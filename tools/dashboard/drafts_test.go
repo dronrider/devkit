@@ -1206,7 +1206,7 @@ func TestStaticBoardTableHead(t *testing.T) {
 		`drafts: "devkit.dash.drafts.sort"`,
 		`tasks: "devkit.dash.tasks.sort"`,
 		`sess: "devkit.dash.sess.sort"`,
-		`const TBL_SORT_OLD = { fresh: "date:desc", title: "title:asc" }`,
+		`const TBL_SORT_OLD = { fresh: "id:desc", title: "title:asc" }`,
 		"function tblHead(",
 		"function tblSortNext(",
 		"function draftsSorted(",
@@ -1224,16 +1224,23 @@ func TestStaticBoardTableHead(t *testing.T) {
 			t.Errorf("кнопка порядка о двух положениях осталась в клиенте: есть %q", gone)
 		}
 	}
-	// Колонка важности есть только у накопителя, ранг только у доски, ход
-	// работы только у сессий: приём один, состав колонок свой. Заголовок у
-	// колонки хода рисованный: слово требовало под себя восемьдесят точек под
-	// кружок в девять, а снятый заголовок человек забраковал отдельно.
+	// Состав колонок у разделов свой, приём один (DK-1564, утверждённый
+	// макет): у накопителя отметка выбора своей узкой колонкой без слова,
+	// ранг подписан словом и носит сумму слагаемых, источник записи стоит
+	// отдельной колонкой; колонки приоритета нет, уровень разбора читается
+	// рангом. Заголовок у колонки хода сессий рисованный: слово требовало
+	// под себя восемьдесят точек под кружок в девять, а снятый заголовок
+	// человек забраковал отдельно.
 	cols := funcBody(t, text, "const TBL_COLS = {")
-	for _, want := range []string{`label: "Приоритет"`, `label: "Ранг"`,
-		`key: "live", label: "Ход", ico: "`} {
+	for _, want := range []string{`key: "pick", label: ""`,
+		`key: "rank", label: "Ранг", by: "рангу"`,
+		`key: "live", label: "Ход", ico: "`, `label: "Из черновика"`} {
 		if !strings.Contains(cols, want) {
 			t.Errorf("в колонках разделов нет %q", want)
 		}
+	}
+	if strings.Contains(cols, `label: "Приоритет"`) {
+		t.Error("колонка приоритета вернулась в накопитель: уровень разбора читается рангом")
 	}
 	// Дата последней активности сессии стоит колонкой, а колонки возраста
 	// рядом нет: человек прочитал «Идёт» и «Активность» как одно и то же, и
@@ -1243,11 +1250,6 @@ func TestStaticBoardTableHead(t *testing.T) {
 	}
 	if strings.Contains(cols, `key: "age"`) {
 		t.Error("колонка возраста сессии осталась рядом с активностью")
-	}
-	// Отметка выбора и приоритет живут одной колонкой накопителя: врозь они
-	// занимали две, и подпись «Приоритет» переставала влезать.
-	if strings.Contains(cols, `key: "pick"`) {
-		t.Error("отметка выбора осталась своей колонкой накопителя")
 	}
 	// Подсказка сортировки говорит по-русски: прежнее «Поставить список по
 	// колонке» человек читать отказался.
@@ -1456,12 +1458,16 @@ func TestDraftOfTaskIDNamesTask(t *testing.T) {
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"title": "форма черновика после груминга не уходит на задачу", "prio": "mid"}`).Body.Close()
 
-	// Исход груминга дословно: строка встала на доску, файл записи уехал из
-	// накопителя.
-	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")); err != nil {
+	// Исход груминга дословно: грумер наполняет запись постановкой, заведение
+	// номером записи оформляет её в задачу, файл записи уезжает из накопителя
+	// переносом, а номер остаётся за строкой (DK-1564, решение 6). Ручное
+	// удаление файла здесь не годится: номер записи закреплён в общей
+	// области, и явное заведение без владельца резерва отказывает.
+	draftBody := "# XR-005: форма черновика после груминга не уходит на задачу\n\n" + readyTaskBody
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md"), []byte(draftBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-005", "--title", "Заведённая грумингом",
+	runTaskctl(t, e.proj, "add", "--id", "XR-005", "--title", "Заведённая грумингом",
 		"--rank", "25+1+1+0+1", "--accept", "agent")
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
@@ -1818,6 +1824,17 @@ func TestStaticDraftPreparedRead(t *testing.T) {
 	}
 }
 
+func TestStaticDraftChatEntry(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftchatentry.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вход в чат разбора: %v\n%s", err, out)
+	}
+}
+
 func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	kit, err := filepath.Abs("../..")
@@ -1971,7 +1988,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора"} {
+	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора", "богатая карточка"} {
 		runTaskctl(t, e.proj, "draft", title)
 	}
 	for id, analysis := range map[string]string{"XR-008": "empty", "XR-009": "error"} {
@@ -1988,10 +2005,19 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Тело богатой карточки заведено по канону постановки: слагаемые ранга
+	// с обоснованиями, DoD и сценарий проверки, те же формы, что у фикстур
+	// taskctl. Ранг валиден для бага: поправка на баг это 5, и сумма 42, а не
+	// 37 (замер QA 2026-11-06, CLI preflight `add` прошёл на этом же теле).
+	richAddBody := "\n## Что происходит\n\nТестовый запуск обнаружил пропуск проверки.\n\n## Чего хотим\n\nПроверка выполняется до записи.\n\n## DoD\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n`25+5+3+5+4 = 42`, P2.\n\n- Серьёзность 25: работа продолжается.\n- Ценность 5: касается одного сценария.\n- Неопределённость 3: место правки известно.\n- Поправка на баг 5: исправляется наблюдаемая поломка.\n- Рычаг 4: убирает повторный разбор.\n\n## Сценарий проверки\n\n1. Запустить.\n2. Ждём ok.\n\n## Контекст\n\nПроверка **полной постановки** и [ссылки](https://example.invalid).\n\n- Данные сохраняются.\n- Повтор не создаёт дубль.\n\n> Результат виден в чате.\n"
 	for id, proposals := range map[string][]draftproposal.Proposal{
 		"XR-005": {{ID: "p1", Revision: 1, Outcome: "drop", Text: "первая карточка", Reason: "устарело"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "вторая карточка", Reason: "устарело"}},
 		"XR-006": {{ID: "p3", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "третья карточка"}, {ID: "p3b", Revision: 1, Outcome: "drop", Text: "ещё не решено", Reason: "устарело"}},
 		"XR-007": {{ID: "p4", Revision: 1, Outcome: "drop", Text: "четвёртая карточка", Reason: "устарело"}},
+		// Богатая карточка заведения несёт свойства доски словами и ранг
+		// формулой: экран согласования обязан показать тип, приёмку и ранг
+		// итогом, а не кодами (DK-1564, замер QA 2026-11-06).
+		"XR-010": {{ID: "p5", Revision: 1, Outcome: "add", Title: "баг доставки ленты", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "mixed", Barrier: "глаза", Text: richAddBody}},
 	} {
 		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
 		data, err := os.ReadFile(path)

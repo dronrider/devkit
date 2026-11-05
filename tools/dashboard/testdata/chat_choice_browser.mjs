@@ -149,7 +149,7 @@ try {
     const msg = document.querySelector(".chatfeed .msg").getBoundingClientRect();
     const button = document.querySelector(".csend").getBoundingClientRect();
     const toolbar = document.querySelector(".crow .cmodel").getBoundingClientRect();
-    return { left: box.left - msg.left, overflow: document.documentElement.scrollWidth > innerWidth, controlsOverflow: [...document.querySelectorAll(".cbox button,.cbox select")].some((n) => n.getBoundingClientRect().right > box.right || n.getBoundingClientRect().left < box.left), button: button.toJSON(), toolbar: toolbar.toJSON(), box: box.toJSON() };
+    return { left: box.left - msg.left, overflow: document.documentElement.scrollWidth > innerWidth, controlsOverflow: [...document.querySelectorAll(".cbox button,.cbox select")].filter((n) => n.getClientRects().length > 0).some((n) => n.getBoundingClientRect().right > box.right || n.getBoundingClientRect().left < box.left), button: button.toJSON(), toolbar: toolbar.toJSON(), box: box.toJSON() };
   });
   assert.ok(Math.abs(layout.left) <= 1, "composer выровнен по внешнему краю сообщений: " + JSON.stringify(layout));
   assert.equal(layout.overflow, false);

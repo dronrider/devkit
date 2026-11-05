@@ -7,8 +7,8 @@ import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, fail, app
 // панели и уезжает на время правки.
 const writes = [];
 const state = { version: 1, state: "active", analysis: "ok", proposals: [
-  { id: "chat-delivery", revision: 1, outcome: "add", title: "Доставка чата записи",
-    board_type: "bug", rank: "2", size: "L", accept: "mixed",
+  { id: "chat-delivery", board_id: "XR-005", revision: 1, outcome: "add", title: "Доставка чата записи",
+    board_type: "bug", rank: "25+5+3+0+4", size: "L", accept: "mixed",
     barrier: "прогон стенда и живой экран", rationale: "дефект виден на приёмке",
     text: "# Доставка чата записи\n\nРеплика уезжает в чат записи.\n\n- пункт один\n- пункт два\n" },
 ] };
@@ -28,7 +28,7 @@ const { sandbox, byId } = makeSandbox(appPathArg(), (path, init) => {
     return { message: "задача сохранена" };
   }
   if (path === "/api/projects/demo/drafts/XR-9/prepared") return { id: "XR-9", snapshot, basis: "d1", state };
-  if (path === "/api/projects/demo/drafts/XR-9") return { id: "XR-9", text: "# XR-9: встреча\n", hash: "h", type: "task", source: "thought", lock: "unlocked" };
+  if (path === "/api/projects/demo/drafts/XR-9") return { id: "XR-9", text: "# Встреча по доставке\n", hash: "h", type: "task", source: "thought", lock: "unlocked" };
   if (path.endsWith("/board")) return { board: { prefix: "XR", sections: [] }, works: [] };
   if (path.includes("/chats")) return { chats: [], models: [] };
   if (path === "/api/quota") return { harnesses: [] };
@@ -53,9 +53,27 @@ if (!dump(view).includes("Реплика уезжает в чат записи")
 const editBox = allByClass(groups, "pedit")[0];
 if (!editBox || !editBox.hidden) fail("поля правки не спрятаны в чтении");
 const chipsLine = chipText(groups);
-for (const part of ["Подготовлена", "тип bug", "цена L", "приёмка mixed"]) {
+for (const part of ["На согласовании", "тип Баг", "ранг 37", "цена L", "Проверка с вашим участием"]) {
   if (!chipsLine.includes(part)) fail("в чтении нет чипа " + part);
 }
+// Ранг показан итогом суммы, а слагаемые ушли в подсказку: формула в чипе
+// шире строки статуса и кодами не читается (DK-1564, замер QA 2026-11-06).
+{
+  const tipOf = (node) => String((node && ((node.attrs || {}).title || node.title)) || "");
+  const rank = allByClass(groups, "chip").find((c) => dump(c).includes("ранг 37"));
+  if (!rank || !tipOf(rank).includes("25+5+3+0+4")) {
+    fail("слагаемые ранга не уехали в подсказку чипа: " + chipsLine);
+  }
+  const accept = allByClass(groups, "chip").find((c) => dump(c).includes("Проверка с вашим участием"));
+  if (!accept || !tipOf(accept).includes("mixed")) {
+    fail("код приёмки не уехал в подсказку чипа: " + chipsLine);
+  }
+}
+// Шапка называет задачу её номером доски, а источник стоит ссылкой сверху
+// (DK-1564, утверждённый макет): номер и запись встречают раньше описания.
+const idbig = byClass(groups, "idbig");
+if (!idbig || dump(idbig) !== "XR-005") fail("шапка задачи не названа номером доски");
+if (!chipsLine.includes("из XR-9: Встреча по доставке")) fail("в чтении нет ссылки на исходную запись");
 const notes = byClass(groups, "pnotes");
 if (!notes || notes.hidden || !dump(notes).includes("Барьер приёмки") || !dump(notes).includes("прогон стенда и живой экран")) fail("длинные тексты не стоят блоками в чтении");
 if (!dump(notes).includes("Довод разбора")) fail("довод разбора не показан в чтении");

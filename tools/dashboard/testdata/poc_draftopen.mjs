@@ -50,7 +50,7 @@ function press(row, target, why) {
 
 // --- строка накопителя ведёт внутрь записи ---
 {
-  const row = browserKids(sandbox.draftRow("demo", drafts[0]));
+  const row = browserKids(sandbox.draftRow("demo", drafts[0], {}, []));
   const title = allByClass(row, "st")[0];
   if (!title) fail("в строке накопителя нет заголовка записи: " + dump(row));
   sandbox.location.hash = "#demo/drafts";
@@ -63,7 +63,7 @@ function press(row, target, why) {
 
 // --- ID записи это та же дорога ---
 {
-  const row = browserKids(sandbox.draftRow("demo", drafts[0]));
+  const row = browserKids(sandbox.draftRow("demo", drafts[0], {}, []));
   const id = byClass(row, "id");
   sandbox.location.hash = "#demo/drafts";
   press(row, id, "на ID записи");
@@ -75,23 +75,20 @@ function press(row, target, why) {
 
 // --- кнопки строки внутрь не уводят ---
 //
-// Кнопки разбора в строке больше нет вовсе: запуск один на выбранное и стоит
-// над списком, а в строке осталась отметка выбора. Она внутрь записи уводить
-// тоже не должна: прежде нажатие всплывало до обработчика строки и открывало
-// форму вместо своего дела (замечание пользователя).
+// Кнопок в строке больше нет вовсе: разговор держит экран записи, а запуск
+// один на выбранное и стоит над списком (DK-1564, утверждённый макет). В
+// строке осталась отметка выбора, и она внутрь записи уводить не должна:
+// прежде нажатие всплывало до обработчика строки и открывало форму вместо
+// своего дела (замечание пользователя).
 {
-  const row = browserKids(sandbox.draftRow("demo", drafts[0]));
+  const row = browserKids(sandbox.draftRow("demo", drafts[0], {}, []));
   if (deepBtn(row, "Грумить")) fail("кнопка разбора вернулась в строку: " + dump(row));
+  if (deepBtn(row, "btn-ico")) fail("кнопка чата вернулась в строку: " + dump(row));
   const pick = byClass(row, "dpick");
   if (!pick) fail("в строке накопителя нет отметки выбора: " + dump(row));
   const box = byClass(pick, "dbox");
-  const talk = deepBtn(row, "btn-ico");
-  if (!talk) fail("кнопки чата в строке накопителя нет: " + dump(row));
-  const icon = tag(talk, "SVG") || Array.from(talk.children)[0];
   for (const [node, why] of [[pick, "на отметку выбора"],
-    [box, "на квадрат внутри отметки"],
-    [talk, "на кнопку чата"],
-    [icon, "на значок внутри кнопки чата"]]) {
+    [box, "на квадрат внутри отметки"]]) {
     sandbox.location.hash = "#demo/drafts";
     press(row, node, why);
     await settle();

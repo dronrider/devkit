@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/draftideas"
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
@@ -209,6 +210,13 @@ func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []jso
 		var id string
 		json.Unmarshal(m["id"], &id)
 		if id != "" {
+			path, _ := draftPathOf(projPath, id)
+			if text, err := os.ReadFile(path); err == nil {
+				total, pending := draftideas.Count(text)
+				m["ideas_total"], _ = json.Marshal(total)
+				m["ideas_undecided"], _ = json.Marshal(pending)
+				m["groomed"], _ = json.Marshal(draftGroomed(projPath, id, text))
+			}
 			if mark, err := json.Marshal(groomPrompt(id, "", draftModeGroom)); err == nil {
 				m["order"] = mark
 			}
@@ -290,6 +298,24 @@ func draftHash(text []byte) string {
 	return fmt.Sprintf("%x", sum)[:12]
 }
 
+// draftGroomed отвечает, шёл ли уже разбор записи: остались ли подготовленные
+// задачи, старый блок разбора, раздел откладывания или приписанная хоть одной
+// мысли судьба. Спрашивают его экран записи и подъём разбора, и разойтись им
+// нельзя: кнопка не должна обещать запуск, который сервер отбил бы.
+func draftGroomed(projPath, id string, text []byte) bool {
+	if _, err := os.Stat(draftproposal.PreparedPath(projPath, id)); err == nil {
+		return true
+	}
+	if _, had, err := draftproposal.Material(text); err == nil && had {
+		return true
+	}
+	if draftideas.GroomSection(text) {
+		return true
+	}
+	total, undecided := draftideas.Count(text)
+	return total > undecided
+}
+
 // draftBusy называет живую сессию разбора этой записи, а пустая строка значит,
 // что запись свободна. Спрашивают его двое: подъём разбора (второй грумер
 // поверх работающего) и правка текста (пока разбор идёт, запись принадлежит
@@ -361,6 +387,10 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	// Мысли и признак разбора едят с текстом записи (DK-1564): по ним кнопка
+	// чата разбора отличает первый разбор, повторный повод и просто разговор.
+	ideasTotal, ideasUndecided := draftideas.Count(text)
+	groomed := draftGroomed(found.Path, id, text)
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Грумить»,
 	// и подсказка на ней читает то же поле, что и строка накопителя. Оба
 	// исхода едут сразу, order на «грумить» и orderRun на «выполнить»
@@ -372,11 +402,21 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		"orderRun": groomPrompt(id, "", draftModeRun),
 		// База правки едет вместе с текстом: экран вернёт её при сохранении, и
 		// разошедшуюся ручка отобьёт вместо молчаливого затирания.
-		"hash": draftHash(text)}
+		"hash": draftHash(text),
+		// Мысли и разбор теми же полями, что и у отказа повтора: экрану
+		// достаточно пары чисел и признака, текст пунктов он уже вёз.
+		"ideas_total": ideasTotal, "ideas_undecided": ideasUndecided, "groomed": groomed}
 	// И ожидание разговора тем же полем: кнопка чата груминга на экране записи
 	// помечает его так же, как строка накопителя.
 	if wait, ok := askWaiting(found.Path, id, s.now()); ok {
 		out["waiting"] = wait
+	}
+	// Дата правки едет теми же полями, что и строке накопителя: колонки даты
+	// в списке больше нет (DK-1564, утверждённый макет), и точное время с
+	// давностью живёт подсказкой на экране записи.
+	if info, err := os.Stat(path); err == nil {
+		out["moved"] = info.ModTime().Format(draftDateLayout)
+		out["moved_at"] = info.ModTime().Unix()
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -604,6 +644,25 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, оформлять нечего", id, found.Name, rel)})
 		return
+	}
+	// Повторный разбор без повода не поднимается (DK-1564): судьбы приписаны,
+	// подготовленных вопросов нет, и разговор разбора продолжается в чате той
+	// же записи. Первый разбор, уточнение человека и продолжение выполнением
+	// поводами остаются, отказ бьёт только пустой повтор, в том числе прямой
+	// запросом мимо кнопки.
+	if mode != draftModeRun && ask == "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно", id, found.Name, rel)})
+			return
+		}
+		if _, undecided := draftideas.Count(data); undecided == 0 && draftGroomed(found.Path, id, data) {
+			s.logf("груминг %s в %s отклонён: повторный разбор без неразобранных мыслей 409", id, found.Name)
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": fmt.Sprintf("разбор %s уже шёл, неразобранных мыслей нет: продолжайте разговор разбора в чате записи, новая ходка не нужна", id)})
+			return
+		}
 	}
 	if err := draftmeta.GuardRecord(found.Path, id); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -927,12 +986,38 @@ func (s *server) handleDraftPrepared(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	var result json.RawMessage
-	if err = json.Unmarshal([]byte(out), &result); err != nil {
+	var view struct {
+		State draftproposal.State `json:"state"`
+	}
+	if err = json.Unmarshal([]byte(out), &view); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "подготовленные задачи не прочитались"})
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	// Унаследованной задаче без номера он закрепляется здесь же (DK-1564):
+	// номер обязан стоять до применения решения, а не в момент подтверждения.
+	// После первого закрепления чтение ничего не пишет.
+	for _, p := range view.State.Proposals {
+		if p.Status == "" && p.BoardID == "" {
+			out, code, err = s.taskctlWrite(found.Path, "draft", "prepared", "adopt", id)
+			if err != nil {
+				writeJSON(w, code, map[string]string{"error": err.Error()})
+				return
+			}
+			var adopted struct {
+				Views []json.RawMessage `json:"views"`
+			}
+			if err = json.Unmarshal([]byte(out), &adopted); err != nil || len(adopted.Views) == 0 {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "закрепление номеров не прочиталось"})
+				return
+			}
+			if note := commitDocs(found.Path, boardCommitMsg(id, "закрепление номеров подготовки"), draftFileRel(id), preparedFileRel(id)); note != "" {
+				s.logf("закрепление номеров %s в %s: %s", id, found.Name, note)
+			}
+			out = string(adopted.Views[0])
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, json.RawMessage(out))
 }
 func (s *server) handleDraftPreparedSave(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {

@@ -143,7 +143,8 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   }
 
   // И на самом экране: при живом разговоре о записи пометки разбора нет, а
-  // кнопка «Грумить» на месте.
+  // кнопка «Разобрать» на месте. Первый разбор нового черновика сохраняет
+  // рабочий путь (DK-1564, утверждённая поправка).
   now.waiting = false;
   now.works = talk;
   await go("#demo");
@@ -152,7 +153,7 @@ const chatBtns = () => allByClass(groups, "btn-ico");
   if (said.includes("груминг идёт")) {
     fail("разговор о записи показан идущим разбором: " + said.slice(0, 300));
   }
-  if (!said.includes("Грумить")) {
+  if (!said.includes("Разобрать")) {
     fail("кнопка разбора пропала из-за разговора о записи: " + said.slice(0, 300));
   }
   now.works = groom;

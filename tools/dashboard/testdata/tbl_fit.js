@@ -84,15 +84,14 @@ const CELLS = {
       `</svg></button></span></span></td>`,
   },
   drafts: {
-    prio: `<td class="dimp"><span class="cin"><button class="dpick"><span class="dbox"></span></button>` +
-      `<span class="chip" data-fit="prio" data-alt="средний|низкий">высокий</span></span></td>`,
-    id: `<td class="id"><span data-fit="id">DK-410</span></td>`,
-    title: `<td class="dtt"><span class="cin"><span class="st">Линт не видит файл задачи, заведённой руками</span>` +
-      `<span class="rchips"><span class="chip">отложен 20 авг</span></span></span></td>`,
-    date: `<td class="dwhen"><span class="stale dashed" data-fit="date">2026-08-17</span></td>`,
-    act: `<td class="sm"><span class="cin"><span class="racts" data-fit="act">` +
-      `<button class="btn btn-sm btn-ico rchat"><svg viewBox="0 0 24 24"></svg></button>` +
-      `</span></span></td>`,
+    pick: `<td class="dimp"><span class="cin"><button class="dpick"><span class="dbox"></span></button></span></td>`,
+    id: `<td class="id"><span data-fit="id">DK-1564</span></td>`,
+    title: `<td class="dtt"><span class="cin"><span class="st">Линт не видит файл задачи, заведённой руками</span></span></td>`,
+    type: `<td class="dtype"><span data-fit="type">Разработка</span></td>`,
+    rank: `<td class="drank"><span data-fit="rank" data-alt="средний|низкий|100">высокий</span></td>`,
+    size: `<td class="dsize"><span data-fit="size">XL</span></td>`,
+    state: `<td class="dst"><span class="cin"><span class="chip" data-fit="state" data-alt="ждёт разбора|ждёт ответа|разобран">На согласовании</span></span></td>`,
+    src: `<td class="dsrc"><span class="cin"><button class="linkish" data-fit="src">из DK-1564</button></span></td>`,
   },
 };
 
@@ -102,6 +101,14 @@ const body = `<tbody><tr class="${ROW}">` +
 
 document.getElementById("groups").innerHTML =
   `<table class="tbl t-${kind}">${colgroup()}${head()}${body}</table>`;
+if (kind === "drafts") {
+  const ordinary = document.querySelector("tbody tr").cloneNode(true);
+  ordinary.classList.add("ordinary");
+  ordinary.querySelector(".dst").innerHTML = '<span class="st">ждёт разбора</span>';
+  ordinary.querySelector(".dsize").textContent = "";
+  ordinary.querySelector(".dsrc").textContent = "";
+  document.querySelector("tbody").append(ordinary);
+}
 document.getElementById("pname").textContent = "devkit";
 const sel = document.getElementById("pselect");
 if (sel) sel.innerHTML = "<option>devkit</option>";
@@ -202,6 +209,7 @@ cols.forEach((c, at) => {
   let cut = over(cell);
   for (const node of cell.querySelectorAll("[data-fit]")) cut = Math.max(cut, over(node));
   out.push("cut_" + c.key + "=" + cut);
+  out.push("spill_" + c.key + "=" + spill(cell));
   // Подпись в шапке это такая же короткая метка: колонка, которой не хватает
   // ширины на собственное имя со значком порядка, режет его тем же обрубком.
   const label = document.querySelector('.tblh [data-fit="' + c.key + '"]');
@@ -270,6 +278,7 @@ const chip = document.querySelector("." + ROW + " .chip");
 look.chiph = high(chip);
 look.chipfs = cs(chip, "font-size");
 look.chipgap = cs(document.querySelector("." + ROW + " .rchips"), "gap");
+if (kind === "drafts") out.push("ordinary_h=" + (high(document.querySelector(".ordinary")) - cs(document.querySelector(".ordinary td"), "border-top-width") + cs(row.children[0], "border-top-width")));
 for (const key of Object.keys(look)) out.push("l_" + key + "=" + look[key]);
 
 document.title = out.join(" ");

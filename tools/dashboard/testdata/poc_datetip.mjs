@@ -54,6 +54,15 @@ const { sandbox, byId } = makeSandbox(app, (path_) => {
   }
   if (path_.endsWith("/works")) return { works };
   if (path_.endsWith("/drafts")) return { drafts };
+  if (path_.endsWith("/drafts/types")) return { types: [{ name: "task", title: "Задача" }] };
+  if (path_.includes("/drafts/XR-D1/prepared")) {
+    return { id: "XR-D1", snapshot: "s1", state: { version: 1, state: "active", proposals: [] } };
+  }
+  if (path_.includes("/drafts/XR-D1")) {
+    return Object.assign({ id: "XR-D1", file: "docs/tasks/drafts/XR-D1.md", text: "автономный выкат",
+      type: "task", source: "thought", lock: "unlocked", order: "", orderRun: "", hash: "h1",
+      ideas_total: 0, ideas_undecided: 0, groomed: false }, drafts[0]);
+  }
   if (path_.includes("/tasks/")) {
     return { project: "demo", id: "XR-101", after: [], blocks: [], row: rows[0],
       text: "постановка", file: "docs/tasks/XR-101.md" };
@@ -110,17 +119,21 @@ const sane = (where, tip) => {
   sane("экран задачи", tipOf(said));
 }
 
-// --- запись накопителя: точное время ---
+// --- запись накопителя: точное время на экране записи ---
+// Колонки даты в списке больше нет (DK-1564, утверждённый макет), и дата
+// правки стоит в строке статуса экрана записи: подсказка приносит то же
+// точное время, что прежде висело над строкой списка.
 {
-  await go("#demo/drafts");
-  const cell = byClass(allByClass(groups, "dsrow")[0], "dwhen");
-  const tip = tipOf(byClass(cell, "stale"));
-  sane("накопитель", tip);
+  await go("#demo/draft/XR-D1");
+  const said = allByClass(groups, "stale").find((node) => tipOf(node));
+  if (!said) fail("экран записи: даты с подсказкой нет");
+  const tip = tipOf(said);
+  sane("экран записи", tip);
   if (!/\d{1,2}:\d{2}/.test(tip)) {
-    fail("накопитель: сервер прислал точное время правки, а подсказка его не показывает: " + tip);
+    fail("экран записи: сервер прислал точное время правки, а подсказка его не показывает: " + tip);
   }
   if (!tip.includes("назад") && !tip.includes("вчера")) {
-    fail("накопитель: подсказка не говорит давности: " + tip);
+    fail("экран записи: подсказка не говорит давности: " + tip);
   }
 }
 

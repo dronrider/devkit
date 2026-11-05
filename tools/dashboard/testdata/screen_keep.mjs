@@ -1769,7 +1769,7 @@ grooming = false;
 await go("#demo/draft/XR-D2");
 dchips = find(groups, "draft-chips");
 if (dump(dchips).includes("груминг идёт")) fail("кончившийся груминг помечен идущим: " + dump(dchips));
-const groomBtn = barButton(groups, "Грумить");
+const groomBtn = barButton(groups, "Разобрать");
 if (!groomBtn) fail("кнопки груминга нет на записи без разбора: " + dump(groups).slice(0, 300));
 // Разбор кончился, замок снят: карандаш возвращается на место.
 if (!barButton(dchips, "Править запись")) {
@@ -1790,7 +1790,7 @@ await go("#demo/draft/XR-D2");
 if (barButton(groups, "Чат груминга")) {
   fail("на форме вернулась вторая дверь в тот же чат: " + dump(groups).slice(0, 300));
 }
-if (!barButton(groups, "Грумить")) {
+if (!barButton(groups, "Разобрать")) {
   fail("кнопка разбора пропала из-за чата о записи: " + dump(groups).slice(0, 300));
 }
 

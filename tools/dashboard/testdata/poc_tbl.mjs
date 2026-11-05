@@ -94,7 +94,7 @@ const rankCol = () => allByClass(head("tasks") || {}, "tblb")
   await go("#demo");
   const h = head("tasks");
   if (!h) fail("шапки колонок над доской нет: " + dump(groups).replace(/\s+/g, " ").slice(0, 400));
-  for (const label of ["Номер", "Задача", "Дата"]) {
+  for (const label of ["№", "Задача", "Дата"]) {
     if (!col("tasks", label)) fail("в шапке доски нет колонки «" + label + "»: " + dump(h));
   }
   if (!rankCol()) fail("в шапке доски нет колонки ранга: " + dump(h));
@@ -105,7 +105,7 @@ const rankCol = () => allByClass(head("tasks") || {}, "tblb")
   }
   // Своего порядка экран доске не назначает: строки стоят так, как их сложила
   // сама доска, и подсвеченной колонки при первом заходе нет.
-  if (["Номер", "Задача", "Дата"].some((l) => on(col("tasks", l))) || on(rankCol())) {
+  if (["№", "Задача", "Дата"].some((l) => on(col("tasks", l))) || on(rankCol())) {
     fail("доска открылась переставленной, хотя порядка никто не просил: " + dump(h));
   }
 }
@@ -120,11 +120,11 @@ const boardIds = () => allByClass(groups, "trow")
 {
   const row = allByClass(groups, "trow")[0];
   const kids = [...row.children].map((k) => String(k.className || "").split(" ")[0]);
-  if (JSON.stringify(kids) !== JSON.stringify(["id", "tt", "rank", "twhen", "meta"])) {
+  if (JSON.stringify(kids) !== JSON.stringify(["id", "tt", "stage", "rank", "twhen", "meta"])) {
     fail("ячейки строки доски идут не тем порядком: " + JSON.stringify(kids));
   }
-  if (!dump(byClass(row, "twhen")).includes("2026-08-")) {
-    fail("дата правки не встала своей ячейкой: " + dump(row).replace(/\s+/g, " "));
+  if (!/^\d{2}-\d{2}-\d{2}$/.test(String(dump(byClass(row, "twhen"))).trim())) {
+    fail("дата правки не встала своей ячейкой днём без века: " + dump(row).replace(/\s+/g, " "));
   }
 }
 

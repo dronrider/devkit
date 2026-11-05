@@ -2487,6 +2487,17 @@ func TestBoardTableCellsNoDeadSpace(t *testing.T) {
 		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
 	} {
 		t.Logf("раздел «%s»: %v", tab.word, look(got[tab.key]))
+		if tab.key == "drafts" {
+			if got[tab.key]["cols"] != 8 || got[tab.key]["l_rowh"] != got[tab.key]["ordinary_h"] {
+				t.Errorf("общая таблица согласования и разбора: %v", got[tab.key])
+			}
+			for key, value := range got[tab.key] {
+				if (strings.HasPrefix(key, "cut_") || strings.HasPrefix(key, "head_") && !strings.HasPrefix(key, "head_min_") || strings.HasPrefix(key, "spill_")) && value > 1 {
+					t.Errorf("в общей таблице переполнение %s=%d", key, value)
+				}
+			}
+			continue
+		}
 		for name, min := range got[tab.key] {
 			col, ok := strings.CutPrefix(name, "min_")
 			if !ok || col == "act" {
@@ -2624,7 +2635,7 @@ func TestStaticFormPopFits(t *testing.T) {
 		btn   int
 		wide  int
 	}{
-		{"draft", "Грумить", 125, 92},
+		{"draft", "Разобрать", 145, 110},
 		{"task", "Выполнить", 145, 110},
 		{"check", "Проверить", 145, 110},
 	} {
@@ -2912,6 +2923,9 @@ func TestBoardTabsSameLook(t *testing.T) {
 	} {
 		want := got["tasks"][one.key]
 		for _, kind := range []string{"sess", "drafts"} {
+			if kind == "drafts" && (strings.HasPrefix(one.key, "l_ico") || one.key == "l_actgap" || one.key == "l_subfs") {
+				continue // В восьми колонках нет хвоста действий и подписи даты.
+			}
 			if got[kind][one.key] != want {
 				t.Errorf("%s: у задач %d, у раздела %s %d. Вид у трёх разделов один",
 					one.word, want, kind, got[kind][one.key])
@@ -2927,6 +2941,9 @@ func TestBoardTabsSameLook(t *testing.T) {
 	} {
 		want := got["tasks"][one.key]
 		for _, kind := range []string{"sess", "drafts"} {
+			if kind == "drafts" && one.key == "l_chipgap" {
+				continue
+			}
 			if got[kind][one.key] != want {
 				t.Errorf("%s: у задач %d, у раздела %s %d", one.word, want,
 					kind, got[kind][one.key])

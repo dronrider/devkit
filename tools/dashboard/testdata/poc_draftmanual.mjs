@@ -1,7 +1,7 @@
-import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, fail, appPathArg } from "./poc_dom.mjs";
 
-// Ручная подготовка задачи с экрана записи (DK-1564): путь из README,
-// «Подготовить задачу вручную». Приём на сервере требует первую редакцию 1,
+// Ручная подготовка задачи с экрана записи (DK-1564): кнопка «Подготовить
+// вручную» в составе задач разбора. Приём на сервере требует первую редакцию 1,
 // а правка сохранённой задачи идёт следующей редакцией. Пустая форма ручной
 // подготовки открывается сразу в правке, сохранённая задача чтением.
 const writes = [];
@@ -37,6 +37,19 @@ function byAria(root, part) {
     return null;
   };
   return walk(root);
+}
+await openScreen("demo/draft/XR-9");
+{
+  // Пустой состав задач разбора говорит словами и держит ручную подготовку
+  // (DK-1564, утверждённый макет): кнопка в голове карточки состава.
+  const board = byId.get("groups");
+  const comp = allByClass(board, "comp").find((n) => dump(n).includes("Задачи разбора"));
+  if (!comp) fail("на экране записи нет карточки состава задач разбора");
+  if (!dump(comp).includes("Подготовленного пока нет")) fail("пустой состав не сказал об этом словами");
+  const entry = deepBtn(comp, "Подготовить вручную");
+  if (!entry) fail("в составе нет ручной подготовки");
+  entry.handlers.click({});
+  if (!sandbox.location.hash.includes("/prepared/new")) fail("ручная подготовка открыла не пустую форму: " + sandbox.location.hash);
 }
 await openScreen("demo/draft/XR-9/prepared/new");
 const groups = byId.get("groups");

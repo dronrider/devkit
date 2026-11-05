@@ -38,11 +38,11 @@ assert(statusEnd > statusStart);
 const statusCtx = vm.createContext({});
 vm.runInContext(source.slice(statusStart, statusEnd + 2) + '\nthis.card = draftCardStatus;', statusCtx);
 for (const [outcome, status, want] of [
-  ['add', '', 'Подготовлена'], ['add', 'accepted', 'Подтверждена'], ['add', 'rejected', 'Отклонена'],
-  ['attach', '', 'Подготовлена'], ['attach', 'accepted', 'Подтверждена'],
-  ['defer', '', 'Подготовлена'], ['defer', 'rejected', 'Отклонена'],
-  ['drop', '', 'Подготовлено'], ['drop', 'accepted', 'Подтверждено'], ['drop', 'rejected', 'Отклонено'],
-  ['', '', 'Подготовлено'], ['', 'accepted', 'Подтверждено'], ['', 'rejected', 'Отклонено'],
+  ['add', '', 'На согласовании'], ['add', 'accepted', 'Подтверждена'], ['add', 'rejected', 'Отклонена'],
+  ['attach', '', 'На согласовании'], ['attach', 'accepted', 'Подтверждена'],
+  ['defer', '', 'На согласовании'], ['defer', 'rejected', 'Отклонена'],
+  ['drop', '', 'На согласовании'], ['drop', 'accepted', 'Подтверждено'], ['drop', 'rejected', 'Отклонено'],
+  ['', '', 'На согласовании'], ['', 'accepted', 'Подтверждено'], ['', 'rejected', 'Отклонено'],
 ]) {
   assert.equal(statusCtx.card(outcome, status), want, outcome + ' ' + status);
 }

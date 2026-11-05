@@ -854,7 +854,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* Зазор в ячейке хвоста тот же, что и между самими кнопками, и правило это
    одно на три раздела: врозь у задач стояло шесть точек, а у сессий с
    накопителем восемь, и вид разделов расходился на ровном месте. */
-.trow .meta>.cin,.dsrow .sm>.cin,.arow .aacts>.cin{gap:var(--actgap)}
+.trow .meta>.cin,.arow .aacts>.cin{gap:var(--actgap)}
 .trow .meta>.cin{justify-content:flex-start}
 /* действия строки: главная кнопка, «Стоп» у идущей работы и три точки с
    остальным. Ряд стоит своей коробкой, а не россыпью в ячейке, потому что от
@@ -1903,14 +1903,19 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* колонка типа растёт под длинную подпись чипа, а не режет её */
 .srow{grid-template-columns:minmax(60px,auto) 1fr auto;gap:6px;padding:7px 12px}
 
-/* приписки строки накопителя жмутся вправо одной строкой и на телефоне: у
-   строки доски они уезжают под заголовок, а тут это разорванная строка */
-.dsrow .sm>.cin{justify-content:flex-end;flex-wrap:nowrap}
 /* наименование ужимается многоточием, а не переносом: полный текст показывает
-   подсказка, и на узком экране строка остаётся одной. Приписки едут в той же
-   ячейке: колонка названия и так забирает остаток строки, и стоять поодаль им
-   негде */
+   подсказка, и на узком экране строка остаётся одной. Приписки едут под
+   названием отдельной строкой чипов */
 .dsrow .st{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* дверь в исходный черновик ужимается многоточием в своей колонке: полный
+   текст показывает экран записи, а колонка источника узкая по макету
+   (DK-1564) */
+.dsrow .dsrc{min-width:0}
+.dsrow .dsrc .linkish{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* состояние согласования чипом ужимается в своей колонке: слово длиннее
+   колонки режется многоточием, а не наезжает на источник записи рядом
+   (DK-1564, замер QA 2026-11-06) */
+.dsrow .dst .chip{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* телефон: кнопка запуска разбора остаётся рядом с полем модели, а не растёт
    во всю ширину полосы, как растут кнопки заведения */
 .grun .btn{width:auto}
@@ -2833,7 +2838,7 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    наведения схлопывались в ноль) правил ту же беду, что теперь правит тяга
    границы, и делал это за человека и рывком */
 @media (min-width:901px){
-  .trow .twhen,.trow .tt,.dsrow .dimp,.dsrow .dwhen,.dsrow .dtt{overflow:hidden}
+  .trow .twhen,.trow .tt,.dsrow .dimp,.dsrow .dtt{overflow:hidden}
   .trow .rank{min-width:0}
 }
 
@@ -2925,23 +2930,28 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .meta{grid-column:4;grid-row:1}
   /* Хвост прижат к правому краю строки и не переносится: правило одно на три
      раздела, и стоит оно рядом с раскладкой той строки, которой правит. */
-  .trow .meta>.cin,.dsrow .sm>.cin,.arow .aacts>.cin{justify-content:flex-end;flex-wrap:nowrap}
-  /* накопитель ложится тем же ритмом, что и строка доски: отметка с важностью,
-     номер и дата первой строкой, название второй во всю ширину. Приписки едут
-     под названием: рядом с ним флекс их не жмёт, и они уносили раздел вбок */
+  .trow .meta>.cin,.arow .aacts>.cin{justify-content:flex-end;flex-wrap:nowrap}
+  /* накопитель ложится тем же ритмом, что и строка доски: отметка выбора,
+     номер и состояние первой строкой, название второй во всю ширину, дверь в
+     исходный черновик третьей. Состояние не прячется и на телефоне
+     (DK-1564, утверждённый макет), а тип, ранг и цена остаются колонками
+     широкого экрана: на телефоне они читаются на экране записи, и строка не
+     рассыпается мелочью. Приписки едут под названием: рядом с ним флекс их
+     не жмёт, и они уносили раздел вбок */
   .tbl>tbody>tr.dsrow{display:grid;grid-template-columns:auto auto 1fr auto;
     gap:var(--rowmgy) var(--rowmgx);
     padding:var(--rowmpy) var(--rowmpx);align-items:center}
   .dsrow .dimp{grid-column:1;grid-row:1}
   .dsrow .dimp>.cin{flex-wrap:nowrap}
   .dsrow .id{grid-column:2;grid-row:1}
-  .dsrow .dwhen{grid-column:3;grid-row:1;min-width:0;text-align:right}
-  .dsrow .sm{grid-column:4;grid-row:1}
+  .dsrow .dst{grid-column:4;grid-row:1;min-width:0;text-align:right}
   .dsrow .dtt{grid-column:1 / -1;grid-row:2;overflow:hidden}
   .dsrow .dtt>.cin{display:block}
   .dsrow .dtt .st{display:block;white-space:normal;line-height:1.35}
   .dsrow .dtt .rchips{display:flex;flex-wrap:wrap;gap:var(--rowmgy);margin-top:var(--rowmgy);max-width:100%}
   .dsrow .dtt .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .dsrow .dtype,.dsrow .drank,.dsrow .dsize{display:none}
+  .dsrow .dsrc{grid-column:1 / -1;grid-row:3;min-width:0}
   /* сессии ложатся тем же ритмом, что строка доски и запись накопителя:
      состояние, дата активности и кнопки первой полосой, название работы второй
      во всю ширину. Прежде кнопки уезжали третьей полосой во всю ширину строки,

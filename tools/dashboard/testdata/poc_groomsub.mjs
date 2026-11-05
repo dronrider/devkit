@@ -41,7 +41,7 @@ await sandbox.loadHarnesses();
 
 // В строке накопителя кнопки разбора нет вовсе: там отметка выбора.
 const row = sandbox.draftRow("demo", { id: "XR-D1", title: "мысль с телефона", age_words: "вчера",
-  order: "Проведи груминг XR-D1" });
+  order: "Проведи груминг XR-D1" }, {}, []);
 if (deepBtn(row, "Грумить")) fail("кнопка разбора вернулась в строку: " + dump(row));
 if (!byClass(row, "dpick")) fail("в строке накопителя нет отметки выбора: " + dump(row));
 

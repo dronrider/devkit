@@ -266,7 +266,10 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	}
 	answer.Mode = "apply"
 	answer.Snapshots = answer.Snapshots[:1]
-	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}
+	// Сохранение выдаёт новой карточке номер доски ключом (DK-1564), поэтому
+	// решение адресуется тем ключом, которым вопрос показывает карточку.
+	shown := q.Prepared.Sources[0].Proposals[0].ID
+	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: shown, Revision: 1, Action: "reject", Reason: "не нужно"}}
 	for _, wrong := range []proposalAnswer{
 		{Mode: "apply", Anchor: answer.Anchor, Tree: answer.Tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: "stale"}}, Decisions: answer.Decisions},
 		{Mode: "apply", Anchor: answer.Anchor, Tree: answer.Tree, Snapshots: answer.Snapshots, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "unseen", Revision: 1, Action: "accept"}}},
@@ -325,7 +328,8 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	continued := st.e.s.proposalContinuation(st.e.proj, scenarioPanelSID)
 	// Тел задач в продолжении нет (DK-1469, решение 4): строка на задачу
 	// называет её ID и состояние, описание читается на экране задачи.
-	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "p2, редакция 1: подготовлено") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "подготовлено") || !strings.Contains(continued, "не нужно") {
+	shownSecond := q.Prepared.Sources[1].Proposals[0].ID
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, shownSecond+", редакция 1: подготовлено") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "подготовлено") || !strings.Contains(continued, "не нужно") {
 		t.Fatalf("multi-source continuation: %s", continued)
 	}
 	replacement := chat.Ask{Task: "XR-4", Session: scenarioPanelSID, Questions: []chat.Question{{Text: "новый вопрос"}}}
@@ -362,7 +366,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	}
 	writeBinds(t, st.e.home, "2026-10-30T12:01:00 сессия "+newSID+" задача XR-4 проект demo дерево "+st.e.proj+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux chat-new\n")
 	continued = st.e.s.proposalContinuation(st.e.proj, newSID)
-	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "p2, редакция 1: подготовлено") {
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, shownSecond+", редакция 1: подготовлено") {
 		t.Fatalf("new session continuation: %s", continued)
 	}
 	resp = doReq(t, st.c, "GET", st.e.srv.URL+"/api/projects/demo/chats/"+newSID+"/ask", "")

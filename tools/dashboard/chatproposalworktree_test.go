@@ -64,7 +64,9 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 		t.Fatalf("question: %+v %v", question, err)
 	}
 	writeBinds(t, st.e.home, "2026-10-30T12:00:00 сессия "+scenarioPanelSID+" задача XR-4 проект demo дерево "+tree+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
-	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: question.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
+	// Решение адресуется ключом из показанного вопроса: сохранение выдаёт
+	// новой карточке номер доски ключом (DK-1564).
+	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: question.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: question.Prepared.Sources[0].Proposals[0].ID, Revision: 1, Action: "reject", Reason: "не нужно"}}}
 	data, _ := json.Marshal(map[string]any{"text": "отклонить веточный результат", "msg_id": "tree-answer", "proposal": answer})
 	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
 	got := body(t, resp)

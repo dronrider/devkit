@@ -2849,22 +2849,23 @@ const TBL_COLS = {
     { key: "act", label: "", w: 78 },
   ],
   drafts: [
-    // Отметка выбора и уровень разбора живут одной колонкой: врозь они
-    // занимали две, и подпись «Приоритет» переставала влезать, стоило шапке
-    // добавить к ней значок направления (замечание пользователя). Ширина стоит
-    // по самому длинному слову чипа вместе с отметкой: прежних 112 точек не
-    // хватало на собственное содержимое, и «средний» читался «средн». Тридцать
-    // две точки колонка вернула названию двумя заходами: сперва с её первой
-    // ячейки сняли отступ под кружок, которого у накопителя нет вовсе, потом
-    // вдвое ужались боковой отступ и зазор между галочкой и чипом («расстояние
-    // между ними можно спокойно сократить вдвое», слова пользователя).
-    { key: "prio", label: "Приоритет", by: "приоритету", first: "desc", w: 108 },
-    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 70 },
-    { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
-    { key: "date", label: "Дата", by: "дате", first: "desc", w: 76 },
-    // Действие у записи одно, разговор, и колонка стоит по нему: кнопка и два
-    // боковых отступа тем же счётом, что у доски и сессий.
-    { key: "act", label: "", w: 42 },
+    // Колонки одни на обе секции накопителя, согласование и разбор (DK-1564,
+    // утверждённый макет): отметка выбора, номер, название, тип, ранг, цена,
+    // состояние и источник записи. Дата и приоритет места не занимают: дата
+    // стоит на экране записи, а уровень разбора читается колонкой ранга.
+    // Отметка выбора без слова в шапке: подпись ей не нужна, подсказка кнопки
+    // называет действие целиком.
+    { key: "pick", label: "", w: 36 },
+    { key: "id", label: "№", by: "номеру", first: "asc", w: 70 },
+    { key: "title", label: "Название", by: "названию", first: "asc", flex: true },
+    { key: "type", label: "Тип", w: 96 },
+    // Ранг подписан словом, а не значком: колонка носит числовую сумму
+    // подготовки, значок замера 2026-11-06 читался бессмысленным, и колонку
+    // называет только подсказка кнопки (DK-1564, утверждённый макет).
+    { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 66 },
+    { key: "size", label: "Цена", w: 56 },
+    { key: "state", label: "Состояние", w: 118 },
+    { key: "src", label: "Из черновика", w: 132 },
   ],
 };
 
@@ -2874,7 +2875,10 @@ const TBL_COLS = {
 const TBL_DEFAULT = {
   tasks: { col: "", dir: "" },
   sess: { col: "live", dir: "asc" },
-  drafts: { col: "date", dir: "desc" },
+  // Колонки даты у накопителя больше нет (DK-1564), а свежими сверху список
+  // открывался и прежде: номер записи растёт по времени записи, и порядок по
+  // номеру вниз говорит то же слово.
+  drafts: { col: "id", dir: "desc" },
 };
 
 const TBL_SORT_KEY = {
@@ -2895,8 +2899,9 @@ const TBL_WIDE_KEY = {
 // Накопитель помнил свой порядок словом ещё до шапки (DK-353, кнопка о двух
 // положениях), и ключ хранилища у него тот же. Прежние значения переводятся в
 // колонку с направлением: иначе выбор человека сбросился бы на первой же
-// отрисовке нового вида.
-const TBL_SORT_OLD = { fresh: "date:desc", title: "title:asc" };
+// отрисовке нового вида. Прежний выбор свежести держит номер по убыванию:
+// колонки даты у таблицы больше нет, а номер записи растёт по времени записи.
+const TBL_SORT_OLD = { fresh: "id:desc", title: "title:asc" };
 
 function tblSort(sect) {
   const def = TBL_DEFAULT[sect] || { col: "", dir: "" };
@@ -5244,7 +5249,11 @@ function formPage(cfg) {
   let fitTitle = () => {};
   if (has.title) {
     title = el("textarea", cfg.titleLegend ? "" : ("tedit" + (cfg.titleTall ? " tbig" : "")));
-    title.value = form.title || "";
+    // Чтение без своего заголовка показывает смысловой fallback: пустое поле в
+    // шапке читалось пропажей названия (замер QA 2026-11-06). Правка открывает
+    // настоящее пустое значение, и fallback заголовком от случайного
+    // сохранения не становится.
+    title.value = form.title || (!cfg.edit && cfg.titleRead) || "";
     title.rows = 1;
     if (cfg.titleHint) title.placeholder = cfg.titleHint;
     title.setAttribute("aria-label", cfg.titleLabel || "заголовок задачи");
@@ -5351,6 +5360,7 @@ function formPage(cfg) {
     edit = on;
     if (title) {
       title.readOnly = !on;
+      if (cfg.titleRead && !String(form.title || "").trim()) title.value = on ? "" : cfg.titleRead;
       title.classList.toggle("ro", !on);
     }
     // Чтение и правка держат разные рамку и паддинги, и высота заголовка
@@ -9894,7 +9904,19 @@ async function chatState(project, addr, board, works) {
   if (st.task && !st.fresh) {
     const m = await api("/api/projects/" + encodeURIComponent(project) +
       "/tasks/" + encodeURIComponent(st.task) + "/chat");
-    if (m.ok && m.body && m.body.id) st.main = m.body;
+    if (m.ok && m.body && m.body.id) {
+      st.main = m.body;
+    } else if (!m.ok) {
+      // Адрес записи накопителя в журнале назначений не стоит, и ручка даёт
+      // отказ: тогда панель сама читает запись, чтобы композер мог поднять
+      // разбор её неразобранных мыслей прямо из чата (DK-1564).
+      const d = await api("/api/projects/" + encodeURIComponent(project) +
+        "/drafts/" + encodeURIComponent(st.task));
+      if (d.ok && d.body) {
+        st.draft = d.body;
+        st.grooming = draftGrooming(works, st.task);
+      }
+    }
   }
   // Виток цели резолвируется до чтения списка: он скрыт из выдачи (DK-847) и
   // держится в окне флагом удержания, а удержание собирается из sid и самого
@@ -14433,6 +14455,20 @@ function chatPanel(project, st) {
   // живую сессию каналом или поднимать резюм (ручка /continue).
   row.append(pickBtn);
   row.append(modelPick(project, st));
+  // Неразобранные мысли записи разбираются прямо из её чата: вход в разговор
+  // сам ходку не поднимает, а эта кнопка поднимает, не отходя от ленты
+  // (DK-1564, утверждённая поправка). Под идущим разбором кнопки нет: работы
+  // там уже идут, и тесный композер дорожает.
+  if (st.draft && st.draft.groomed && Number(st.draft.ideas_undecided) > 0 && !st.grooming) {
+    const more = barBtn("btn", "Разобрать мысли", "i-play");
+    more.addEventListener("click", () => {
+      more.disabled = true;
+      groomDraft(st.project, st.task, "", "", "", "", "")
+        .catch(console.error)
+        .finally(() => { paintChat(shownProject, route().chat, shownBoard, shownWorks); });
+    });
+    row.append(more);
+  }
   if (st.task) {
     const go = el("button", "cgo");
     go.title = st.isGoal ? "Продолжить цель " + st.task : "Продолжить работу по " + st.task;
@@ -15875,13 +15911,13 @@ function draftNum(d) {
   return m ? Number(m[1]) : 0;
 }
 
-// Уровень разбора числом: им и стоит колонка важности. Записи без уровня
+// Уровень разбора числом: им и стоит колонка ранга. Записи без уровня
 // приходят с пустым полем, и лежат они ниже всех названных при убывании и выше
 // при возрастании, как и всякое отсутствие значения.
 const DRAFT_PRIO_N = { high: 3, mid: 2, low: 1 };
 
 function draftValue(d, col) {
-  if (col === "prio") return DRAFT_PRIO_N[d.prio] || 0;
+  if (col === "rank") return DRAFT_PRIO_N[d.prio] || 0;
   if (col === "id") return draftNum(d);
   if (col === "title") return String(d.title || "");
   return draftDay(d);
@@ -15959,6 +15995,10 @@ async function groomDraft(project, id, afterOk, harness, tier, mode, effort) {
 // Память живёт экраном: уход с накопителя её очищает, потому что выбор это
 // намерение сейчас, а не настройка.
 const draftPick = new Set();
+// Выбор подготовленных задач под подтверждение: тем же экраном и тем же
+// правилом, что и выбор записей. Ключ это запись вместе с задачей, потому что
+// задача живёт в записи, а номер доски у неё свой.
+const preparedPick = new Set();
 // Перерисовка полосы запуска: её зовёт всякая правка выбора. Ставится она
 // самой полосой, а до первой отрисовки её нет.
 let draftBarPaint = null;
@@ -15966,6 +16006,9 @@ let draftBarPaint = null;
 // сама, но снятие выбора приходит со стороны (после запуска разбора), и без
 // этой памяти отметки оставались бы гореть при пустом выборе.
 const draftPickSays = new Map();
+// Та же память для подготовленных задач: подтверждение снимает выбор со
+// стороны, и строка обязана погасить отметку сама.
+const preparedPickSays = new Map();
 
 function draftPickSet(id, on) {
   if (on) draftPick.add(id);
@@ -15985,13 +16028,33 @@ function draftPickClear() {
   if (draftBarPaint) draftBarPaint();
 }
 
+function preparedPickSet(key, on) {
+  if (on) preparedPick.add(key);
+  else preparedPick.delete(key);
+  const say = preparedPickSays.get(key);
+  if (say) say();
+  if (draftBarPaint) draftBarPaint();
+}
+
+function preparedPickClear() {
+  const was = [...preparedPick];
+  preparedPick.clear();
+  for (const key of was) {
+    const say = preparedPickSays.get(key);
+    if (say) say();
+  }
+  if (draftBarPaint) draftBarPaint();
+}
+
 // Полоса запуска разбора: одна кнопка на выбранное и поле модели рядом с ней.
 // Пока ничего не отмечено, кнопки нет вовсе: гашеная кнопка отвечала на вопрос,
 // которого никто не задавал, а что отметки бывают, говорит подпись рядом
-// (решение пользователя).
-function draftRunBar(project, works) {
+// (решение пользователя). Подтверждение выбранных подготовленных задач стоит
+// той же полосой: выбор наверху один, и действия выбора живут рядом с ним
+// (DK-1564, утверждённый макет).
+function draftRunBar(project, works, prepared) {
   const bar = el("div", "nbar");
-  draftRunBarFill(bar, project, works);
+  draftRunBarFill(bar, project, works, prepared);
   return bar;
 }
 
@@ -16030,17 +16093,50 @@ function modelLadderPick(name) {
   return list.find((m) => m.model === name) || list.find((m) => m.pin) || list[0] || null;
 }
 
-function draftRunBarFill(bar, project, works) {
+function draftRunBarFill(bar, project, works, prepared) {
   // Перерисовка полосы это её собственное дело: отметка в строке зовёт её через
   // draftBarPaint, не трогая список.
-  draftBarPaint = () => { draftRunBarFill(bar, project, works); };
+  draftBarPaint = () => { draftRunBarFill(bar, project, works, prepared); };
   const picked = [...draftPick];
-  if (!picked.length) {
+  const pickedPrepared = [...preparedPick];
+  if (!picked.length && !pickedPrepared.length) {
     bar.replaceChildren(el("span", "hint",
-      "Отметьте записи в списке, и разбор поднимется на выбранные."));
+      "Отметьте записи или подготовленные задачи: разбор поднимется на выбранные записи, выбранные задачи заведутся на доску."));
     return;
   }
   const grp = el("span", "grun");
+  // Подтверждение выбранных задач идёт первой кнопкой полосы: заведение на
+  // доску короче разбора, и ждать его за меню модели незачем.
+  if (pickedPrepared.length) {
+    const ok = el("button", "btn btn-sm btn-acc",
+      "Подтвердить выбранные (" + pickedPrepared.length + ")");
+    withTip(ok, "Выбранные подготовленные задачи заводятся на доску своими номерами.");
+    ok.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      ok.disabled = true;
+      try {
+        const entries = (prepared || []).filter((e) => preparedPick.has(e.view.id + "/" + e.task.id));
+        const views = [];
+        for (const e of entries) {
+          if (!views.some((v) => v.id === e.view.id)) views.push(e.view);
+        }
+        if (views.some((v) => draftPreparedDirty.has(v.id))) {
+          sayResult("Сначала сохраните правки задач", true);
+          return;
+        }
+        await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), views,
+          (view, p) => preparedPick.has(view.id + "/" + p.id));
+        preparedPickClear();
+      } finally {
+        ok.disabled = false;
+      }
+    });
+    grp.append(ok);
+  }
+  if (!picked.length) {
+    bar.replaceChildren(grp, el("span", "hint", "Выбрано задач: " + pickedPrepared.length + "."));
+    return;
+  }
   // Число стоит в самой подписи: подтверждения перед подъёмом больше нет, и
   // сказать, сколько сессий встанет, надо на кнопке.
   const btn = el("button", "btn btn-sm btn-acc", "Грумить (" + picked.length + ")");
@@ -16108,7 +16204,8 @@ function draftRunBarFill(bar, project, works) {
   grp.append(wrap);
   bar.replaceChildren(grp, el("span", "hint", "Выбрано " + picked.length + " " +
     plural(picked.length, "запись", "записи", "записей") +
-    ", каждая пойдёт своим разговором."));
+    (pickedPrepared.length ? " и задач: " + pickedPrepared.length : "") +
+    ", каждая запись пойдёт своим разговором."));
 }
 
 // Подъём разбора на выбранные записи. Подтверждения перед ним нет: выбор
@@ -16124,18 +16221,23 @@ async function draftGroomStart(project, works, harness, tier, effort) {
   // затем, чтобы моргать между нажатием и первым ходом сессии, а воротам
   // пачки нужна правда о tmux.
   const going = picked.filter((id) => Boolean(workBusy(id, works)));
-  const todo = picked.filter((id) => !going.includes(id));
+  const checked = await Promise.all(picked.filter((id) => !going.includes(id)).map(async (id) => {
+    const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id));
+    return { id, ready: r.ok && (!r.body.groomed || Number(r.body.ideas_undecided) > 0) };
+  }));
+  const todo = checked.filter((d) => d.ready).map((d) => d.id);
+  const quiet = checked.filter((d) => !d.ready).map((d) => d.id);
   if (!todo.length) {
-    sayResult("разбор идёт у всех выбранных записей (" + going.join(", ") +
-      "): поднимать нечего", true);
+    sayResult("Поднимать нечего: разбор уже идёт, нет новых мыслей либо запись недоступна (" +
+      [...going, ...quiet].join(", ") + ")", true);
     return 0;
   }
-  return draftGroomRun(project, todo, harness, tier, effort, going);
+  return draftGroomRun(project, todo, harness, tier, effort, going, quiet);
 }
 
 // Подъём идёт по одной сессии: ручка разбора поднимает свою, и слать их разом
 // значило бы драться за один и тот же tmux-замок.
-async function draftGroomRun(project, ids, harness, tier, effort, skipped) {
+async function draftGroomRun(project, ids, harness, tier, effort, skipped, quiet) {
   let done = 0;
   const bad = [];
   for (const id of ids) {
@@ -16151,6 +16253,7 @@ async function draftGroomRun(project, ids, harness, tier, effort, skipped) {
   sayResult("поднято " + done + " " + plural(done, "сессия", "сессии", "сессий") +
     " разбора" +
     (skip.length ? ", пропущено " + skip.length + " с идущим разбором: " + skip.join(", ") : "") +
+    (quiet && quiet.length ? ", без новых мыслей или недоступно: " + quiet.join(", ") : "") +
     (bad.length ? ", не поднялось: " + bad.join(", ") : ""), bad.length > 0);
   await refresh();
   return done;
@@ -16164,7 +16267,17 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 // Строка накопителя ведёт на экран записи, а разбор запускается не из неё:
 // накопитель разбирают пачкой, и отметка выбора стоит в строке, а кнопка
 // запуска одна над списком (LLD DK-328, решение пользователя).
-function draftRow(project, d) {
+// draftRowState называет состояние записи по факту, а не по полю файла: разбор
+// идёт, если жива его сессия, ждёт ответа, если разговор спросил и молчит, а во
+// без новых мыслей запись разобрана, остальные ждут разбора (DK-1564).
+function draftRowState(d, works) {
+  if (draftGrooming(works, d.id)) return "в разборе";
+  if (d.waiting) return "ждёт ответа";
+  if (d.groomed && Number(d.ideas_undecided) === 0) return "разобран";
+  return "ждёт разбора";
+}
+
+function draftRow(project, d, typeTitles, works) {
   const row = freshMark(el("tr", "dsrow clicky"), d.id);
   // Отметка выбора это кнопка, а не флажок браузера: палец попадает в неё
   // целиком, а состояние читается с самой кнопки, а не с её начинки.
@@ -16185,14 +16298,8 @@ function draftRow(project, d) {
     draftPickSet(d.id, !draftPick.has(d.id));
     pickSay();
   });
-  // Отметка выбора и уровень разбора стоят одной колонкой. Врозь они занимали
-  // две, и подпись «Приоритет» в шапке переставала влезать, стоило сортировке
-  // добавить к ней значок направления (замечание пользователя). Ячейка есть у
-  // всякой записи, у записи без уровня в том числе: иначе соседние колонки
-  // съезжали бы на одну.
   const { cell: impc, box: imp } = tblCell("dimp");
   imp.append(pick);
-  if (d.prio) imp.append(el("span", "chip", DRAFT_PRIO[d.prio] || d.prio));
   row.append(impc);
   row.append(el("td", "id", d.id));
   // Заголовок записи режется той же кромкой, что и заголовок строки доски, и
@@ -16208,42 +16315,33 @@ function draftRow(project, d) {
   if (d.deferred) {
     chips.push(el("span", "chip", "отложен " + d.deferred + (d.deferred_until ? " до " + d.deferred_until : "")));
   }
-  // Разбор спросил и ждёт ответа: признак тот же и теми же словами, что у
-  // строки доски, своего у накопителя нет.
-  const waits = waitChip(d);
-  if (waits) chips.push(waits);
   if (chips.length) {
     const box = el("span", "rchips");
     for (const chip of chips) box.append(chip);
     tt.append(box);
   }
   row.append(ttc);
-  // Дата правки записи вместо возраста днями и теми же словами, что у строки
-  // доски: возраст «3 дня» отвечал не на тот вопрос (замечание пользователя).
-  // Колонка у неё своя: по ней список и сортируется нажатием в шапке.
-  const when = el("td", "dwhen");
-  if (d.moved) {
-    when.append(withTip(el("span", "stale dashed", d.moved),
-      whenTip(d.moved_at || d.moved)));
-  }
-  row.append(when);
-  const { cell: metac, box: meta } = tblCell("sm");
-  // Черновик это та же задача, просто в черновом исполнении, и обсуждать его с
-  // агентом надо тем же способом: кнопка та же, значок тот же, панель
-  // открывается с привязкой к его ID (решение пользователя).
-  const talk = rowChatBtn(project, d);
-  const acts = el("span", "racts");
-  acts.append(talk);
-  meta.append(acts);
-  row.append(metac);
+  row.append(el("td", "dtype", typeTitles[d.type] || d.type || ""));
+  // Ранг записи это её уровень разбора словом: числа у записи до разбора нет,
+  // а уровень грубый и на глаз, и колонка называет его тем же словом, каким
+  // его назначает команда.
+  row.append(el("td", "drank", d.prio ? (DRAFT_PRIO[d.prio] || d.prio) : ""));
+  // Цены у записи нет до заведения строки: колонка стоит общая на обе секции и
+  // молчит пустой ячейкой, а не пропадает.
+  row.append(el("td", "dsize", ""));
+  const state = el("td", "dst");
+  // Ожидание ответа стоит в колонке состояния тем же чипом с кружком и
+  // подсказкой вопроса, что и у строки доски: слово «ждёт ответа» без него
+  // теряло бы и вопрос, и живой признак.
+  const wait = waitChip(d);
+  if (wait) state.append(wait);
+  else state.append(el("span", "st", draftRowState(d, works)));
+  row.append(state);
+  // Источника у самой записи нет: колонка заполнена у строк согласования, а
+  // здесь стоит прочерк ячейки, чтобы геометрия обеих секций совпадала.
+  row.append(el("td", "dsrc", ""));
   row.addEventListener("click", (ev) => {
-    // Нажатым оказывается не сама кнопка, а её начинка (значок у чата,
-    // стрелка у выбора подписки), и спрашивать надо, лежит ли нажатое внутри
-    // кнопки, а не равно ли оно ей. Прежняя проверка звала includes у
-    // children, а children в браузере это HTMLCollection без методов массива:
-    // нажатие на строку накопителя падало с TypeError, не доходя до перехода,
-    // и запись не открывалась ни с доски, ни с телефонного таба.
-    if (talk.contains(ev.target) || pick.contains(ev.target)) return;
+    if (pick.contains(ev.target)) return;
     goKeepingChat(project + "/draft/" + d.id);
   });
   return row;
@@ -16259,6 +16357,10 @@ async function renderDrafts(project, works) {
   // своей ручкой.
   countsSet({ sess: (works || []).length,
     drafts: ((r.ok && r.body.drafts) || []).length });
+  // Строки подготовленных задач секции согласования: массив живёт раньше
+  // своих строк, потому что полоса запуска берёт его в замыкание, а заполняется
+  // он позже, ответами ручек записей.
+  const preparedRows = [];
   const items = [{
     key: "board-kind",
     sign: [project, "drafts", shownCounts.tasks, (works || []).length,
@@ -16275,8 +16377,8 @@ async function renderDrafts(project, works) {
     // позапрошлому состоянию машины.
     sign: [project, (works || []).filter((w) => w.live === WORK_BUSY || w.live === WORK_WAIT)
       .map((w) => w.id).join(",")].join("|"),
-    make: () => draftRunBar(project, works),
-    fill: (bar) => { draftRunBarFill(bar, project, works); },
+    make: () => draftRunBar(project, works, preparedRows),
+    fill: (bar) => { draftRunBarFill(bar, project, works, preparedRows); },
   }];
   if (!r.ok) {
     const text = r.body.error || "накопитель не прочитался";
@@ -16295,30 +16397,26 @@ async function renderDrafts(project, works) {
   const drafts = r.body.drafts || [];
   const projectBase = "/api/projects/" + encodeURIComponent(project);
   const preparedViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/prepared")));
-  const shownViews = preparedViews.filter((v) => v.ok && v.body.state && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
   if (preparedViews.some((v) => !v.ok)) {
     items.push({ key: "draft-prepared-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
   }
-  if (shownViews.length) {
-    items.push({ key: "draft-prepared-shown", sign: JSON.stringify(shownViews), make: () => {
-      const box = el("section", "card");
-      box.append(el("h2", "", "Подготовленное в накопителе"));
-      if (preparedViews.every((v) => v.ok)) {
-        const all = el("button", "btn", "Подтвердить все показанные задачи");
-        all.type = "button";
-        all.addEventListener("click", async () => {
-          if (shownViews.some((v) => draftPreparedDirty.has(v.id))) { sayResult("Сначала сохраните правки задач", true); return; }
-          await confirmDraftPrepared(projectBase, shownViews);
-        });
-        box.append(all);
-      }
-      for (const view of shownViews) {
-        box.append(el("h3", "", view.id));
-        box.append(draftPreparedList(projectBase + "/drafts/" + encodeURIComponent(view.id), view, false));
-      }
-      return box;
-    } });
+  // Тип записи словом для колонки типа: словарь типов принадлежит проекту, и
+  // называть тип его же словом честнее собственной таблицы имён.
+  const typesView = await api(projectBase + "/drafts/types");
+  const typeTitles = {};
+  for (const t of (typesView.ok && typesView.body.types) || []) typeTitles[t.name] = t.title;
+  // Подготовленные задачи собираются в плоский список строк секции
+  // «Согласовать заведение»: секция стоит в общей таблице до разбора, задача
+  // строкой как на доске, подтверждение отметками (DK-1564, утверждённый
+  // макет). Решённые в секцию не попадают: их номер уже принадлежит строке или
+  // отказу.
+  for (const v of preparedViews) {
+    if (!v.ok || !v.body || !v.body.state) continue;
+    for (const p of (v.body.state.proposals || [])) {
+      if (!p.status) preparedRows.push({ view: v.body, task: p });
+    }
   }
+  preparedRows.sort((a, b) => draftNum({ id: preparedNumber(a.task) }) - draftNum({ id: preparedNumber(b.task) }));
   // Выбор живёт этим экраном и этим списком: записи, которой больше нет в
   // накопителе (её разобрали), в выборе тоже быть не должно.
   const here = new Set(drafts.map((d) => d.id));
@@ -16330,6 +16428,15 @@ async function renderDrafts(project, works) {
   // памяти оставил бы такие строки без кисти.
   for (const id of [...draftPickSays.keys()]) {
     if (!here.has(id)) draftPickSays.delete(id);
+  }
+  // Тот же порядок для выбранного подготовленного: подтверждённая задача
+  // покидает секцию, и отметка её не держит.
+  const preparedHere = new Set(preparedRows.map((e) => e.view.id + "/" + e.task.id));
+  for (const key of [...preparedPick]) {
+    if (!preparedHere.has(key)) preparedPick.delete(key);
+  }
+  for (const key of [...preparedPickSays.keys()]) {
+    if (!preparedHere.has(key)) preparedPickSays.delete(key);
   }
   // Карточка списка держится в переменной: переключение порядка перебирает её
   // строки на месте, не ходя за ними на сервер. Данных для порядка в ответе
@@ -16356,25 +16463,64 @@ async function renderDrafts(project, works) {
     for (const d of draftsSorted(drafts)) {
       // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
       // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
-      // подписи строка осталась бы отмеченной при пустом выборе.
+      // подписи строка осталась бы отмеченной при пустом выборе. Состояние тоже:
+      // «в разборе» и «ждёт ответа» приходят со стороны, живыми работами и
+      // признаком ожидания.
       out.push({ key: d.id,
         sign: JSON.stringify(d) + (freshRow === d.id ? "|fresh" : "") +
-          (draftPick.has(d.id) ? "|pick" : ""),
-        make: () => draftRow(project, d) });
+          (draftPick.has(d.id) ? "|pick" : "") +
+          "|" + draftRowState(d, works),
+        make: () => draftRow(project, d, typeTitles, works) });
     }
     return out;
+  };
+  // Полоса заголовка секции общей таблицы: та же подача, что у ярусов доски,
+  // потому что секции согласования и разбора стоят в одной таблице с одними
+  // колонками (DK-1564, утверждённый макет).
+  const secBand = (title, count) => () => {
+    const band = tblBand("drafts", "secband");
+    const head = el("div", "shead", title);
+    head.append(el("span", "n", String(count)));
+    band.cell.append(head);
+    return band.tr;
   };
   // Шапка колонок вместо слова «Черновики» с числом: и слово, и число уже
   // стоят табом над списком, а место над колонками занимали зря. Порядок
   // правится нажатием на подпись, тем же приёмом, что у доски и сессий.
   const partsFor = () => {
-    const rows = rowsFor();
     const parts = [{ key: "cols", sign: "cols", make: () => tblColgroup("drafts") }];
-    if (drafts.length) {
+    if (drafts.length || preparedRows.length) {
       parts.push({
         key: "drafts-head",
         sign: tblHeadSign("drafts"),
         make: () => tblHead("drafts", () => { paintRows(); }),
+      });
+    }
+    // Секция согласования стоит первой: подтвердить заведение важнее, чем
+    // разбирать новое, и готовые задачи читаются раньше материала.
+    if (preparedRows.length) {
+      const rows = [{
+        key: "pshead",
+        sign: String(preparedRows.length),
+        make: secBand("Согласовать заведение", preparedRows.length),
+      }];
+      for (const e of preparedRows) {
+        const key = e.view.id + "/" + e.task.id;
+        rows.push({
+          key: "p-" + key,
+          sign: JSON.stringify(e.task) + (preparedPick.has(key) ? "|pick" : ""),
+          make: () => preparedTableRow(project, e.view, e.task),
+        });
+      }
+      parts.push(tblBodyItem("drafts-prepared",
+        rows.map((row) => row.key + "=" + row.sign).join("\n"), rows, "tsec"));
+    }
+    const rows = rowsFor();
+    if (drafts.length && preparedRows.length) {
+      rows.unshift({
+        key: "dshead",
+        sign: String(drafts.length),
+        make: secBand("Разбор и оформление", drafts.length),
       });
     }
     parts.push(tblBodyItem("drafts-body",
@@ -17054,15 +17200,27 @@ function watchRunning() {
 const draftPreparedDirty = new Set();
 
 // Экран согласования называет подготовленный исход add подготовленной задачей
-// (DK-1545): до решения человека статус «подготовлена», после решения
+// (DK-1545): до решения человека статус «На согласовании», после решения
 // «подтверждена» или «отклонена». Удаление говорит в среднем роде,
 // неизвестный исход тоже.
 const draftOutcomeTitles = { add: "Задача", attach: "Приписка", defer: "Отсрочка", drop: "Удаление" };
+// Тип строки доски и вид приёмки словами: коды «bug» и «mixed» человек на
+// экране согласования читать отказался, а подписи уже есть в макете
+// (DK-1564, замер QA 2026-11-06). LLD остаётся сам собой: это имя
+// собственного рода задач, а не код.
+const boardTypeTitles = { task: "Задача", bug: "Баг", LLD: "LLD" };
+const acceptTitles = { agent: "Проверка агентом", mixed: "Проверка с вашим участием", user: "Проверка за вами" };
+// Статус согласования одной подписью во всех местах: таблица, состав записи и
+// шапка экрана задачи говорят нерешённой «На согласовании» чипом ожидания, а
+// решения словами исхода (DK-1564, утверждённый макет).
+function preparedStatusChip(task) {
+  return el("span", "chip" + (task.status ? "" : " c-wait"), draftCardStatus(task.outcome, task.status));
+}
 function draftCardStatus(outcome, status) {
   const feminine = outcome === "add" || outcome === "attach" || outcome === "defer";
   if (status === "accepted") return feminine ? "Подтверждена" : "Подтверждено";
   if (status === "rejected") return feminine ? "Отклонена" : "Отклонено";
-  return feminine ? "Подготовлена" : "Подготовлено";
+  return "На согласовании";
 }
 
 async function confirmDraftPrepared(projectBase, views, selection) {
@@ -17081,14 +17239,19 @@ async function confirmDraftPrepared(projectBase, views, selection) {
   if (result.ok) await refresh();
 }
 
-// draftIdeaBox это кнопка «Оставить мысль» на экране записи (DK-1469, решение
-// 3): человек пишет текстом мысль, она ложится датированным пунктом в раздел
-// «Идеи» записи, а судьбу пункту приписывает грумер на разборе.
+// draftIdeaBox это поле «Мысль по записи» под описанием (DK-1469, решение 3):
+// человек пишет текстом мысль, она ложится датированным пунктом в раздел
+// «Идеи» записи, а судьбу пункту приписывает грумер на разборе. Оформлено тем
+// же тёмным полем с подписью в грани рамки, что и прочие поля форм, и стоит
+// одной строкой с кнопкой (DK-1564, утверждённый макет).
 function draftIdeaBox(project, id, locked) {
   const box = el("section", "draft-idea");
+  const frame = el("fieldset", "dfield");
+  frame.append(el("span", "", "Мысль по записи"));
   const input = el("input");
-  input.placeholder = "Мысль по записи";
+  input.placeholder = "напишите мысль, не заходя в разбор";
   input.disabled = locked;
+  frame.append(input);
   const send = el("button", "btn", "Оставить мысль");
   send.type = "button";
   send.disabled = locked;
@@ -17106,59 +17269,201 @@ function draftIdeaBox(project, id, locked) {
   input.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") { ev.preventDefault(); put().catch(console.error); }
   });
-  box.append(input, send);
+  box.append(frame, send);
   return box;
 }
 
-// draftPreparedList это раздел подготовленных задач на экране записи: список
-// строк-ссылок без тел, тело читается на экране самой задачи (DK-1564, решение
-// 4). Портянка полей на экране записи ушла вместе с выносом носителя.
-function draftPreparedList(base, view, heading = true) {
-  const section = el("section", "draft-prepared");
-  if (heading) section.append(el("h2", "", "Подготовленное разбором"));
+// preparedNumber называет подготовленную задачу её номером доски (DK-1564):
+// номер закрепляется до применения решения, у новых задач совпадает с ключом, а
+// у унаследованных живёт рядом с прежним ключом. Ссылки остаются по ключу, а
+// читает человек номер.
+function preparedNumber(task) {
+  return String((task && task.board_id) || (task && task.id) || "");
+}
+
+// preparedTitle называет подготовленную задачу словами там, где своего
+// заголовка у неё нет (DK-1564): смысл ищется в первой строке описания, потом
+// в причине, и лишь затем в слове исхода. Заголовок не остаётся пустым нигде:
+// таблица, состав и шапка называют задачу одним и тем же fallback.
+function preparedTitle(task) {
+  const own = String(task && task.title || "").trim();
+  if (own) return own;
+  const first = String(task && task.text || "").split("\n")
+    .map((s) => s.trim()).find((s) => s.length > 0) || "";
+  if (first) return first;
+  const reason = String(task && task.reason || "").trim();
+  if (reason) return reason;
+  return draftOutcomeTitles[task && task.outcome] || "Задача";
+}
+
+// Ранг подготовки приезжает с доски формулой слагаемых, а читает человек
+// итогом: «37» вместо «25+5+3+0+4» (DK-1564, замер QA 2026-11-06). Слагаемые
+// остаются полю правки и подсказкам, чужая строка показывается как есть.
+function rankSum(rank) {
+  const raw = String(rank || "").trim();
+  if (!raw) return "";
+  const parts = raw.split("+").map((s) => s.trim());
+  if (!parts.every((s) => /^\d+$/.test(s))) return raw;
+  return String(parts.reduce((was, s) => was + Number(s), 0));
+}
+
+// Тип подготовленной задачи словами: у заведения слово несёт тип строки
+// доски, у прочих исходов сам исход и есть тип («Удаление», «Приписка»), и
+// подменять его типом по умолчанию нельзя (DK-1564, замер QA 2026-11-06).
+function preparedType(task) {
+  if (task.outcome && task.outcome !== "add") return draftOutcomeTitles[task.outcome] || "Задача";
+  return boardTypeTitles[task.board_type] || task.board_type || "Задача";
+}
+
+// leadIdTrim срезает ведущий номер самой записи с её заголовка: номер стоит
+// рядом крупно и в ссылке источника, и повтор «XR-005: XR-005: ...» читается
+// эхом. Удаляется только ведущий ID самой записи, упоминания других задач в
+// тексте остаются (DK-1564).
+function leadIdTrim(text, id) {
+  if (!id) return text;
+  return String(text || "").replace(
+    new RegExp("^" + id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":\\s*"), "");
+}
+
+// preparedSrow это строка подготовленной задачи в составе записи: номер,
+// название, ранг и состояние, тем же срезом строки, каким состав цели носит
+// свои задачи (DK-1564, утверждённый макет). Решённые задачи открываются той
+// же строкой: старые ссылки из чатов ведут именно на них.
+function preparedSrow(project, draftId, task) {
+  const row = el("div", "srow clicky");
+  row.append(el("span", "id", preparedNumber(task)));
+  const title = preparedTitle(task);
+  row.append(withFull(el("span", "st", title), title));
+  const meta = el("span", "sm");
+  if (task.rank) {
+    const sum = rankSum(task.rank);
+    const rank = el("span", "rank", sum);
+    if (sum !== String(task.rank).trim()) withTip(rank, "слагаемые: " + task.rank);
+    meta.append(rank);
+  }
+  meta.append(preparedStatusChip(task));
+  const receipt = task.result || {};
+  for (const got of (Array.isArray(receipt.ids) ? receipt.ids : [])) {
+    const link = el("button", "linkish", got);
+    link.type = "button";
+    link.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got);
+    });
+    meta.append(link);
+  }
+  row.append(meta);
+  row.addEventListener("click", () => { goKeepingChat(project + "/draft/" + draftId + "/prepared/" + task.id); });
+  return row;
+}
+
+// draftPreparedComp это состав задач разбора на экране записи (DK-1564,
+// утверждённый макет): карточка состава тем же видом, что задачи цели, стоит
+// над описанием. Актуальные задачи видны сразу, решённые сворачиваются, а
+// пустой состав говорит словами и держит ручную подготовку.
+function draftPreparedComp(project, view) {
+  const card = el("div", "card comp");
+  const head = el("div", "chd");
+  head.append(el("b", "", "Задачи разбора"));
   const state = view && view.state || {};
   const tasks = Array.isArray(state.proposals) ? state.proposals : [];
+  const live = tasks.filter((t) => !t.status);
+  const done = tasks.filter((t) => t.status);
+  const id = view && view.id || "";
+  if (live.length) head.append(el("span", "cnt", live.length + " на согласовании"));
+  const create = el("button", "btn btn-sm", "Подготовить вручную");
+  create.type = "button";
+  create.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/new"); });
+  head.append(el("span", "gap"), create);
+  card.append(head);
   if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
       state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленного пока нет.";
-    section.append(el("p", "", message));
+    card.append(el("div", "empty", message));
+    return card;
   }
-  const outcomes = draftOutcomeTitles;
-  const projectBase = base.slice(0, base.indexOf("/drafts/"));
-  const project = decodeURIComponent(projectBase.split("/").pop());
-  const id = view && view.id || "";
-  const create = el("button", "btn", "Подготовить задачу вручную"); create.type = "button";
-  create.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/new"); });
-  section.append(create);
-  if (tasks.some((p) => !p.status)) {
-    const acceptAll = el("button", "btn", "Подтвердить все задачи записи");
-    acceptAll.type = "button";
-    acceptAll.addEventListener("click", async () => {
-      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку задачи", true); return; }
-      await confirmDraftPrepared(projectBase, [view]);
+  for (const task of live) card.append(preparedSrow(project, id, task));
+  if (done.length) {
+    const fold = el("div", "more", "Ещё " + done.length + " " +
+      plural(done.length, "решённая задача", "решённые задачи", "решённых задач"));
+    const box = el("div", "");
+    box.hidden = true;
+    for (const task of done) box.append(preparedSrow(project, id, task));
+    fold.addEventListener("click", () => {
+      box.hidden = !box.hidden;
+      fold.textContent = box.hidden
+        ? "Ещё " + done.length + " " + plural(done.length, "решённая задача", "решённые задачи", "решённых задач")
+        : "Свернуть решённые";
     });
-    section.append(acceptAll);
+    card.append(fold, box);
   }
-  for (const task of tasks) {
-    const card = el("article", "draft-prepared-task");
-    const statusLine = el("p", "", draftCardStatus(task.outcome, task.status));
-    card.append(statusLine);
-    if (task.status) {
-      const receipt = task.result || {};
-      const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
-      for (const got of ids) {
-        const link = el("button", "link", got); link.type = "button";
-        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got));
-        statusLine.append(document.createTextNode(" "), link);
-      }
-    }
-    const open = el("button", "link", task.title || task.id); open.type = "button";
-    open.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/" + task.id); });
-    card.append(open, document.createTextNode(" (" + (outcomes[task.outcome] || "Подготовленное") + ")"));
-    if (task.rationale) card.append(el("p", "", "Довод: " + task.rationale));
-    section.append(card);
+  return card;
+}
+
+// preparedTableRow это строка подготовленной задачи в общей таблице
+// накопителя (DK-1564, утверждённый макет): секция «Согласовать заведение»
+// держит задачами те же колонки и ту же плотность строки, что и секция
+// разбора. Ранг и цена стоят своими ячейками, источник отдельной ссылкой, а
+// нажатие открывает описание задачи.
+function preparedTableRow(project, view, task) {
+  const key = view.id + "/" + task.id;
+  const row = el("tr", "dsrow clicky");
+  const { cell: impc, box: imp } = tblCell("dimp");
+  const pick = el("button", "dpick" + (preparedPick.has(key) ? " on" : ""));
+  pick.type = "button";
+  pick.append(el("span", "dbox"));
+  const pickSay = () => {
+    const on = preparedPick.has(key);
+    pick.classList.toggle("on", on);
+    pick.setAttribute("aria-pressed", on ? "true" : "false");
+    withTip(pick, on ? "Снять выбор с " + preparedNumber(task) : "Выбрать " + preparedNumber(task) + " для подтверждения");
+    pick.setAttribute("aria-label", "Выбрать " + preparedNumber(task) + " для подтверждения");
+  };
+  pickSay();
+  preparedPickSays.set(key, pickSay);
+  pick.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    preparedPickSet(key, !preparedPick.has(key));
+    pickSay();
+  });
+  imp.append(pick);
+  row.append(impc);
+  row.append(el("td", "id", preparedNumber(task)));
+  const { cell: ttc, box: tt } = tblCell("dtt");
+  const title = preparedTitle(task);
+  tt.append(withFull(el("span", "st", title), title));
+  row.append(ttc);
+  row.append(el("td", "dtype", preparedType(task)));
+  // Ранг в таблице итогом суммы: формула шире колонки и наезжала на цену
+  // (замер QA 2026-11-06), слагаемые уезжают в подсказку ячейки.
+  const drank = el("td", "drank", rankSum(task.rank));
+  if (String(task.rank || "").trim() && rankSum(task.rank) !== String(task.rank).trim()) {
+    withTip(drank, "слагаемые: " + task.rank);
   }
-  return section;
+  row.append(drank);
+  row.append(el("td", "dsize", task.size && task.size !== "-" ? String(task.size) : ""));
+  // Состояние согласования явно: строка попадает в секцию только до решения, и
+  // слово говорит, чего она ждёт. Чип внутри вложенной коробки режется по
+  // ширине колонки и на источник рядом не наезжает.
+  const { cell: statec, box: stateb } = tblCell("dst");
+  stateb.append(preparedStatusChip(task));
+  row.append(statec);
+  // Источник записи нужен в самой строке: согласование идёт по записям, и
+  // перейти к материалу из списка должна давать та же строка.
+  const { cell: srcc, box: srcb } = tblCell("dsrc");
+  const src = el("button", "linkish", "из " + view.id);
+  src.type = "button";
+  src.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    goKeepingChat(project + "/draft/" + view.id);
+  });
+  srcb.append(src);
+  row.append(srcc);
+  row.addEventListener("click", (ev) => {
+    if (pick.contains(ev.target) || src.contains(ev.target)) return;
+    goKeepingChat(project + "/draft/" + view.id + "/prepared/" + task.id);
+  });
+  return row;
 }
 
 // preparedPropChip это короткие свойства подготовленной задачи для строки
@@ -17170,6 +17475,25 @@ const preparedPropChip = [
   ["ответственный", "assignee"], ["срок", "due"], ["контроль", "control"],
   ["после", "after"], ["приписка к", "target"], ["вернуться до", "until"],
 ];
+
+// Чип свойства подготовки читается словом, а не кодом доски: тип и приёмка
+// подписями, ранг итогом суммы (DK-1564, замер QA 2026-11-06). Код приёмки и
+// слагаемые ранга уходят в подсказку: они говорят, из чего итог собрался.
+function preparedPropChipNode(label, fld, raw) {
+  if (fld === "rank") {
+    const sum = rankSum(raw);
+    const chip = el("span", "chip", label + " " + sum);
+    if (sum !== String(raw).trim()) withTip(chip, "слагаемые: " + raw);
+    return chip;
+  }
+  if (fld === "accept") {
+    return withTip(el("span", "chip", acceptTitles[raw] || raw), "вид приёмки: " + raw);
+  }
+  if (fld === "board_type") {
+    return el("span", "chip", label + " " + (boardTypeTitles[raw] || raw));
+  }
+  return el("span", "chip", label + " " + raw);
+}
 
 // Поля правки подготовленной задачи: короткие свойства одной рамкой в строку
 // с переносом, приёмка закрытым списком, тексты своей рамкой каждый. Набор
@@ -17207,6 +17531,7 @@ function preparedBody(v) {
     barrier: String(v.barrier || ""), control: String(v.control || ""), assignee: String(v.assignee || ""),
     due: String(v.due || ""), target: String(v.target || ""), until: String(v.until || ""),
     rationale: String(v.rationale || ""), reason: String(v.reason || ""),
+    outcome: String(v.outcome || ""),
     after: String(v.after || "").split(",").map((s) => s.trim()).filter(Boolean),
   };
 }
@@ -17218,7 +17543,13 @@ async function savePreparedTask(project, id, view, edited) {
   if (result.ok) {
     draftPreparedDirty.delete(id);
     preparedDraft.edit = false;
-    goKeepingChat(project + "/draft/" + id + "/prepared/" + edited.id);
+    // Временный ключ новой задачи живёт только в этом ответе: сохранение
+    // выдаёт задаче постоянный номер доски и возвращает его в assigned, и
+    // экран переезжает на номер, иначе подтверждению не на что встать
+    // (DK-1564, решение 6). Правка прежней задачи приходит без assigned и
+    // остаётся на своём ключе.
+    const assigned = (result.body && result.body.assigned) || {};
+    goKeepingChat(project + "/draft/" + id + "/prepared/" + (assigned[edited.id] || edited.id));
     await refresh();
   }
 }
@@ -17229,7 +17560,7 @@ async function savePreparedTask(project, id, view, edited) {
 // согласование кнопками в командной панели. Правка включается карандашом,
 // несёт рамки с подписью в грани и кончается «Сохранить» либо «Отменить
 // правку».
-function preparedTaskScreen(project, id, view, task, isNew) {
+function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
   const decided = Boolean(task.status);
   const projectBase = "/api/projects/" + encodeURIComponent(project);
   const value = Object.assign({}, task, {
@@ -17244,9 +17575,17 @@ function preparedTaskScreen(project, id, view, task, isNew) {
   const propChips = [];
   for (const [label, fld] of preparedPropChip) {
     const raw = fld === "after" ? value.after : task[fld];
-    if (String(raw || "").trim()) propChips.push(el("span", "chip", label + " " + raw));
+    if (String(raw || "").trim()) propChips.push(preparedPropChipNode(label, fld, raw));
   }
-  const chips = [el("span", "chip", draftCardStatus(task.outcome, task.status))].concat(propChips);
+  // Исходный черновик стоит компактной меткой сверху, первым в строке статуса
+  // (DK-1564, утверждённый макет): номер записи вместе с коротким названием
+  // ссылкой, и искать эту связь в конце описания не требуется.
+  const sourceChip = el("span", "chip");
+  const sourceLink = el("button", "linkish", "из " + id + (sourceTitle ? ": " + sourceTitle : ""));
+  sourceLink.type = "button";
+  sourceLink.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id); });
+  sourceChip.append(sourceLink);
+  const chips = [sourceChip, preparedStatusChip(task)].concat(propChips);
 
   // Правка: исход списком, короткие свойства рамкой в строку, тексты рамками.
   const editFields = el("div", "pedit");
@@ -17337,7 +17676,7 @@ function preparedTaskScreen(project, id, view, task, isNew) {
       const one = el("div", "pnote");
       one.append(el("span", "pnote-l", "Результат"));
       for (const got of ids) {
-        const link = el("button", "link", got);
+        const link = el("button", "linkish", got);
         link.type = "button";
         link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got));
         one.append(link, document.createTextNode(" "));
@@ -17395,9 +17734,17 @@ function preparedTaskScreen(project, id, view, task, isNew) {
       { text: "Доска " + project, go: () => { goKeepingChat(project); } },
       { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
       { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
+      // Своя крошка у задачи своя: номер доски, закреплённый за задачей до
+      // заведения (DK-1564).
+      { text: preparedNumber(task) },
     ],
-    num: id,
-    titleText: task.title || (draftOutcomeTitles[task.outcome] || "Задача") + " " + task.id,
+    num: preparedNumber(task),
+    // Заголовок задачи не бывает пустым: у задачи без своего названия его
+    // занимает смысловой fallback из текста, причины или исхода, тот же, что
+    // в таблице накопителя и в составе записи (DK-1564). Поле правки в чтении
+    // показывает его же, а в правке остаётся честно пустым.
+    titleText: preparedTitle(task),
+    titleRead: !isNew && !String(task.title || "").trim() ? preparedTitle(task) : "",
     titleHint: isNew ? NEW_PLACEHOLDER : "",
     titleLabel: "заголовок задачи " + task.id,
     form: value,
@@ -17479,7 +17826,10 @@ function preparedTaskScreen(project, id, view, task, isNew) {
 async function renderDraftPrepared(project, id, key) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
-  const result = await api(base + "/prepared");
+  // Запись читается вместе с подготовленным: её первая строка это короткое
+  // название источника в ссылке сверху экрана задачи (DK-1564, утверждённый
+  // макет), и ждать её отдельным походом незачем.
+  const [result, record] = await Promise.all([api(base + "/prepared"), api(base)]);
   if (!result.ok) {
     sync(groups, [{ key: "draft-prepared-page", sign: "miss " + id + " " + key + " " + (result.body && result.body.error || ""),
       make: () => formPage({
@@ -17499,9 +17849,10 @@ async function renderDraftPrepared(project, id, key) {
   const task = isNew
     ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add", board_type: "task", size: "-", accept: "agent" }
     : tasks.find((p) => p.id === key);
+  const sourceTitle = sourceDraftTitle(record);
   sync(groups, [{
     key: "draft-prepared-page",
-    sign: [id, key, JSON.stringify(task)].join("|"),
+    sign: [id, key, JSON.stringify(task), sourceTitle].join("|"),
     make: () => {
       if (!task) {
         return formPage({
@@ -17514,10 +17865,32 @@ async function renderDraftPrepared(project, id, key) {
           titleText: key, detail: { note: "задача " + key + " в записи " + id + " не найдена" },
         }).page;
       }
-      return preparedTaskScreen(project, id, view, task, isNew);
+      return preparedTaskScreen(project, id, view, task, isNew, sourceTitle);
     },
   }]);
 }
+
+// sourceDraftTitle достаёт короткое название записи-источника для ссылки
+// сверху экрана задачи (DK-1564): первая непустая строка тела без решёток и
+// без повторного ведущего номера записи, утаённая до разумной длины
+// многоточием.
+function sourceDraftTitle(record) {
+  if (!record || !record.ok) return "";
+  const line = String(record.body && record.body.text || "").split("\n").map((s) => s.trim()).find((s) => s.length > 0) || "";
+  const plain = leadIdTrim(line.replace(/^#+\s*/, ""), record.body.id);
+  return plain.length > 48 ? plain.slice(0, 48) + "..." : plain;
+}
+
+// Словари коротких свойств записи: источник и доступ называются словами в
+// чтении и правке одними и теми же списками, чтобы чип и селект не расходились.
+const DRAFT_SOURCE_TITLES = [
+  { value: "thought", title: "мысль" }, { value: "meeting", title: "встреча" },
+  { value: "mail", title: "почта" }, { value: "messenger", title: "мессенджер" },
+  { value: "link", title: "ссылка" },
+];
+const DRAFT_LOCK_TITLES = [
+  { value: "unlocked", title: "обычный" }, { value: "locked", title: "закрытый" },
+];
 
 function draftMetadataEditor(base, id, meta, types, disabled) {
   const box = el("div", "draft-meta");
@@ -17538,14 +17911,8 @@ function draftMetadataEditor(base, id, meta, types, disabled) {
     return select;
   }
   const kind = field("тип", types.map((t) => ({ value: t.name, title: t.title })), meta.type);
-  const source = field("источник", [
-    { value: "thought", title: "мысль" }, { value: "meeting", title: "встреча" },
-    { value: "mail", title: "почта" }, { value: "messenger", title: "мессенджер" },
-    { value: "link", title: "ссылка" },
-  ], meta.source);
-  const lock = field("доступ", [
-    { value: "unlocked", title: "обычный" }, { value: "locked", title: "закрытый" },
-  ], meta.lock);
+  const source = field("источник", DRAFT_SOURCE_TITLES, meta.source);
+  const lock = field("доступ", DRAFT_LOCK_TITLES, meta.lock);
   const save = el("button", "btn", "Сохранить поля");
   save.type = "button";
   save.disabled = disabled || types.length === 0;
@@ -17608,7 +17975,8 @@ async function renderDraft(project, works, id) {
   const locked = running && !waiting;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(preparedResult.body)].join("|"),
+    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(preparedResult.body),
+      text.ok ? [text.body.groomed, text.body.ideas_total, text.body.ideas_undecided].join(",") : ""].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -17618,10 +17986,38 @@ async function renderDraft(project, works, id) {
       // же чип (замечание пользователя).
       const waits = waitChip({ waiting });
       if (waits) chips.push(waits);
+      // Дата правки переехала сюда из колонки списка (DK-1564, утверждённый
+      // макет): день стоит в строке статуса, а точное время с давностью
+      // подсказкой, теми же словами, что и даты доски.
+      if (text.ok && text.body.moved) {
+        chips.push(withTip(el("span", "stale dashed", whenShort(text.body.moved)),
+          whenTip(text.body.moved_at || text.body.moved)));
+      }
+      // Компактные метки записи в чтении (DK-1564, утверждённый макет): тип,
+      // источник и доступ стоят чипами в строке статуса, а селекты правки
+      // приходят карандашом вместе с остальными полями.
+      const metaNow = text.ok ? {
+        type: text.body.type || "task", source: text.body.source || "thought", lock: text.body.lock || "unlocked",
+      } : null;
+      const metaChips = [];
+      if (metaNow) {
+        const typeTitle = (draftTypes.find((t) => t.name === metaNow.type) || {}).title || metaNow.type;
+        const sourceTitle = (DRAFT_SOURCE_TITLES.find((s) => s.value === metaNow.source) || {}).title || metaNow.source;
+        const lockTitle = (DRAFT_LOCK_TITLES.find((s) => s.value === metaNow.lock) || {}).title || metaNow.lock;
+        for (const pair of [["тип", typeTitle], ["источник", sourceTitle], ["доступ", lockTitle]]) {
+          const chip = el("span", "chip", pair[0] + ": " + pair[1]);
+          metaChips.push(chip);
+          chips.push(chip);
+        }
+      }
+      const metaEditor = metaNow ? draftMetadataEditor(base, id, metaNow, draftTypes, locked) : null;
+      if (metaEditor) metaEditor.hidden = true;
       const actions = [];
-      // Вход в разговор тут один и стоит значком, как у строк задач: кнопка
-      // «Чат груминга» вела в тот же самый чат, что и значок рядом, и две
-      // двери в одну комнату человек читал как две разные (замечание
+      // Вход в разговор тут один: у разобранной записи его держит кнопка
+      // «Чат разбора» в ряду действий, а значок чата в шапке убран; пока
+      // разбор идёт или ещё не начинался, дверь остаётся за значком, как у
+      // строк задач. Прежде кнопка и значок стояли рядом и вели в один чат,
+      // и две двери в одну комнату человек читал как две разные (замечание
       // пользователя).
       if (running) {
         // Забрать запись у агента больше нечем, и стоп стоит тут же, в ряду
@@ -17635,9 +18031,24 @@ async function renderDraft(project, works, id) {
         stop.setAttribute("aria-label", "Стоп");
         stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
         actions.push(stop);
+      } else if (text.ok && text.body.groomed) {
+        // Разбор записи уже шёл (DK-1564, утверждённая поправка): кнопка при
+        // любом числе неразобранных мыслей открывает чат разбора этой записи,
+        // а не поднимает новую ходку с формы. Неразобранные мысли разбираются
+        // из этого же чата, и первый разбор нового черновика остаётся ниже.
+        // Адрес разговора это сама запись, и вход в состоявшийся чат второго
+        // адреса не заводит.
+        const pending = Number(text.body.ideas_undecided) > 0;
+        const talk = barBtn("btn btn-acc", "Чат разбора", "i-chat");
+        withTip(talk, pending
+          ? "Разбор записи уже шёл: неразобранные мысли разбираются разговором в чате записи."
+          : "Разбор записи уже шёл и неразобранных мыслей нет: продолжайте разговор в чате записи.");
+        talk.addEventListener("click", () => { openChat(chatAddr(project, id)); });
+        actions.push(talk);
       } else {
-        // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
-        // «груминг идёт» звала запустить грумера поверх работающего.
+        // Сюда черновик попадает, пока разбор ни разу не шёл: после первого
+        // разбора вход с формы всегда открывает чат записи (DK-1564,
+        // утверждённая поправка), и вторую ходку с формы не поднять.
         // Исход записи стоит группой в меню составной кнопки (DK-1043):
         // выбор решает, продолжит ли поднятая сессия конвейером задачи после
         // строки на доске, либо разбор кончается ей одной, как раньше.
@@ -17653,7 +18064,7 @@ async function renderDraft(project, works, id) {
         const groomTip = (mode) => (groomOrder(mode) ? "Заказ агенту: «" + groomOrder(mode) + "»." : "");
         const groom = runControl(project, id,
           (label) => { groomBtn = barBtn("btn btn-acc", label, "i-play"); return groomBtn; },
-          "Грумить", false, groomTip(groomMode),
+          "Разобрать", false, groomTip(groomMode),
           "", "",
           // Несохранённая правка уезжает на диск до подъёма разбора: иначе
           // агент прочитал бы старый текст, и потеря была бы молчаливой.
@@ -17680,7 +18091,9 @@ async function renderDraft(project, works, id) {
       // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
       // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
       // факту: строка появилась или нет (решение пользователя). Форма держит
-      // саму запись и действия над ней, и больше ничего.
+      // саму запись и действия над ней, а состав задач разбора стоит после
+      // шапки и действий, перед описанием (DK-1564, утверждённый макет):
+      // состав не заслоняет идентичность самой записи.
       return formPage({
         key: "draft", project, id,
         // Дорога на доску была только через накопитель, и с экрана записи её не
@@ -17691,16 +18104,24 @@ async function renderDraft(project, works, id) {
         ],
         num: id,
         // Заголовок записи это её первая строка, и правят его в самом тексте.
-        titleText: (said.split("\n").find((ln) => ln.trim()) || id).replace(/^#+\s*/, ""),
+        // Повторный ведущий номер срезается: в списке он стоит своей колонкой.
+        titleText: leadIdTrim((said.split("\n").find((ln) => ln.trim()) || id).replace(/^#+\s*/, ""), id),
         // Пропавший файл это не поломка экрана, а след исхода: груминг мог
         // увести запись строкой, припиской или удалением.
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        afterChips: text.ok ? [draftMetadataEditor(base, id, {
-          type: text.body.type || "task", source: text.body.source || "thought", lock: text.body.lock || "unlocked",
-        }, draftTypes, locked), draftIdeaBox(project, id, locked), ...(preparedResult.ok ? [draftPreparedList(base, preparedResult.body)] : [])] : [],
-        has: { file: true, pencil: !locked, read: true, chat: true },
+        afterChips: [draftPreparedComp(project, preparedResult.ok ? preparedResult.body : null)]
+          .concat(metaEditor ? [metaEditor] : []),
+        // Поле мысли стоит после описания и оформлено как поле, а не как
+        // белая сыпь над текстом записи (DK-1564, утверждённый макет).
+        extra: text.ok ? [draftIdeaBox(project, id, locked)] : [],
+        // Значок чата в шапке остаётся рабочим входом, пока на форме нет
+        // подписанной кнопки чата: у разбора без прошедшей ходки и под идущим
+        // разбором дверь одна, а у разобранной записи её закрывает «Чат
+        // разбора» в действиях.
+        has: { file: true, pencil: !locked, read: true,
+          chat: !(text.ok && text.body.groomed && !running) },
         penLabel: "Править запись",
         // Причина замка живёт подсказкой погашенного карандаша: пропавшая
         // кнопка читалась бы поломкой экрана, а карточки с этими словами на
@@ -17711,6 +18132,10 @@ async function renderDraft(project, works, id) {
         onEdit: (on) => {
           taskDraft.id = id;
           taskDraft.edit = on;
+          // Метки чтения и селекты правки меняются местами в один ход
+          // карандаша: держать оба вида сразу значило править вслепую.
+          if (metaEditor) metaEditor.hidden = !on;
+          for (const chip of metaChips) chip.hidden = on;
         },
         check: () => {
           const dirty = form.text !== said;
@@ -20721,7 +21146,7 @@ function screenKey(rt) {
   // узлом и своими потоками, а экран под ней от её открытия не меняется и
   // собираться заново не должен.
   return [rt.proj, rt.id, rt.home, rt.agents, rt.feed, rt.make, rt.drafts, rt.sess,
-    rt.find, rt.draft, rt.doc, rt.path, rt.lldList].join("|");
+    rt.find, rt.draft, rt.prepared, rt.doc, rt.path, rt.lldList].join("|");
 }
 
 // Обновление экрана с сохранением места: перерисовка идёт по месту, а те

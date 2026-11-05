@@ -6,6 +6,8 @@ const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
 try {
   assert.equal((await context.request.post(base+'/api/login',{data:{token}})).status(),200);
+  const prepared = await (await context.request.get(base+'/__worktree?mode=state')).json();
+  const key = prepared.key;
   const page = await context.newPage();
   await page.goto(base+'/#demo/chat/'+sid);
   // Вопрос согласования короткий: тел задач в чате нет, каждая задача это
@@ -17,8 +19,8 @@ try {
   assert.ok(!text.includes('веточный результат'));
   assert.ok(!text.includes('## DoD'));
   assert.ok(text.includes('Результат'));
-  await page.locator('.askfb a[href$="/draft/XR-4/prepared/p1"]').waitFor();
-  await page.getByLabel('Подтвердить p1').check();
+  await page.locator('.askfb a[href$="/draft/XR-4/prepared/'+key+'"]').waitFor();
+  await page.getByLabel('Подтвердить Результат').check();
   assert.equal(await page.locator('textarea.csay').inputValue(),'');
   if (mode === 'linked') {
     const response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');

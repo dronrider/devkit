@@ -182,9 +182,10 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 			if p.Revision != previous.Revision+1 || reflect.DeepEqual(p, previous) {
 				return "", fmt.Errorf("%s: нужна следующая редакция", p.ID)
 			}
-			if p.BoardID == "" {
-				p.BoardID = previous.BoardID
+			if p.BoardID != "" && p.BoardID != previous.BoardID {
+				return "", fmt.Errorf("%s: закреплённый номер менять нельзя", p.ID)
 			}
+			p.BoardID = previous.BoardID
 			old.Proposals[i] = p
 		} else {
 			if p.Revision != 1 {

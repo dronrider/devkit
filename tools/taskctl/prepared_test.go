@@ -600,3 +600,55 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 		t.Fatalf("reanalysis: %s", raw)
 	}
 }
+
+func TestPreparedSaveRefusesBoardIDReassignment(t *testing.T) {
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	root := setup(t)
+	if _, err := cmdDraft(root, "материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftPrepared(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view preparedView
+	json.Unmarshal([]byte(raw), &view)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","reason":"лишнее"},{"id":"p2","revision":1,"outcome":"drop","reason":"лишнее"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	path := draftproposal.PreparedPath(root, "XR-008")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := view.State.Proposals[0]
+	for _, number := range []string{view.State.Proposals[1].BoardID, "XR-999"} {
+		edited := original
+		edited.Revision++
+		edited.BoardID = number
+		payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{edited}})
+		if _, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload); err == nil {
+			t.Fatalf("разрешена смена номера %s на %s", original.BoardID, number)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("отказ изменил подготовленные задачи: %v", err)
+		}
+	}
+	original.Revision++
+	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{original}})
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.Proposals[0].BoardID != original.BoardID {
+		t.Fatalf("номер изменился: %s", raw)
+	}
+}

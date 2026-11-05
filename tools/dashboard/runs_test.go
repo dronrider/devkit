@@ -29,6 +29,18 @@ const runsBoardJSON = `{"prefix":"XR","sections":[` +
 // сорванный опрос (DK-904).
 const tmuxNoServer = "echo 'no server running on /tmp/tmux-501/default' >&2; exit 1"
 
+// Кнопки стендов отказа доставки у подставного tmux, обе файлами рядом с
+// журналом вызовов, без файлов фикстура молчит и поведения не меняет
+// (замечание ревью DK-1605). Файл sendFailKnob ломает саму подачу: send-keys
+// выходит ненулевым со словами поломки, а сессия остаётся в списке живой.
+// Файл sendGoneKnob убивает носитель на подаче: первая send-keys ставит метку
+// sendGoneMark, и всякий следующий ls отвечает словами про отсутствие
+// сервера, как машина, у которой умер последний разговор.
+func sendFailKnob(logPath string) string { return logPath + ".sendfail" }
+
+func sendGoneKnob(logPath string) string { return logPath + ".drop" }
+func sendGoneMark(logPath string) string { return logPath + ".sent" }
+
 // writeTmuxFake кладёт фикстуру tmux: пишет каждый вызов в журнал, на ls
 // отвечает списком сессий; пустой список это ненулевой код, как у живого tmux
 // без своего сервера.
@@ -41,8 +53,13 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 		// такой обход пропускает (DK-904).
 		body += "  " + tmuxNoServer + ";;\n"
 	} else {
-		body += fmt.Sprintf("  printf '%s';;\n", sessions)
+		body += fmt.Sprintf("  if [ -f %q ] && [ -f %q ]; then %s; fi\n  printf '%%s' '%s';;\n",
+			sendGoneKnob(logPath), sendGoneMark(logPath), tmuxNoServer, sessions)
 	}
+	body += fmt.Sprintf("send-keys)\n  if [ -f %q ]; then"+
+		" echo 'подача в панель не вышла' >&2; exit 1; fi\n"+
+		"  if [ -f %q ]; then : > %q; fi;;\n",
+		sendFailKnob(logPath), sendGoneKnob(logPath), sendGoneMark(logPath))
 	// Снимок окна: клиент говорит о своём состоянии сам, и стоп спрашивает его
 	// до всякого Escape (четвёртая приёмка DK-716). Стенд задаёт экран файлом,
 	// а без файла окно показывает идущий ход: так выглядит большинство стендов

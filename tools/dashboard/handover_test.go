@@ -375,6 +375,50 @@ func TestContinueLiveTerminalWithoutPeer(t *testing.T) {
 		}
 	})
 
+	t.Run("отказ доставки живому окну не поднимает второго процесса", func(t *testing.T) {
+		e, c, log := setup(t, "XR-004", "chat-7")
+		if err := os.WriteFile(sendFailKnob(log), []byte("1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/continue", ``)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("поломка подачи выдана за успех: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, "не подалось") || !strings.Contains(text, "chat-7") {
+			t.Fatalf("отказ не назвал живое окно: %s", text)
+		}
+		said := readFile(t, log)
+		if !strings.Contains(said, "send-keys") {
+			t.Fatalf("подача в живое окно не пробовалась:\n%s", said)
+		}
+		if strings.Contains(said, "new-session") {
+			t.Fatalf("поломка доставки подняла второй процесс рядом с живым:\n%s", said)
+		}
+	})
+
+	t.Run("носитель, умерший на подаче, возобновляется подъёмом", func(t *testing.T) {
+		e, c, log := setup(t, "XR-004", "chat-7")
+		if err := os.WriteFile(sendGoneKnob(log), []byte("1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/continue", ``)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("штатный подъём после смерти носителя не прошёл: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"way":"resume"`) {
+			t.Fatalf("умерший носитель поднят не резюмом: %s", text)
+		}
+		said := readFile(t, log)
+		if !strings.Contains(said, "send-keys") {
+			t.Fatalf("подача в живое окно не пробовалась:\n%s", said)
+		}
+		if strings.Count(said, "new-session") != 1 || !strings.Contains(said, "--resume '"+sid+"'") {
+			t.Fatalf("носитель возобновлён не одним резюмом того же разговора:\n%s", said)
+		}
+	})
+
 	t.Run("чужой владелец имени не получает клавиш", func(t *testing.T) {
 		e, c, log := setup(t, "XR-004", "chat-7")
 		appendBinds(t, e.home, "2026-09-01T12:00:00 сессия cccc1111-2222-4222-8222-333333333333"+

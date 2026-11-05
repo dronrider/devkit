@@ -4799,7 +4799,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   view.dataset.file = detail.file || "docs/tasks/" + id + ".md";
   const paint = () => {
     if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(mdDropTitle(form.text), project));
-    else view.replaceChildren(el("div", "empty", "файл задачи пуст"));
+    else view.replaceChildren(el("div", "empty", detail.note || "файл задачи пуст"));
   };
   paint();
   body.append(view, ta);
@@ -5239,6 +5239,9 @@ function formPage(cfg) {
   let title = null;
   let titleFrame = null;
   let titleMsg = null;
+  // Подгонка высоты заголовка объявлена до своего блока: у экрана без поля
+  // заголовка она пуста, а смена режима зовёт её после смены рамки поля.
+  let fitTitle = () => {};
   if (has.title) {
     title = el("textarea", cfg.titleLegend ? "" : ("tedit" + (cfg.titleTall ? " tbig" : "")));
     title.value = form.title || "";
@@ -5247,13 +5250,18 @@ function formPage(cfg) {
     title.setAttribute("aria-label", cfg.titleLabel || "заголовок задачи");
     // Высота по содержимому: заголовок в одну строку держал поле на три, и
     // место уходило в пустоту. Считается она после вставки в дерево, потому что
-    // до неё scrollHeight равен нулю.
-    const fit = () => {
+    // до неё scrollHeight равен нулю. Ручка живёт снаружи блока: смена режима
+    // меняет рамку и паддинги поля, и высоту приходится считать заново.
+    fitTitle = () => {
       title.style.height = "auto";
-      if (title.scrollHeight) title.style.height = title.scrollHeight + "px";
+      // scrollHeight не включает рамку поля, а height при border-box её
+      // включает: без надбавки поле всегда резало содержимое на толщину рамки
+      // (замер QA 2026-11-05: clientHeight 37 при scrollHeight 39).
+      const border = title.offsetHeight - title.clientHeight;
+      if (title.scrollHeight) title.style.height = title.scrollHeight + border + "px";
     };
-    title.addEventListener("input", () => { form.title = title.value; fit(); touch(); });
-    setTimeout(fit, 0);
+    title.addEventListener("input", () => { form.title = title.value; fitTitle(); touch(); });
+    setTimeout(fitTitle, 0);
     if (cfg.titleLegend) {
       // Подпись на верхней границе рамки поля (макет DK-447): рамка отличает поле
       // от фона без отдельной строки подписи, и форма короче на строку.
@@ -5345,6 +5353,10 @@ function formPage(cfg) {
       title.readOnly = !on;
       title.classList.toggle("ro", !on);
     }
+    // Чтение и правка держат разные рамку и паддинги, и высота заголовка
+    // считается заново: прежний inline-размер вчитывал в поле лишние строки
+    // или резал его на телефоне (замер QA 2026-11-05).
+    fitTitle();
     if (file && file.setEdit) file.setEdit(on);
     rankMode(on);
     dressPen();
@@ -17149,87 +17161,321 @@ function draftPreparedList(base, view, heading = true) {
   return section;
 }
 
-// preparedTaskFields это общий набор полей формы подготовленной задачи: та же
-// четвёрка исходов, те же поля по исходу, что были у формы на экране записи.
-// Правка живёт на экране самой задачи, запись остаётся списком ссылок.
-const preparedFieldRows = [
-  ["Название", "title", ["add"], false],
-  ["Тип строки", "board_type", ["add"], false],
-  ["Ранг", "rank", ["add"], false],
-  ["Цена", "size", ["add"], false],
-  ["Приёмка", "accept", ["add"], false],
-  ["Барьер", "barrier", ["add"], false],
-  ["Ответственный", "assignee", ["add"], false],
-  ["Срок", "due", ["add"], false],
-  ["Контроль", "control", ["add"], false],
-  ["После", "after", ["add"], false],
-  ["Куда приписать", "target", ["attach"], false],
-  ["Описание", "text", ["add", "attach", "defer", "drop"], true],
-  ["Довод разбора", "rationale", ["add", "attach", "defer", "drop"], true],
-  ["Причина", "reason", ["defer", "drop"], true],
-  ["Вернуться до", "until", ["defer"], false],
+// preparedPropChip это короткие свойства подготовленной задачи для строки
+// статуса: экран согласования открывается чтением по стандарту форм DK-1438,
+// свойства стоят чипами, пустые не встают вовсе. Длинные тексты (барьер,
+// довод, причина) чипами не бывают, они блоками под описанием.
+const preparedPropChip = [
+  ["тип", "board_type"], ["ранг", "rank"], ["цена", "size"], ["приёмка", "accept"],
+  ["ответственный", "assignee"], ["срок", "due"], ["контроль", "control"],
+  ["после", "after"], ["приписка к", "target"], ["вернуться до", "until"],
 ];
 
-function draftPreparedForm(project, id, view, task, isNew) {
-  const outcomes = draftOutcomeTitles;
-  const value = { ...task, after: Array.isArray(task.after) ? task.after.join(", ") : "" };
-  const box = el("div");
-  const fieldRows = [];
-  function textField(label, key, kinds, multiline) {
-    const wrap = el("label", "dfield");
-    wrap.append(el("span", "", label));
-    const input = el(multiline ? "textarea" : "input");
-    input.value = value[key] || "";
-    input.addEventListener("input", () => { value[key] = input.value; draftPreparedDirty.add(id); });
-    wrap.append(input); box.append(wrap); fieldRows.push({ wrap, kinds });
+// Поля правки подготовленной задачи: короткие свойства одной рамкой в строку
+// с переносом, приёмка закрытым списком, тексты своей рамкой каждый. Набор
+// полей по исходу тот же, что у формы до перестройки экрана, поменялся вид
+// (DK-1438, решения 3 и 4), а не предметная механика.
+const preparedShortRow = [
+  ["Тип строки", "board_type", ["add"]],
+  ["Ранг", "rank", ["add"]],
+  ["Цена", "size", ["add"]],
+  ["Приёмка", "accept", ["add"], ["agent", "mixed", "user"]],
+  ["Ответственный", "assignee", ["add"]],
+  ["Срок", "due", ["add"]],
+  ["Контроль", "control", ["add"]],
+  ["После", "after", ["add"]],
+  ["Куда приписать", "target", ["attach"]],
+  ["Вернуться до", "until", ["defer"]],
+];
+const preparedTextRows = [
+  ["Барьер приёмки", "barrier", ["add"]],
+  ["Довод разбора", "rationale", ["add", "attach", "defer", "drop"]],
+  ["Причина", "reason", ["defer", "drop"]],
+];
+
+// Режим правки подготовленной задачи переживает перерисовку по фокусу окна:
+// тот же трюк, что у правки задачи и записи. Ключ это черновик вместе с
+// задачей, у черновика задач несколько.
+const preparedDraft = { key: "", edit: false };
+
+// preparedBody собирает сравнимый слепок полей задачи: по нему форма узнаёт
+// свою тронутость, а сохранение собирает тело из тех же полей.
+function preparedBody(v) {
+  return {
+    title: String(v.title || ""), text: String(v.text || ""), board_type: String(v.board_type || ""),
+    rank: String(v.rank || ""), size: String(v.size || ""), accept: String(v.accept || ""),
+    barrier: String(v.barrier || ""), control: String(v.control || ""), assignee: String(v.assignee || ""),
+    due: String(v.due || ""), target: String(v.target || ""), until: String(v.until || ""),
+    rationale: String(v.rationale || ""), reason: String(v.reason || ""),
+    after: String(v.after || "").split(",").map((s) => s.trim()).filter(Boolean),
+  };
+}
+
+async function savePreparedTask(project, id, view, edited) {
+  const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared",
+    { method: "PUT", body: { base: view.snapshot, proposal: edited } });
+  sayResult(apiSaid(result), !result.ok);
+  if (result.ok) {
+    draftPreparedDirty.delete(id);
+    preparedDraft.edit = false;
+    goKeepingChat(project + "/draft/" + id + "/prepared/" + edited.id);
+    await refresh();
   }
-  const kindLabel = el("label", "pick"); kindLabel.append(el("span", "pl", "Исход"));
+}
+
+// preparedTaskScreen собирает экран подготовленной задачи на каркасе formPage
+// (провал приёмки 2026-11-05): чтение по умолчанию, описание собрано разметкой
+// тем же файловым блоком, что у задачи и записи, свойства стоят чипами,
+// согласование кнопками в командной панели. Правка включается карандашом,
+// несёт рамки с подписью в грани и кончается «Сохранить» либо «Отменить
+// правку».
+function preparedTaskScreen(project, id, view, task, isNew) {
+  const decided = Boolean(task.status);
+  const projectBase = "/api/projects/" + encodeURIComponent(project);
+  const value = Object.assign({}, task, {
+    title: task.title || "", text: task.text || "",
+    after: Array.isArray(task.after) ? task.after.join(", ") : "",
+  });
+  const clean = JSON.stringify(preparedBody(value));
+  const ownKey = id + "/" + task.id;
+  let page = null;
+
+  // Чтение: короткие свойства чипами в строке статуса, рядом со статусом.
+  const propChips = [];
+  for (const [label, fld] of preparedPropChip) {
+    const raw = fld === "after" ? value.after : task[fld];
+    if (String(raw || "").trim()) propChips.push(el("span", "chip", label + " " + raw));
+  }
+  const chips = [el("span", "chip", draftCardStatus(task.outcome, task.status))].concat(propChips);
+
+  // Правка: исход списком, короткие свойства рамкой в строку, тексты рамками.
+  const editFields = el("div", "pedit");
+  const kindRow = el("label", "pick");
+  kindRow.append(el("span", "pl", "исход"));
   const kind = el("select");
-  for (const [key, title] of Object.entries(outcomes)) { const o = el("option", "", title); o.value = key; o.selected = key === value.outcome; kind.append(o); }
-  kindLabel.append(kind); box.append(kindLabel);
-  for (const [label, key, kinds, multiline] of preparedFieldRows) textField(label, key, kinds, multiline);
-  const showFields = () => { for (const item of fieldRows) item.wrap.hidden = !item.kinds.includes(value.outcome); };
-  kind.addEventListener("change", () => { value.outcome = kind.value; draftPreparedDirty.add(id); showFields(); });
+  kind.setAttribute("aria-label", "исход подготовки");
+  for (const [k, title] of Object.entries(draftOutcomeTitles)) {
+    const o = el("option", "", title);
+    o.value = k;
+    o.selected = k === value.outcome;
+    kind.append(o);
+  }
+  kind.addEventListener("change", () => {
+    value.outcome = kind.value;
+    showFields();
+    if (page) page.touch();
+  });
+  kindRow.append(kind);
+  editFields.append(kindRow);
+  const propsFrame = el("fieldset", "dfield");
+  propsFrame.append(el("legend", "", "Свойства задачи"));
+  const propsRow = el("div", "pshort");
+  propsFrame.append(propsRow);
+  editFields.append(propsFrame);
+  const shortFields = [];
+  for (const [label, fld, kinds, list] of preparedShortRow) {
+    let field;
+    if (list) {
+      const cur = String(value[fld] || "");
+      const vals = !cur || list.includes(cur) ? list : [cur].concat(list);
+      field = pickField(label, vals, cur, (v) => {
+        value[fld] = v;
+        if (page) page.touch();
+      });
+    } else {
+      field = el("label", "pinp");
+      field.append(el("span", "", label));
+      const input = el("input");
+      input.value = value[fld] || "";
+      input.addEventListener("input", () => {
+        value[fld] = input.value;
+        if (page) page.touch();
+      });
+      field.append(input);
+    }
+    shortFields.push({ node: field, kinds });
+    propsRow.append(field);
+  }
+  const textFrames = [];
+  for (const [label, fld, kinds] of preparedTextRows) {
+    const frame = el("fieldset", "dfield");
+    frame.append(el("legend", "", label));
+    const ta = el("textarea", "parea");
+    ta.rows = 2;
+    ta.value = value[fld] || "";
+    ta.addEventListener("input", () => {
+      value[fld] = ta.value;
+      if (page) page.touch();
+    });
+    frame.append(ta);
+    textFrames.push({ node: frame, kinds });
+    editFields.append(frame);
+  }
+  const showFields = () => {
+    for (const f of shortFields) f.node.hidden = !f.kinds.includes(value.outcome);
+    for (const f of textFrames) f.node.hidden = !f.kinds.includes(value.outcome);
+  };
   showFields();
-  const save = el("button", "btn btn-acc", "Сохранить"); save.type = "button";
-  save.addEventListener("click", async () => {
-    const { __new, ...fields } = value;
-    const edited = { ...fields, revision: task.revision + (isNew ? 0 : 1), after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
-    const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared",
-      { method: "PUT", body: { base: view.snapshot, proposal: edited } });
+
+  // Чтение: длинные тексты блоками под описанием, у решённой задачи тем же
+  // местом квитанция со ссылками на результат.
+  const readNotes = el("div", "pnotes");
+  const notes = [];
+  if (task.barrier) notes.push(["Барьер приёмки", task.barrier]);
+  if (task.rationale) notes.push(["Довод разбора", task.rationale]);
+  if (task.reason) notes.push(["Причина", task.reason]);
+  const receipt = task.result || {};
+  if (receipt.reason) notes.push(["Итог", receipt.reason]);
+  for (const [label, text] of notes) {
+    const one = el("div", "pnote");
+    one.append(el("span", "pnote-l", label), el("span", "pn-t", text));
+    readNotes.append(one);
+  }
+  if (decided) {
+    const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
+    if (ids.length) {
+      const one = el("div", "pnote");
+      one.append(el("span", "pnote-l", "Результат"));
+      for (const got of ids) {
+        const link = el("button", "link", got);
+        link.type = "button";
+        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got));
+        one.append(link, document.createTextNode(" "));
+      }
+      readNotes.append(one);
+    }
+  }
+
+  // Отказ спрашивает причину на месте, карточкой после описания: постоянное
+  // поле отказа занимало экран служебным местом, а нужна причина только в
+  // момент отказа.
+  const rejectBox = el("fieldset", "dfield preject");
+  rejectBox.hidden = true;
+  rejectBox.append(el("legend", "", "Причина отказа"));
+  const rejectReason = el("input");
+  rejectReason.setAttribute("aria-label", "причина отказа от задачи");
+  const rejectRow = el("div", "preject-row");
+  const rejectGo = barBtn("btn btn-danger", "Отклонить задачу", "close");
+  const rejectStay = barBtn("btn", "Оставить", "i-done");
+  rejectRow.append(rejectGo, rejectStay);
+  rejectBox.append(rejectReason, rejectRow);
+  rejectStay.addEventListener("click", () => { rejectBox.hidden = true; });
+  rejectGo.addEventListener("click", async () => {
+    const result = await api(projectBase + "/drafts/" + encodeURIComponent(id) + "/prepared/reject",
+      { method: "POST", body: { base: view.snapshot, proposal: task.id, reason: rejectReason.value } });
     sayResult(apiSaid(result), !result.ok);
     if (result.ok) {
       draftPreparedDirty.delete(id);
-      goKeepingChat(project + "/draft/" + id + "/prepared/" + edited.id);
       await refresh();
+      goKeepingChat(project + "/draft/" + id);
     }
   });
-  box.append(save);
-  if (!isNew) {
-    const accept = el("button", "btn", "Подтвердить"); accept.type = "button";
+
+  // Согласование стоит в командной панели строки статуса, левее карандаша:
+  // то же место, что у «Грумить» на экране записи.
+  const actions = [];
+  if (!decided && !isNew) {
+    const accept = barBtn("btn btn-acc", "Подтвердить", "i-done");
     accept.addEventListener("click", async () => {
-      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку", true); return; }
-      await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), [view], (_, p) => p.id === task.id);
+      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку задачи", true); return; }
+      await confirmDraftPrepared(projectBase, [view], (_, p) => p.id === task.id);
       goKeepingChat(project + "/draft/" + id);
     });
-    const rejectLabel = el("label", "dfield"); rejectLabel.append(el("span", "", "Причина отказа"));
-    const rejectReason = el("input"); rejectReason.addEventListener("input", () => draftPreparedDirty.add(id)); rejectLabel.append(rejectReason);
-    const reject = el("button", "btn", "Отклонить"); reject.type = "button";
-    reject.addEventListener("click", async () => {
-      const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared/reject",
-        { method: "POST", body: { base: view.snapshot, proposal: task.id, reason: rejectReason.value } });
-      sayResult(apiSaid(result), !result.ok);
-      if (result.ok) { draftPreparedDirty.delete(id); await refresh(); goKeepingChat(project + "/draft/" + id); }
+    const reject = barBtn("btn", "Отклонить", "close");
+    reject.addEventListener("click", () => {
+      rejectBox.hidden = !rejectBox.hidden;
+      if (!rejectBox.hidden && rejectReason.focus) rejectReason.focus();
     });
-    box.append(accept, rejectLabel, reject);
+    actions.push(accept, reject);
   }
-  return box;
+
+  page = formPage({
+    key: "draft-prepared", project, id,
+    crumb: [
+      { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+      { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
+      { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
+    ],
+    num: id,
+    titleText: task.title || (draftOutcomeTitles[task.outcome] || "Задача") + " " + task.id,
+    titleHint: isNew ? NEW_PLACEHOLDER : "",
+    titleLabel: "заголовок задачи " + task.id,
+    form: value,
+    detail: { file: "docs/tasks/prepared/" + id + ".md", text: task.text || "", note: "описания нет" },
+    chips,
+    afterChips: [editFields],
+    extra: [readNotes, rejectBox],
+    actions,
+    has: { title: !decided, file: true, pencil: !decided && !isNew, read: !isNew },
+    // Решённую задачу править нельзя, и карандаш говорит об этом подсказкой,
+    // а не пропажей: молчащая кнопка читалась бы поломкой экрана.
+    penOff: decided ? "Решённую задачу править нельзя: исход уже применён к записи" : "",
+    penLabel: "Править задачу",
+    edit: isNew || (preparedDraft.key === ownKey && preparedDraft.edit),
+    always: isNew,
+    flatBar: isNew,
+    saveLabel: isNew ? "Сохранить задачу" : "Сохранить",
+    // Выход живёт только на форме заведения: у сохранённой задачи его роль
+    // играет «Отменить правку», и одинокая кнопка «Не заводить» держала в
+    // чтении пустую полосу (замер QA 2026-11-05).
+    ...(isNew ? {
+      quitLabel: "Не заводить",
+      onQuit: (btn) => {
+        if (btn && JSON.stringify(preparedBody(value)) !== clean && !btn.classList.contains("armed")) {
+          btn.classList.add("armed");
+          btn.rename("Задача не записана, выйти?");
+          return;
+        }
+        draftPreparedDirty.delete(id);
+        goKeepingChat(project + "/draft/" + id);
+      },
+    } : {}),
+    onEdit: (on) => {
+      preparedDraft.key = ownKey;
+      preparedDraft.edit = on;
+      editFields.hidden = !on;
+      readNotes.hidden = on;
+      for (const chip of propChips) chip.hidden = on;
+      for (const act of actions) act.hidden = on;
+      if (on) showFields();
+    },
+    check: () => {
+      const dirty = JSON.stringify(preparedBody(value)) !== clean;
+      if (dirty) draftPreparedDirty.add(id); else draftPreparedDirty.delete(id);
+      const refusal = value.outcome === "add" && !String(value.title || "").trim()
+        ? "у задачи нужен заголовок: по нему её ищут на доске" : "";
+      return { dirty, refusal };
+    },
+    onSave: () => {
+      const body = preparedBody(value);
+      const edited = Object.assign({}, value, body, {
+        revision: task.revision + (isNew ? 0 : 1),
+        after: body.after,
+      });
+      savePreparedTask(project, id, view, edited).catch(console.error);
+    },
+    onDrop: () => {
+      draftPreparedDirty.delete(id);
+      preparedDraft.edit = false;
+      // Отпечаток снимается руками: данные с сервера те же, и без этого
+      // перерисовка оставила бы на экране прежний узел вместе с брошенной
+      // правкой в поле.
+      const shown = findKey(document.getElementById("groups"), "draft-prepared-page");
+      if (shown) shown.dataset.psign = "";
+      renderDraftPrepared(project, id, task.id).catch(console.error);
+    },
+  });
+  // Полоса действий встаёт на место после вставки экрана в дерево: до неё у
+  // строк статуса нет родителя, и место полосы выбирается по нему. Тот же
+  // отложенный ход, что у подгонки высоты заголовка.
+  setTimeout(() => { page.touch(); }, 0);
+  return page.page;
 }
 
 // renderDraftPrepared это экран подготовленной задачи (DK-1564, решение 4):
-// сюда ведёт ссылка из реплики согласования, здесь читается описание и здесь
-// же задача правится, подтверждается или отклоняется. Ключ new открывает
-// пустую форму ручной подготовки.
+// сюда ведёт строка-ссылка из реплики согласования. Открывается чтением по
+// стандарту форм DK-1438, правка включается карандашом, ключ new открывает
+// пустую форму ручной подготовки сразу в правке.
 async function renderDraftPrepared(project, id, key) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
@@ -17251,7 +17497,7 @@ async function renderDraftPrepared(project, id, key) {
   const tasks = view.state && Array.isArray(view.state.proposals) ? view.state.proposals : [];
   const isNew = key === "new";
   const task = isNew
-    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add" }
+    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add", board_type: "task", size: "-", accept: "agent" }
     : tasks.find((p) => p.id === key);
   sync(groups, [{
     key: "draft-prepared-page",
@@ -17268,31 +17514,7 @@ async function renderDraftPrepared(project, id, key) {
           titleText: key, detail: { note: "задача " + key + " в записи " + id + " не найдена" },
         }).page;
       }
-      const chips = [el("span", "chip", draftCardStatus(task.outcome, task.status))];
-      const decided = Boolean(task.status);
-      const body = el("div");
-      if (decided) {
-        const receipt = task.result || {};
-        for (const [label, fld] of [["Заголовок", "title"], ["Описание", "text"], ["Довод разбора", "rationale"], ["Причина", "reason"]]) {
-          if (task[fld]) body.append(el("p", "", label + ": " + task[fld]));
-        }
-        if (receipt.reason) body.append(el("p", "", "Итог: " + receipt.reason));
-      } else {
-        body.append(draftPreparedForm(project, id, view, task, isNew));
-      }
-      return formPage({
-        key: "draft-prepared", project, id, num: id,
-        crumb: [
-          { text: "Доска " + project, go: () => { goKeepingChat(project); } },
-          { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
-          { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
-        ],
-        num: id,
-        titleText: task.title || (draftOutcomeTitles[task.outcome] || "Задача") + " " + task.id,
-        chips,
-        afterChips: [body],
-        has: { read: true },
-      }).page;
+      return preparedTaskScreen(project, id, view, task, isNew);
     },
   }]);
 }

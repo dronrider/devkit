@@ -1807,6 +1807,17 @@ func TestStaticDraftManualPrepare(t *testing.T) {
 	}
 }
 
+func TestStaticDraftPreparedRead(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftprepared.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("экран подготовленной задачи: %v\n%s", err, out)
+	}
+}
+
 func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	kit, err := filepath.Abs("../..")

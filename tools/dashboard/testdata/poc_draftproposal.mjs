@@ -1,4 +1,4 @@
-import { makeSandbox, settle, allByClass, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
 
 const writes = [];
 const state = { version: 1, state: "active", analysis: "ok", proposals: [
@@ -28,6 +28,19 @@ function cardText(node) {
   for (const kid of node.children || []) out += "\n" + cardText(kid);
   return out;
 }
+function byAria(root, part) {
+  const walk = (n) => {
+    if (!n) return null;
+    const label = String((n.attrs && n.attrs["aria-label"]) || "");
+    if ((n.tagName === "INPUT" || n.tagName === "TEXTAREA") && label.includes(part)) return n;
+    for (const kid of n.children || []) {
+      const hit = walk(kid);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(root);
+}
 async function openScreen(hash) {
   sandbox.location.hash = hash;
   await sandbox.refresh(); await settle();
@@ -39,24 +52,24 @@ if (rows.length !== 2) fail("две подготовленные задачи н
 if (!cardText(rows[0]).includes("Подготовлена")) fail("приписка до решения не названа подготовленной");
 if (!cardText(rows[1]).includes("Подготовлено")) fail("удаление до решения не названо подготовленным");
 // Правка и отказ живут на экране самой задачи, куда ведёт строка списка
-// (DK-1469, решение 4).
+// (DK-1469, решение 4). Экран открывается чтением, правка включается
+// карандашом, поэтому до правки поля недоступны.
 await openScreen("demo/draft/XR-9/prepared/p1");
-let fields = allByClass(groups, "dfield");
-function field(label) {
-  const wrap = fields.find((n) => n.children[0] && n.children[0].textContent === label);
-  if (!wrap) fail("нет поля " + label);
-  return wrap.children[1];
-}
-const text = field("Описание");
+const pen = deepBtn(groups, "tpen"); if (!pen) fail("нет карандаша правки");
+pen.handlers.click({});
+const text = tag(byClass(groups, "fbody"), "TEXTAREA"); if (!text) fail("нет поля описания");
 text.value = "поправленная приписка"; text.handlers.input({});
 const save = deepBtn(groups, "Сохранить"); if (!save) fail("нет сохранения");
 save.handlers.click({}); await settle();
 if (writes.length !== 1 || writes[0].base !== "s1" || writes[0].proposal.text !== "поправленная приписка" || writes[0].proposal.revision !== 2) fail("правка не доехала");
 await openScreen("demo/draft/XR-9/prepared/p2");
-fields = allByClass(groups, "dfield");
-const reason = field("Причина отказа"); reason.value = "не относится"; reason.handlers.input({});
+// Отказ спрашивает причину на месте: карточка причины встаёт по кнопке отказа.
 const reject = deepBtn(groups, "Отклонить"); if (!reject) fail("нет отказа");
-reject.handlers.click({}); await settle();
+reject.handlers.click({});
+const reason = byAria(groups, "причина отказа"); if (!reason) fail("нет поля причины отказа");
+reason.value = "не относится";
+const rejectGo = deepBtn(groups, "Отклонить задачу"); if (!rejectGo) fail("нет кнопки отказа");
+rejectGo.handlers.click({}); await settle();
 if (writes.length !== 2 || writes[1].base !== "s2" || writes[1].proposal !== "p2" || writes[1].reason !== "не относится") fail("отказ не доехал");
 await openScreen("demo/draft/XR-9");
 rows = allByClass(groups, "draft-prepared-task");

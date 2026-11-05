@@ -50,10 +50,32 @@ try {
         document.body.append(host);
       }, { count, kind, side });
       const host = page.locator("#effort-geometry");
-      if (kind === "run") await host.locator(".more2").click();
-      else await host.locator("select").dispatchEvent("mousedown", { bubbles: true, cancelable: true });
       const menu = host.locator(kind === "run" ? ".hpop" : ".menu");
-      await menu.waitFor({ state: "visible" });
+      const anchor = host.locator(kind === "run" ? ".more2" : "select");
+      const open = async () => {
+        const box = await anchor.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        if (kind === "chat") assert(await menu.isVisible(), "mousedown открыл меню");
+        await page.mouse.up();
+        assert(await menu.isVisible(), "полный click закрыл меню модели " + JSON.stringify({ viewport, count, kind, side }));
+      };
+      await open();
+      await anchor.click();
+      assert(!(await menu.isVisible()), "повторный click не закрыл меню");
+      await open();
+      await page.mouse.click(5, 5);
+      assert(!(await menu.isVisible()), "click снаружи не закрыл меню");
+      await open();
+      await page.keyboard.press("Escape");
+      assert(!(await menu.isVisible()), "Escape не закрыл меню");
+      await open();
+      const next = menu.locator(".mrow").nth(1);
+      const choice = await next.getAttribute("data-model");
+      await next.click();
+      assert(await menu.isVisible(), "выбор модели закрыл меню до выбора глубины");
+      assert(await next.evaluate((n) => n.classList.contains("on")), "модель не выбрана");
+      if (kind === "chat") assert.equal(await anchor.inputValue(), choice, "выбор не отразился в поле модели");
       const geometry = await menu.evaluate((menu) => {
         const rect = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
         const marks = [...menu.querySelectorAll(".effmark")];

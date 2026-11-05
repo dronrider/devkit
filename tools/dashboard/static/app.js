@@ -10934,7 +10934,9 @@ function modelPick(project, st) {
     }
     popupsShut(null);
     menu.hidden = false;
-    held = popupHold(menu, shut);
+    // Меню открывается на mousedown, а следующий click приходит по select.
+    // Поле и меню входят в один контейнер, иначе этот click закрывает меню.
+    held = popupHold(box, shut);
     popFit(model, menu);
     model.focus();
     // Кольцо вердикта спрашивается открытием меню, ведь вердикт зависит от

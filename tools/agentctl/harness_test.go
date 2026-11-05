@@ -734,6 +734,70 @@ env = ["CLAUDE_CONFIG_DIR={home}"]
 	}
 }
 
+// TestCmdHarnessJSONEffortLevels: набор ступеней глубины яруса едет в ответ
+// команды из ключей effort_* профиля, а ярус без ключа и подписка без набора
+// остаются без поля (DK-1570, макет шкалы v4).
+func TestCmdHarnessJSONEffortLevels(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "glmcli", `[delegate]
+mode = "cli"
+command = ["glm", "run", "{prompt}"]
+effort_mini = ["low", "high", "max"]
+effort_base = ["low", "high", "max"]
+
+[hooks]
+
+[quota]
+`)
+	writeProfile(t, kit, "plaincli", echoProfile)
+	writeMachine(t, kit, `enabled = ["glmcli", "plaincli"]
+default = "glmcli"
+
+[glmcli]
+mini = "glm-flash"
+base = "glm"
+pro = "glm"
+max = "glm"
+
+[plaincli]
+mini = "plain"
+base = "plain"
+pro = "plain"
+max = "plain"
+`)
+	text, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v harnessesJSON
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
+	}
+	byName := map[string]harnessJSON{}
+	for _, h := range v.Harnesses {
+		byName[h.Name] = h
+	}
+	byTier := map[string][]string{}
+	for _, m := range byName["glmcli"].Models {
+		byTier[m.Tier] = m.Levels
+	}
+	if !slices.Equal(byTier["mini"], []string{"low", "high", "max"}) {
+		t.Fatalf("mini-ярус несёт %v, жду low high max", byTier["mini"])
+	}
+	if !slices.Equal(byTier["base"], []string{"low", "high", "max"}) {
+		t.Fatalf("base-ярус несёт %v, жду low high max", byTier["base"])
+	}
+	// Ярус без ключа остаётся без набора: панель шкалы у него не рисует.
+	if byTier["pro"] != nil {
+		t.Fatalf("pro-ярус без ключа несёт набор %v", byTier["pro"])
+	}
+	for _, m := range byName["plaincli"].Models {
+		if m.Levels != nil {
+			t.Fatalf("подписка без ключей несёт набор у %s: %v", m.Tier, m.Levels)
+		}
+	}
+}
+
 // TestCmdHarnessJSONVia: ступень, уехавшая ссылкой на чужую подписку, несёт
 // поле via с именем харнеса-владельца, а домашняя ступень поля не несёт вовсе
 // (DK-1177). Формат самого model остаётся голым именем модели: checkrun

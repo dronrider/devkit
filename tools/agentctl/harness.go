@@ -112,7 +112,9 @@ var profileSchema = []sectionSpec{
 		{"config", subtoml.KindStr}, {"dir", subtoml.KindStr}, {"global_file", subtoml.KindStr}}},
 	{"delegate", []keySpec{{"mode", subtoml.KindStr}, {"command", subtoml.KindArr}, {"agents_dir", subtoml.KindStr},
 		{"agents_format", subtoml.KindStr}, {"map_mini", subtoml.KindStr}, {"map_base", subtoml.KindStr},
-		{"map_pro", subtoml.KindStr}, {"map_max", subtoml.KindStr}}},
+		{"map_pro", subtoml.KindStr}, {"map_max", subtoml.KindStr},
+		{"effort_mini", subtoml.KindArr}, {"effort_base", subtoml.KindArr},
+		{"effort_pro", subtoml.KindArr}, {"effort_max", subtoml.KindArr}}},
 	{"hooks", []keySpec{{"protocol", subtoml.KindStr}, {"config", subtoml.KindStr}, {"events", subtoml.KindArr},
 		{"memory_index", subtoml.KindStr}}},
 	{"quota", []keySpec{{"snap", subtoml.KindStr}, {"script", subtoml.KindStr}, {"buckets", subtoml.KindArr},
@@ -840,6 +842,16 @@ func suggestMap(l *layers, name string) {
 	s.Map, s.Suggested = m, true
 }
 
+// effortLevelsOf отдаёт набор ступеней глубины яруса из профиля харнеса: ключ
+// effort_<ярус> секции [delegate], подмножество общего списка low..max. Пусто у
+// профиля без набора: панель тогда не рисует шкалы у строки этого яруса.
+func effortLevelsOf(p *profile, tier string) []string {
+	if p == nil {
+		return nil
+	}
+	return p.section("delegate").Arr("effort_" + tier)
+}
+
 // awayReach это хвост строки назначения про достижимость чужого харнеса.
 // Уехавшая ступень поднимается только командой: спавн субагента живёт внутри
 // сессии инструмента, и снаружи его не дёрнуть. Достижимость поэтому видна
@@ -1358,6 +1370,12 @@ type harnessModelJSON struct {
 	Tier  string `json:"tier"`
 	Model string `json:"model"`
 	Via   string `json:"via,omitempty"`
+	// Levels это набор ступеней глубины, который клиент подписки принимает на
+	// этом ярусе (low..max, подмножество общего списка). Панель рисует шкалу
+	// меню по нему, а не по общему списку из пяти уровней: у семьи моделей
+	// ступени свои (DK-1570, макет шкалы v4). Пусто у подписки, которая набора
+	// не назвала, и у строки чата сверх лестницы.
+	Levels []string `json:"levels,omitempty"`
 }
 
 // harnessesJSON это ответ команды: машинная раскладка подписок целиком.
@@ -1438,7 +1456,8 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.HooksGap = hooksGap(l, name)
 		for _, tier := range tierNames {
 			if m := l.Setup[name].mapOf(tier); m != "" {
-				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})
+				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name),
+					Levels: effortLevelsOf(l.Profiles[name], tier)})
 			}
 		}
 		h.Chat = l.Setup[name].chatOf()

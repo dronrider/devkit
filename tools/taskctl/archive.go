@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ArchRow это строка таблицы архива: ID, Задача, Тип, P, Закрыто, Ссылка.
+// ArchRow хранит прежние шесть колонок и необязательные R, Цену, Приёмку.
 type ArchRow struct {
 	LineIdx int
 	Cells   []string
@@ -47,8 +47,8 @@ func LoadArchive(path string) (*Archive, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s:%d: %v", path, i+1, err)
 			}
-			if len(cells) != 6 {
-				return nil, fmt.Errorf("%s:%d: ожидалось 6 колонок, получилось %d", path, i+1, len(cells))
+			if len(cells) != 6 && len(cells) != 9 {
+				return nil, fmt.Errorf("%s:%d: ожидалось 6 или 9 колонок, получилось %d", path, i+1, len(cells))
 			}
 			m := idRe.FindStringSubmatch(cells[0])
 			if m == nil {
@@ -99,14 +99,37 @@ func archiveTaskFile(root, id, closed string) (string, bool) {
 	return "", false
 }
 
-// appendRow дописывает строку в конец файла архива (архив append-only,
-// таблица кончается вместе с файлом).
+// appendArchiveRow расширяет шапку при новом формате, сохраняя старые строки.
 func appendArchiveRow(path string, cells []string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	s := string(data)
+	if len(cells) == 9 {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+				continue
+			}
+			old, err := splitCells(line)
+			if err != nil {
+				return err
+			}
+			if len(old) != 6 {
+				continue
+			}
+			if old[0] == "ID" {
+				old = append(old, "R", "Цена", "Приёмка")
+			} else if strings.HasPrefix(old[0], "-") {
+				old = append(old, "---", "------", "---------")
+			} else {
+				continue
+			}
+			lines[i] = "| " + strings.Join(old, " | ") + " |"
+		}
+		s = strings.Join(lines, "\n")
+	}
 	if !strings.HasSuffix(s, "\n") {
 		s += "\n"
 	}

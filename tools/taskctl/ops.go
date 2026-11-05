@@ -1154,7 +1154,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// Срок переживает закрытие тем же правилом: дата это свойство задачи, и
 	// по архивной строке видно, укладывалась ли она в срок.
 	archBase, _, archDebtSuf, _, _, archAssignSuf, archDueSuf, _, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
-	cells := []string{p.ID, joinTitle(archBase, nil, archDebtSuf, "", "", archAssignSuf, archDueSuf, "", archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
+	cells := []string{p.ID, joinTitle(archBase, nil, archDebtSuf, "", "", archAssignSuf, archDueSuf, "", archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell, row.RCell, row.Cost, acceptOf(row.Title)}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
 	}

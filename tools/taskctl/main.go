@@ -224,6 +224,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               в раздел «Проверка», зелёный прогон
                                               ставит отметку, которую спрашивает
                                               move check
+  reopen <ID> --reason "..."                 вернуть из архива в Backlog
+  reopen stats [--json]                      число задач и событий возврата
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/,
                                               со всех строк снимается «[после <ID>]»
@@ -1240,6 +1242,24 @@ func main() {
 			msg, err = cmdReviewStats(root(*dir), cut)
 		default:
 			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats / draft / approve / drop / publish / poll / approve-mr", args[1]))
+		}
+	case "reopen":
+		fs := flag.NewFlagSet("reopen", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		reason := fs.String("reason", "", "причина возврата")
+		jsonOut := fs.Bool("json", false, "машинная сводка возвратов")
+		var p ReopenParams
+		fs.StringVar(&p.Rank, "rank", "", "разбивка ранга старой строки")
+		fs.StringVar(&p.Size, "size", "", "цена старой строки")
+		fs.StringVar(&p.Accept, "accept", "", "вид приёмки старой строки")
+		commitFlags(fs, &p.Commit)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "reopen <ID> --reason ... | reopen stats [--json]")
+		if pos[0] == "stats" {
+			msg, err = cmdReopenStats(root(*dir), *jsonOut)
+		} else {
+			p.ID, p.Reason = pos[0], *reason
+			msg, err = cmdReopen(root(*dir), p)
 		}
 	case "close":
 		fs := flag.NewFlagSet("close", flag.ExitOnError)

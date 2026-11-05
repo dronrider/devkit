@@ -17,9 +17,10 @@ import (
 // суффиксы, ранг на сумму и слагаемые, дата последней правки строки лежит
 // отдельным полем, пометки list («код слит», возраст) отдельным списком.
 type jsonRow struct {
-	ID    string   `json:"id"`
-	Title string   `json:"title"`
-	After []string `json:"after,omitempty"`
+	ReopenCount int      `json:"reopen_count"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	After       []string `json:"after,omitempty"`
 	// HeldBy это неснятые рёбра строки (решение 2 LLD DK-933). Маркер «после»
 	// снимает только close, а ребро снимается уже слиянием предпосылки, и
 	// держит строку на экране это поле, а не after.
@@ -135,20 +136,21 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageV
 	base, deps, debtSuf, armSuf, _, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	control := jsonControlOf(controlSuf)
 	return jsonRow{
-		ID:      r.ID,
-		Title:   strings.TrimSpace(base),
-		After:   deps,
-		HeldBy:  ed.heldIDs(r),
-		Debt:    debtSuf != "",
-		Armed:   armSuf != "",
-		Arm:     jsonArmOf(root, ed, r),
-		Accept:  sufText(acceptSuf, "приёмка"),
-		Due:     sufText(dueSuf, "срок"),
-		Control: control,
-		Assign:  sufText(assignSuf, "исп"),
-		Fail:    sufText(failSuf, "провал"),
-		Block:   sufText(blockSuf, "блок"),
-		Type:    r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,
+		ReopenCount: reopenCountFile(taskFilePath(root, r.ID)),
+		ID:          r.ID,
+		Title:       strings.TrimSpace(base),
+		After:       deps,
+		HeldBy:      ed.heldIDs(r),
+		Debt:        debtSuf != "",
+		Armed:       armSuf != "",
+		Arm:         jsonArmOf(root, ed, r),
+		Accept:      sufText(acceptSuf, "приёмка"),
+		Due:         sufText(dueSuf, "срок"),
+		Control:     control,
+		Assign:      sufText(assignSuf, "исп"),
+		Fail:        sufText(failSuf, "провал"),
+		Block:       sufText(blockSuf, "блок"),
+		Type:        r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,
 		Adjustments: jsonAdjs(r.RAdj),
 		Cost:        r.Cost, Link: r.Link,
 		// Дата последней правки строки: перевод в статус двигает строку между
@@ -269,6 +271,14 @@ func cmdShowJSON(root, id string) (string, error) {
 		}
 		if rel, ok := archiveTaskFile(root, id, r.Cells[4]); ok {
 			out.File = rel
+			out.ReopenCount = reopenCountFile(filepath.Join(root, rel))
+		}
+		if len(r.Cells) == 9 && r.Cells[6] != "-" {
+			row, _, e := archiveBoardRow(r)
+			if e != nil {
+				return "", e
+			}
+			out.R, out.ROwn, out.RParts, out.Cost, out.Accept = row.RTotal, row.ROwn, row.RParts, row.Cost, acceptOf(row.Title)
 		}
 		return marshal(out)
 	}

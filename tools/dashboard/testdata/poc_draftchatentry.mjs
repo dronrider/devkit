@@ -43,6 +43,8 @@ const { sandbox, byId } = makeSandbox(app, (path, init) => {
   // Журнал чата проверяется раньше поиска записи: адрес чата содержит номер
   // той же записи, и поиск съедал бы 404 журнала ответом тела записи.
   if (path.includes("/tasks/") && path.endsWith("/chat")) {
+    const id = ["XR-20", "XR-21", "XR-22", "XR-23"].find((id) => path.includes("/" + id + "/"));
+    if (id) return {id, chat:"carrier-" + id};
     return { raw: { status: 404, statusText: "Not Found", text: '{"error":"журнала нет"}' } };
   }
   const hit = Object.keys(drafts).find((id) => path.includes("/" + id));
@@ -51,7 +53,7 @@ const { sandbox, byId } = makeSandbox(app, (path, init) => {
       form, drafts[hit]);
   }
   if (path.endsWith("/board")) return { board: { prefix: "XR", sections: [] }, works };
-  if (path.includes("/chats")) return { chats: [], models: [] };
+  if (path.includes("/chats")) return { chats: ["XR-20","XR-21","XR-22","XR-23"].map((id) => ({id:"carrier-" + id,tasks:[id],title:"Разбор записи"})), models: [] };
   if (path === "/api/quota") return { harnesses: [] };
   return {};
 });
@@ -159,7 +161,9 @@ const visibleSlot = () => allByClass(sandbox.document.getElementById("cpin"), "c
  if (!talk) fail("после ошибки нет входа в прежний чат");
  talk.handlers.click({stopPropagation:()=>{}});
  await go("#demo/chat/XR-23");
- if (groomPosts().length) fail("вход в чат после ошибки поднял разбор");
+ const actual = await sandbox.chatState("demo", "XR-23", {sections:[]}, works);
+ if (actual.sid !== "carrier-XR-23" || !actual.draft || !actual.draft.groom_error) fail("повтор потерял назначенный чат или ошибку");
+ if (posts.some((p) => /\/(groom|say)$/.test(p.path))) fail("вход в прежний чат после ошибки отправил запрос запуска или реплику");
  const retry = deepBtn(visibleSlot(), "Повторить разбор");
  if (!retry) fail("после ошибки нет явного повтора без новой мысли");
  retry.handlers.click({stopPropagation:()=>{}});

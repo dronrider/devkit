@@ -317,16 +317,16 @@ func draftGroomed(projPath, id string, text []byte) bool {
 	return total > undecided
 }
 
-// draftBusy называет живую сессию разбора этой записи, а пустая строка значит,
-// что запись свободна. Спрашивают его двое: подъём разбора (второй грумер
-// поверх работающего) и правка текста (пока разбор идёт, запись принадлежит
-// агенту, решение 3 LLD DK-354). Разговор про запись работой не считается: у
-// него та же tmux-сессия, а файла он не трогает.
 func draftGroomError(projPath, id string, text []byte) bool {
 	state, err := draftproposal.Load(projPath, id, text)
 	return err == nil && state.Analysis == "error"
 }
 
+// draftBusy называет живую сессию разбора этой записи, а пустая строка значит,
+// что запись свободна. Спрашивают его двое: подъём разбора (второй грумер
+// поверх работающего) и правка текста (пока разбор идёт, запись принадлежит
+// агенту, решение 3 LLD DK-354). Разговор про запись работой не считается: у
+// него та же tmux-сессия, а файла он не трогает.
 func (s *server) draftBusy(projPath, id string) string {
 	talk := s.tmuxTalk(projPath)
 	for _, name := range tmuxSessions() {

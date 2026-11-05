@@ -9906,10 +9906,8 @@ async function chatState(project, addr, board, works) {
       "/tasks/" + encodeURIComponent(st.task) + "/chat");
     if (m.ok && m.body && m.body.id) {
       st.main = m.body;
-    } else if (!m.ok) {
-      // Адрес записи накопителя в журнале назначений не стоит, и ручка даёт
-      // отказ: тогда панель сама читает запись, чтобы композер мог поднять
-      // разбор её неразобранных мыслей прямо из чата (DK-1564).
+    }
+    if (!m.ok || !boardRow(board, st.task)) {
       const d = await api("/api/projects/" + encodeURIComponent(project) +
         "/drafts/" + encodeURIComponent(st.task));
       if (d.ok && d.body) {

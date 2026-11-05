@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dronrider/devkit/internal/draftproposal"
+	"github.com/dronrider/devkit/internal/mainchat"
 )
 
 // Мысли записи и признак прошедшего разбора едут с текстом записи (DK-1564):
@@ -241,6 +242,15 @@ func TestDraftFailedGroomStatusAndRetry(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if err := mainchat.Put(e.home, mainchat.Bind{Record: "XR-005", Project: "demo", Chat: "failed-carrier", Source: mainchat.ByWork}); err != nil {
+				t.Fatal(err)
+			}
+			primary := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-005/chat", "")
+			var binding map[string]any
+			json.Unmarshal([]byte(body(t, primary)), &binding)
+			if primary.StatusCode != http.StatusOK || binding["chat"] != "failed-carrier" {
+				t.Fatalf("назначение черновика: %d %v", primary.StatusCode, binding)
 			}
 			resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
 			var detail map[string]any

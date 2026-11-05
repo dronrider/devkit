@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Показ уровня</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:oklch(0.98 0.004 85); --fg:oklch(0.25 0.012 85); --mut:oklch(0.52 0.014 85);
+  --line:oklch(0.89 0.007 85);
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+    --line:oklch(0.28 0.01 85);
+  }
+}
+body{background:var(--bg);color:var(--fg);font:400 14px/1.6 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:880px;margin:0 auto;padding-block:40px 56px}
+h1{font:600 26px/1.25 var(--sans);margin:6px 0 10px;text-wrap:balance}
+.eyebrow{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.lead{color:var(--mut);max-width:64ch;margin:0}
+section{margin-top:36px}
+h2{font:600 17px var(--sans);margin:0 0 4px}
+.snote{color:var(--mut);font-size:13px;margin:0 0 14px;max-width:70ch}
+.cap{color:var(--mut);font-size:12.5px;margin:10px 0 0;max-width:70ch}
+
+/* Палитра продукта, копия :root из style.css панели. */
+.dpanel{
+  --bg0:oklch(0.155 0.007 80); --bg1:oklch(0.19 0.008 80); --bg2:oklch(0.225 0.009 80);
+  --bg3:oklch(0.265 0.01 80); --line:oklch(0.29 0.01 80); --line2:oklch(0.36 0.012 80);
+  --tx:oklch(0.93 0.006 85); --tx2:oklch(0.72 0.012 85); --tx3:oklch(0.54 0.012 85);
+  --acc:oklch(0.8 0.13 80); --acc-ink:oklch(0.22 0.04 80); --block:oklch(0.66 0.19 28);
+  --psans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --pmono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  background:var(--bg0);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  color-scheme:dark;
+}
+.chead{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;
+  background:var(--bg1);border-bottom:1px solid var(--line);
+  font:500 11px var(--pmono);letter-spacing:.05em;color:var(--tx3)}
+.cbody{padding:14px 16px}
+
+/* Строка ввода чата: поле модели одной строкой, мини-полоска в самом поле. */
+.cbox{margin-top:12px;background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
+.cbox.open,.cbox:focus-within{border-color:var(--acc)}
+.cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);
+  font:400 13.5px/1.5 var(--psans);resize:none;outline:none;padding:0}
+.cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;min-width:0}
+.cmodel{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
+.cdsel{flex:none;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);font:500 12px var(--psans);padding:0 6px;cursor:pointer;outline:none;color-scheme:dark}
+/* Мини-полоска глубины в поле подписки: ручной уровень виден без открытия
+   меню, поле остаётся одной строкой. */
+.mbar{flex:none;display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;
+  border-radius:6px;font:500 10px var(--pmono);color:var(--acc);
+  background:color-mix(in oklab,var(--acc) 12%,transparent)}
+.mbar-dot{width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
+.mbar[hidden]{display:none}
+.csend{height:36px;padding:0 16px;border-radius:9px;font:600 13px var(--psans);background:var(--acc);
+  color:var(--acc-ink);border:0;cursor:pointer;white-space:nowrap}
+.mwhy{font:400 11.5px/1.5 var(--psans);color:var(--tx3);margin:9px 0 0}
+
+/* Экран задачи: чипы под заголовком, глубина вторым чипом за приоритетом. */
+.tchips{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:6px;font:500 10.5px var(--psans);background:var(--bg3);color:var(--tx2);white-space:nowrap}
+.tchips .chip{height:26px;padding:0 10px}
+.dashed{border-bottom:1px dashed var(--line2);cursor:default}
+.c-p1{background:color-mix(in oklab,var(--block) 20%,transparent);color:var(--block);font-weight:600}
+/* Чип глубины рядом с приоритетом: моно, акцент. Без записи уровня чипа нет. */
+.chip.lvl{font:500 10.5px var(--pmono);color:var(--acc);
+  background:color-mix(in oklab,var(--acc) 14%,transparent)}
+.trow{display:flex;align-items:center;gap:8px;min-height:26px;padding:0 10px}
+.tdot{width:8px;height:8px;border-radius:50%;background:var(--acc);flex:none}
+.tname{font:500 13px var(--psans);color:var(--tx)}
+
+/* Правила для согласования. */
+.rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.rules li{position:relative;padding-left:20px;color:var(--fg);max-width:74ch}
+.rules li::before{content:"-";position:absolute;left:0;color:var(--mut)}
+.rmono{font:500 12px var(--pmono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">макет для согласования</p>
+  <h1>Показ уровня</h1>
+  <p class="lead">Ручной выбор глубины виден в двух местах до запуска: мини-полоска в поле подписки чата и чип глубины рядом с приоритетом на экране задачи. Уровень чипа приходит из записи этапа, а не с доски.</p>
+
+  <section>
+    <h2>Мини-полоска в поле подписки чата</h2>
+    <p class="snote">Выбор глубины в меню отражается мини-полоской прямо в поле модели: уровень виден без открытия меню, поле остаётся одной строкой. Без ручного выбора полоски нет.</p>
+    <div class="dpanel">
+      <div class="chead">панель чата: ручной выбор сделан</div>
+      <div class="cbody">
+        <div class="cbox open">
+          <textarea rows="2" placeholder="Написать агенту..." aria-label="Реплика в чат"></textarea>
+          <div class="crow">
+            <div class="cmodel">
+              <select class="cdsel" aria-label="Модель агента">
+                <option selected>opus (claude-code)</option>
+                <option>glm-5.3 (glm-code)</option>
+              </select>
+              <span class="mbar"><i class="mbar-dot"></i>high</span>
+            </div>
+            <button class="csend">Отправить</button>
+          </div>
+        </div>
+        <p class="mwhy">Мини-полоска называет уровень следующего запуска и стоит в одной строке с полем модели.</p>
+      </div>
+    </div>
+
+    <div class="dpanel" style="margin-top:14px">
+      <div class="chead">панель чата: ручного выбора нет</div>
+      <div class="cbody">
+        <div class="cbox open">
+          <textarea rows="2" placeholder="Написать агенту..." aria-label="Реплика в чат"></textarea>
+          <div class="crow">
+            <div class="cmodel">
+              <select class="cdsel" aria-label="Модель агента">
+                <option selected>opus (claude-code)</option>
+                <option>glm-5.3 (glm-code)</option>
+              </select>
+              <span class="mbar" hidden><i class="mbar-dot"></i></span>
+            </div>
+            <button class="csend">Отправить</button>
+          </div>
+        </div>
+        <p class="mwhy">Следующий запуск едет вердиктом, показывать нечего, и полоски нет.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Чип глубины на экране задачи</h2>
+    <p class="snote">Чип стоит вторым, сразу за приоритетом. Уровень берётся из записи этапа: текущей или последней работы строки, ручной выбор или вердикт pick. Строка без записи уровня чип не рисует.</p>
+    <div class="dpanel">
+      <div class="chead">экран задачи: строка с записью этапа</div>
+      <div class="cbody">
+        <div class="tchips" style="margin-top:0">
+          <span class="chip dashed c-p1">P1</span>
+          <span class="chip lvl">high</span>
+        </div>
+        <p class="mwhy">Приоритет P1 и глубина high рядом: человек ищет в одном месте, чем сейчас живёт строка.</p>
+      </div>
+    </div>
+
+    <div class="dpanel" style="margin-top:14px">
+      <div class="chead">экран задачи: строка без записи этапа</div>
+      <div class="cbody">
+        <div class="tchips" style="margin-top:0">
+          <span class="chip dashed c-p1">P1</span>
+        </div>
+        <p class="mwhy">Записи уровня нет, и чипа нет: молчание честнее пустой ступени.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Правила для согласования</h2>
+    <ul class="rules">
+      <li>Мини-полоска в поле подписки чата показывает ручной выбор и живёт один запуск, как сам выбор.</li>
+      <li>Чип глубины на экране задачи приходит из записи этапа, а не с доски: у строки без записи уровня чипа нет.</li>
+      <li>Оба места говорят одно и то же слово уровня, латиницей флага <span class="rmono">agentctl</span>.</li>
+    </ul>
+  </section>
+</div>
+</body>
+</html>

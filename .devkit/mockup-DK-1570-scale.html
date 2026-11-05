@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Шкала глубины по семьям</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:oklch(0.98 0.004 85); --fg:oklch(0.25 0.012 85); --mut:oklch(0.52 0.014 85);
+  --line:oklch(0.89 0.007 85);
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+    --line:oklch(0.28 0.01 85);
+  }
+}
+body{background:var(--bg);color:var(--fg);font:400 14px/1.6 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:880px;margin:0 auto;padding-block:40px 56px}
+h1{font:600 26px/1.25 var(--sans);margin:6px 0 10px;text-wrap:balance}
+.eyebrow{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.lead{color:var(--mut);max-width:64ch;margin:0}
+section{margin-top:36px}
+h2{font:600 17px var(--sans);margin:0 0 4px}
+.snote{color:var(--mut);font-size:13px;margin:0 0 14px;max-width:70ch}
+.cap{color:var(--mut);font-size:12.5px;margin:10px 0 0;max-width:70ch}
+
+/* Палитра продукта, копия :root из style.css панели. */
+.dpanel{
+  --bg0:oklch(0.155 0.007 80); --bg1:oklch(0.19 0.008 80); --bg2:oklch(0.225 0.009 80);
+  --bg3:oklch(0.265 0.01 80); --line:oklch(0.29 0.01 80); --line2:oklch(0.36 0.012 80);
+  --tx:oklch(0.93 0.006 85); --tx2:oklch(0.72 0.012 85); --tx3:oklch(0.54 0.012 85);
+  --acc:oklch(0.8 0.13 80); --acc-ink:oklch(0.22 0.04 80);
+  --psans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --pmono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  background:var(--bg0);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  color-scheme:dark;
+}
+.chead{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;
+  background:var(--bg1);border-bottom:1px solid var(--line);
+  font:500 11px var(--pmono);letter-spacing:.05em;color:var(--tx3)}
+.cbody{padding:14px 16px}
+
+/* Справочная таблица ступеней. */
+.fgrid{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.frow{display:flex;gap:14px;align-items:baseline;padding:9px 14px;border-top:1px solid var(--line)}
+.frow:first-child{border-top:0}
+.frow:nth-child(odd){background:color-mix(in oklab,var(--fg) 3%,transparent)}
+.fname{font:500 13px var(--mono);min-width:130px}
+.fsteps{flex:1;min-width:0}
+.fmap{font:400 11.5px var(--mono);color:var(--mut);white-space:nowrap}
+
+/* Шкала глубины: набор ступеней задаётся переменными --n и --step, подписи и
+   точки встают по ним. Центр точки это центр через translateX(-50%), рамка
+   входит в размер, а не прибавляется. Дорожка кончается на последней ступени. */
+.eff{display:block;padding:2px 11px 4px;--n:5;--step:25%;user-select:none}
+.effmarks{position:relative;height:15px}
+.effmark{position:absolute;left:calc(var(--i)*var(--step));transform:translateX(-50%);
+  border:0;background:none;padding:0 2px;line-height:15px;cursor:pointer;border-radius:5px;
+  font:500 10px var(--pmono);color:var(--tx3);white-space:nowrap;box-sizing:border-box}
+.effmark:hover{color:var(--tx2);background:var(--bg3)}
+.effmark.on{color:var(--tx);background:var(--bg3)}
+.effmark:focus-visible{outline:1px solid var(--acc);outline-offset:1px}
+.efftrack{position:relative;height:13px;margin-top:1px;cursor:pointer}
+.effrail{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--bg3);
+  width:calc((var(--n) - 1)*var(--step))}
+.efffill{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--acc);
+  opacity:.85;width:calc(var(--sel)*var(--step))}
+.effdot{position:absolute;top:5.5px;width:7px;height:7px;margin-top:-3.5px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*var(--step));
+  transform:translateX(-50%);box-sizing:border-box}
+.effdot.verd{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in oklab,var(--acc) 30%,transparent)}
+.effthumb{position:absolute;top:5.5px;width:13px;height:13px;margin-top:-6.5px;border-radius:50%;
+  background:var(--acc);border:2px solid var(--bg0);box-shadow:0 0 0 1px var(--line2);
+  left:calc(var(--sel)*var(--step));transform:translateX(-50%);box-sizing:border-box;
+  transition:left .15s ease}
+@media (prefers-reduced-motion: reduce){.effthumb{transition:none}}
+
+/* Строки моделей в меню. */
+.menu{margin-top:10px;width:min(360px,100%);background:var(--bg2);border:1px solid var(--line2);
+  border-radius:11px;box-shadow:0 16px 40px rgba(0,0,0,.5);padding:8px 10px}
+.mlabel{font:500 10px var(--pmono);letter-spacing:.07em;text-transform:uppercase;color:var(--tx3);margin:0 0 3px}
+.hrow{display:flex;align-items:center;gap:7px;padding:4px 7px;margin:0 -7px;border-radius:7px;cursor:pointer}
+.hrow.on,.hrow:hover{background:var(--bg3)}
+.hname{font:500 12.5px var(--psans);color:var(--tx)}
+.hchip{font:500 10px var(--psans);background:var(--bg3);color:var(--tx2);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.mwhy{font:400 11.5px/1.5 var(--psans);color:var(--tx3);margin:9px 0 0}
+
+/* Правила для согласования. */
+.rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.rules li{position:relative;padding-left:20px;color:var(--fg);max-width:74ch}
+.rules li::before{content:"-";position:absolute;left:0;color:var(--mut)}
+.rmono{font:500 12px var(--pmono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">макет для согласования</p>
+  <h1>Шкала глубины по семьям</h1>
+  <p class="lead">У каждой семьи моделей свои ступени глубины. Шкала в меню запуска и в чате показывает ступени выбранной семьи, кольцо на точке это вердикт <code style="font:500 12.5px var(--mono)">agentctl pick</code>.</p>
+
+  <section>
+    <h2>Ступени у семей</h2>
+    <p class="snote">Наборы держат профили харнесов ключами effort_* по ярусам. У GLM и DeepSeek ступеней три, у anthropic-строк четыре, у routerai набор зависит от яруса.</p>
+    <div class="fgrid">
+      <div class="frow"><span class="fname">claude-code, mimo, codex</span><span class="fsteps">low, medium, high, xhigh</span><span class="fmap">все ярусы</span></div>
+      <div class="frow"><span class="fname">glm-code, opencode-go</span><span class="fsteps">low, high, max</span><span class="fmap">все ярусы</span></div>
+      <div class="frow"><span class="fname">routerai mini/base</span><span class="fsteps">low, high, max</span><span class="fmap">нижние ярусы</span></div>
+      <div class="frow"><span class="fname">routerai pro/max</span><span class="fsteps">low, medium, high, xhigh</span><span class="fmap">верхние ярусы</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Шкала anthropic-строк</h2>
+    <p class="snote">Четыре ступени. Кольцо на точке high, вердикт попал в набор. Дорожка кончается на последней ступени xhigh.</p>
+    <div class="dpanel">
+      <div class="chead">меню модели и глубины: claude-code</div>
+      <div class="cbody">
+        <div class="menu" style="margin-top:0">
+          <p class="mlabel">Модель</p>
+          <div class="hrow on"><span class="hname">opus</span><span class="hchip">pro, claude-code</span></div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" style="--n:4;--step:33.3333%;--sel:2" data-verdict="high">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="medium">medium</button>
+              <button class="effmark" style="--i:2" data-level="high">high</button>
+              <button class="effmark" style="--i:3" data-level="xhigh">xhigh</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot" style="--i:1"></span><span class="effdot verd" style="--i:2"></span><span class="effdot" style="--i:3"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy">Кольцо на точке шкалы показывает вердикт pick: ползунок стоит на ней, пока руку не приложили.</p>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Ступени у anthropic-строк те же четыре, что прежде без max: max выдаётся только рукой и в набор этой семьи не входит.</p>
+  </section>
+
+  <section>
+    <h2>Шкала GLM и DeepSeek</h2>
+    <p class="snote">Три ступени. Вердикт medium в набор не попал, кольцо и ползунок встают на ближайшую ступень сверху, high.</p>
+    <div class="dpanel">
+      <div class="chead">меню модели и глубины: glm-code</div>
+      <div class="cbody">
+        <div class="menu" style="margin-top:0">
+          <p class="mlabel">Модель</p>
+          <div class="hrow on"><span class="hname">glm-5.3</span><span class="hchip">pro, glm-code</span></div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" style="--n:3;--step:50%;--sel:1" data-verdict="medium">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="high">high</button>
+              <button class="effmark" style="--i:2" data-level="max">max</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot verd" style="--i:1"></span><span class="effdot" style="--i:2"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy">Вердикт вне набора поднимается до ближайшей ступени сверху: medium встаёт на high, ступень medium в семье отсутствует.</p>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Дорожка из трёх точек, крайние это low и max, середина high. Пяти подписей больше нет: шкала называет только ступени семьи.</p>
+  </section>
+
+  <section>
+    <h2>Шкала routerai по ярусам</h2>
+    <p class="snote">Один харнес, два набора: нижние ярусы несут три ступени, верхние четыре. Шкала перестраивается по выбранной строке меню.</p>
+    <div class="dpanel">
+      <div class="chead">меню модели и глубины: routerai</div>
+      <div class="cbody">
+        <div class="menu" style="margin-top:0">
+          <p class="mlabel">Модель</p>
+          <div class="hrow" data-tier="mini"><span class="hname">router-mini</span><span class="hchip">mini, routerai</span></div>
+          <div class="hrow" data-tier="base"><span class="hname">router-base</span><span class="hchip">base, routerai</span></div>
+          <div class="hrow on" data-tier="pro"><span class="hname">router-pro</span><span class="hchip">pro, routerai</span></div>
+          <div class="hrow" data-tier="max"><span class="hname">router-max</span><span class="hchip">max, routerai</span></div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" style="--n:4;--step:33.3333%;--sel:1" data-verdict="high">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="medium">medium</button>
+              <button class="effmark" style="--i:2" data-level="high">high</button>
+              <button class="effmark" style="--i:3" data-level="xhigh">xhigh</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot" style="--i:1"></span><span class="effdot verd" style="--i:2"></span><span class="effdot" style="--i:3"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy">Строка pro выбрана, и шкала несёт четыре ступени верхних ярусов. Выбор mini или base перестроит шкалу в три ступени low, high, max.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Правила для согласования</h2>
+    <ul class="rules">
+      <li>Набор ступеней шкалы это ступени выбранной семьи моделей, у каждой семьи свой.</li>
+      <li>Дорожка кончается на последней ступени набора, пустого хвоста до max нет.</li>
+      <li>Кольцо на точке шкалы это вердикт <span class="rmono">agentctl pick</span>, бегунок стоит на нём без ручного выбора.</li>
+      <li>Вердикт вне набора ступеней поднимается до ближайшей сверху по общему порядку low, medium, high, xhigh, max.</li>
+      <li>Подписи ступеней держат латиницу флага, а центр точки и бегунка совпадает по линии: рамка входит в размер, а не прибавляется к нему.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function(){
+  var ORDER=["low","medium","high","xhigh","max"];
+  function steps(root){
+    var n=parseFloat(getComputedStyle(root).getPropertyValue("--n"))||5;
+    var marks=root.querySelectorAll(".effmark");
+    var list=Array.prototype.map.call(marks,function(b){return b.dataset.level});
+    function indexOf(lv){
+      var i=list.indexOf(lv);
+      if(i>=0)return i;
+      // Вердикт вне набора: ближайшая ступень сверху по общему порядку.
+      var from=ORDER.indexOf(lv);
+      for(var k=from+1;k<ORDER.length;k++){var j=list.indexOf(ORDER[k]);if(j>=0)return j;}
+      return -1;
+    }
+    function set(lv){
+      var i=indexOf(lv);
+      if(i<0)return;
+      root.style.setProperty("--sel",i);
+      marks.forEach(function(b){b.classList.toggle("on",b.dataset.level===lv)});
+    }
+    marks.forEach(function(b){b.addEventListener("click",function(){set(b.dataset.level)})});
+    var track=root.querySelector(".efftrack");
+    if(track)track.addEventListener("click",function(e){
+      var r=track.getBoundingClientRect();
+      var i=Math.round((e.clientX-r.left)/r.width*(list.length-1));
+      set(list[Math.max(0,Math.min(list.length-1,i))]);
+    });
+    set(root.dataset.verdict||list[0]);
+  }
+  document.querySelectorAll(".eff").forEach(steps);
+})();
+</script>
+</body>
+</html>

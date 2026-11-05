@@ -27,7 +27,7 @@ func guardDraft(root, id string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%s: не удалось проверить метаданные материала", id)
 	}
-	if h.Lock == "locked" {
+	if RequiresLocal(h) {
 		return false, fmt.Errorf("%s: ждёт локальную модель", id)
 	}
 	return true, nil
@@ -94,7 +94,11 @@ func GuardRecordLocked(root, id string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if protected {
+	h, parseErr := Parse(data)
+	if parseErr != nil {
+		return fmt.Errorf("%s: не удалось проверить метаданные материала", id)
+	}
+	if protected || RequiresLocal(h) {
 		return fmt.Errorf("%s: ждёт локальную модель", id)
 	}
 

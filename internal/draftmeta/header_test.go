@@ -38,3 +38,11 @@ func TestReadReportsPath(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+func TestMalformedSourceIsNotDefaultThought(t *testing.T) {
+	for _, value := range []string{"источник mail", "источник=meeting", "источник-extra: mail", "источник:", "источник: unknown", "источник: mail\nисточник: thought"} {
+		if _, err := Parse([]byte("# запись\n" + value + "\n\n## Текст\ntripwire")); err == nil {
+			t.Fatalf("unsafe source accepted: %s", value)
+		}
+	}
+}

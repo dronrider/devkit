@@ -74,13 +74,15 @@ var tiers = map[string]bool{"mini": true, "base": true, "pro": true, "max": true
 // секции файла), по нему назначение едет суффиксом строки; имя, канал и
 // модель нужны людям и срезу профиля.
 type Participant struct {
-	Handle  string
-	Kind    string // human или agent
-	Name    string
-	Model   string // модель агентского участника: по её меткам срез профиля
-	Tier    string // ярус агентского участника, вердикт сужается до него
-	Roles   []string
-	Channel string // канал человека для напоминаний
+	Handle   string
+	Kind     string // human или agent
+	Name     string
+	Model    string // модель агентского участника: по её меткам срез профиля
+	Route    string // local или cloud для разового разбора записи
+	Endpoint string // OpenAI-compatible base URL
+	Tier     string // ярус агентского участника, вердикт сужается до него
+	Roles    []string
+	Channel  string // канал человека для напоминаний
 }
 
 // Human и Agent это значения поля kind.
@@ -103,6 +105,11 @@ func (p Participant) HasRole(role string) bool {
 // обязателен агенту и запрещён человеку. Ошибка называет участника и ключ,
 // чтобы править файл было можно по самому сообщению.
 func (p Participant) valid() error {
+	if p.Route != "" || p.Endpoint != "" {
+		if p.Kind != Agent || (p.Route != "local" && p.Route != "cloud") || p.Endpoint == "" || p.Model == "" {
+			return fmt.Errorf("%s: маршрут требует agent, model, route local/cloud и endpoint", p.Handle)
+		}
+	}
 	switch p.Kind {
 	case Human:
 		if p.Tier != "" {
@@ -164,6 +171,12 @@ func Load(home string) ([]Participant, error) {
 		if v, ok := t.Get("model"); ok {
 			p.Model = v.Str
 		}
+		if v, ok := t.Get("route"); ok {
+			p.Route = v.Str
+		}
+		if v, ok := t.Get("endpoint"); ok {
+			p.Endpoint = v.Str
+		}
 		if v, ok := t.Get("tier"); ok {
 			p.Tier = v.Str
 		}
@@ -206,6 +219,9 @@ func Render(list []Participant) string {
 		}
 		if p.Model != "" {
 			fmt.Fprintf(&b, "model = %s\n", subtoml.Quote(p.Model))
+		}
+		if p.Route != "" {
+			fmt.Fprintf(&b, "route = %s\nendpoint = %s\n", subtoml.Quote(p.Route), subtoml.Quote(p.Endpoint))
 		}
 		if p.Tier != "" {
 			fmt.Fprintf(&b, "tier = %s\n", subtoml.Quote(p.Tier))

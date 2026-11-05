@@ -30,6 +30,9 @@ func Parse(data []byte) (Header, error) {
 		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
+			if strings.HasPrefix(line, "источник") {
+				return Header{}, fmt.Errorf("неверная строка источника")
+			}
 			if strings.HasPrefix(line, "замок") {
 				return Header{}, fmt.Errorf("неверная строка замка %q", line)
 			}
@@ -43,6 +46,9 @@ func Parse(data []byte) (Header, error) {
 			continue
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if strings.HasPrefix(key, "источник") && key != "источник" {
+			return Header{}, fmt.Errorf("неверная строка источника")
+		}
 		if strings.HasPrefix(key, "замок") && key != "замок" {
 			return Header{}, fmt.Errorf("неверная строка замка %q", line)
 		}
@@ -101,4 +107,17 @@ func Read(path string) (Header, error) {
 		return Header{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return h, nil
+}
+
+// RequiresLocal keeps private sources local even when a lock was removed.
+func RequiresLocal(h Header) bool {
+	if h.Lock == "locked" {
+		return true
+	}
+	switch h.Source {
+	case "", "thought", "link":
+		return false
+	default:
+		return true
+	}
 }

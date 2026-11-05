@@ -140,3 +140,32 @@ func TestGuardErrorDoesNotExposeMalformedPrivateValue(t *testing.T) {
 		t.Fatalf("unsafe error: %v", err)
 	}
 }
+
+func TestPrivateSourcesStayLocalWhenUnlocked(t *testing.T) {
+	for _, source := range []string{"meeting", "mail", "messenger", "unknown"} {
+		t.Run(source, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "docs", "tasks", "drafts")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			data := []byte("# private\nисточник: " + source + "\nзамок: unlocked\n\n## Текст\ntripwire")
+			path := filepath.Join(dir, "XR-1.md")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := GuardRecord(root, "XR-1"); err == nil {
+				t.Fatal("private draft allowed cloud")
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-1.md"), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := GuardRecord(root, "XR-1"); err == nil {
+				t.Fatal("private task header allowed cloud")
+			}
+		})
+	}
+}

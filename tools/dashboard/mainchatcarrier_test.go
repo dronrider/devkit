@@ -85,3 +85,42 @@ func TestChatMainRowFollowsResumedCarrierSID(t *testing.T) {
 		t.Fatalf("resume изменил историю: %v", err)
 	}
 }
+
+// Передача в одну секунду (DK-1606). Обе полные строки запуска легли одной
+// секундой в одно имя окна, и спор имени решал порядок обхода карты: при
+// выигрыше прежнего носителя свежий сворачивался в past, сегмент записи его
+// не находил, и основная строка то стояла в общем списке, то пропадала,
+// вместо неё читался физический разговор. Свёртка имён решает спор порядком
+// строк журнала, как геттер после DK-1601, и повторные чтения без мутаций
+// дают одну и ту же основную строку.
+func TestChatListSameSecondHandoverKeepsMainRow(t *testing.T) {
+	e, c := chatEnv(t)
+	stamp := time.Date(2026, 11, 5, 5, 35, 44, 0, time.UTC)
+	const key = "tmux-task-XR-4"
+	writeMainChat(t, e.home, mainchat.Line(stamp, mainchat.Bind{Record: "XR-4", Chat: key,
+		Project: "demo", Source: mainchat.ByMove}))
+	old := writeSession(t, e.home, e.proj, "", "dd834458-old", plainTalk, stamp)
+	fresh := writeSession(t, e.home, e.proj, "", "42bc6b8e-new", plainTalk, stamp.Add(time.Second))
+	birth := func(sid, transcript string) string {
+		return sessions.Line(stamp, sid, sessionBind{Task: "XR-4", Source: bindOrder,
+			Project: "demo", Tmux: "task-XR-4", Transcript: transcript}, "startup")
+	}
+	writeBindsAt(t, e.home, birth("dd834458-old", old)+birth("42bc6b8e-new", fresh))
+	for n := 0; n < 64; n++ {
+		rows := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+		mainRows, raw := 0, 0
+		for _, row := range rows {
+			switch rowStr(row, "id") {
+			case "XR-4":
+				if rowBool(row, "main") {
+					mainRows++
+				}
+			case "dd834458-old", "42bc6b8e-new":
+				raw++
+			}
+		}
+		if mainRows != 1 || raw != 0 {
+			t.Fatalf("чтение %d: основная строка пропала или носитель вернулся сырой строкой: %v", n, rows)
+		}
+	}
+}

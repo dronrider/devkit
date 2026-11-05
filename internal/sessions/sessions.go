@@ -638,6 +638,27 @@ func TmuxOwner(recs map[string][]Bind, name string) string {
 	return TmuxOwnerSince(recs, name, "")
 }
 
+// TmuxClaims распределяет имена окон по разговорам тем же правилом, каким
+// хозяина одного имени выбирает TmuxOwner: имя достаётся разговору свежей
+// записи, а при равном времени разговору, чья запись встала в журнале позже.
+// Строгое сравнение времени на равных секундах решал порядок обхода карты, и
+// сборка списка чатов металась между жильцами одного окна (DK-1606). Вторая
+// карта отдаёт время выигравшей записи: порог подъёма окна сверяется с ним.
+func TmuxClaims(recs map[string][]Bind) (claim, when map[string]string) {
+	claim, when, order := map[string]string{}, map[string]string{}, map[string]int{}
+	for sid, rs := range recs {
+		for _, r := range rs {
+			if r.Tmux == "" {
+				continue
+			}
+			if w, ok := when[r.Tmux]; !ok || r.Time > w || (r.Time == w && r.lineOrder > order[r.Tmux]) {
+				claim[r.Tmux], when[r.Tmux], order[r.Tmux] = sid, r.Time, r.lineOrder
+			}
+		}
+	}
+	return claim, when
+}
+
 // TmuxOwnerSince это тот же выбор хозяина, но записи старше since (метка
 // реестра, строка вида 2006-01-02T15:04:05) в счёт не идут. Порог нужен окну,
 // поднятому заново: между командой подъёма и записью хука старта свежайшая
@@ -649,14 +670,14 @@ func TmuxOwnerSince(recs map[string][]Bind, name, since string) string {
 	if name == "" {
 		return ""
 	}
-	best, at := "", ""
+	best, at, order := "", "", 0
 	for sid, rs := range recs {
 		for _, r := range rs {
 			if r.Tmux != name || (since != "" && r.Time < since) {
 				continue
 			}
-			if best == "" || r.Time > at {
-				best, at = sid, r.Time
+			if best == "" || r.Time > at || (r.Time == at && r.lineOrder > order) {
+				best, at, order = sid, r.Time, r.lineOrder
 			}
 		}
 	}

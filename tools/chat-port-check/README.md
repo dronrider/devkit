@@ -1,6 +1,6 @@
 # Сценарий DK-1624: перенос чата Claude -> Codex -> Claude
 
-Одноразовый сценарий проверки задачи [DK-1624](../DK-1624.md). Он прогоняет
+Одноразовый сценарий проверки задачи [DK-1624](../../docs/tasks/DK-1624.md). Он прогоняет
 живой разговор по цепочке двух клиентов и складывает исходы в отчёт. Тесты
 гоняют ту же цепочку на фикстурах вместо клиентов, живой прогон идёт на
 рабочей машине диспетчера с действующими подписками.
@@ -8,7 +8,7 @@
 ## Живой прогон
 
 ```bash
-python3 docs/tasks/DK-1624/chat-port-check.py \
+python3 tools/chat-port-check/chat-port-check.py \
   --workdir /tmp/dk1624-work \
   --out /tmp/dk1624-run1 \
   --claude-cmd "<обёртка подписки Claude>" \
@@ -101,7 +101,7 @@ RESUME_PROBE_READY и создаёт рядом с seed-журналом нов�
 `<UUID>.jsonl` (эксклюзивно, существующий файл не заменяется):
 
 ```bash
-python3 docs/tasks/DK-1624/native_projection.py \
+python3 tools/chat-port-check/native_projection.py \
   --seed "<путь к seed-журналу>" \
   --history native_history_in.jsonl \
   --seed-uuid "<UUID seed-сессии>" \
@@ -134,7 +134,7 @@ Codex) и tool_result с признаком is_error сохраняются ка
 ## Тесты
 
 ```bash
-devkitctl test docs/tasks/DK-1624
+devkitctl test tools/chat-port-check
 ```
 
 Фикстуры `fake_claude_client.py` и `fake_codex_server.py` изображают

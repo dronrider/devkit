@@ -1,4 +1,4 @@
-<!-- devkit:generated map body=ac83a00b2126dc54 -->
+<!-- devkit:generated map body=af1cc4a26bfd41b3 -->
 
 # Карта проекта
 
@@ -12,6 +12,7 @@
 hooks: проверки текстов, уведомления и фоновая работа по расписанию сессии
 internal: общий go-модуль каркаса утилит
 tools/agentctl: выбор исполнителя под задачу
+tools/chat-port-check: DK-1624: перенос чата Claude -> Codex -> Claude
 tools/cmdout: длинный вывод команд файлом, агенту выжимка
 tools/dashboard: веб-дашборд агентской разработки
 tools/devkitctl: обвязка проекта с поддержкой кеша длинных потоков

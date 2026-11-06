@@ -352,6 +352,9 @@ func writeShownProposal(t *testing.T, project, rawCards, mode string) {
 	var active []map[string]any
 	for _, card := range cards {
 		if card["status"] == nil || card["status"] == "" {
+			if mode != "тело в вопросе" {
+				delete(card, "text")
+			}
 			active = append(active, card)
 		}
 	}
@@ -366,7 +369,18 @@ func writeShownProposal(t *testing.T, project, rawCards, mode string) {
 	if mode == "другая редакция" && len(active) > 0 {
 		active[0]["revision"] = 99
 	}
-	question := map[string]any{"questions": []any{map[string]any{"text": "выбор", "prepared": map[string]any{"version": 1, "tree": tree, "anchor": "OB-069", "sources": []any{map[string]any{"source": "OB-069", "basis": basis, "proposals": active}}}}}}
+	revision := 1
+	if mode == "устаревшая редакция разбора" {
+		revision = 2
+	}
+	options := []any{map[string]any{"label": "Подтвердить разбор OB-069"}}
+	if mode == "отдельное согласие на задачу" {
+		options = []any{map[string]any{"label": "Подтвердить p1"}}
+	}
+	if mode == "лишнее согласие" {
+		options = append(options, map[string]any{"label": "Подтвердить p2"})
+	}
+	question := map[string]any{"questions": []any{map[string]any{"text": "выбор", "options": options, "prepared": map[string]any{"version": 1, "tree": tree, "anchor": "OB-069", "sources": []any{map[string]any{"source": "OB-069", "basis": basis, "revision": revision, "proposals": active}}}}}}
 	data, err := json.Marshal(question)
 	if err != nil {
 		t.Fatal(err)
@@ -380,6 +394,23 @@ func writeShownProposal(t *testing.T, project, rawCards, mode string) {
 	}
 }
 
+func fakePreparedScenarioView(t *testing.T, rawCards, mode string) string {
+	t.Helper()
+	var cards []map[string]any
+	if err := json.Unmarshal([]byte(rawCards), &cards); err != nil {
+		t.Fatal(err)
+	}
+	view := map[string]any{"basis": "basis-shown", "ready": mode != "разбор не готов", "state": map[string]any{"pack_revision": 1, "proposals": cards}}
+	if mode == "нет редакции разбора" {
+		view["state"].(map[string]any)["pack_revision"] = 0
+	}
+	data, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "#!/bin/sh\nprintf '%s\\n' '" + string(data) + "'\n"
+}
+
 func TestGroomProposalScenarioChecks(t *testing.T) {
 	devkit := devkitRoot(t)
 	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"69-groom-proposals"}, nil)
@@ -391,6 +422,13 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		pass                 bool
 	}{
 		{"порядок", "taskctl draft prepared save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"разбор не готов", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"нет редакции разбора", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"устаревшая редакция разбора", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"отдельное согласие на задачу", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"лишнее согласие", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"тело в вопросе", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
+		{"тела остались на форме", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, true},
 		{"ошибка до интервью", "taskctl draft prepared save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
 		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc [exit=1]\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
 		{"наоборот", "taskctl draft prepared save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
@@ -443,7 +481,7 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log.String()), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fake := "#!/bin/sh\nprintf '%s\\n' '{\"basis\":\"basis-shown\",\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			fake := fakePreparedScenarioView(t, tc.proposals, tc.name)
 			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -469,6 +507,13 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 		pass                                bool
 	}{
 		{"работает", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, true},
+		{"разбор не готов", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"нет редакции разбора", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"устаревшая редакция разбора", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"отдельное согласие на задачу", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"лишнее согласие", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"тело в вопросе", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, false},
+		{"тела остались на форме", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1,"text":"полное описание"}]`, true},
 		{"нет сессии", "empty", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"закрытый активный заголовок", "session", "active-title", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"закрытое архивное тело", "session", "archive-body", "safe", `[{"id":"p1","revision":1}]`, false},
@@ -566,7 +611,7 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(sessions, "rollout-test.jsonl"), append(entry, '\n'), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fake := "#!/bin/sh\nprintf '%s\\n' '{\"basis\":\"basis-shown\",\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			fake := fakePreparedScenarioView(t, tc.proposals, tc.name)
 			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
 				t.Fatal(err)
 			}

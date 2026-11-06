@@ -48,6 +48,8 @@ assert p.exists(), 'исходник исчез'
 s = p.read_text()
 assert 'выбор: сценарии/1' in s, 'интервью не сохранило сценарии'
 view = json.loads(subprocess.check_output(['taskctl', 'draft', 'prepared', 'OB-069'], text=True))
+assert view.get('ready') is True, 'разбор не готов к подтверждению'
+assert isinstance(view['state'].get('pack_revision'), int) and view['state']['pack_revision'] > 0, 'нет редакции всего разбора'
 cards = view['state']['proposals']
 assert len(cards) >= 2, 'нужны отдельные задачи для двух поправок'
 assert all(not c.get('status') for c in cards), 'задача применена без подтверждения'
@@ -85,15 +87,21 @@ assert ask.is_file(), 'вопрос согласования не опублик
 parts = [line for line in ask.read_text().splitlines() if line.startswith('{')]
 assert len(parts) == 1, 'неверный сохранённый вопрос'
 questions = json.loads(parts[0]).get('questions', [])
-shown = [q.get('prepared') for q in questions if q.get('prepared')]
+shown = [q for q in questions if q.get('prepared')]
 assert len(shown) == 1, 'нет отдельного вопроса согласования'
-question = shown[0]
+question = shown[0]['prepared']
 assert question.get('version') == 1 and question.get('tree') == os.path.realpath('.') and question.get('anchor') == 'OB-069', 'неверный адрес показанного вопроса'
 sources = question.get('sources', [])
 assert len(sources) == 1 and sources[0].get('source') == 'OB-069', 'источник вопроса не совпал'
+assert sources[0].get('revision') == view['state']['pack_revision'], 'редакция всего разбора не совпала'
+options = shown[0].get('options', [])
+assert len(options) == len(sources), 'согласие должно относиться к целому черновику'
+assert [o.get('label') for o in options] == ['Подтвердить разбор ' + source['source'] for source in sources], 'вопрос содержит отдельное согласие на задачу'
 assert view.get('basis') and sources[0].get('basis') == view['basis'], 'показанный basis не совпал'
 assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у задачи нет ID или редакции'
-assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные задачи или редакции не совпали'
+def stripped_text(cards):
+    return [{key: value for key, value in card.items() if key != 'text'} for card in cards]
+assert stripped_text(sources[0].get('proposals', [])) == stripped_text([c for c in view['state']['proposals'] if not c.get('status')]), 'показанные задачи или редакции не совпали'
 assert all(not c.get('text') for c in sources[0]['proposals']), 'тело задачи въехало в вопрос'
 
 assert interview is not None and interview < save, 'интервью не предшествует подготовке задач'

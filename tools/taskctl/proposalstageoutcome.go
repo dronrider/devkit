@@ -116,6 +116,16 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 					return result, err
 				}
 			}
+			if h.Lock == "locked" {
+				t, err := loadDraftText(draftPath(s.root, p.Target))
+				if err != nil {
+					return result, err
+				}
+				setDraftMeta(t, "", "", "locked")
+				if err = t.save(); err != nil {
+					return result, err
+				}
+			}
 			msg, err := cmdDraftDefer(s.root, p.Target, p.Reason, p.Until, false, CommitOpts{})
 			return stagedResult{ID: p.Target, Text: msg}, err
 		}

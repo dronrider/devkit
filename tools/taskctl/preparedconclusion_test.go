@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
@@ -292,5 +293,78 @@ func TestConclusionStageErrorHasOneID(t *testing.T) {
 	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{{ID: "bad", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "mixed", Barrier: "неизвестный"}}}
 	if err = validatePreparedBundle(root, view.ID, record, state); err == nil || strings.Count(err.Error(), "bad:") != 1 {
 		t.Fatalf("идентификатор ошибки повторился: %v", err)
+	}
+}
+
+func TestConclusionDeferPreservesSourcePrivacy(t *testing.T) {
+	for _, targetLock := range []string{"projection", "unlocked", "locked"} {
+		t.Run(targetLock, func(t *testing.T) {
+			root, _ := conclusionFixture(t)
+			if _, err := cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+				t.Fatal(err)
+			}
+			source, _ := os.ReadFile(draftPath(root, "XR-008"))
+			if h, err := draftmeta.Parse(source); err != nil || h.Lock != "locked" {
+				t.Fatalf("закрытый исходник: %+v %v", h, err)
+			}
+			p := draftproposal.Proposal{ID: "defer-private", Revision: 1, Outcome: "defer", Reason: "Закрытый довод отсрочки", Text: "Закрытая выдержка"}
+			var original []byte
+			if targetLock != "projection" {
+				if _, err := cmdDraft(root, "Материал назначения", "high", CommitOpts{}); err != nil {
+					t.Fatal(err)
+				}
+				p.Target = "XR-009"
+				if _, err := cmdDraftMeta(root, p.Target, "", "", targetLock, CommitOpts{}); err != nil {
+					t.Fatal(err)
+				}
+				original, _ = os.ReadFile(draftPath(root, p.Target))
+			}
+			view := conclusionView(t, root)
+			payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{p}, "complete": true})
+			raw, err := cmdDraftPreparedSave(root, view.ID, view.Snapshot, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal([]byte(raw), &view); err != nil {
+				t.Fatal(err)
+			}
+			if p.Target != "" {
+				staged, _ := os.ReadFile(draftPath(root, p.Target))
+				if string(staged) != string(original) {
+					t.Fatal("подготовка изменила живое назначение")
+				}
+			}
+			req := conclusionRequest(view)
+			raw, err = cmdDraftPreparedConfirm(root, req, CommitOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result confirmationResult
+			if err = json.Unmarshal([]byte(raw), &result); err != nil {
+				t.Fatal(err)
+			}
+			target := result.Results[0].IDs[0]
+			data, err := os.ReadFile(draftPath(root, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			h, err := draftmeta.Parse(data)
+			if err != nil || h.Lock != "locked" || !strings.Contains(string(data), p.Reason) {
+				t.Fatalf("назначение потеряло закрытый довод или защиту: %+v %v\n%s", h, err, data)
+			}
+			if original != nil {
+				before, _ := draftmeta.Parse(original)
+				if h.Type != before.Type || h.Source != before.Source || h.Priority != before.Priority || !strings.Contains(string(data), "Материал назначения") {
+					t.Fatalf("потеряны поля назначения: %+v -> %+v", before, h)
+				}
+			}
+			if replay, err := cmdDraftPreparedConfirm(root, req, CommitOpts{}); err != nil || !strings.Contains(replay, `"repeated":true`) {
+				t.Fatalf("повтор квитанции: %s %v", replay, err)
+			}
+			after, _ := os.ReadFile(draftPath(root, target))
+			if string(after) != string(data) {
+				t.Fatal("повтор изменил закрытое назначение")
+			}
+		})
 	}
 }

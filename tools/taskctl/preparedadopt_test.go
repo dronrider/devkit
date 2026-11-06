@@ -29,9 +29,10 @@ func legacyAskForAdoptionKey(t *testing.T, target bool, key string) (string, pre
 	if _, err = cmdDraft(root, "legacy shown material", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	card := draftproposal.Proposal{ID: key, Revision: 1, Outcome: "drop", Text: "Убрать устаревший индикатор", Reason: "лишнее"}
+	card := draftproposal.Proposal{ID: key, Revision: 1, Outcome: "add", Title: "Сохранённая задача", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}
 	if target {
 		card.Outcome = "attach"
+		card.Text = "Материал для приписки"
 		card.Target = "XR-001"
 	}
 	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{card}}

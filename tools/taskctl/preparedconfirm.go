@@ -73,6 +73,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		header draftmeta.Header
 	}
 	records := map[string]record{}
+	prior := map[string]draftproposal.State{}
 	allRepeated := true
 	for _, snap := range request.Snapshots {
 		data, err := os.ReadFile(draftPath(root, snap.Source))
@@ -88,6 +89,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 			return out, err
 		}
 		records[snap.Source] = record{data, state, header}
+		prior[snap.Source] = copyState(state)
 		for _, d := range decisions[snap.Source] {
 			matched := false
 			for _, r := range state.Receipts {
@@ -110,9 +112,12 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	out.Results = nil
 	for _, snap := range request.Snapshots {
 		rec := records[snap.Source]
-		if reason := preparedNotReady(rec.data, rec.state); reason != "" {
+		effective, reason := resolvePrepared(root, snap.Source, rec.data, rec.state)
+		if reason != "" {
 			return out, fmt.Errorf("%s: %s", snap.Source, reason)
 		}
+		rec.state = effective
+		records[snap.Source] = rec
 		if snap.Revision != 0 && snap.Revision != rec.state.PackRevision {
 			return out, fmt.Errorf("%s: редакция разбора изменилась", snap.Source)
 		}
@@ -141,7 +146,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	}
 	for _, snap := range request.Snapshots {
 		rec := records[snap.Source]
-		basis, err := preparedBasis(root, rec.data, rec.state)
+		basis, err := preparedBasis(root, rec.data, prior[snap.Source])
 		if err != nil {
 			return out, err
 		}
@@ -171,10 +176,6 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	// Состояние до применения решений: финальная сверка снимка обязана
 	// смотреть на тот же исходник, что видел спрашиваемый, а не на уже
 	// изменённое нами состояние с квитками и статусами.
-	prior := map[string]draftproposal.State{}
-	for _, snap := range request.Snapshots {
-		prior[snap.Source] = copyState(records[snap.Source].state)
-	}
 	staged, err := newStagingBoard(root)
 	if err != nil {
 		return out, err
@@ -403,16 +404,24 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 		if err != nil {
 			return nil, nil, err
 		}
-		if header.Lock != "locked" {
-			continue
-		}
+
 		state, err := draftproposal.Load(root, decision.Source, data)
 		if err != nil {
 			return nil, nil, err
 		}
 		for _, p := range state.Proposals {
-			if p.ID == decision.Proposal && p.Outcome == "attach" {
+			if p.ID != decision.Proposal || p.Status != "" || p.Target == "" {
+				continue
+			}
+			if header.Lock == "locked" && p.Outcome == "attach" {
 				targets[p.Target] = true
+			}
+			if p.Outcome == "drop" || p.Outcome == "defer" {
+				if active, err := preparedTargetActive(root, p.Target); err == nil && active {
+					targets[p.Target] = true
+				} else if err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}

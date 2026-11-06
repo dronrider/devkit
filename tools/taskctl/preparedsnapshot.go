@@ -40,10 +40,11 @@ func preparedBasisInputs(root string, source []byte, state draftproposal.State) 
 		if !idRe.MatchString(p.Target) {
 			return nil, fmt.Errorf("%s: неверное назначение %q", p.ID, p.Target)
 		}
-		path := taskFileAbs(root, p.Target)
-		if !seen[path] {
-			paths = append(paths, path)
-			seen[path] = true
+		for _, path := range preparedTargetPaths(root, p) {
+			if !seen[path] {
+				paths = append(paths, path)
+				seen[path] = true
+			}
 		}
 	}
 	sort.Strings(paths)

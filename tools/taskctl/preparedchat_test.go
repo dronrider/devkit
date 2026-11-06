@@ -93,8 +93,9 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(question.Text, "Подготовил задачи, согласуй их описание.") ||
-		!strings.Contains(question.Text, "#"+filepath.Base(root)+"/draft/XR-008/prepared/"+assignedKey(view, "p1")) ||
+	if !strings.Contains(question.Text, "Подготовил заключение разбора и задачи.") ||
+		!strings.Contains(question.Text, "#"+filepath.Base(root)+"/draft/XR-008") ||
+		strings.Contains(question.Text, "/prepared/") ||
 		len(question.Options) != 1 || question.Options[0].Label != "Подтвердить разбор XR-008" ||
 		question.Prepared.Sources[0].Revision != view.State.PackRevision || question.Prepared.Sources[0].Revision < 1 {
 		t.Fatalf("вопрос без ссылок: %s %+v", question.Text, question.Options)
@@ -107,8 +108,8 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if err = json.Unmarshal([]byte(printed), &published); err != nil || published.Prepared == nil {
 		t.Fatalf("printed question: %s %v", printed, err)
 	}
-	if strings.Contains(printed, "одно") || strings.Contains(printed, "другое") {
-		t.Fatalf("тела задач уехали в вопрос: %s", printed)
+	if !strings.Contains(printed, "одно") || !strings.Contains(printed, "другое") {
+		t.Fatalf("заключение о действиях отсутствует: %s", printed)
 	}
 	ask, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008")))
 	if !ok || ask.Questions[0].Prepared == nil {
@@ -127,6 +128,14 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	}
 	if _, err = cmdPreparedChatAnswer(root, "XR-008", input, CommitOpts{}); err == nil {
 		t.Fatal("forged display accepted")
+	}
+	copyQ.Sources[0].Proposals[0].Reason = question.Prepared.Sources[0].Proposals[0].Reason
+	copyQ.Sources[0].Conclusion = "Подменённое заключение"
+	if err = chat.WriteAsk(root, chat.TaskName("XR-008"), forged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cmdPreparedChatAnswer(root, "XR-008", input, CommitOpts{}); err == nil {
+		t.Fatal("forged conclusion accepted")
 	}
 	if err = chat.WriteAsk(root, chat.TaskName("XR-008"), ask); err != nil {
 		t.Fatal(err)

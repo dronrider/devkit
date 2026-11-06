@@ -78,7 +78,7 @@ func TestPreparedMigrateRecordsAndAsks(t *testing.T) {
 		t.Fatal("ask пропал")
 	}
 	q := rewritten.Questions[0]
-	if q.Prepared == nil || q.Proposal != nil || !strings.Contains(q.Text, "Подготовил задачи, согласуй их описание.") || !strings.Contains(q.Text, "/draft/XR-008/prepared/p2") {
+	if q.Prepared == nil || q.Proposal != nil || !strings.Contains(q.Text, "Подготовил заключение разбора и задачи.") || !strings.Contains(q.Text, "/draft/XR-008/prepared/p2") {
 		t.Fatalf("ask не переписан: %+v", q)
 	}
 	if strings.Contains(q.Text, "Тестовый запуск обнаружил пропуск") || q.Prepared.Sources[0].Proposals[1].Text != "" {

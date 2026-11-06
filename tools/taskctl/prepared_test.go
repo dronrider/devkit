@@ -227,7 +227,7 @@ func TestPreparedSaveRemapsAfterToIssuedID(t *testing.T) {
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	input := []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"лишнее","reason":"устарело"},{"id":"p2","revision":1,"outcome":"add","title":"Результат","text":"тело результата","board_type":"task","rank":"0+1+1+0+1","size":"M","accept":"agent","after":["p1"]}]}`)
+	input := []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"add","title":"Предшественник","text":"материал"},{"id":"p2","revision":1,"outcome":"add","title":"Результат","text":"тело результата","board_type":"task","rank":"0+1+1+0+1","size":"M","accept":"agent","after":["p1"]}]}`)
 	saved, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
@@ -652,7 +652,7 @@ func TestPreparedSaveRefusesBoardIDReassignment(t *testing.T) {
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","reason":"лишнее"},{"id":"p2","revision":1,"outcome":"drop","reason":"лишнее"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"add","title":"Первая","text":"материал"},{"id":"p2","revision":1,"outcome":"add","title":"Вторая","text":"материал"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

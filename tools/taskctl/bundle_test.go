@@ -340,11 +340,8 @@ func TestBundleLegacyRemainingKeepsAcceptedReceipt(t *testing.T) {
 	expectedAccepted := baseline.Proposals[0]
 	record, _, _ := readPrepared(root, view.ID)
 	legacy, _ := preparedViewOf(root, view.ID, record, state)
-	if legacy.Ready {
-		t.Fatal("legacy remaining silently ready")
-	}
-	if !strings.Contains(legacy.Reason, "сохраните") {
-		t.Fatalf("legacy preparation path missing: %s", legacy.Reason)
+	if !legacy.Ready || legacy.State.PackRevision != 1 {
+		t.Fatalf("legacy remaining requires Save: %+v", legacy)
 	}
 	input := []byte(`{"proposals":[],"complete":true}`)
 	raw, err := cmdDraftPreparedSave(root, view.ID, legacy.Snapshot, input)

@@ -22,12 +22,13 @@ import (
 // сохранения срезается из записи вовсе.
 
 type preparedView struct {
-	Ready    bool                `json:"ready"`
-	Reason   string              `json:"reason"`
-	ID       string              `json:"id"`
-	Snapshot string              `json:"snapshot"`
-	Basis    string              `json:"basis"`
-	State    draftproposal.State `json:"state"`
+	Conclusion string              `json:"conclusion"`
+	Ready      bool                `json:"ready"`
+	Reason     string              `json:"reason"`
+	ID         string              `json:"id"`
+	Snapshot   string              `json:"snapshot"`
+	Basis      string              `json:"basis"`
+	State      draftproposal.State `json:"state"`
 	// Assigned несёт выданные номера новых задач этого сохранения: присланный
 	// ключ на зарезервированный номер (DK-1564, решение 6). Пустеет на чтении
 	// и правке прежних задач: их номер уже стоит в ключе.
@@ -57,8 +58,12 @@ func preparedViewOf(root, id string, record []byte, state draftproposal.State) (
 	if err != nil {
 		return preparedView{}, err
 	}
-	reason := preparedNotReady(record, state)
-	return preparedView{ID: id, Snapshot: snapshot, Basis: basis, State: state, Ready: reason == "", Reason: reason}, nil
+	effective, reason := resolvePrepared(root, id, record, state)
+	conclusion, err := preparedConclusion(root, effective)
+	if err != nil {
+		return preparedView{}, err
+	}
+	return preparedView{ID: id, Snapshot: snapshot, Basis: basis, State: effective, Ready: reason == "", Reason: reason, Conclusion: conclusion}, nil
 }
 
 func cmdDraftPrepared(root, id string) (string, error) {
@@ -168,6 +173,7 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	}
 	var incoming struct {
 		Proposals      []draftproposal.Proposal `json:"proposals"`
+		Conclusion     *string                  `json:"conclusion"`
 		Analysis       *string                  `json:"analysis"`
 		Complete       bool                     `json:"complete"`
 		ReplacePending bool                     `json:"replace_pending"`
@@ -196,6 +202,10 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 		return "", err
 	}
 	if incoming.ReplacePending {
+		retired := map[string]bool{}
+		for _, key := range old.RetiredIDs {
+			retired[key] = true
+		}
 		keep := map[string]bool{}
 		for _, p := range incoming.Proposals {
 			keep[p.ID] = true
@@ -204,10 +214,13 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 		for _, p := range old.Proposals {
 			if p.Status != "" || keep[p.ID] {
 				retained = append(retained, p)
-			} else if p.BoardID != "" {
-				old.RetiredIDs = append(old.RetiredIDs, p.BoardID)
-			} else if idRe.MatchString(p.ID) {
-				old.RetiredIDs = append(old.RetiredIDs, p.ID)
+			} else {
+				for _, key := range []string{p.ID, p.BoardID} {
+					if key != "" && !retired[key] {
+						old.RetiredIDs = append(old.RetiredIDs, key)
+						retired[key] = true
+					}
+				}
 			}
 		}
 		old.Proposals = retained
@@ -245,10 +258,23 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 			p.BoardID = previous.BoardID
 			old.Proposals[i] = p
 		} else {
+			for _, key := range old.RetiredIDs {
+				if key == p.ID {
+					return "", fmt.Errorf("%s: ключ прежнего результата занят", p.ID)
+				}
+			}
 			if p.Revision != 1 {
 				return "", fmt.Errorf("%s: первая редакция должна быть 1", p.ID)
 			}
 			sent := p.ID
+			if p.Outcome != "add" {
+				if p.BoardID != "" || idRe.MatchString(p.ID) {
+					return "", fmt.Errorf("%s: номер доски выдаётся только новой задаче", p.ID)
+				}
+				index[p.ID] = len(old.Proposals)
+				old.Proposals = append(old.Proposals, p)
+				continue
+			}
 			id, err := allocID(root, b, arch, drafts)
 			if err != nil {
 				return "", err
@@ -267,7 +293,7 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	// присланных задач: отказ валидации не сжигает номера в общей области.
 	for i := range old.Proposals {
 		p := &old.Proposals[i]
-		if p.BoardID != "" || p.Status != "" {
+		if p.BoardID != "" || p.Status != "" || p.Outcome != "add" {
 			continue
 		}
 		id, err := allocID(root, b, arch, drafts)
@@ -288,6 +314,9 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	}
 	if len(incoming.Proposals) > 0 {
 		old.State = "active"
+	}
+	if incoming.Conclusion != nil {
+		old.Conclusion = strings.TrimSpace(*incoming.Conclusion)
 	}
 	if incoming.Analysis != nil {
 		old.Analysis = *incoming.Analysis

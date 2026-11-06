@@ -79,7 +79,7 @@ func cmdDraftPreparedAdopt(root string, ids []string) (string, error) {
 		e := entry{id: id, record: record, state: state}
 		for i := range state.Proposals {
 			p := &state.Proposals[i]
-			if p.BoardID != "" || p.Status != "" {
+			if p.BoardID != "" || p.Status != "" || p.Outcome != "add" {
 				continue
 			}
 			num, err := allocID(root, b, arch, drafts)

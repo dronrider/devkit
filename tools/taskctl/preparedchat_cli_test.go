@@ -115,12 +115,12 @@ func TestPreparedChatActualCLI(t *testing.T) {
 			t.Fatalf("generated source confirmation: %+v %+v", source, q.Options[i])
 		}
 	}
-	if !strings.Contains(q.Text, "Подготовил задачи, согласуй их описание.") ||
+	if !strings.Contains(q.Text, "Подготовил заключение разбора и задачи.") ||
 		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/"+first+"/prepared/"+issued[first+"/p2"]) ||
-		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/"+second+"/prepared/"+issued[second+"/p1"]) {
+		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/"+second) || strings.Contains(q.Text, "/draft/"+second+"/prepared/") {
 		t.Fatalf("вопрос без ссылок на задачи: %s", q.Text)
 	}
-	if strings.Contains(out, "Тестовый запуск обнаружил пропуск") || strings.Contains(out, "частная мысль") {
+	if strings.Contains(out, "Тестовый запуск обнаружил пропуск") {
 		t.Fatalf("тела задач уехали в вопрос: %s", out)
 	}
 	dropOut, err := run(nil, "draft", "prepared", "ask", second)
@@ -131,7 +131,7 @@ func TestPreparedChatActualCLI(t *testing.T) {
 	if err = json.Unmarshal([]byte(dropOut), &dropOnly); err != nil || dropOnly.Prepared == nil {
 		t.Fatalf("question без add: %s %v", dropOut, err)
 	}
-	if !strings.Contains(dropOnly.Text, "Подготовил задачи, согласуй их описание.") || !strings.Contains(dropOnly.Text, "/draft/"+second+"/prepared/"+issued[second+"/p1"]) {
+	if !strings.Contains(dropOnly.Text, "Подготовил заключение разбора и задачи.") || !strings.Contains(dropOnly.Text, "/draft/"+second) || strings.Contains(dropOnly.Text, "/prepared/") {
 		t.Fatalf("вопрос без задачи add собран не тем текстом: %s", dropOnly.Text)
 	}
 	t.Setenv("DEVKIT_GROOM_SOURCE", first)

@@ -28,11 +28,18 @@ type preparedChatAnswer struct {
 // подтверждения. Тела задач остаются в prepared-файле, чат их не носит.
 func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []chat.Option) {
 	project := filepath.Base(tree)
-	text := "Подготовил задачи, согласуй их описание."
+	text := "Подготовил заключение разбора и задачи. Согласуй весь результат."
 	var options []chat.Option
 	for _, s := range shown.Sources {
 		options = append(options, chat.Option{Label: "Подтвердить разбор " + s.Source})
+		text += fmt.Sprintf("\n\nЗаключение %s: #%s/draft/%s", s.Source, project, s.Source)
+		if s.Conclusion != "" {
+			text += "\n\n" + s.Conclusion
+		}
 		for _, p := range s.Proposals {
+			if p.Outcome != "add" {
+				continue
+			}
 			title := p.Title
 			if title == "" {
 				title = p.ID
@@ -68,7 +75,7 @@ func preparedChatQuestion(root, anchor string, also []string) (chat.Question, er
 		if !view.Ready {
 			return chat.Question{}, fmt.Errorf("%s: %s", id, view.Reason)
 		}
-		s := chat.PreparedSource{Source: id, Basis: view.Basis, Revision: view.State.PackRevision}
+		s := chat.PreparedSource{Source: id, Basis: view.Basis, Revision: view.State.PackRevision, Conclusion: view.Conclusion}
 		for _, p := range view.State.Proposals {
 			if p.Status == "" {
 				p.Text = ""
@@ -210,6 +217,15 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 			matches, err := preparedBasisMatches(root, source.Source, basis, source.Basis)
 			if err != nil {
 				return "", err
+			}
+			if source.Conclusion != "" || state.Conclusion != "" {
+				conclusion, err := preparedConclusion(root, state)
+				if err != nil {
+					return "", err
+				}
+				if source.Conclusion != conclusion {
+					return "", fmt.Errorf("%s: показанное заключение изменилось", source.Source)
+				}
 			}
 			var cards []draftproposal.Proposal
 			for _, p := range state.Proposals {

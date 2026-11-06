@@ -22,9 +22,9 @@ func gitFixture(t *testing.T, root string, args ...string) {
 	}
 }
 
-// savePreparedDrop записывает в дерево одну новую карточку удаления и отвечает
+// savePreparedAdd записывает в дерево новую задачу и отвечает
 // номером, который сохранение за ней закрепило.
-func savePreparedDrop(t *testing.T, dir string) string {
+func savePreparedAdd(t *testing.T, dir string) string {
 	t.Helper()
 	raw, err := cmdDraftPrepared(dir, "XR-008")
 	if err != nil {
@@ -36,7 +36,7 @@ func savePreparedDrop(t *testing.T, dir string) string {
 	}
 	input, err := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "веточный результат", Reason: "лишнее"}}})
+	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Веточный результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestPreparedNumbersReservedAcrossWorktrees(t *testing.T) {
 	// Связанный worktree не видит незафиксированных prepared-файлов основного
 	// дерева: без общей области распределения оба сохранения выдают один номер
 	// даже строго по очереди, под общим lock (DK-1564).
-	mainID, treeID := savePreparedDrop(t, root), savePreparedDrop(t, tree)
+	mainID, treeID := savePreparedAdd(t, root), savePreparedAdd(t, tree)
 	if mainID == "" || treeID == "" {
 		t.Fatalf("номера не выданы: %q %q", mainID, treeID)
 	}
@@ -135,7 +135,7 @@ func TestPreparedNumbersSeeMainBoardBeyondClaims(t *testing.T) {
 	if len(claimed) != 0 {
 		t.Fatalf("фикстура испорчена, общий ledger не пуст: %v", claimed)
 	}
-	got := savePreparedDrop(t, tree)
+	got := savePreparedAdd(t, tree)
 	if got != "XR-010" {
 		t.Fatalf("устаревший worktree выдал занятый основной доской номер: %s", got)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -46,7 +47,7 @@ func (s *stagingBoard) planProposals(source string, header draftmeta.Header, def
 		}
 		res, err := s.stageOutcome(source, header, p)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", p.ID, err)
+			return nil, proposalStageError(p.ID, err)
 		}
 		if res.ID != "" && p.Outcome == "add" {
 			ids[p.ID] = res.ID
@@ -57,7 +58,7 @@ func (s *stagingBoard) planProposals(source string, header draftmeta.Header, def
 				id = mapped
 			}
 			if _, err = cmdDepAdd(s.root, DepParams{ID: res.ID, DepID: id}); err != nil {
-				return nil, fmt.Errorf("%s: %w", p.ID, err)
+				return nil, proposalStageError(p.ID, err)
 			}
 		}
 		receipt := draftproposal.Receipt{Proposal: p.ID, Revision: p.Revision, Outcome: p.Outcome, Result: res.Text, Reason: p.Reason}
@@ -67,4 +68,11 @@ func (s *stagingBoard) planProposals(source string, header draftmeta.Header, def
 		results = append(results, receipt)
 	}
 	return results, nil
+}
+
+func proposalStageError(id string, err error) error {
+	if strings.HasPrefix(err.Error(), id+":") {
+		return err
+	}
+	return fmt.Errorf("%s: %w", id, err)
 }

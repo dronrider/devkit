@@ -22,7 +22,7 @@ func (s *stagingBoard) projection(sourceID string, h draftmeta.Header, p draftpr
 	}
 	text := strings.TrimSpace(p.Text)
 	if text == "" {
-		return "", fmt.Errorf("%s: текст результата пуст", p.ID)
+		return "", fmt.Errorf("текст результата пуст")
 	}
 	link := sourceID + ".md"
 	if p.Outcome == "attach" {
@@ -81,7 +81,44 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 			}
 		}
 		result = stagedResult{ID: id, Text: msg}
-	case "attach", "defer", "drop":
+	case "drop":
+		if strings.TrimSpace(p.Reason) == "" {
+			return result, fmt.Errorf("нужна причина удаления")
+		}
+		if p.Target == "" {
+			return stagedResult{Text: "Материал отклонён: " + strings.TrimSpace(p.Reason)}, nil
+		}
+		if !idRe.MatchString(p.Target) || p.Target == sourceID {
+			return result, fmt.Errorf("неверная цель удаления %q", p.Target)
+		}
+		if active, err := preparedTargetActive(s.root, p.Target); err == nil && !active {
+			return stagedResult{Text: p.Target + " уже отсутствует в активных черновиках; удаление не требуется: " + strings.TrimSpace(p.Reason)}, nil
+		} else if err != nil {
+			return result, err
+		}
+		if h.Lock != "locked" {
+			if err := draftmeta.GuardRecord(s.root, p.Target); err != nil {
+				return result, err
+			}
+		}
+		msg, err := cmdDraftDrop(s.root, p.Target, p.Reason, CommitOpts{})
+		if err != nil {
+			return result, err
+		}
+		return stagedResult{Text: msg}, nil
+	case "attach", "defer":
+		if p.Outcome == "defer" && p.Target != "" {
+			if !idRe.MatchString(p.Target) || p.Target == sourceID {
+				return result, fmt.Errorf("неверная цель отсрочки %q", p.Target)
+			}
+			if h.Lock != "locked" {
+				if err := draftmeta.GuardRecord(s.root, p.Target); err != nil {
+					return result, err
+				}
+			}
+			msg, err := cmdDraftDefer(s.root, p.Target, p.Reason, p.Until, false, CommitOpts{})
+			return stagedResult{ID: p.Target, Text: msg}, err
+		}
 		id, err := s.projection(sourceID, h, p)
 		if err != nil {
 			return result, err
@@ -94,8 +131,6 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 		case "defer":
 			msg, err = cmdDraftDefer(s.root, id, p.Reason, p.Until, false, CommitOpts{})
 			result.ID = id
-		case "drop":
-			msg, err = cmdDraftDrop(s.root, id, p.Reason, CommitOpts{})
 		}
 		if err != nil {
 			return stagedResult{}, err

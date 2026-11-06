@@ -56,11 +56,14 @@ type Receipt struct {
 	Reason   string   `json:"reason,omitempty"`
 }
 type State struct {
-	Version   int        `json:"version"`
-	State     string     `json:"state"`
-	Proposals []Proposal `json:"proposals"`
-	Receipts  []Receipt  `json:"receipts,omitempty"`
-	Analysis  string     `json:"analysis,omitempty"`
+	PackRevision   int        `json:"pack_revision,omitempty"`
+	PreparedSource string     `json:"prepared_source,omitempty"`
+	RetiredIDs     []string   `json:"retired_ids,omitempty"`
+	Version        int        `json:"version"`
+	State          string     `json:"state"`
+	Proposals      []Proposal `json:"proposals"`
+	Receipts       []Receipt  `json:"receipts,omitempty"`
+	Analysis       string     `json:"analysis,omitempty"`
 }
 type Decision struct {
 	Source   string `json:"source"`
@@ -70,8 +73,9 @@ type Decision struct {
 	Reason   string `json:"reason,omitempty"`
 }
 type Snapshot struct {
-	Source string `json:"source"`
-	Digest string `json:"digest"`
+	Revision int    `json:"revision,omitempty"`
+	Source   string `json:"source"`
+	Digest   string `json:"digest"`
 }
 type ConfirmRequest struct {
 	Snapshots []Snapshot `json:"snapshots"`
@@ -135,6 +139,13 @@ func (s State) Validate() error { return s.validate(false) }
 func (s State) validatePrepared() error { return s.validate(true) }
 
 func (s State) validate(emptyHistory bool) error {
+	retired := map[string]bool{}
+	for _, id := range s.RetiredIDs {
+		if id == "" || retired[id] {
+			return fmt.Errorf("неверный или повторный снятый номер %q", id)
+		}
+		retired[id] = true
+	}
 	if s.Version != 1 || (s.State != "active" && s.State != "history") {
 		return fmt.Errorf("неверная версия или состояние разбора")
 	}

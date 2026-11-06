@@ -69,6 +69,9 @@ func ReservedIDs(root string) (map[string]bool, error) {
 				out[p.BoardID] = true
 			}
 		}
+		for _, id := range state.RetiredIDs {
+			out[id] = true
+		}
 	}
 	return out, nil
 }
@@ -125,6 +128,15 @@ func RenderPrepared(s State) ([]byte, error) {
 	b.WriteString(preparedFence + "\n")
 	writeKeyValue(&b, "version", strconv.Itoa(s.Version))
 	writeKeyValue(&b, "state", tomlString(s.State))
+	if s.PackRevision != 0 {
+		writeKeyValue(&b, "pack_revision", strconv.Itoa(s.PackRevision))
+	}
+	if s.PreparedSource != "" {
+		writeKeyValue(&b, "prepared_source", tomlString(s.PreparedSource))
+	}
+	if len(s.RetiredIDs) > 0 {
+		writeKeyValue(&b, "retired_ids", tomlArray(s.RetiredIDs))
+	}
 	if s.Analysis != "" {
 		writeKeyValue(&b, "analysis", tomlString(s.Analysis))
 	}
@@ -419,10 +431,23 @@ func ParsePrepared(data []byte) (State, error) {
 		return State{}, err
 	}
 	t := doc.Table("")
-	if err = checkFields("prepared", t, "version state analysis keys"); err != nil {
+	if err = checkFields("prepared", t, "version state analysis keys pack_revision prepared_source retired_ids"); err != nil {
 		return State{}, err
 	}
 	state := State{Receipts: receipts}
+	if state.RetiredIDs, err = wantArr("prepared", "retired_ids", t); err != nil {
+		return State{}, err
+	}
+	if _, exists := t.Get("pack_revision"); exists {
+		if state.PackRevision, err = wantInt("prepared", "pack_revision", t); err != nil {
+			return State{}, err
+		}
+	}
+	if _, exists := t.Get("prepared_source"); exists {
+		if state.PreparedSource, err = wantStr("prepared", "prepared_source", t); err != nil {
+			return State{}, err
+		}
+	}
 	if state.Version, err = wantInt("prepared", "version", t); err != nil {
 		return State{}, err
 	}

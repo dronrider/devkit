@@ -19,6 +19,7 @@ type PreparedQuestion struct {
 }
 
 type PreparedSource struct {
+	Revision  int                      `json:"revision,omitempty"`
 	Source    string                   `json:"source"`
 	Basis     string                   `json:"basis"`
 	Proposals []draftproposal.Proposal `json:"proposals"`
@@ -75,7 +76,7 @@ func CheckPreparedAnswer(q PreparedQuestion, tree string, r draftproposal.Confir
 	snaps := map[string]string{}
 	for _, s := range r.Snapshots {
 		shown, ok := sources[s.Source]
-		if !ok || s.Digest != shown.Basis || snaps[s.Source] != "" {
+		if !ok || s.Digest != shown.Basis || s.Revision != shown.Revision || snaps[s.Source] != "" {
 			return fmt.Errorf("снимок %s не показан", s.Source)
 		}
 		snaps[s.Source] = s.Digest
@@ -102,16 +103,23 @@ func CheckPreparedAnswer(q PreparedQuestion, tree string, r draftproposal.Confir
 		if !found {
 			return fmt.Errorf("редакция %s не показана", d.Proposal)
 		}
-		if d.Action != "accept" && d.Action != "reject" {
-			return fmt.Errorf("неверное решение %s", d.Proposal)
-		}
-		if d.Action == "reject" && strings.TrimSpace(d.Reason) == "" {
-			return fmt.Errorf("нужна причина отказа %s", d.Proposal)
+		if d.Action != "accept" {
+			return fmt.Errorf("подтвердите весь разбор; отказ обсудите в чате")
 		}
 		used[d.Source] = true
 	}
 	if len(used) != len(snaps) {
 		return fmt.Errorf("лишний снимок")
+	}
+	for _, s := range q.Sources {
+		if !used[s.Source] {
+			continue
+		}
+		for _, p := range s.Proposals {
+			if !decisions[s.Source+"\x00"+p.ID] {
+				return fmt.Errorf("%s: подтвердите весь разбор целиком", s.Source)
+			}
+		}
 	}
 	return nil
 }

@@ -2865,7 +2865,7 @@ const TBL_COLS = {
     { key: "rank", label: "Ранг", by: "рангу", first: "desc", w: 66 },
     { key: "size", label: "Цена", w: 56 },
     { key: "state", label: "Состояние", w: 118 },
-    { key: "src", label: "Из черновика", w: 132 },
+    { key: "src", label: "Задачи", w: 132 },
   ],
 };
 
@@ -14809,7 +14809,7 @@ function chatPanel(project, st) {
     const selection = askPick.selection || null;
     let proposal = null;
     if (askPick.proposalDraft) {
-      try { proposal = askPick.proposalDraft.decisions.length ? proposalAnswer(askPick.proposalDraft) : proposalComment(askPick.proposalDraft); }
+      try { proposal = !ta.value.trim() && askPick.proposalDraft.decisions.length ? proposalAnswer(askPick.proposalDraft) : proposalComment(askPick.proposalDraft); }
       catch (err) { sayResult(err.message, true); return; }
     }
     const text = ta.value;
@@ -14829,7 +14829,8 @@ function chatPanel(project, st) {
     }
     askPick.put = "";
     askPick.draft = "";
-    if (!proposal || proposal.mode !== "comment") askPick.proposalDraft = null;
+    if (proposal && proposal.mode === "comment") askPick.proposalDraft.decisions = [];
+    else askPick.proposalDraft = null;
     askPick.selected = null;
     askPick.ordinary = null;
     askPick.touched = false;
@@ -15358,7 +15359,7 @@ function askPickFallback(steps, ask) {
 // её строки списка; иначе панель дописывает строки той же формы и вешает
 // галочки на них. Частичный набор на чужом списке не считается находкой.
 function askPickWire(feed, ta, pick) {
-  for (const selector of [".askresume", ".caskpick", ".attach-selection", ".askfb"]) {
+  for (const selector of [".askresume", ".prepared-source", ".caskpick", ".attach-selection", ".askfb"]) {
     for (const old of feed.querySelectorAll(selector)) old.remove();
   }
   for (const li of feed.querySelectorAll(".casklit")) {
@@ -15993,10 +15994,6 @@ async function groomDraft(project, id, afterOk, harness, tier, mode, effort) {
 // Память живёт экраном: уход с накопителя её очищает, потому что выбор это
 // намерение сейчас, а не настройка.
 const draftPick = new Set();
-// Выбор подготовленных задач под подтверждение: тем же экраном и тем же
-// правилом, что и выбор записей. Ключ это запись вместе с задачей, потому что
-// задача живёт в записи, а номер доски у неё свой.
-const preparedPick = new Set();
 // Перерисовка полосы запуска: её зовёт всякая правка выбора. Ставится она
 // самой полосой, а до первой отрисовки её нет.
 let draftBarPaint = null;
@@ -16004,10 +16001,6 @@ let draftBarPaint = null;
 // сама, но снятие выбора приходит со стороны (после запуска разбора), и без
 // этой памяти отметки оставались бы гореть при пустом выборе.
 const draftPickSays = new Map();
-// Та же память для подготовленных задач: подтверждение снимает выбор со
-// стороны, и строка обязана погасить отметку сама.
-const preparedPickSays = new Map();
-
 function draftPickSet(id, on) {
   if (on) draftPick.add(id);
   else draftPick.delete(id);
@@ -16021,24 +16014,6 @@ function draftPickClear() {
   draftPick.clear();
   for (const id of was) {
     const say = draftPickSays.get(id);
-    if (say) say();
-  }
-  if (draftBarPaint) draftBarPaint();
-}
-
-function preparedPickSet(key, on) {
-  if (on) preparedPick.add(key);
-  else preparedPick.delete(key);
-  const say = preparedPickSays.get(key);
-  if (say) say();
-  if (draftBarPaint) draftBarPaint();
-}
-
-function preparedPickClear() {
-  const was = [...preparedPick];
-  preparedPick.clear();
-  for (const key of was) {
-    const say = preparedPickSays.get(key);
     if (say) say();
   }
   if (draftBarPaint) draftBarPaint();
@@ -16096,45 +16071,12 @@ function draftRunBarFill(bar, project, works, prepared) {
   // draftBarPaint, не трогая список.
   draftBarPaint = () => { draftRunBarFill(bar, project, works, prepared); };
   const picked = [...draftPick];
-  const pickedPrepared = [...preparedPick];
-  if (!picked.length && !pickedPrepared.length) {
+  if (!picked.length) {
     bar.replaceChildren(el("span", "hint",
-      "Отметьте записи или подготовленные задачи: разбор поднимется на выбранные записи, выбранные задачи заведутся на доску."));
+      "Отметьте записи для разбора. Подготовленный разбор подтверждается на форме черновика."));
     return;
   }
   const grp = el("span", "grun");
-  // Подтверждение выбранных задач идёт первой кнопкой полосы: заведение на
-  // доску короче разбора, и ждать его за меню модели незачем.
-  if (pickedPrepared.length) {
-    const ok = el("button", "btn btn-sm btn-acc",
-      "Подтвердить выбранные (" + pickedPrepared.length + ")");
-    withTip(ok, "Выбранные подготовленные задачи заводятся на доску своими номерами.");
-    ok.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      ok.disabled = true;
-      try {
-        const entries = (prepared || []).filter((e) => preparedPick.has(e.view.id + "/" + e.task.id));
-        const views = [];
-        for (const e of entries) {
-          if (!views.some((v) => v.id === e.view.id)) views.push(e.view);
-        }
-        if (views.some((v) => draftPreparedDirty.has(v.id))) {
-          sayResult("Сначала сохраните правки задач", true);
-          return;
-        }
-        const confirmed = await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), views,
-          (view, p) => preparedPick.has(view.id + "/" + p.id));
-        if (confirmed) preparedPickClear();
-      } finally {
-        ok.disabled = false;
-      }
-    });
-    grp.append(ok);
-  }
-  if (!picked.length) {
-    bar.replaceChildren(grp, el("span", "hint", "Выбрано задач: " + pickedPrepared.length + "."));
-    return;
-  }
   // Число стоит в самой подписи: подтверждения перед подъёмом больше нет, и
   // сказать, сколько сессий встанет, надо на кнопке.
   const btn = el("button", "btn btn-sm btn-acc", "Грумить (" + picked.length + ")");
@@ -16202,7 +16144,6 @@ function draftRunBarFill(bar, project, works, prepared) {
   grp.append(wrap);
   bar.replaceChildren(grp, el("span", "hint", "Выбрано " + picked.length + " " +
     plural(picked.length, "запись", "записи", "записей") +
-    (pickedPrepared.length ? " и задач: " + pickedPrepared.length : "") +
     ", каждая запись пойдёт своим разговором."));
 }
 
@@ -16356,9 +16297,8 @@ async function renderDrafts(project, works) {
   // своей ручкой.
   countsSet({ sess: (works || []).length,
     drafts: ((r.ok && r.body.drafts) || []).length });
-  // Строки подготовленных задач секции согласования: массив живёт раньше
-  // своих строк, потому что полоса запуска берёт его в замыкание, а заполняется
-  // он позже, ответами ручек записей.
+  // Строки черновиков с подготовленным разбором живут раньше
+  // отрисовки таблицы и заполняются ответами ручек записей.
   const preparedRows = [];
   const items = [{
     key: "board-kind",
@@ -16404,18 +16344,15 @@ async function renderDrafts(project, works) {
   const typesView = await api(projectBase + "/drafts/types");
   const typeTitles = {};
   for (const t of (typesView.ok && typesView.body.types) || []) typeTitles[t.name] = t.title;
-  // Подготовленные задачи собираются в плоский список строк секции
-  // «Согласовать заведение»: секция стоит в общей таблице до разбора, задача
-  // строкой как на доске, подтверждение отметками (DK-1564, утверждённый
-  // макет). Решённые в секцию не попадают: их номер уже принадлежит строке или
-  // отказу.
   for (const v of preparedViews) {
-    if (!v.ok || !v.body || !v.body.state) continue;
-    for (const p of (v.body.state.proposals || [])) {
-      if (!p.status) preparedRows.push({ view: v.body, task: p });
+    if (!v.ok || !v.body || !v.body.state || v.body.state.state === "history") continue;
+    if ((v.body.state.proposals || []).some((p) => !p.status)) {
+      preparedRows.push({ view: v.body, draft: drafts.find((d) => d.id === v.body.id) || { id: v.body.id } });
     }
   }
-  preparedRows.sort((a, b) => draftNum({ id: preparedNumber(a.task) }) - draftNum({ id: preparedNumber(b.task) }));
+  preparedRows.sort((a, b) => draftNum(a.draft) - draftNum(b.draft));
+  const preparedIDs = new Set(preparedRows.map((e) => e.view.id));
+  const grooming = drafts.filter((d) => !preparedIDs.has(d.id));
   // Выбор живёт этим экраном и этим списком: записи, которой больше нет в
   // накопителе (её разобрали), в выборе тоже быть не должно.
   const here = new Set(drafts.map((d) => d.id));
@@ -16427,15 +16364,6 @@ async function renderDrafts(project, works) {
   // памяти оставил бы такие строки без кисти.
   for (const id of [...draftPickSays.keys()]) {
     if (!here.has(id)) draftPickSays.delete(id);
-  }
-  // Тот же порядок для выбранного подготовленного: подтверждённая задача
-  // покидает секцию, и отметка её не держит.
-  const preparedHere = new Set(preparedRows.map((e) => e.view.id + "/" + e.task.id));
-  for (const key of [...preparedPick]) {
-    if (!preparedHere.has(key)) preparedPick.delete(key);
-  }
-  for (const key of [...preparedPickSays.keys()]) {
-    if (!preparedHere.has(key)) preparedPickSays.delete(key);
   }
   // Карточка списка держится в переменной: переключение порядка перебирает её
   // строки на месте, не ходя за ними на сервер. Данных для порядка в ответе
@@ -16459,7 +16387,7 @@ async function renderDrafts(project, works) {
     }
     // Ключ строки это ID черновика: обновление по фокусу окна трогает только те
     // строки, что изменились, и список не уезжает из-под пальца.
-    for (const d of draftsSorted(drafts)) {
+    for (const d of draftsSorted(grooming)) {
       // Отметка выбора входит в подпись строки: сама по себе она рисуется своим
       // же нажатием, а вот снятие выбора после запуска приходит со стороны, и без
       // подписи строка осталась бы отмеченной при пустом выборе. Состояние тоже:
@@ -16504,22 +16432,22 @@ async function renderDrafts(project, works) {
         make: secBand("Согласовать заведение", preparedRows.length),
       }];
       for (const e of preparedRows) {
-        const key = e.view.id + "/" + e.task.id;
+        const key = e.view.id;
         rows.push({
           key: "p-" + key,
-          sign: JSON.stringify(e.task) + (preparedPick.has(key) ? "|pick" : ""),
-          make: () => preparedTableRow(project, e.view, e.task),
+          sign: JSON.stringify([e.view, e.draft]),
+          make: () => preparedTableRow(project, e.view, e.draft, typeTitles),
         });
       }
       parts.push(tblBodyItem("drafts-prepared",
         rows.map((row) => row.key + "=" + row.sign).join("\n"), rows, "tsec"));
     }
     const rows = rowsFor();
-    if (drafts.length && preparedRows.length) {
+    if (grooming.length && preparedRows.length) {
       rows.unshift({
         key: "dshead",
-        sign: String(drafts.length),
-        make: secBand("Разбор и оформление", drafts.length),
+        sign: String(grooming.length),
+        make: secBand("Разбор и оформление", grooming.length),
       });
     }
     parts.push(tblBodyItem("drafts-body",
@@ -17222,20 +17150,20 @@ function draftCardStatus(outcome, status) {
   return "На согласовании";
 }
 
-async function confirmDraftPrepared(projectBase, views, selection) {
+async function confirmDraftPrepared(projectBase, views) {
   const snapshots = [];
   const decisions = [];
   for (const view of views) {
-    const tasks = (view.state && view.state.proposals || []).filter((p) => !p.status && (!selection || selection(view, p)));
+    if (!view.ready) { sayResult(view.reason || "Разбор ещё не готов к подтверждению", true); return false; }
+    const tasks = (view.state && view.state.proposals || []).filter((p) => !p.status);
     if (!tasks.length) continue;
-    snapshots.push({ source: view.id, digest: view.basis });
+    snapshots.push({ source: view.id, digest: view.basis, revision: view.state.pack_revision });
     for (const p of tasks) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
   }
   if (!decisions.length) { sayResult("Нет подготовленных задач для подтверждения", true); return false; }
   const result = await api(projectBase + "/drafts/prepared/confirm", { method: "POST", body: { snapshots, decisions } });
   const ids = result.ok ? (result.body.results || []).flatMap((r) => r.ids || []).join(", ") : "";
   sayResult(apiSaid(result) + (ids ? ": " + ids : ""), !result.ok);
-  if (result.ok) await refresh();
   return result.ok;
 }
 
@@ -17374,7 +17302,7 @@ function draftPreparedComp(project, view) {
   const create = el("button", "btn btn-sm", "Подготовить вручную");
   create.type = "button";
   create.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/new"); });
-  head.append(el("span", "gap"), create);
+  if (state.state !== "history") head.append(el("span", "gap"), create);
   card.append(head);
   if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
@@ -17400,69 +17328,24 @@ function draftPreparedComp(project, view) {
   return card;
 }
 
-// preparedTableRow это строка подготовленной задачи в общей таблице
-// накопителя (DK-1564, утверждённый макет): секция «Согласовать заведение»
-// держит задачами те же колонки и ту же плотность строки, что и секция
-// разбора. Ранг и цена стоят своими ячейками, источник отдельной ссылкой, а
-// нажатие открывает описание задачи.
-function preparedTableRow(project, view, task) {
-  const key = view.id + "/" + task.id;
+function preparedTableRow(project, view, draft, typeTitles) {
   const row = el("tr", "dsrow clicky");
-  const { cell: impc, box: imp } = tblCell("dimp");
-  const pick = el("button", "dpick" + (preparedPick.has(key) ? " on" : ""));
-  pick.type = "button";
-  pick.append(el("span", "dbox"));
-  const pickSay = () => {
-    const on = preparedPick.has(key);
-    pick.classList.toggle("on", on);
-    pick.setAttribute("aria-pressed", on ? "true" : "false");
-    withTip(pick, on ? "Снять выбор с " + preparedNumber(task) : "Выбрать " + preparedNumber(task) + " для подтверждения");
-    pick.setAttribute("aria-label", "Выбрать " + preparedNumber(task) + " для подтверждения");
-  };
-  pickSay();
-  preparedPickSays.set(key, pickSay);
-  pick.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    preparedPickSet(key, !preparedPick.has(key));
-    pickSay();
-  });
-  imp.append(pick);
-  row.append(impc);
-  row.append(el("td", "id", preparedNumber(task)));
-  const { cell: ttc, box: tt } = tblCell("dtt");
-  const title = preparedTitle(task);
-  tt.append(withFull(el("span", "st", title), title));
-  row.append(ttc);
-  row.append(el("td", "dtype", preparedType(task)));
-  // Ранг в таблице итогом суммы: формула шире колонки и наезжала на цену
-  // (замер QA 2026-11-06), слагаемые уезжают в подсказку ячейки.
-  const drank = el("td", "drank", rankSum(task.rank));
-  if (String(task.rank || "").trim() && rankSum(task.rank) !== String(task.rank).trim()) {
-    withTip(drank, "слагаемые: " + task.rank);
-  }
-  row.append(drank);
-  row.append(el("td", "dsize", task.size && task.size !== "-" ? String(task.size) : ""));
-  // Состояние согласования явно: строка попадает в секцию только до решения, и
-  // слово говорит, чего она ждёт. Чип внутри вложенной коробки режется по
-  // ширине колонки и на источник рядом не наезжает.
+  row.append(tblCell("dimp").cell, el("td", "id", view.id));
+  const { cell: titlec, box: titleb } = tblCell("dtt");
+  const title = draft.title || view.id;
+  titleb.append(withFull(el("span", "st", title), title));
+  row.append(titlec, el("td", "dtype", typeTitles[draft.type] || draft.type || ""));
+  row.append(el("td", "drank", DRAFT_PRIO[draft.prio] || ""), el("td", "dsize", ""));
   const { cell: statec, box: stateb } = tblCell("dst");
-  stateb.append(preparedStatusChip(task));
+  const state = el("span", "chip", view.ready ? "На согласовании" : "Нужна доработка");
+  if (view.reason) withTip(state, view.reason);
+  stateb.append(state);
   row.append(statec);
-  // Источник записи нужен в самой строке: согласование идёт по записям, и
-  // перейти к материалу из списка должна давать та же строка.
   const { cell: srcc, box: srcb } = tblCell("dsrc");
-  const src = el("button", "linkish", "из " + view.id);
-  src.type = "button";
-  src.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    goKeepingChat(project + "/draft/" + view.id);
-  });
-  srcb.append(src);
+  const count = (view.state.proposals || []).filter((p) => !p.status).length;
+  srcb.append(el("span", "", count + " " + plural(count, "задача", "задачи", "задач")));
   row.append(srcc);
-  row.addEventListener("click", (ev) => {
-    if (pick.contains(ev.target) || src.contains(ev.target)) return;
-    goKeepingChat(project + "/draft/" + view.id + "/prepared/" + task.id);
-  });
+  row.addEventListener("click", () => { goKeepingChat(project + "/draft/" + view.id); });
   return row;
 }
 
@@ -17558,12 +17441,13 @@ async function savePreparedTask(project, id, view, edited) {
 // preparedTaskScreen собирает экран подготовленной задачи на каркасе formPage
 // (провал приёмки 2026-11-05): чтение по умолчанию, описание собрано разметкой
 // тем же файловым блоком, что у задачи и записи, свойства стоят чипами,
-// согласование кнопками в командной панели. Правка включается карандашом,
+// правка включается карандашом,
 // несёт рамки с подписью в грани и кончается «Сохранить» либо «Отменить
 // правку».
 function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
   const decided = Boolean(task.status);
-  const projectBase = "/api/projects/" + encodeURIComponent(project);
+  const prepareNeeded = !decided && !isNew && view.ready === false
+    && (!view.state || !view.state.pack_revision || !view.state.prepared_source);
   const value = Object.assign({}, task, {
     title: task.title || "", text: task.text || "",
     after: Array.isArray(task.after) ? task.after.join(", ") : "",
@@ -17698,48 +17582,7 @@ function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
     }
   }
 
-  // Отказ спрашивает причину на месте, карточкой после описания: постоянное
-  // поле отказа занимало экран служебным местом, а нужна причина только в
-  // момент отказа.
-  const rejectBox = el("fieldset", "dfield preject");
-  rejectBox.hidden = true;
-  rejectBox.append(el("legend", "", "Причина отказа"));
-  const rejectReason = el("input");
-  rejectReason.setAttribute("aria-label", "причина отказа от задачи");
-  const rejectRow = el("div", "preject-row");
-  const rejectGo = barBtn("btn btn-danger", "Отклонить задачу", "close");
-  const rejectStay = barBtn("btn", "Оставить", "i-done");
-  rejectRow.append(rejectGo, rejectStay);
-  rejectBox.append(rejectReason, rejectRow);
-  rejectStay.addEventListener("click", () => { rejectBox.hidden = true; });
-  rejectGo.addEventListener("click", async () => {
-    const result = await api(projectBase + "/drafts/" + encodeURIComponent(id) + "/prepared/reject",
-      { method: "POST", body: { base: view.snapshot, proposal: task.id, reason: rejectReason.value } });
-    sayResult(apiSaid(result), !result.ok);
-    if (result.ok) {
-      draftPreparedDirty.delete(id);
-      await refresh();
-      goKeepingChat(project + "/draft/" + id);
-    }
-  });
-
-  // Согласование стоит в командной панели строки статуса, левее карандаша:
-  // то же место, что у «Грумить» на экране записи.
   const actions = [];
-  if (!decided && !isNew) {
-    const accept = barBtn("btn btn-acc", "Подтвердить", "i-done");
-    accept.addEventListener("click", async () => {
-      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку задачи", true); return; }
-      const confirmed = await confirmDraftPrepared(projectBase, [view], (_, p) => p.id === task.id);
-      if (confirmed) await goKeepingResult(project + "/draft/" + id);
-    });
-    const reject = barBtn("btn", "Отклонить", "close");
-    reject.addEventListener("click", () => {
-      rejectBox.hidden = !rejectBox.hidden;
-      if (!rejectBox.hidden && rejectReason.focus) rejectReason.focus();
-    });
-    actions.push(accept, reject);
-  }
 
   page = formPage({
     key: "draft-prepared", project, id,
@@ -17764,7 +17607,7 @@ function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
     detail: { file: "docs/tasks/prepared/" + id + ".md", text: task.text || "", note: "описания нет" },
     chips,
     afterChips: [editFields],
-    extra: [readNotes, rejectBox],
+    extra: [readNotes],
     actions,
     has: { title: !decided, file: true, pencil: !decided && !isNew, read: !isNew },
     // Решённую задачу править нельзя, и карандаш говорит об этом подсказкой,
@@ -17798,9 +17641,11 @@ function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
       for (const chip of propChips) chip.hidden = on;
       for (const act of actions) act.hidden = on;
       if (on) showFields();
+      if (page) page.touch();
     },
     check: () => {
-      const dirty = JSON.stringify(preparedBody(value)) !== clean;
+      const dirty = JSON.stringify(preparedBody(value)) !== clean
+        || (prepareNeeded && preparedDraft.key === ownKey && preparedDraft.edit);
       if (dirty) draftPreparedDirty.add(id); else draftPreparedDirty.delete(id);
       const refusal = value.outcome === "add" && !String(value.title || "").trim()
         ? "у задачи нужен заголовок: по нему её ищут на доске" : "";
@@ -17965,6 +17810,7 @@ async function renderDraft(project, works, id) {
     return goTaskInstead(project, text.body.task);
   }
   const running = draftGrooming(works, id);
+  const history = preparedResult.ok && preparedResult.body.state && preparedResult.body.state.state === "history";
   // Конец груминга виден без перезагрузки страницы: пока разбор идёт, экран
   // сам дожидается исхода опросом, и пометка уходит вместе с его приходом.
   // Опрос стоит до сторожа правки: иначе он глох бы на время редактирования.
@@ -17985,14 +17831,14 @@ async function renderDraft(project, works, id) {
   // Отпирает замок живое ожидание: агент спит в инструменте ожидания, файла не
   // трогает, и ответ правкой текста это законная дорога. Тем же правилом
   // отвечает и ручка, замок экрана тут не единственный сторож.
-  const locked = running && !waiting;
+  const locked = history || (running && !waiting);
   sync(groups, [{
     key: "draft-page",
     sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(preparedResult.body),
       text.ok ? [text.body.groomed, text.body.groom_error, text.body.ideas_total, text.body.ideas_undecided].join(",") : ""].join("|"),
     make: () => {
       const form = { text: said };
-      const chips = [el("span", "chip", "черновик")];
+      const chips = [el("span", "chip", history ? "История разбора" : "черновик")];
       if (running) chips.push(el("span", "chip c-run", "груминг идёт"));
       // Разбор спросил и ждёт ответа: чип тот же, что у строки накопителя и у
       // строки доски. Кружка на кнопке чата тут больше нет, он дублировал этот
@@ -18032,7 +17878,11 @@ async function renderDraft(project, works, id) {
       // строк задач. Прежде кнопка и значок стояли рядом и вели в один чат,
       // и две двери в одну комнату человек читал как две разные (замечание
       // пользователя).
-      if (running) {
+      if (history) {
+        const talk = barBtn("btn", "Чат разбора", "i-chat");
+        talk.addEventListener("click", () => { openChat(chatAddr(project, id)); });
+        actions.push(talk);
+      } else if (running) {
         // Забрать запись у агента больше нечем, и стоп стоит тут же, в ряду
         // кнопок шапки: прежде под него уходила отдельная карточка во всю
         // полосу, а слова её дублировали чип «груминг идёт» (замечание
@@ -18103,12 +17953,44 @@ async function renderDraft(project, works, id) {
           });
         actions.push(groom);
       }
-      // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
-      // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
-      // факту: строка появилась или нет (решение пользователя). Форма держит
-      // саму запись и действия над ней, а состав задач разбора стоит после
-      // шапки и действий, перед описанием (DK-1564, утверждённый макет):
-      // состав не заслоняет идентичность самой записи.
+      const prepared = preparedResult.ok ? preparedResult.body : null;
+      const pending = prepared && prepared.state && (prepared.state.proposals || []).some((p) => !p.status);
+      let accepting = false;
+      const accept = !history && pending ? barBtn("btn btn-acc", "Подтвердить разбор", "i-done") : null;
+      const reason = el("div", "hint");
+      const approvalGuard = () => {
+        if (!accept) return;
+        const why = accepting ? "Подтверждение разбора идёт" : form.text !== said || draftPreparedDirty.has(id)
+          ? "Сначала сохраните правку записи или задачи" : running ? "Сначала завершите разбор"
+          : prepared.ready ? "" : prepared.reason || "Разбор ещё не готов к подтверждению";
+        accept.disabled = Boolean(why);
+        reason.textContent = why;
+        reason.hidden = !why;
+      };
+      if (accept) {
+        accept.addEventListener("click", async () => {
+          approvalGuard();
+          if (accept.disabled) return;
+          accepting = true;
+          approvalGuard();
+          try {
+            if (await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), [prepared])) {
+              await goKeepingResult(project + "/drafts");
+            }
+          } finally {
+            accepting = false;
+            approvalGuard();
+          }
+        });
+        for (const action of actions) {
+          if (action.querySelector(".lb") && action.querySelector(".lb").textContent === "Чат разбора") {
+            action.className = "btn btn-ico";
+            action.querySelector(".lb").hidden = true;
+          }
+        }
+        actions.unshift(accept);
+        approvalGuard();
+      }
       return formPage({
         key: "draft", project, id,
         // Дорога на доску была только через накопитель, и с экрана записи её не
@@ -18126,22 +18008,22 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        afterChips: [draftPreparedComp(project, preparedResult.ok ? preparedResult.body : null)]
+        afterChips: [reason, draftPreparedComp(project, prepared)]
           .concat(metaEditor ? [metaEditor] : []),
         // Поле мысли стоит после описания и оформлено как поле, а не как
         // белая сыпь над текстом записи (DK-1564, утверждённый макет).
-        extra: text.ok ? [draftIdeaBox(project, id, locked)] : [],
+        extra: text.ok && !history ? [draftIdeaBox(project, id, locked)] : [],
         // Значок чата в шапке остаётся рабочим входом, пока на форме нет
         // подписанной кнопки чата: у разбора без прошедшей ходки и под идущим
         // разбором дверь одна, а у разобранной записи её закрывает «Чат
         // разбора» в действиях.
         has: { file: true, pencil: !locked, read: true,
-          chat: !(text.ok && text.body.groomed && !running) },
+          chat: !history && !(text.ok && text.body.groomed && !running) },
         penLabel: "Править запись",
         // Причина замка живёт подсказкой погашенного карандаша: пропавшая
         // кнопка читалась бы поломкой экрана, а карточки с этими словами на
         // экране больше нет.
-        penOff: locked ? "Правка заперта: разбор идёт, запись у агента. "
+        penOff: history ? "Разбор завершён, исходник сохранён в истории" : locked ? "Правка заперта: разбор идёт, запись у агента. "
           + "Вернуть её можно стопом." : "",
         edit: taskDraft.id === id && taskDraft.edit && !locked,
         onEdit: (on) => {
@@ -18156,6 +18038,7 @@ async function renderDraft(project, works, id) {
           const dirty = form.text !== said;
           taskDraft.id = id;
           taskDraft.dirty = dirty;
+          approvalGuard();
           return { dirty, refusal: form.text.trim() ? "" : "пустой текст затёр бы запись черновика" };
         },
         onSave: () => { saveDraftText(project, id, form.text, hash).catch(console.error); },
@@ -21762,7 +21645,7 @@ wireFlash();
 })();
 refresh().catch(console.error);
 
-// A proposal choice retains the shown cards and basis until explicit sending.
+// Показанный состав и редакция сохраняются до явного подтверждения разбора.
 function proposalDraft(shown, text = "", decisions = []) {
   return { shown: JSON.parse(JSON.stringify(shown)), text: String(text), decisions: JSON.parse(JSON.stringify(decisions)) };
 }
@@ -21777,15 +21660,20 @@ function proposalAnswer(draft) {
     const source = sources.get(d.source);
     const card = source && (source.proposals || []).find((p) => p.id === d.proposal && p.revision === d.revision);
     const key = JSON.stringify([d.source, d.proposal]);
-    if (!card || seen.has(key) || !["accept", "reject"].includes(d.action)) throw new Error("Карточка не показана или выбрана повторно");
-    if (d.action === "reject" && !String(d.reason || "").trim()) throw new Error("Укажите причину отказа");
+    if (!card || seen.has(key) || d.action !== "accept") throw new Error("Карточка не показана или выбрана повторно");
     seen.add(key); used.add(d.source);
     const decision = { source: d.source, proposal: d.proposal, revision: d.revision, action: d.action };
     if (d.reason) decision.reason = d.reason;
     decisions.push(decision);
   }
-  if (!decisions.length) throw new Error("Выберите карточки");
-  const snapshots = shown.sources.filter((s) => used.has(s.source)).map((s) => ({ source: s.source, digest: s.basis }));
+  if (!decisions.length) throw new Error("Подтвердите разбор черновика");
+  for (const source of shown.sources.filter((s) => used.has(s.source))) {
+    if ((source.proposals || []).some((p) => !seen.has(JSON.stringify([source.source, p.id])))) {
+      throw new Error("Подтверждается весь разбор черновика");
+    }
+    if (!source.revision) throw new Error("Покажите актуальный разбор черновика");
+  }
+  const snapshots = shown.sources.filter((s) => used.has(s.source)).map((s) => ({ source: s.source, digest: s.basis, revision: s.revision }));
   if (snapshots.some((s) => !s.digest)) throw new Error("Нет показанного снимка");
   return { anchor: shown.anchor, tree: shown.tree, snapshots, decisions };
 }
@@ -21794,13 +21682,10 @@ function proposalComment(draft) {
   const shown = draft && draft.shown;
   if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources) || !shown.sources.length) throw new Error("Нет показанного вопроса");
   return { mode: "comment", anchor: shown.anchor, tree: shown.tree,
-    snapshots: shown.sources.map((s) => ({ source: s.source, digest: s.basis })), decisions: [] };
+    snapshots: shown.sources.map((s) => ({ source: s.source, digest: s.basis, revision: s.revision })), decisions: [] };
 }
 
-// preparedPickWire вешает галки подтверждения на строки-ссылки реплики
-// вопроса (DK-1469, решение 4): отмеченная задача подтверждается, неотмеченная
-// остаётся подготовленной, а поправка уходит свободным текстом рядом с
-// отметками. Тел задач в чате нет, строка ведёт на экран подготовленной задачи.
+// Ссылки ведут на задачи, согласие относится ко всему разбору черновика.
 function preparedFlat(shown) {
   const out = [];
   for (const source of shown.sources || []) {
@@ -21838,25 +21723,29 @@ function preparedPickWire(feed, pick, shown) {
     }
   }
   for (const one of lines) one.line.classList.add("casklit");
-  const decided = (d) => draft.decisions.some((x) => x.source === d.source && x.proposal === d.task.id);
-  for (const one of lines) {
+  for (const source of shown.sources) {
+    const sourceLine = el("p", "casklit prepared-source");
     const mark = el("input", "caskpick");
     mark.type = "checkbox";
-    mark.setAttribute("aria-label", "Подтвердить " + one.item.title);
-    askPickMark(mark, decided(one.item));
+    mark.disabled = !source.revision || !(source.proposals || []).length;
+    mark.setAttribute("aria-label", "Подтвердить разбор " + source.source);
+    const selected = (source.proposals || []).every((p) => draft.decisions.some((d) =>
+      d.source === source.source && d.proposal === p.id && d.revision === p.revision && d.action === "accept"));
+    if (!selected || mark.disabled) draft.decisions = draft.decisions.filter((d) => d.source !== source.source);
+    askPickMark(mark, selected && !mark.disabled);
     mark.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      askPickMark(mark, !mark.classList.contains("on"));
-      draft.decisions = lines.filter((own) => own.mark.classList.contains("on"))
-        .map((own) => ({ source: own.item.source, proposal: own.item.task.id, revision: own.item.task.revision, action: "accept" }));
+      if (mark.disabled) return;
+      const on = !mark.classList.contains("on");
+      askPickMark(mark, on);
+      draft.decisions = draft.decisions.filter((d) => d.source !== source.source);
+      if (on) draft.decisions.push(...source.proposals.map((p) =>
+        ({ source: source.source, proposal: p.id, revision: p.revision, action: "accept" })));
       askPickSave(pick.addr, pick);
     });
-    one.line.onclick = (ev) => {
-      if (ev.target.closest("a,button,input")) return;
-      mark.click();
-    };
-    one.line.prepend(mark);
-    one.mark = mark;
+    sourceLine.append(mark, document.createTextNode("Подтвердить разбор " + source.source));
+    if (mark.disabled) sourceLine.append(document.createTextNode(". Покажите актуальный разбор черновика."));
+    (host.querySelector(".bb") || host).append(sourceLine);
   }
   askPickSave(pick.addr, pick);
 }

@@ -1226,15 +1226,15 @@ func TestStaticBoardTableHead(t *testing.T) {
 	}
 	// Состав колонок у разделов свой, приём один (DK-1564, утверждённый
 	// макет): у накопителя отметка выбора своей узкой колонкой без слова,
-	// ранг подписан словом и носит сумму слагаемых, источник записи стоит
-	// отдельной колонкой; колонки приоритета нет, уровень разбора читается
+	// ранг подписан словом и носит сумму слагаемых, число подготовленных задач
+	// стоит отдельной колонкой; колонки приоритета нет, уровень разбора читается
 	// рангом. Заголовок у колонки хода сессий рисованный: слово требовало
 	// под себя восемьдесят точек под кружок в девять, а снятый заголовок
 	// человек забраковал отдельно.
 	cols := funcBody(t, text, "const TBL_COLS = {")
 	for _, want := range []string{`key: "pick", label: ""`,
 		`key: "rank", label: "Ранг", by: "рангу"`,
-		`key: "live", label: "Ход", ico: "`, `label: "Из черновика"`} {
+		`key: "live", label: "Ход", ico: "`, `key: "src", label: "Задачи"`} {
 		if !strings.Contains(cols, want) {
 			t.Errorf("в колонках разделов нет %q", want)
 		}
@@ -1260,7 +1260,7 @@ func TestStaticBoardTableHead(t *testing.T) {
 	if !strings.Contains(heap, `tblHead("drafts"`) {
 		t.Error("шапки колонок в накопителе нет")
 	}
-	if !strings.Contains(heap, "draftsSorted(drafts)") {
+	if !strings.Contains(heap, "draftsSorted(grooming)") {
 		t.Error("список накопителя рисуется порядком ответа сервера, а не выбранным")
 	}
 	if !strings.Contains(funcBody(t, text, "function renderBoard("), `tblHead("tasks"`) {
@@ -1780,13 +1780,13 @@ func TestDraftProposalEditingAndRejectThroughTaskctl(t *testing.T) {
 	}
 	resp = doReq(t, c, "POST", base+"/reject", string(payload))
 	text = body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("reject %d %s", resp.StatusCode, text)
+	if resp.StatusCode < http.StatusBadRequest {
+		t.Fatalf("individual rejection accepted %d %s", resp.StatusCode, text)
 	}
 	// Фикстура легла старым блоком в запись, первое же сохранение унесло
 	// состояние в prepared-файл и срезало блок из записи (DK-1469, решение 2).
 	saved, err := draftproposal.ParsePrepared([]byte(readFile(t, draftproposal.PreparedPath(e.proj, "XR-005"))))
-	if err != nil || saved.Analysis != "ok" || saved.Proposals[0].Text != "исправленная приписка" || saved.Proposals[1].Status != "rejected" {
+	if err != nil || saved.Analysis != "ok" || saved.Proposals[0].Text != "исправленная приписка" || saved.Proposals[1].Status != "" {
 		t.Fatalf("saved %+v %v", saved, err)
 	}
 }
@@ -1835,6 +1835,21 @@ func TestStaticDraftChatEntry(t *testing.T) {
 	}
 }
 
+func completedLegacyPrepared(t *testing.T, record []byte, state draftproposal.State) draftproposal.State {
+	t.Helper()
+	embedded, err := draftproposal.Replace(record, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, _, err := draftproposal.Material(embedded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PackRevision = 1
+	state.PreparedSource = draftproposal.Digest(material)
+	return state
+}
+
 func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	kit, err := filepath.Abs("../..")
@@ -1863,7 +1878,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "active", Proposals: proposals})
+		data, err = draftproposal.Replace(data, completedLegacyPrepared(t, data, draftproposal.State{Version: 1, State: "active", Proposals: proposals}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1894,7 +1909,15 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 		return resp.StatusCode, body(t, resp)
 	}
 	v1, v2 := getView("XR-005"), getView("XR-006")
-	one := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p1", Revision: 1, Action: "accept"}}}
+	one := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Revision: v1.State.PackRevision, Digest: v1.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p1", Revision: 1, Action: "accept"}}}
+	sourceBefore := readFile(t, filepath.Join(e.proj, "docs/tasks/drafts/XR-005.md"))
+	if code, text := send(one); code == 200 {
+		t.Fatalf("partial source accepted %d %s", code, text)
+	}
+	if readFile(t, filepath.Join(e.proj, "docs/tasks/drafts/XR-005.md")) != sourceBefore {
+		t.Fatal("partial source changed state")
+	}
+	one.Decisions = append(one.Decisions, draftproposal.Decision{Source: v1.ID, Proposal: "p2", Revision: 1, Action: "accept"})
 	writeScript(t, e.bin, "git", "exit 1")
 	if code, text := send(one); code != 200 || !strings.Contains(text, "публикация не завершена") {
 		t.Fatalf("one with failed publication %d %s", code, text)
@@ -1927,7 +1950,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	if string(before) != string(unchanged) {
 		t.Fatal("dependent request wrote board")
 	}
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}, {Source: v2.ID, Digest: v2.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p2", Revision: 1, Action: "reject", Reason: "отказ"}, {Source: v2.ID, Proposal: "a", Revision: 1, Action: "accept"}, {Source: v2.ID, Proposal: "b", Revision: 1, Action: "accept"}}}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v2.ID, Revision: v2.State.PackRevision, Digest: v2.Basis}}, Decisions: []draftproposal.Decision{{Source: v2.ID, Proposal: "a", Revision: 1, Action: "accept"}, {Source: v2.ID, Proposal: "b", Revision: 1, Action: "accept"}}}
 	if code, text := send(req); code != 200 {
 		t.Fatalf("batch %d %s", code, text)
 	}
@@ -2024,7 +2047,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "active", Proposals: proposals})
+		data, err = draftproposal.Replace(data, completedLegacyPrepared(t, data, draftproposal.State{Version: 1, State: "active", Proposals: proposals}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2095,7 +2118,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	// Фикстуры легли старыми блоками в записи, подтверждение унесло решённое
 	// в prepared-файлы (DK-1469, решение 2). Неразобранная запись осталась
 	// со старым блоком: prepared-файла у неё нет.
-	for _, id := range []string{"XR-005", "XR-006", "XR-007"} {
+	for _, id := range []string{"XR-005", "XR-006", "XR-007", "XR-010"} {
 		state, err := draftproposal.ParsePrepared([]byte(readFile(t, draftproposal.PreparedPath(e.proj, id))))
 		if err != nil || state.State != "history" {
 			t.Fatalf("%s %+v %v", id, state, err)

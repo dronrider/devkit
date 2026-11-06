@@ -3,45 +3,39 @@ import { makeSandbox, makeNode, allByClass } from './poc_dom.mjs';
 const [app, raw] = process.argv.slice(2);
 const {sandbox,store} = makeSandbox(app, () => ({}));
 const shown=JSON.parse(raw);
-const feed=makeNode('div'), ta=makeNode('textarea'); ta.value='свои слова';
+const feed=makeNode('div');
 const pick={addr:'synthetic',on:true,ask:{kind:'agent',task:'XR-1',since:1,text:'Подготовил задачи, согласуй их описание.',prepared:shown}};
 sandbox.preparedPickWire(feed,pick,shown);
-// Реплики вопроса в ленте нет: строки дописываются пузырём той же формы, галки
-// вешаются на них (DK-1469, решение 4).
 assert.equal(allByClass(feed,'askfb').length,1);
 const marks=allByClass(feed,'caskpick');
-assert.equal(marks.length,3);
-// Текст узла собирается с детей: сам узел стенда держит только разметку.
-const lines=[...feed.querySelectorAll('p')].map((p)=>sandbox.askPickText(p).replace(/\s+/g,' ').trim());
-assert.equal(lines.length,5);
-assert.equal(lines[0].startsWith('вопрос по XR-1'),true);
-assert.equal(lines[1].startsWith('Подготовил задачи'),true);
-assert.equal(lines[2].startsWith('a:'),true);
-assert.ok(lines[2].includes('#worktree/draft/XR-1/prepared/a'));
+assert.equal(marks.length,2,'согласие должно относиться к черновику');
+const taskLines=[...feed.querySelectorAll('p')].filter((p)=>sandbox.askPickText(p).includes('/prepared/'));
+assert.equal(taskLines.length,3);
+assert.ok(taskLines.every((line)=>!allByClass(line,'caskpick').length),'при задачах остались галки');
 const comment = sandbox.proposalComment(pick.proposalDraft);
 assert.equal(comment.mode, 'comment');
 assert.equal(comment.snapshots.length, 2);
 assert.equal(comment.decisions.length, 0);
-// Отмеченная галкой задача подтверждается, две отметки несут один снимок своей
-// записи, и отметка переживает перерисовку памятью разговора.
 const click={stopPropagation(){}};
 marks[0].handlers.click(click);
-marks[1].handlers.click(click);
 const saved=JSON.parse(store.get('devkit.askdraft.synthetic'));
 assert.equal(saved.proposalDraft.decisions.length,2);
-assert.equal(saved.proposalDraft.decisions[0].action,'accept');
-// Повторная развеска того же вопроса читает отметки из памяти: галки стоят
-// на местах, чужого решения в них не появилось.
+assert.ok(saved.proposalDraft.decisions.every((d)=>d.source==='XR-1' && d.action==='accept'));
 const feed2=makeNode('div');
 sandbox.preparedPickWire(feed2,pick,shown);
 const again=allByClass(feed2,'caskpick');
-assert.equal(again.length,3);
+assert.equal(again.length,2);
 assert.equal(again[0].classList.contains('on'),true);
-assert.equal(again[1].classList.contains('on'),true);
-assert.equal(again[2].classList.contains('on'),false);
-// Ответ собирается по показанному снимку, а не по свежему материалу записи.
+assert.equal(again[1].classList.contains('on'),false);
 shown.sources[0].basis='новый';
 const answer=sandbox.proposalAnswer(saved.proposalDraft);
 assert.equal(answer.snapshots[0].digest,'old');
+assert.equal(answer.snapshots[0].revision,shown.sources[0].revision);
 assert.equal(answer.decisions.length,2);
-console.log('proposal UI marks and persistence: ok');
+// Сохранённая частичная отметка прежнего UI не означает согласие на весь разбор.
+pick.proposalDraft.decisions.pop();
+const feed3=makeNode('div');
+sandbox.preparedPickWire(feed3,pick,pick.proposalDraft.shown);
+assert.equal(allByClass(feed3,'caskpick')[0].classList.contains('on'),false);
+assert.equal(pick.proposalDraft.decisions.length,0);
+console.log('proposal whole source marks and persistence: ok');

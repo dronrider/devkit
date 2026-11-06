@@ -17,7 +17,13 @@ import uuid
 
 
 def claude_journal_to_codex_items(lines):
-    """Строки журнала stream-json -> элементы Responses API для inject_items."""
+    """Строки журнала stream-json -> элементы Responses API для inject_items.
+
+    Признак is_error у tool_result не сохраняется: результат кладётся в
+    function_call_output простым текстом. Это известная задокументированная
+    потеря прямого направления, классификация ошибки остаётся только в
+    тексте самого результата.
+    """
     items = []
     for raw in lines:
         line = raw.strip() if isinstance(raw, str) else raw

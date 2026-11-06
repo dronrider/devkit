@@ -358,7 +358,7 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	}
 }
 
-func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
+func TestPreparedHistoryRejectsNewAnalysisAndKeepsOldRetry(t *testing.T) {
 	root := setup(t)
 	kit, _ := filepath.Abs("../..")
 	t.Setenv("DEVKIT_HOME", kit)
@@ -396,12 +396,15 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatalf("state: %+v", view.State)
 	}
 	old := view.State
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
+	if _, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`)); err == nil {
+		t.Fatal("history reopened")
+	}
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "active" || len(view.State.Proposals) != 2 || !reflect.DeepEqual(view.State.Proposals[0], old.Proposals[0]) || !reflect.DeepEqual(view.State.Receipts, old.Receipts) {
+	if !reflect.DeepEqual(view.State, old) {
 		t.Fatalf("new state: %+v", view.State)
 	}
 	before, _ := os.ReadFile(draftPath(root, "XR-008"))
@@ -417,15 +420,15 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatalf("retry: %s", repeat)
 	}
 	next, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p2"), Revision: 1, Action: "accept"}}})
-	if _, err = cmdDraftPreparedConfirm(root, next, CommitOpts{}); err != nil {
-		t.Fatal(err)
+	if _, err = cmdDraftPreparedConfirm(root, next, CommitOpts{}); err == nil {
+		t.Fatal("new history confirmation applied")
 	}
 	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "history" || len(view.State.Receipts) != 4 {
+	if view.State.State != "history" || len(view.State.Receipts) != 2 {
 		t.Fatalf("final: %+v", view.State)
 	}
 }

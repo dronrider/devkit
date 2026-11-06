@@ -156,6 +156,9 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if old.State == "history" {
+		return "", fmt.Errorf("%s: разбор завершён и сохранён в истории; новый разбор запишите отдельным черновиком", id)
+	}
 	snapshot, err := preparedSnapshot(old, record)
 	if err != nil {
 		return "", err

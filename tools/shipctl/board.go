@@ -5,8 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/merged"
 )
 
 // Ключи секций и заголовки те же, что в taskctl. Парсер здесь нарочно
@@ -149,7 +152,7 @@ func loadBoard(root string) (*board, error) {
 
 // failSufRe вытаскивает причину из пометки провала проверки в заголовке
 // строки. Ставит пометку taskctl fail, и по ней видно, что за задачей остался
-// сломанный прод: очередь тогда стоит, даже когда строка ушла из Check.
+// непогашенный провал, даже когда строка ушла из Check.
 var failSufRe = regexp.MustCompile(`\[провал: ([^|\[\]]*)\]`)
 
 type failure struct{ ID, Reason string }
@@ -185,6 +188,53 @@ func failedOf(b *board, id string) string {
 func brokenProd(f failure) string {
 	return fmt.Sprintf("провал проверки за %s (%s): прод считается сломанным, чинить shipctl revert %s либо форвард-фиксом и shipctl merge %s",
 		f.ID, f.Reason, f.ID, f.ID)
+}
+
+type failBlock struct {
+	fail failure
+	path string
+}
+
+// failureDeps обходит рёбра «после» один раз на строку. Свою пометку
+// пропускаем, чтобы форвард-фикс проходил и при цикле зависимостей.
+func failureDeps(b *board, id string) []failBlock {
+	fails := map[string]failure{}
+	for _, f := range failedChecks(b) {
+		fails[f.ID] = f
+	}
+	if len(fails) == 0 {
+		return nil
+	}
+	var out []failBlock
+	seen := map[string]bool{id: true}
+	var walk func(from string, chain []string)
+	walk = func(from string, chain []string) {
+		r := b.rowOf(from)
+		if r == nil {
+			return
+		}
+		for _, d := range merged.Deps(r.Title) {
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			next := append(slices.Clone(chain), d)
+			if f, ok := fails[d]; ok {
+				out = append(out, failBlock{f, strings.Join(next, " -> ")})
+			}
+			walk(d, next)
+		}
+	}
+	walk(id, []string{id})
+	return out
+}
+
+func failBlocksSaid(blocks []failBlock) string {
+	var why []string
+	for _, bl := range blocks {
+		why = append(why, fmt.Sprintf("%s, путь зависимости %s", brokenProd(bl.fail), bl.path))
+	}
+	return strings.Join(why, "; ")
 }
 
 // sectOf возвращает секцию задачи, пустую строку если её нет на доске.
@@ -240,3 +290,11 @@ func (b *board) rowOf(id string) *row {
 // openReviewNotes переехал в internal/trace: тот же перечень открытых
 // замечаний спрашивает след слова «review» у этапа плана (LLD DK-972,
 // решение 6), и копия разошлась бы с merge на первой же правке разбора.
+
+func failureGate(b *board, id string) error {
+	blocks := failureDeps(b, id)
+	if len(blocks) == 0 {
+		return nil
+	}
+	return &dependencyWait{fmt.Errorf("%s", failBlocksSaid(blocks))}
+}

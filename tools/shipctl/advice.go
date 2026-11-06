@@ -42,7 +42,7 @@ func checkParts(root string, b *board, smoked []string) (waiting, agentSmoked, a
 	for _, r := range b.sects["check"] {
 		switch kind := accept.KindOf(r.Title); {
 		case failSufRe.MatchString(r.Title):
-			// Непогашенный провал держит очередь целиком, и про такую строку
+			// Непогашенный провал виден отдельной строкой, и про такую строку
 			// status кричит своей строкой. Ни человеку в приёмку, ни тику она
 			// сейчас не принадлежит: сперва чинится прод.
 		case kind != accept.Agent:
@@ -64,14 +64,14 @@ func checkParts(root string, b *board, smoked []string) (waiting, agentSmoked, a
 // дальше» живёт в выводе утилиты, а не в прозе скилла: подсказку читает любая
 // модель и ровно в тот момент, когда решение принимается, а абзац скилла к
 // этому моменту прочитан час назад или не прочитан вовсе (DK-180, DK-205).
-// Порядок веток это порядок срочности: сломанный прод держит очередь целиком,
+// Порядок веток это порядок срочности: сначала починка провала,
 // дальше проверка выкаченного, потом стоящий поезд, и только потом работа над
 // кодом.
 func nextStep(st pipelineState) string {
 	switch {
 	case len(st.failed) > 0:
 		return "следующий шаг: чинить прод по " + strings.Join(st.failed, ", ") +
-			" (shipctl revert <ID> либо форвард-фикс), очередь стоит целиком, пока висит признак провала"
+			" (shipctl revert <ID> либо форвард-фикс), зависимые задачи ждут починки, независимые можно сливать и выкатывать"
 	case len(st.check) > 0:
 		return checkStep(st)
 	case len(st.train) > 0:
@@ -248,7 +248,6 @@ func rehearsalGate(root, id, title, doc string) error {
 	}
 	return rehearsal.Fresh(root, id, doc, "слияние")
 }
-
 
 // Проверяющие следов regcheck, тестов и ревью переехали в internal/trace
 // (LLD DK-972, решение 6): ворота слияния и этап плана спрашивают одну и ту же

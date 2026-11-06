@@ -14,20 +14,15 @@ const (
 	rowSelfFailed = "| XR-001 | Починка бага [провал: прод отдаёт 500] | bug | P1 | 55 (50+0+0+5+0) | [tasks/XR-001.md](tasks/XR-001.md) |\n"
 )
 
-// TestMergeRefusesWhileProdBroken: пока за чужой задачей числится провал,
-// прод сломан, и очередь стоит целиком.
-func TestMergeRefusesWhileProdBroken(t *testing.T) {
+func TestMergeIndependentDespiteFailedCheck(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	branchWithFix(t, root)
-	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
-	if err == nil || !strings.Contains(err.Error(), "провал проверки за XR-003") {
-		t.Fatalf("ожидал отказ по сломанному проду, получил: %v", err)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "shipctl revert XR-003") {
-		t.Fatalf("в отказе нет способа починить прод: %v", err)
-	}
-	if log := gitT(t, root, "log", "main", "--format=%s"); strings.Contains(log, "fix: XR-001 правка") {
-		t.Fatalf("отбитый merge всё же слил ветку:\n%s", log)
+	b, err := loadBoard(root)
+	if err != nil || failedOf(b, "XR-003") != "прод отдаёт 500" {
+		t.Fatalf("чужая пометка потеряна: %v", err)
 	}
 }
 
@@ -46,27 +41,6 @@ func TestMergeFixesBrokenProd(t *testing.T) {
 	calls, _ := os.ReadFile(callLog)
 	if !strings.Contains(string(calls), "move XR-001 check") {
 		t.Fatalf("taskctl move не вызван: %q", calls)
-	}
-}
-
-// TestMergeTrainRefusedWhileProdBroken: поезд это накопление, а сломанный
-// прод чинят выкатом, поэтому --train отбивается и для своей задачи.
-func TestMergeTrainRefusedWhileProdBroken(t *testing.T) {
-	root, _ := setup(t, rowSelfFailed, "")
-	branchWithFix(t, root)
-	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
-	if err == nil || !strings.Contains(err.Error(), "поезд при сломанном проде не копится") {
-		t.Fatalf("ожидал отказ поездного слияния, получил: %v", err)
-	}
-}
-
-// TestShipRefusesWhileProdBroken: провал проверяется раньше состава поезда,
-// иначе отказ говорил бы про пустой поезд вместо сломанного прода.
-func TestShipRefusesWhileProdBroken(t *testing.T) {
-	root, _ := setup(t, rowInProg+rowFailed, "")
-	_, err := cmdShip(root, ShipParams{Deploy: "true"})
-	if err == nil || !strings.Contains(err.Error(), "провал проверки за XR-003") {
-		t.Fatalf("ожидал отказ ship по сломанному проду, получил: %v", err)
 	}
 }
 
@@ -149,7 +123,7 @@ func TestRevertWithoutFailMark(t *testing.T) {
 }
 
 // TestStatusNamesBrokenProd: status называет сломанный прод отдельной строкой
-// и вердикта про свободную очередь рядом с ней не печатает.
+// и позволяет продолжать независимые задачи.
 func TestStatusNamesBrokenProd(t *testing.T) {
 	root, _ := setup(t, rowSelfFailed, "")
 	codeCommit(t, root, "XR-001", "one.txt")
@@ -157,11 +131,11 @@ func TestStatusNamesBrokenProd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(st, "провал проверки за XR-001") || !strings.Contains(st, "merge и ship отказывают") {
+	if !strings.Contains(st, "провал проверки за XR-001") || !strings.Contains(st, "независимые задачи проходят") {
 		t.Fatalf("status молчит про сломанный прод:\n%s", st)
 	}
-	if strings.Contains(st, "очередь свободна") {
-		t.Fatalf("вердикт про свободную очередь противоречит сломанному проду:\n%s", st)
+	if !strings.Contains(st, "очередь свободна") {
+		t.Fatalf("независимые задачи должны проходить:\n%s", st)
 	}
 }
 

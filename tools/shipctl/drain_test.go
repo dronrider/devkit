@@ -34,14 +34,14 @@ func TestShipDrainQueueBusyNoop(t *testing.T) {
 	}
 }
 
-// TestShipDrainBrokenProdNoop: и на сломанном проде, третьем чистом отказе.
+// Чужой провал не меняет причину пустого разлива.
 func TestShipDrainBrokenProdNoop(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	msg, err := cmdShip(root, ShipParams{Drain: true})
 	if err != nil {
 		t.Fatalf("разлив на сломанном проде должен молчать нулём: %v", err)
 	}
-	if !strings.Contains(msg, "разлив не нужен") || !strings.Contains(msg, "провал проверки за XR-003") {
+	if !strings.Contains(msg, "разлив не нужен") || !strings.Contains(msg, "поезд пуст") {
 		t.Fatalf("сообщение о сломанном проде: %q", msg)
 	}
 }

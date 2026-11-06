@@ -616,7 +616,12 @@ func cmdStatus(root string) (string, error) {
 	failed := map[string]bool{}
 	for _, f := range fails {
 		failed[f.ID] = true
-		out = append(out, brokenProd(f)+"; merge и ship отказывают, пока признак не погашен")
+		out = append(out, brokenProd(f)+"; заблокированы зависимости по рёбрам «после», независимые задачи проходят")
+	}
+	for _, r := range b.sects["in-progress"] {
+		if err := failureGate(b, r.ID); err != nil {
+			out = append(out, r.ID+" заблокирована: "+err.Error())
+		}
 	}
 	var soft []string
 	for _, id := range back {
@@ -631,8 +636,6 @@ func cmdStatus(root string) (string, error) {
 			" (проверка принята с замечаниями, доработка идёт кругом; очередь не держат)")
 	}
 	switch {
-	case len(fails) > 0:
-		// вердикта нет: прод сломан, и «очередь свободна» рядом с этим врало бы.
 	case len(busy) > 0:
 		out = append(out, fmt.Sprintf("очередь занята: %s в Check с выкатом без отметки smoke, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0]))
 	case len(strays) > 0:
@@ -650,7 +653,7 @@ func cmdStatus(root string) (string, error) {
 			out = append(out, "очередь свободна: в Check только задачи без выкаченного кода, подтверждение за пользователем, но выкат они не держат")
 		}
 	default:
-		out = append(out, "очередь свободна, сливать и выкатывать можно")
+		out = append(out, "очередь свободна, независимые от провалов задачи можно сливать и выкатывать")
 	}
 	// Кто из Check ждёт человека, называется поимённо и с видом приёмки: до
 	// DK-516 status говорил про приёмку глазами одной фразой на всех, и по
@@ -1131,22 +1134,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		// ID переданной задачи. Ветка задачи называется по ID (RULES.board.md).
 		return "", fmt.Errorf("стоишь на %s, а сливается %s: перейти на ветку задачи и повторить", branch, p.ID)
 	}
-	// Провал проверки это сломанный прод, и до починки очередь стоит целиком.
-	// Единственный заход, который она пропускает, это починка самой
-	// проваленной задачи форвард-фиксом: он и снимет признак переводом в Check.
-	// Поезд при сломанном проде не копится, чинят выкатом.
 	failReason := failedOf(b, p.ID)
-	for _, f := range failedChecks(b) {
-		switch {
-		case f.ID != p.ID:
-			return "", fmt.Errorf("%s; своя задача сольётся, когда прод починен", brokenProd(f))
-		case p.Train:
-			return "", fmt.Errorf("%s; поезд при сломанном проде не копится, чинить одиночным merge или откатом", brokenProd(f))
-		}
+	if err := failureGate(b, p.ID); err != nil {
+		return "", err
 	}
-	// Ребро «после» у сливаемой строки обязано быть снято (решение 3 LLD
-	// DK-933), в обоих режимах: код идёт в main и поездом. Провал предпосылки
-	// сюда не доходит, его раньше отбил сломанный прод.
 	if err := edgeGate(root, b, p.ID); err != nil {
 		return "", err
 	}
@@ -1173,13 +1164,6 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if !p.Train {
 		if busy, err := checkQueue(root, main, b); err != nil {
 			return "", err
-		} else if len(busy) > 0 && failReason != "" {
-			// Форвард-фикс проваленной задачи чинится выкатом, а выкат
-			// очередь не проходит: копить поезд при сломанном проде значит
-			// запереть починку навсегда (ship отбит признаком провала,
-			// merge отбит занятой очередью), поэтому здесь честный отказ
-			// с путём починки, а не молчаливое слияние в поезд.
-			return "", fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke, а %s провалена и чинится только выкатом форвард-фикса: сначала smoke (shipctl smoke %s) либо проверка занявшей очередь (taskctl close), либо откат своей задачи (shipctl revert %s), поезд при сломанном проде не копится", strings.Join(busy, ", "), p.ID, busy[0], p.ID)
 		} else if len(busy) > 0 {
 			p.Train = true
 			queueFallback = fmt.Sprintf("очередь занята: %s в Check с выкатом без отметки smoke, поэтому слияние поездное: ветка ждёт свободной очереди в main, выкат потом одним деплоем (shipctl ship); отметка прогона сценария (shipctl smoke %s) очередь освобождает\n", strings.Join(busy, ", "), busy[0])
@@ -1584,8 +1568,8 @@ type ShipParams struct {
 // конвейер) под --drain выходят нулём с сообщением вместо error. Провал
 // деплоя в их число не входит: это не «нечего разливать», а поломка, и
 // --drain сам ставит признак провала на первую задачу состава тем же
-// суффиксом, что taskctl fail, чтобы следующий разлив
-// упёрся в failedChecks и промолчал сам. Собственный notify() тут не зовётся:
+// суффиксом, что taskctl fail. Повтор того же груза сдерживает отдельная
+// запись неудачного выката. Собственный notify() тут не зовётся:
 // его шлёт taskFailSet через taskctl fail, и звать оба значило бы дублировать
 // уведомление на одно и то же событие.
 func cmdShip(root string, p ShipParams) (string, error) {
@@ -1680,9 +1664,6 @@ func cmdShip(root string, p ShipParams) (string, error) {
 			return "", err
 		}
 	}
-	if fs := failedChecks(b); len(fs) > 0 {
-		return withTail(drainOr(p.Drain, fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0]))))
-	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
 		return "", err
@@ -1702,6 +1683,11 @@ func cmdShip(root string, p ShipParams) (string, error) {
 			return tailNote, nil
 		}
 		return drainOr(p.Drain, fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)"))
+	}
+	for _, id := range train {
+		if err := failureGate(b, id); err != nil {
+			return withTail(drainOr(p.Drain, fmt.Errorf("состав поезда (%s) заблокирован: %w", strings.Join(train, ", "), err)))
+		}
 	}
 	// Ворота перевода спрашиваются до выката, а не после (DK-781): состав
 	// переводится в Check уже с прода, и строка без сценария роняла там перевод
@@ -1735,6 +1721,25 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err := freshMain(root, main); err != nil {
 		return "", err
 	}
+	artifact, err := drainArtifact(root, main)
+	if err != nil {
+		return "", err
+	}
+	if p.Drain {
+		failed, err := readDrainFailure(root)
+		if err != nil {
+			return "", fmt.Errorf("запись неудачного выката не прочитана: %w", err)
+		}
+		if failed.Artifact == artifact {
+			return withTail(drainOr(true, fmt.Errorf("выкат того же артефакта (%s) ранее не прошёл: %s; повтор вручную: shipctl ship", strings.Join(failed.Tasks, ", "), failed.Reason)))
+		}
+	}
+	rememberFailure := func(reason string) string {
+		if err := saveDrainFailure(root, drainFailure{Artifact: artifact, Tasks: train, Reason: reason}); err != nil {
+			return "\nзапись неудачного выката не сохранена: " + err.Error()
+		}
+		return ""
+	}
 	list := strings.Join(train, ", ")
 	for _, id := range train {
 		stageOpen(root, id, stage.Deploy, "shipctl ship, поезд: "+list)
@@ -1767,6 +1772,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		done, failedComp, out, timedOut, rerr := runComponents(root, comps, deploy.timeout)
 		if rerr != nil {
 			short, full := deployProblem(failedComp.Command, timedOut, deploy.timeout)
+			guardNote := rememberFailure("компонент " + failedComp.Name + " " + short)
 			outSummary := cmdoutFrame(root, "deploy-"+failedComp.Name, out)
 			doneNote := ""
 			if len(done) > 0 {
@@ -1774,22 +1780,23 @@ func cmdShip(root string, p ShipParams) (string, error) {
 			}
 			if p.Drain {
 				note := failNote(root, train[0], fmt.Sprintf("компонент %s %s", failedComp.Name, short), doPush)
-				return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note)
+				return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note+guardNote)
 			}
 			note := notify(root, train[0], fmt.Sprintf("%s: выкат поезда, компонент %s %s (%s)", filepath.Base(root), failedComp.Name, short, list), full+"\n"+outSummary)
-			return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note)
+			return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note+guardNote)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен по компонентам (%s): %s", list, strings.Join(done, ", ")))
 	case deploy.run != "":
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout, nil); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
+			guardNote := rememberFailure(short)
 			outSummary := cmdoutFrame(root, "deploy", out)
 			if p.Drain {
 				note := failNote(root, train[0], short, doPush)
-				return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
+				return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note+guardNote)
 			}
 			note := notify(root, train[0], fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+outSummary)
-			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
+			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note+guardNote)
 		}
 		msg = append(msg, fmt.Sprintf("поезд выкачен (%s)", list))
 	case deploy.manual != "":
@@ -1803,6 +1810,9 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	// не посчитает выкаченный поезд стоящим и не выкатит его повторно.
 	if _, err := git(root, "tag", "--no-sign", "-f", deployTag, main); err != nil {
 		return "", err
+	}
+	if err := clearDrainFailure(root); err != nil {
+		msg = append(msg, "запись неудачного выката не удалена: "+err.Error())
 	}
 	if doPush {
 		// Провал пуша тега не роняет ship: доску важнее довести до Check, она

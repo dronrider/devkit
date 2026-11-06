@@ -341,21 +341,18 @@ func TestMergeQueueBusy(t *testing.T) {
 	}
 }
 
-// TestMergeQueueBusyFailed: форвард-фикс проваленной задачи при занятой
-// очереди в поезд не уходит. Починка провала едет выкатом, выкат очередь не
-// проходит, а поезд при сломанном проде не копится: молчаливое слияние
-// запирало бы починку навсегда.
 func TestMergeQueueBusyFailed(t *testing.T) {
 	root, _ := setup(t, rowSelfFailed, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	gitT(t, root, "tag", "deployed")
 	branchWithFix(t, root)
-	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
-	if err == nil || !strings.Contains(err.Error(), "поезд при сломанном проде не копится") {
-		t.Fatalf("форвард-фикс при занятой очереди должен получать отказ с путём починки: %v", err)
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil || !strings.Contains(msg, "очередь занята: XR-009") || !strings.Contains(msg, "в поезде: XR-001") {
+		t.Fatalf("починка ждёт предыдущего выката в поезде: %q, %v", msg, err)
 	}
-	if !strings.Contains(err.Error(), "очередь занята: XR-009") {
-		t.Fatalf("отказ обязан назвать занявшую очередь задачу: %v", err)
+	b, err := loadBoard(root)
+	if err != nil || failedOf(b, "XR-001") == "" {
+		t.Fatalf("слияние в поезд не снимает пометку провала: %v", err)
 	}
 }
 

@@ -537,11 +537,6 @@ func queueDrain(root string, p QueueParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Сломанный прод держит очередь целиком, и разлив тут молчит своим
-	// маркером, а не перебирает состав, упираясь в один и тот же отказ.
-	if fails := failedChecks(b); len(fails) > 0 {
-		return noQueue + ": " + brokenProd(fails[0]), nil
-	}
 	items, err := queueRows(root, b)
 	if err != nil {
 		return "", err

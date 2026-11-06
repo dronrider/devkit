@@ -93,22 +93,13 @@ func TestQueueDrainPoursOneBranch(t *testing.T) {
 	}
 }
 
-// TestQueueDrainStopsOnBrokenProd: сломанный прод держит очередь целиком, и
-// разлив молчит своим маркером, как ship --drain.
-func TestQueueDrainStopsOnBrokenProd(t *testing.T) {
+func TestQueueDrainIndependentDespiteFailedCheck(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	devkitDir(t, root)
-	branchWithFix(t, root)
-	gitT(t, root, "checkout", "-q", "main")
+	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
-	if err != nil {
-		t.Fatalf("сломанный прод останавливает разлив молча: %v", err)
-	}
-	if !strings.Contains(msg, noQueue) || !strings.Contains(msg, "провал проверки за XR-003") {
-		t.Fatalf("причина остановки: %q", msg)
-	}
-	if strings.Contains(gitT(t, root, "log", "--format=%s"), "fix: XR-001 правка") {
-		t.Error("при сломанном проде ветка уехала в main")
+	if err != nil || !strings.Contains(msg, "XR-001 слита очередью") {
+		t.Fatalf("независимая задача должна пройти: %q, %v", msg, err)
 	}
 }
 

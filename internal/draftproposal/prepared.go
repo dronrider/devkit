@@ -137,6 +137,9 @@ func RenderPrepared(s State) ([]byte, error) {
 	if len(s.RetiredIDs) > 0 {
 		writeKeyValue(&b, "retired_ids", tomlArray(s.RetiredIDs))
 	}
+	if s.Conclusion != "" {
+		writeKeyValue(&b, "conclusion", tomlString(s.Conclusion))
+	}
 	if s.Analysis != "" {
 		writeKeyValue(&b, "analysis", tomlString(s.Analysis))
 	}
@@ -431,7 +434,7 @@ func ParsePrepared(data []byte) (State, error) {
 		return State{}, err
 	}
 	t := doc.Table("")
-	if err = checkFields("prepared", t, "version state analysis keys pack_revision prepared_source retired_ids"); err != nil {
+	if err = checkFields("prepared", t, "version state analysis conclusion keys pack_revision prepared_source retired_ids"); err != nil {
 		return State{}, err
 	}
 	state := State{Receipts: receipts}
@@ -452,6 +455,9 @@ func ParsePrepared(data []byte) (State, error) {
 		return State{}, err
 	}
 	if state.State, err = wantStr("prepared", "state", t); err != nil {
+		return State{}, err
+	}
+	if state.Conclusion, err = wantStr("prepared", "conclusion", t); err != nil {
 		return State{}, err
 	}
 	if state.Analysis, err = wantStr("prepared", "analysis", t); err != nil {

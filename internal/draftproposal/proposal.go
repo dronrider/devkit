@@ -64,6 +64,7 @@ type State struct {
 	Proposals      []Proposal `json:"proposals"`
 	Receipts       []Receipt  `json:"receipts,omitempty"`
 	Analysis       string     `json:"analysis,omitempty"`
+	Conclusion     string     `json:"conclusion,omitempty"`
 }
 type Decision struct {
 	Source   string `json:"source"`

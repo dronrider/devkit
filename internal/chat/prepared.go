@@ -19,10 +19,11 @@ type PreparedQuestion struct {
 }
 
 type PreparedSource struct {
-	Revision  int                      `json:"revision,omitempty"`
-	Source    string                   `json:"source"`
-	Basis     string                   `json:"basis"`
-	Proposals []draftproposal.Proposal `json:"proposals"`
+	Conclusion string                   `json:"conclusion,omitempty"`
+	Revision   int                      `json:"revision,omitempty"`
+	Source     string                   `json:"source"`
+	Basis      string                   `json:"basis"`
+	Proposals  []draftproposal.Proposal `json:"proposals"`
 }
 
 func (q PreparedQuestion) Validate() error {

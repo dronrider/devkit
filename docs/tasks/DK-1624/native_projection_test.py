@@ -21,7 +21,7 @@ SEED_UUID = "11111111-1111-4111-8111-111111111111"
 CWD = "/tmp/dk1624-seed-project"
 
 
-def write_seed(directory, prefix="", answer="RESUME_PROBE_READY."):
+def write_seed(directory, prefix="", suffix="", answer="RESUME_PROBE_READY."):
     """Seed-журнал одной пары в форме native-транскрипта Claude Code."""
     user_uuid = str(uuid.uuid4())
     records = [
@@ -29,7 +29,8 @@ def write_seed(directory, prefix="", answer="RESUME_PROBE_READY."):
          "cwd": CWD, "sessionId": SEED_UUID, "version": "2.1.312",
          "gitBranch": "dk-1624", "type": "user",
          "message": {"role": "user", "content": [
-             {"type": "text", "text": prefix + native_projection.SEED_PROMPT}]},
+             {"type": "text", "text":
+              prefix + native_projection.SEED_PROMPT + suffix}]},
          "uuid": user_uuid, "timestamp": "2026-11-06T18:00:00.000Z"},
         {"parentUuid": user_uuid, "isSidechain": False,
          "userType": "external", "cwd": CWD, "sessionId": SEED_UUID,
@@ -77,6 +78,49 @@ def write_seed_split_reply(directory):
          "message": {"id": "msg_seed", "role": "assistant",
                      "content": [{"type": "text",
                                   "text": "RESUME_PROBE_READY."}]},
+         "uuid": str(uuid.uuid4()), "timestamp": "2026-11-06T18:00:02.000Z"},
+    ]
+    path = Path(directory) / (SEED_UUID + ".jsonl")
+    path.write_text("".join(json.dumps(record, ensure_ascii=False) + "\n"
+                            for record in records), encoding="utf-8")
+    return path
+
+
+def write_seed_suffix(directory):
+    """Seed-журнал формы Go-подписки: prompt в начале, служебный хвост.
+
+    Клиент дописывает служебный текст после исходного вопроса, и тот же
+    prompt повторяется внутри хвоста. Ответ разбит на thinking и text
+    строки с одним message.id.
+    """
+    user_uuid = str(uuid.uuid4())
+    thinking_uuid = str(uuid.uuid4())
+    suffix = ("\n\nSERVICE_SUFFIX_DO_NOT_COPY\n"
+              "{\"original_prompt\": \"Reply only RESUME_PROBE_READY.\", "
+              "\"context\": \"FAKE_SERVICE_DO_NOT_COPY\"}")
+    records = [
+        {"parentUuid": None, "isSidechain": False, "userType": "external",
+         "cwd": CWD, "sessionId": SEED_UUID, "version": "2.1.312",
+         "gitBranch": "dk-1624", "type": "user",
+         "message": {"role": "user",
+                     "content": native_projection.SEED_PROMPT + suffix},
+         "uuid": user_uuid, "timestamp": "2026-11-06T18:00:00.000Z"},
+        {"parentUuid": user_uuid, "isSidechain": False,
+         "userType": "external", "cwd": CWD, "sessionId": SEED_UUID,
+         "version": "2.1.312", "gitBranch": "dk-1624", "type": "assistant",
+         "apiBlockIndex": 0,
+         "message": {"id": "msg_seed", "role": "assistant",
+                     "content": [{"type": "thinking",
+                                  "thinking": "размышление не переносится",
+                                  "signature": "sig-do-not-copy"}]},
+         "uuid": thinking_uuid, "timestamp": "2026-11-06T18:00:01.000Z"},
+        {"parentUuid": thinking_uuid, "isSidechain": False,
+         "userType": "external", "cwd": CWD, "sessionId": SEED_UUID,
+         "version": "2.1.312", "gitBranch": "dk-1624", "type": "assistant",
+         "apiBlockIndex": 1,
+         "message": {"id": "msg_seed", "role": "assistant",
+                     "content": [{"type": "text",
+                                  "text": "RESUME_PROBE_READY"}]},
          "uuid": str(uuid.uuid4()), "timestamp": "2026-11-06T18:00:02.000Z"},
     ]
     path = Path(directory) / (SEED_UUID + ".jsonl")
@@ -174,7 +218,8 @@ class ProjectionTest(Stand):
                          [{"type": "text", "text":
                            native_projection.SEED_PROMPT}])
         self.assertEqual(records[1]["message"]["content"],
-                         [{"type": "text", "text": "RESUME_PROBE_READY."}])
+                         [{"type": "text", "text":
+                           native_projection.SEED_ANSWER}])
         # тексты истории сохранены, thinking исключён
         self.assertEqual(records[2]["message"]["content"],
                          [{"type": "text", "text": "user_fact = CEDAR-5297"}])
@@ -220,7 +265,8 @@ class ProjectionTest(Stand):
                          [{"type": "text", "text":
                            native_projection.SEED_PROMPT}])
         self.assertEqual(records[1]["message"]["content"],
-                         [{"type": "text", "text": "RESUME_PROBE_READY."}])
+                         [{"type": "text", "text":
+                           native_projection.SEED_ANSWER}])
         self.assertNotIn("размышление", journal)
         self.assertNotIn("sig-do-not-copy", journal)
         self.assertNotIn("приставка CLI", journal)
@@ -239,6 +285,54 @@ class ProjectionTest(Stand):
         self.assertEqual(first["message"]["content"],
                          [{"type": "text", "text":
                            native_projection.SEED_PROMPT}])
+
+    def test_seed_with_service_suffix_is_accepted(self):
+        self.seed_path.unlink()
+        self.seed_path = write_seed_suffix(self.dir)
+        code, out, err = self.run_main()
+        self.assertEqual(code, 0, err)
+        new_uuid = [line.split(": ")[1] for line in out.splitlines()
+                    if line.startswith("native uuid: ")][0]
+        target = self.dir / (new_uuid + ".jsonl")
+        journal = target.read_text(encoding="utf-8")
+        records = [json.loads(line) for line in journal.splitlines()]
+        # prompt у начала вопроса принят, служебный хвост не скопирован
+        self.assertEqual(records[0]["type"], "user")
+        self.assertEqual(records[1]["type"], "assistant")
+        self.assertEqual(records[0]["message"]["content"],
+                         [{"type": "text", "text":
+                           native_projection.SEED_PROMPT}])
+        self.assertEqual(records[1]["message"]["content"],
+                         [{"type": "text", "text":
+                           native_projection.SEED_ANSWER}])
+        self.assertNotIn("SERVICE_SUFFIX_DO_NOT_COPY", journal)
+        self.assertNotIn("размышление", journal)
+
+    def test_prompt_in_middle_of_question_refuses(self):
+        self.seed_path.unlink()
+        self.seed_path = write_seed(self.dir, prefix="спереди ",
+                                    suffix=" сзади")
+        code, out, err = self.run_main()
+        self.assertEqual(code, 2)
+        self.assertIn("вопрос", err)
+        self.assertEqual(set(self.journals()),
+                         {"history.jsonl", SEED_UUID + ".jsonl"})
+
+    def test_answer_normalized_to_single_ready(self):
+        self.seed_path.unlink()
+        self.seed_path = write_seed(
+            self.dir, answer="RESUME_PROBE_READY.\nЛишний текст модели.")
+        code, out, err = self.run_main()
+        self.assertEqual(code, 0, err)
+        new_uuid = [line.split(": ")[1] for line in out.splitlines()
+                    if line.startswith("native uuid: ")][0]
+        target = self.dir / (new_uuid + ".jsonl")
+        journal = target.read_text(encoding="utf-8")
+        records = [json.loads(line) for line in journal.splitlines()]
+        self.assertEqual(records[1]["message"]["content"],
+                         [{"type": "text", "text":
+                           native_projection.SEED_ANSWER}])
+        self.assertNotIn("Лишний текст модели", journal)
 
 
 class RefusalTest(Stand):

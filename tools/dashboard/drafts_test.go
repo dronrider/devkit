@@ -2044,14 +2044,21 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		// Богатая карточка заведения несёт свойства доски словами и ранг
 		// формулой: экран согласования обязан показать тип, приёмку и ранг
 		// итогом, а не кодами (DK-1564, замер QA 2026-11-06).
-		"XR-010": {{ID: "p5", Revision: 1, Outcome: "add", Title: "баг доставки ленты", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "mixed", Barrier: "глаза", Text: richAddBody}},
+		"XR-010": {
+			{ID: "p5", Revision: 1, Outcome: "add", Title: "баг доставки ленты", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "mixed", Barrier: "глаза", Text: richAddBody},
+			{ID: "p6", Revision: 1, Outcome: "add", Title: "предшественник подготовленной задачи", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "agent", Text: richAddBody},
+		},
 	} {
 		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err = draftproposal.Replace(data, completedLegacyPrepared(t, data, draftproposal.State{Version: 1, State: "active", Proposals: proposals}))
+		state := draftproposal.State{Version: 1, State: "active", Proposals: proposals}
+		if id != "XR-005" {
+			state = completedLegacyPrepared(t, data, state)
+		}
+		data, err = draftproposal.Replace(data, state)
 		if err != nil {
 			t.Fatal(err)
 		}

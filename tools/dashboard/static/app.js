@@ -17518,7 +17518,11 @@ async function renderDraftPrepared(project, id, key) {
         onSave: ({ form }) => {
           const edited = Object.assign({}, value, {
             title: form.title.trim(), text: form.text, board_type: form.type, size: form.cost,
-            rank: form.parts.join("+"), due: form.due, control: form.control, after: form.after.slice(),
+            rank: form.parts.join("+"), due: form.due, control: form.control,
+            after: form.after.map((dep) => {
+              const pending = tasks.find((p) => p.outcome === "add" && !p.status && preparedNumber(p) === dep);
+              return pending ? pending.id : dep;
+            }),
             revision: task.revision + (isNew ? 0 : 1),
           });
           return savePreparedTask(project, id, view, edited);

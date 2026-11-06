@@ -119,6 +119,7 @@ try {
   await page.getByLabel("заголовок задачи " + number,{exact:true}).fill("баг доставки ленты после правки");
   await page.getByLabel("срок задачи " + number + ", дата",{exact:true}).fill("2026-12-21");
   await page.getByLabel("контроль задачи " + number + ", за сколько дней до срока проверка работ",{exact:true}).fill("3");
+  await page.locator("#groups .tpick .tprow").filter({hasText:"предшественник подготовленной задачи"}).click();
   const preparedSaved = page.waitForResponse(r=>r.url().endsWith("/XR-010/prepared") && r.request().method()==="PUT");
   await page.getByRole("button",{name:"Сохранить",exact:true}).click();
   const preparedResp = await preparedSaved;
@@ -130,10 +131,16 @@ try {
   await page.screenshot({ path: join(evidence,"prepared-desktop.png"), fullPage:true });
   await page.setViewportSize({width:390,height:844});
   const richView = await (await context.request.get(base + "/api/projects/demo/drafts/XR-010/prepared")).json();
-  const richTask = richView.state.proposals.find(p=>p.outcome==="add");
+  const richTask = richView.state.proposals.find(p=>p.id==="p5");
+  const richSibling = richView.state.proposals.find(p=>p.id==="p6");
+  assert.ok(richSibling && richSibling.board_id !== richSibling.id);
+  assert.deepEqual(richTask.after,["p6"],"реальный Save не сохранил canonical legacy dependency key");
   assert.equal(richTask.title,"баг доставки ленты после правки"); assert.equal(richTask.control,"3");
   await source("XR-010");
-  const rich = await confirm(1);
+  const rich = await confirm(2);
+  const materialized = await (await context.request.get(base + "/api/projects/demo/tasks/" + richTask.board_id)).json();
+  assert.ok(materialized.after.some(dep=>dep.id===richSibling.board_id),"whole confirm потерял ребро на созданную строку предшественника");
+  console.log(JSON.stringify({legacySiblingSave:true,topological:true}));
   const ids = rich.results.flatMap(r=>r.ids || []);
   assert.ok(ids.length);
   await page.locator("#flashes").filter({ hasText:ids[0] }).waitFor();
@@ -141,7 +148,7 @@ try {
   await page.getByText("Разбор ничего не подготовил. Можно подготовить задачу вручную.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Подготовить вручную", exact: true }).click();
   await page.waitForURL(/#demo\/draft\/XR-008\/prepared\/new/);
-  await page.locator("#groups .tedit").fill("ручная задача");
+  await page.locator("#groups textarea.tedit").fill("ручная задача");
   await page.locator("#groups .fbody textarea").fill(richTask.text);
   await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^тип$/})}).locator("select").selectOption("bug");
   await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^цена$/})}).locator("select").selectOption("L");
@@ -170,5 +177,5 @@ try {
   await page.locator(".ffold .foldh").filter({hasText:"Из черновика"}).click();
   await page.getByRole("link",{name:"черновик XR-006",exact:true}).click();
   await page.getByText("История разбора",{exact:true}).waitFor();
-  console.log(JSON.stringify({sources:4,whole:true,history:true,attach:true,manual:true,evidence,sharedForm:true,normalEdit:true,preparedEdit:true,cancel:true,forbiddenControls:false,widths:[390,1440]}));
+  console.log(JSON.stringify({sources:4,whole:true,history:true,attach:true,manual:true,evidence,sharedForm:true,normalEdit:true,preparedEdit:true,cancel:true,forbiddenControls:false,legacySiblingSave:true,topological:true,widths:[390,1440]}));
 } finally { await context.close(); await browser.close(); }

@@ -1049,7 +1049,8 @@ func (s *server) handleDraftPreparedSave(w http.ResponseWriter, r *http.Request)
 	}
 	data, err := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{[]draftproposal.Proposal{body.Proposal}})
+		Complete  bool                     `json:"complete"`
+	}{[]draftproposal.Proposal{body.Proposal}, true})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

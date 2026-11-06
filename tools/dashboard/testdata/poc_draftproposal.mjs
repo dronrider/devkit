@@ -72,14 +72,9 @@ const save = deepBtn(groups, "Сохранить"); if (!save) fail("нет со
 save.handlers.click({}); await settle();
 if (writes.length !== 1 || writes[0].base !== "s1" || writes[0].proposal.text !== "поправленная приписка" || writes[0].proposal.revision !== 2) fail("правка не доехала");
 await openScreen("demo/draft/XR-9/prepared/p2");
-// Отказ спрашивает причину на месте: карточка причины встаёт по кнопке отказа.
-const reject = deepBtn(groups, "Отклонить"); if (!reject) fail("нет отказа");
-reject.handlers.click({});
-const reason = byAria(groups, "причина отказа"); if (!reason) fail("нет поля причины отказа");
-reason.value = "не относится";
-const rejectGo = deepBtn(groups, "Отклонить задачу"); if (!rejectGo) fail("нет кнопки отказа");
-rejectGo.handlers.click({}); await settle();
-if (writes.length !== 2 || writes[1].base !== "s2" || writes[1].proposal !== "p2" || writes[1].reason !== "не относится") fail("отказ не доехал");
+if (deepBtn(groups, "Отклонить") || deepBtn(groups, "Подтвердить")) fail("задача допускает отдельное решение");
+state.proposals[1].status = "accepted";
+state.proposals[1].result = { reason: "сохранённая история" };
 await openScreen("demo/draft/XR-9");
 // Решённая задача сворачивается из состава: актуальные остаются на виду, а
 // отклонённое читается за разворотом строки «Ещё N решённых».
@@ -92,5 +87,5 @@ const fold = allByClass(after, "more")[0];
 if (!fold || !cardText(fold).includes("решённая задача")) fail("нет разворота решённых задач");
 fold.handlers.click({});
 rows = allByClass(after, "srow");
-if (rows.length !== 2 || !cardText(rows[1]).includes("Отклонено")) fail("отклонённое удаление не названо отклонённым за разворотом");
-console.log("подготовленные задачи правятся и отклоняются на своём экране");
+if (rows.length !== 2 || !cardText(rows[1]).includes("Подтверждено")) fail("отклонённое удаление не названо отклонённым за разворотом");
+console.log("подготовленные задачи правятся, прежняя история сохраняется");

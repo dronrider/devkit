@@ -20,7 +20,7 @@ try {
   assert.ok(!text.includes('## DoD'));
   assert.ok(text.includes('Результат'));
   await page.locator('.askfb a[href$="/draft/XR-4/prepared/'+key+'"]').waitFor();
-  await page.getByLabel('Подтвердить Результат').check();
+  await page.getByLabel('Подтвердить разбор XR-4').check();
   assert.equal(await page.locator('textarea.csay').inputValue(),'');
   if (mode === 'linked') {
     const response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');

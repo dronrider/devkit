@@ -80,7 +80,7 @@ func TestProposalDeliveryReservationFencesPrivateAttach(t *testing.T) {
 }
 
 func TestProposalAnswerContext(t *testing.T) {
-	q := &chat.PreparedQuestion{Version: 1, Tree: "/tmp/tree", Anchor: "XR-1", Sources: []chat.PreparedSource{{Source: "XR-1", Basis: "old", Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop"}}}}}
+	q := &chat.PreparedQuestion{Version: 1, Tree: "/tmp/tree", Anchor: "XR-1", Sources: []chat.PreparedSource{{Source: "XR-1", Basis: "old", Revision: 1, Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop"}}}}}
 	if preparedFromAsk(chat.Ask{Task: "XR-1", Questions: []chat.Question{{Text: "q", Prepared: q}}}) != q {
 		t.Fatal("shown question lost")
 	}
@@ -105,8 +105,8 @@ func TestProposalHelpersNode(t *testing.T) {
 		t.Skip("node недоступен")
 	}
 	shown := chat.PreparedQuestion{Version: 1, Tree: "/worktree", Anchor: "XR-1", Sources: []chat.PreparedSource{
-		{Source: "XR-1", Basis: "old", Proposals: []draftproposal.Proposal{{ID: "a", Revision: 1, Outcome: "add"}, {ID: "b", Revision: 2, Outcome: "add", After: []string{"a"}}}},
-		{Source: "XR-2", Basis: "basis2", Proposals: []draftproposal.Proposal{{ID: "c", Revision: 1, Outcome: "drop"}}},
+		{Source: "XR-1", Basis: "old", Revision: 1, Proposals: []draftproposal.Proposal{{ID: "a", Revision: 1, Outcome: "add"}, {ID: "b", Revision: 2, Outcome: "add", After: []string{"a"}}}},
+		{Source: "XR-2", Basis: "basis2", Revision: 2, Proposals: []draftproposal.Proposal{{ID: "c", Revision: 1, Outcome: "drop"}}},
 	}}
 	data, err := json.Marshal(shown)
 	if err != nil {
@@ -216,19 +216,19 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	if err = json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-4")), &view); err != nil {
 		t.Fatal(err)
 	}
-	cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"первое","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
+	cli(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"первое","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	secondPath := filepath.Join(st.e.proj, "docs", "tasks", "drafts", "XR-5.md")
 	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-5.md", "# XR-5: второй исходник\n")
 	if err = json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-5")), &view); err != nil {
 		t.Fatal(err)
 	}
-	cli(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-5", "--base", view.Snapshot)
+	cli(`{"complete":true,"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-5", "--base", view.Snapshot)
 	var q chat.Question
 	raw := cli("", "draft", "prepared", "ask", "XR-4", "--also", "XR-5")
 	if err = json.Unmarshal([]byte(raw), &q); err != nil || q.Prepared == nil {
 		t.Fatalf("ask %s %v", raw, err)
 	}
-	answer := proposalAnswer{Mode: "comment", Anchor: "XR-4", Tree: st.e.proj, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: q.Prepared.Sources[0].Basis}, {Source: "XR-5", Digest: q.Prepared.Sources[1].Basis}}}
+	answer := proposalAnswer{Mode: "comment", Anchor: "XR-4", Tree: st.e.proj, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Revision: q.Prepared.Sources[0].Revision, Digest: q.Prepared.Sources[0].Basis}, {Source: "XR-5", Revision: q.Prepared.Sources[1].Revision, Digest: q.Prepared.Sources[1].Basis}}}
 	before := readFile(t, st.path)
 	askPath := chat.AskPath(st.e.proj, chat.TaskName("XR-4"))
 	askBefore := readFile(t, askPath)
@@ -269,7 +269,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	// Сохранение выдаёт новой карточке номер доски ключом (DK-1564), поэтому
 	// решение адресуется тем ключом, которым вопрос показывает карточку.
 	shown := q.Prepared.Sources[0].Proposals[0].ID
-	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: shown, Revision: 1, Action: "reject", Reason: "не нужно"}}
+	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: shown, Revision: 1, Action: "accept"}}
 	for _, wrong := range []proposalAnswer{
 		{Mode: "apply", Anchor: answer.Anchor, Tree: answer.Tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: "stale"}}, Decisions: answer.Decisions},
 		{Mode: "apply", Anchor: answer.Anchor, Tree: answer.Tree, Snapshots: answer.Snapshots, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "unseen", Revision: 1, Action: "accept"}}},
@@ -284,7 +284,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 			t.Fatal("invalid context mutated source")
 		}
 	}
-	req, _ = json.Marshal(map[string]any{"text": "отклонить", "msg_id": "apply-one", "proposal": answer})
+	req, _ = json.Marshal(map[string]any{"text": "подтвердить", "msg_id": "apply-one", "proposal": answer})
 	carrier := chat.Path(st.e.proj, chat.TaskName("XR-4"))
 	if err := os.Remove(carrier); err != nil {
 		t.Fatal(err)
@@ -329,14 +329,14 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	// Тел задач в продолжении нет (DK-1469, решение 4): строка на задачу
 	// называет её ID и состояние, описание читается на экране задачи.
 	shownSecond := q.Prepared.Sources[1].Proposals[0].ID
-	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, shownSecond+", редакция 1: подготовлено") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "подготовлено") || !strings.Contains(continued, "не нужно") {
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, shownSecond+", редакция 1: подготовлено") || !strings.Contains(continued, "подтверждено") || !strings.Contains(continued, "подготовлено") || !strings.Contains(continued, "лишнее") {
 		t.Fatalf("multi-source continuation: %s", continued)
 	}
 	replacement := chat.Ask{Task: "XR-4", Session: scenarioPanelSID, Questions: []chat.Question{{Text: "новый вопрос"}}}
 	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), replacement); err != nil {
 		t.Fatal(err)
 	}
-	req, _ = json.Marshal(map[string]any{"text": "отклонить", "msg_id": "apply-retry-after-replace", "proposal": answer})
+	req, _ = json.Marshal(map[string]any{"text": "подтвердить", "msg_id": "apply-retry-after-replace", "proposal": answer})
 	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
 	msg = body(t, resp)
 	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
@@ -347,14 +347,14 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		t.Fatal("replacement Ask removed")
 	}
 	writeBinds(t, st.e.home, "2026-10-30T12:00:00 сессия "+scenarioPanelSID+" задача XR-100 проект demo дерево "+st.e.proj+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
-	req, _ = json.Marshal(map[string]any{"text": "отклонить после переназначения", "msg_id": "apply-retry-rebound", "proposal": answer})
+	req, _ = json.Marshal(map[string]any{"text": "подтвердить после переназначения", "msg_id": "apply-retry-rebound", "proposal": answer})
 	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
 	msg = body(t, resp)
 	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
 		t.Fatalf("rebound retry %d %s", resp.StatusCode, msg)
 	}
 	oldLines := chat.ReadLines(carrier)
-	if len(oldLines) < 2 || !strings.Contains(oldLines[len(oldLines)-1], "отклонить после переназначения") {
+	if len(oldLines) < 2 || !strings.Contains(oldLines[len(oldLines)-1], "подтвердить после переназначения") {
 		t.Fatalf("old destination: %v", oldLines)
 	}
 	if lines := chat.ReadLines(chat.Path(st.e.proj, chat.TaskName("XR-100"))); len(lines) != 0 {
@@ -408,7 +408,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		State draftproposal.State `json:"state"`
 	}
 	raw = cli("", "draft", "prepared", "XR-4")
-	if err = json.Unmarshal([]byte(raw), &result); err != nil || result.State.Proposals[0].Status != "rejected" {
+	if err = json.Unmarshal([]byte(raw), &result); err != nil || result.State.Proposals[0].Status != "accepted" {
 		t.Fatalf("state %s %v", raw, err)
 	}
 }

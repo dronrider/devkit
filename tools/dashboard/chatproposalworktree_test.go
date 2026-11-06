@@ -39,11 +39,12 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	if mainErr != nil || projErr != nil || !os.SameFile(mainInfo, projInfo) {
 		t.Fatalf("wrong main root: %s", stage.MainRoot(tree))
 	}
-	preparedPath := draftproposal.PreparedPath(tree, "XR-4")
+	sourceRoot := tree
+	preparedPath := draftproposal.PreparedPath(sourceRoot, "XR-4")
 	mainBefore := readFile(t, st.path)
 	cli := func(input string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command(st.bin, append([]string{"-C", tree}, args...)...)
+		cmd := exec.Command(st.bin, append([]string{"-C", sourceRoot}, args...)...)
 		cmd.Env = append(os.Environ(), "CLAUDE_CODE_SESSION_ID="+scenarioPanelSID, "DEVKIT_TMUX=task-test")
 		cmd.Stdin = strings.NewReader(input)
 		out, err := cmd.CombinedOutput()
@@ -58,7 +59,8 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-4")), &view); err != nil {
 		t.Fatal(err)
 	}
-	cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"веточный результат","reason":"устарело"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
+	payload := `{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"веточный результат","reason":"устарело"}]}`
+	cli(payload, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	var question chat.Question
 	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "ask", "XR-4")), &question); err != nil || question.Prepared == nil {
 		t.Fatalf("question: %+v %v", question, err)
@@ -66,15 +68,41 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	writeBinds(t, st.e.home, "2026-10-30T12:00:00 сессия "+scenarioPanelSID+" задача XR-4 проект demo дерево "+tree+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
 	// Решение адресуется ключом из показанного вопроса: сохранение выдаёт
 	// новой карточке номер доски ключом (DK-1564).
-	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: question.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: question.Prepared.Sources[0].Proposals[0].ID, Revision: 1, Action: "reject", Reason: "не нужно"}}}
-	data, _ := json.Marshal(map[string]any{"text": "отклонить веточный результат", "msg_id": "tree-answer", "proposal": answer})
+	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Revision: question.Prepared.Sources[0].Revision, Digest: question.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: question.Prepared.Sources[0].Proposals[0].ID, Revision: 1, Action: "accept"}}}
+	linkedBefore := readFile(t, preparedPath)
+	data, _ := json.Marshal(map[string]any{"text": "подтвердить веточный результат", "msg_id": "tree-answer", "proposal": answer})
 	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
 	got := body(t, resp)
-	if resp.StatusCode != 200 {
-		t.Fatalf("worktree answer: %d %s", resp.StatusCode, got)
+	if resp.StatusCode < 400 || !strings.Contains(got, "линкованный worktree") {
+		t.Fatalf("linked full confirmation: %d %s", resp.StatusCode, got)
 	}
+	linkedState := readFile(t, preparedPath)
+	if linkedState != linkedBefore || readFile(t, st.path) != mainBefore {
+		t.Fatal("linked refusal changed source")
+	}
+	sourceRoot = st.e.proj
+	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-4")), &view); err != nil {
+		t.Fatal(err)
+	}
+	cli(payload, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
+	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "ask", "XR-4")), &question); err != nil || question.Prepared == nil {
+		t.Fatal("main ask", err)
+	}
+	answer.Tree = st.e.proj
+	answer.Snapshots = []draftproposal.Snapshot{{Source: "XR-4", Revision: question.Prepared.Sources[0].Revision, Digest: question.Prepared.Sources[0].Basis}}
+	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: question.Prepared.Sources[0].Proposals[0].ID, Revision: 1, Action: "accept"}}
+	data, _ = json.Marshal(map[string]any{"text": "подтвердить веточный результат", "msg_id": "main-answer", "proposal": answer})
+	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
+	got = body(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("main answer from linked session: %d %s", resp.StatusCode, got)
+	}
+	if readFile(t, preparedPath) != linkedState {
+		t.Fatal("main confirmation changed linked source")
+	}
+	preparedPath = draftproposal.PreparedPath(sourceRoot, "XR-4")
 	state, err := draftproposal.ParsePrepared([]byte(readFile(t, preparedPath)))
-	if err != nil || state.Proposals[0].Status != "rejected" || readFile(t, st.path) != mainBefore {
+	if err != nil || state.Proposals[0].Status != "accepted" || readFile(t, st.path) != mainBefore {
 		t.Fatalf("wrong source: %+v %v", state, err)
 	}
 	applied := readFile(t, preparedPath)

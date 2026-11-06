@@ -77,8 +77,7 @@ if (!chipsLine.includes("из XR-9: Встреча по доставке")) fail
 const notes = byClass(groups, "pnotes");
 if (!notes || notes.hidden || !dump(notes).includes("Барьер приёмки") || !dump(notes).includes("прогон стенда и живой экран")) fail("длинные тексты не стоят блоками в чтении");
 if (!dump(notes).includes("Довод разбора")) fail("довод разбора не показан в чтении");
-const accept = deepBtn(groups, "Подтвердить"); if (!accept || accept.hidden) fail("нет подтверждения в чтении");
-const reject = deepBtn(groups, "Отклонить"); if (!reject || reject.hidden) fail("нет отказа в чтении");
+if (deepBtn(groups, "Подтвердить") || deepBtn(groups, "Отклонить")) fail("у подготовленной задачи остались отдельные решения");
 // Выход «Не заводить» живёт только на форме заведения: у сохранённой задачи
 // его роль играет отмена правки, и кнопка не держит пустую полосу в чтении.
 if (deepBtn(groups, "Не заводить")) fail("в чтении сохранённой задачи есть кнопка выхода");
@@ -90,13 +89,11 @@ if (!legendField(groups, "Свойства задачи")) fail("нет рамк
 if (!legendField(groups, "Довод разбора")) fail("нет рамки довода разбора");
 const text = tag(byClass(groups, "fbody"), "TEXTAREA");
 if (!text || text.hidden) fail("описание не правится большим полем");
-if (accept.hidden !== true) fail("согласование не уехало на время правки");
 // Повторный карандаш возвращает чтение, и согласование встаёт на место.
 pen.handlers.click({});
 if (!editBox.hidden) fail("правка не закрылась повторным карандашом");
 const backView = byClass(groups, "fview");
 if (!backView || backView.hidden) fail("после выхода из правки описание не вернулось в чтение");
-if (accept.hidden) fail("после выхода из правки согласование не вернулось");
 pen.handlers.click({});
 if (editBox.hidden) fail("правка не открылась повторно");
 text.value = "Реплика уезжает в чат записи. Поправка разбора."; text.handlers.input({});
@@ -108,9 +105,6 @@ if (!put || put.base !== "s1" || put.proposal.revision !== 2 || put.proposal.tex
 await openScreen("demo/draft/XR-9/prepared/chat-delivery");
 const back = allByClass(byId.get("groups"), "pedit")[0];
 if (!back || !back.hidden) fail("после сохранения экран не вернулся в чтение");
-// Подтверждение уезжает на сервер решением по этой задаче.
-const again = deepBtn(byId.get("groups"), "Подтвердить"); if (!again) fail("нет подтверждения после правки");
-again.handlers.click({}); await settle();
-const confirm = writes.find((w) => w.confirm);
-if (!confirm || confirm.confirm.decisions.length !== 1 || confirm.confirm.decisions[0].proposal !== "chat-delivery" || confirm.confirm.decisions[0].action !== "accept") fail("подтверждение не доехало");
-console.log("экран подготовленной задачи читается и правится по стандарту форм");
+if (deepBtn(byId.get("groups"), "Подтвердить") || deepBtn(byId.get("groups"), "Отклонить")) fail("после правки вернулось отдельное решение");
+if (writes.some((w) => w.confirm)) fail("просмотр или правка применили результат");
+console.log("экран подготовленной задачи читается и правится без отдельных решений");

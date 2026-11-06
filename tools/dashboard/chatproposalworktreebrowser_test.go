@@ -85,7 +85,7 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 		t.Fatal(err)
 	}
 	material := "## Что происходит\n\nветочный результат\n\n## Чего хотим\n\nПроверка выполняется до записи.\n\n## DoD\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n`0+1+1+0+1 = 3`, P3.\n\n- Серьёзность 0: работа продолжается.\n- Ценность 1: касается одного сценария.\n- Неопределённость 1: место правки известно.\n- Поправка на баг 0: новая работа.\n- Рычаг 1: убирает повторный разбор.\n"
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: material, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: material, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
 	raw, err = cli(string(payload), "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)

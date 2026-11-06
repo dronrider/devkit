@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -650,5 +651,48 @@ func TestPreparedSaveRefusesBoardIDReassignment(t *testing.T) {
 	json.Unmarshal([]byte(raw), &view)
 	if view.State.Proposals[0].BoardID != original.BoardID {
 		t.Fatalf("номер изменился: %s", raw)
+	}
+}
+
+func TestPreparedSaveCanonicalBarrierAndUnknown(t *testing.T) {
+	root := setup(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+	if _, err = cmdDraft(root, "Материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftPrepared(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view preparedView
+	json.Unmarshal([]byte(raw), &view)
+	before, err := collectDocs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := []byte(`{"proposals":[{"id":"bad","revision":1,"outcome":"add","accept":"mixed","barrier":"другое: причина"}]}`)
+	if _, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, invalid); err == nil {
+		t.Fatal("unknown barrier saved")
+	}
+	after, err := collectDocs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("rejected save changed docs")
+	}
+	input := []byte(`{"proposals":[{"id":"manual","revision":1,"outcome":"add","accept":"mixed","barrier":"глаза: проверить вид","text":"# Заголовок\n\nОписание"}]}`)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	p := view.State.Proposals[0]
+	if p.Barrier != "глаза" || !strings.Contains(p.Text, "Барьер приёмки: глаза: проверить вид") || p.ID != "XR-009" {
+		t.Fatalf("saved: %+v", p)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // Группа draft prepared читает и правит подготовленные задачи записи
@@ -109,6 +110,31 @@ func preparedChanges(root, id string, record []byte, state draftproposal.State) 
 	return changes, nil
 }
 
+// normalizePreparedBarrier сохраняет пояснение старой карточки в описании.
+// Нормализация идёт на копии до создания строки, снимок согласования прежний.
+func normalizePreparedBarrier(p draftproposal.Proposal) (draftproposal.Proposal, error) {
+	if p.Outcome != "add" || p.Barrier == "" {
+		return p, nil
+	}
+	key, note, described := strings.Cut(p.Barrier, ":")
+	key = strings.TrimSpace(key)
+	if _, ok := trace.BarrierWanted[key]; !ok {
+		return p, fmt.Errorf("%s: барьер %q не из закрытого списка (глаза, доступ, необратимость, секрет, согласие, событие)", p.ID, p.Barrier)
+	}
+	if described && strings.TrimSpace(note) != "" {
+		paragraph := "Барьер приёмки: " + p.Barrier
+		text := strings.TrimSpace(p.Text)
+		if strings.HasPrefix(text, "# ") {
+			heading, rest, _ := strings.Cut(text, "\n")
+			p.Text = heading + "\n\n" + paragraph + "\n\n" + rest
+		} else {
+			p.Text = paragraph + "\n\n" + text
+		}
+	}
+	p.Barrier = key
+	return p, nil
+}
+
 func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	l, err := drafttx.Acquire(root)
 	if err != nil {
@@ -167,6 +193,10 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	seen := map[string]bool{}
 	assigned := map[string]string{}
 	for _, p := range incoming.Proposals {
+		p, err = normalizePreparedBarrier(p)
+		if err != nil {
+			return "", err
+		}
 		if seen[p.ID] {
 			return "", fmt.Errorf("повтор задачи %s", p.ID)
 		}

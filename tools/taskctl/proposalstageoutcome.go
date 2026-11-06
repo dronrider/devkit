@@ -49,12 +49,16 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 	var result stagedResult
 	switch p.Outcome {
 	case "add":
+		normalized, err := normalizePreparedBarrier(p)
+		if err != nil {
+			return result, err
+		}
+		p = normalized
 		// Номер задачи закреплён заранее: у новых стоит в ключе и board_id,
 		// у унаследованных в board_id, и строка заводится тем же номером без
 		// перенумерования (DK-1564, решение 6). Карточка вовсе без номера это
 		// глубокая старина: ей выделяется свежий номер прежним путём.
 		var id string
-		var err error
 		if p.BoardID != "" {
 			id = p.BoardID
 		} else if idRe.MatchString(p.ID) {

@@ -47,7 +47,11 @@ try {
   assert.equal(await page.getByRole("button", { name: "Отклонить", exact: true }).count(), 0);
   await page.getByText("из XR-005:", { exact: false }).first().click();
   await confirm(2);
+  // Переход меняет URL раньше, чем refresh прочитает и отрисует список.
+  console.log("rows immediately after navigation:", await page.locator("tbody.tsec tr.dsrow").count());
+  await page.waitForFunction(() => document.querySelectorAll("tbody.tsec tr.dsrow").length === 3, null, { timeout: 10000 });
   assert.equal(await page.locator("tbody.tsec tr.dsrow").count(), 3);
+  assert.equal(await page.locator("tbody.tsec tr.dsrow td.id").filter({ hasText: "XR-005" }).count(), 0);
   await source("XR-005");
   await page.getByText("История разбора", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Подтвердить разбор", exact: true }).count(),0);

@@ -613,12 +613,12 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}}
-	for _, p := range view.State.Proposals {
-		req.Decisions = append(req.Decisions, draftproposal.Decision{Source: "XR-008", Proposal: p.ID, Revision: p.Revision, Action: "accept"})
-	}
-	input, _ := json.Marshal(req)
-	if _, err = cmdDraftPreparedConfirm(root, input, CommitOpts{}); err != nil {
+	legacy := view.State
+	receipt := draftproposal.Receipt{Key: "legacy", Source: "XR-008", Proposal: legacy.Proposals[0].ID, Revision: 1, Outcome: "drop", Result: "принято прежде", Reason: "нет нужды"}
+	legacy.Proposals[0].Status = "accepted"
+	legacy.Proposals[0].Result = &receipt
+	legacy.Receipts = append(legacy.Receipts, receipt)
+	if err = draftproposal.SavePrepared(root, "XR-008", legacy); err != nil {
 		t.Fatal(err)
 	}
 	raw, err = cmdDraftPrepared(root, "XR-008")
@@ -631,7 +631,7 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if len(view.State.Proposals) != 3 || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[0].Result.Reason != "нет нужды" || view.State.Proposals[1].Status != "accepted" {
+	if view.Ready || view.State.State != "active" || len(view.State.Proposals) != 3 || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[0].Result.Reason != "нет нужды" || view.State.Proposals[1].Status != "" {
 		t.Fatalf("reanalysis: %s", raw)
 	}
 }

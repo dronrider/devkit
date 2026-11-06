@@ -136,7 +136,10 @@ flowchart TD
   (status/start/merge/ship/revert); заводит worktree на задачу, чтобы
   параллельные сессии не толкались в одном рабочем дереве, команду выката
   берёт из гитигнорнутого `.devkit/deploy.local`,
-  см. [tools/shipctl/README.md](tools/shipctl/README.md).
+  см. [tools/shipctl/README.md](tools/shipctl/README.md). Провал проверки
+  останавливает только прямые и косвенные зависимости по рёбрам «после».
+  Независимые задачи продолжают сливаться и выкатываться, починка самой
+  проваленной задачи проходит и в поезде.
 - `tools/agentctl/` - Go-утилита выбора исполнителя под задачу (pick): модель и
   reasoning effort по типу, цене и неопределённости с доски, применяется
   делегированием субагенту, см. [tools/agentctl/README.md](tools/agentctl/README.md).

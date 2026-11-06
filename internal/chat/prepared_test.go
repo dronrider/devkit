@@ -7,13 +7,13 @@ import (
 )
 
 func TestPreparedQuestionRoundTripAndAnswer(t *testing.T) {
-	q := PreparedQuestion{Version: 1, Tree: "/tmp/tree", Anchor: "XR-1", Sources: []PreparedSource{{Source: "XR-1", Basis: "shown", Proposals: []draftproposal.Proposal{{ID: "a", Revision: 1, Outcome: "add"}, {ID: "b", Revision: 2, Outcome: "add", After: []string{"a"}}}}}}
+	q := PreparedQuestion{Version: 1, Tree: "/tmp/tree", Anchor: "XR-1", Sources: []PreparedSource{{Source: "XR-1", Basis: "shown", Revision: 3, Proposals: []draftproposal.Proposal{{ID: "a", Revision: 1, Outcome: "add"}, {ID: "b", Revision: 2, Outcome: "add", After: []string{"a"}}}}}}
 	a := Ask{Task: "XR-1", Questions: []Question{{Text: "выбор", Prepared: &q}}}
 	parsed, ok := ParseAsk(a.Text())
 	if !ok || parsed.Questions[0].Prepared.Sources[0].Proposals[1].After[0] != "a" {
 		t.Fatal(parsed)
 	}
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-1", Digest: "shown"}}, Decisions: []draftproposal.Decision{{Source: "XR-1", Proposal: "b", Revision: 2, Action: "accept"}}}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-1", Revision: 3, Digest: "shown"}}, Decisions: []draftproposal.Decision{{Source: "XR-1", Proposal: "a", Revision: 1, Action: "accept"}, {Source: "XR-1", Proposal: "b", Revision: 2, Action: "accept"}}}
 	if err := CheckPreparedAnswer(q, "/tmp/tree", req); err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +23,8 @@ func TestPreparedQuestionRoundTripAndAnswer(t *testing.T) {
 		tree   string
 	}{
 		{"tree", func(*draftproposal.ConfirmRequest) {}, "/tmp/other"},
+		{"partial", func(r *draftproposal.ConfirmRequest) { r.Decisions = r.Decisions[:1] }, "/tmp/tree"},
+		{"pack revision", func(r *draftproposal.ConfirmRequest) { r.Snapshots[0].Revision++ }, "/tmp/tree"},
 		{"basis", func(r *draftproposal.ConfirmRequest) { r.Snapshots[0].Digest = "fresh" }, "/tmp/tree"},
 		{"hidden", func(r *draftproposal.ConfirmRequest) { r.Decisions[0].Proposal = "new" }, "/tmp/tree"},
 		{"revision", func(r *draftproposal.ConfirmRequest) { r.Decisions[0].Revision++ }, "/tmp/tree"},

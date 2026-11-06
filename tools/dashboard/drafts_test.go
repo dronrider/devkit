@@ -2148,7 +2148,7 @@ func TestStaticDraftPreparedConfirmResult(t *testing.T) {
 // Накопитель читает состав согласования одним общим ответом, а не запросом по
 // каждой записи (DK-1623): при сотнях черновиков волна запросов по ID клала
 // канал и посредника, и восстановление связи поднимало её заново. Стенд считает
-// обращения клиента к prepared-ручкам при двенадцати записях.
+// обращения клиента к prepared-ручкам на 466 записях постановки.
 func TestStaticDraftsPreparedSingleRequest(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

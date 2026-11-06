@@ -460,6 +460,13 @@ class Scenario:
             if turn["answer"]:
                 exchange.append({"kind": "text", "role": "assistant",
                                  "text": turn["answer"]})
+        # История для native-проекции: та же цепочка без конечного вопроса,
+        # вопрос задаётся потом обычным resume поверх спроецированного
+        # журнала.
+        (self.out / "native_history_in.jsonl").write_text(
+            "".join(line + "\n" for line in
+                    history_adapter.exchange_to_claude_stream_lines(exchange)),
+            encoding="utf-8")
         attempts = []
         for tag, use_tools in (("with_tools", True), ("text_only", False)):
             steps = exchange if use_tools else [

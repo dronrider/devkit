@@ -60,6 +60,18 @@ class ForwardTest(unittest.TestCase):
             {"type": "function_call_output", "call_id": "t2",
              "output": "часть 1\nчасть 2"}])
 
+    def test_tool_result_is_error_is_known_loss(self):
+        line = journal_line({"type": "user", "message": {"role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t4",
+                         "is_error": True,
+                         "content": "File has not been read yet"}]}})
+        items = history_adapter.claude_journal_to_codex_items([line])
+        # Известная потеря прямого направления: признак ошибки не ездит
+        # в простом тексте function_call_output.
+        self.assertEqual(items, [
+            {"type": "function_call_output", "call_id": "t4",
+             "output": "File has not been read yet"}])
+
     def test_text_between_tool_calls_starts_new_message(self):
         line = journal_line({"type": "assistant", "message":
             {"role": "assistant", "content": [

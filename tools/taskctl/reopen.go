@@ -129,7 +129,7 @@ func cmdReopen(root string, p ReopenParams) (string, error) {
 	if err = insertRowLine(b, b.Sects[SectBacklog], row, formatRow(row)); err != nil {
 		return "", err
 	}
-	_, b, err = rehydrate(b)
+	b, err = rehydrateReopened(root, b, src, dst)
 	if err != nil {
 		return "", err
 	}

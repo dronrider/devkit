@@ -4189,7 +4189,8 @@ function taskPick(project, opts) {
   box.append(list);
   const draw = (rows) => {
     list.replaceChildren();
-    const hit = pickMatch(rows, find.value, o.skip || []);
+    const choices = rows.concat((o.extra || []).filter((extra) => !rows.some((row) => row.id === extra.id)));
+    const hit = pickMatch(choices, find.value, o.skip || []);
     if (!hit.length) {
       list.append(el("div", "empty", "Ничего не нашлось."));
       return;
@@ -4226,7 +4227,7 @@ function taskPick(project, opts) {
 // Строка соседа в карточке зависимостей. У архивной задачи (ro) кнопки «Снять»
 // нет: маркер живёт на строке доски, и снимать его у закрытой задачи нечем, а
 // дорога на экран соседа остаётся, ради неё карточку и открывают.
-function depRow(project, id, side, dep, ro) {
+function depRow(project, id, side, dep, ro, onDrop) {
   const row = el("div", "drow");
   row.append(el("span", "id", dep.id));
   row.append(withFull(el("span", "dt", dep.title || dep.note || ""), dep.title || dep.note || ""));
@@ -4244,6 +4245,7 @@ function depRow(project, id, side, dep, ro) {
       ev.stopPropagation();
       // Вторая сторона это та же зависимость наоборот: снимается она у той
       // задачи, в чьём заголовке стоит маркер [после ...].
+      if (onDrop) { onDrop(dep.id); return; }
       const call = side === "after" ? dropDep(project, id, dep.id) : dropDep(project, dep.id, id);
       call.catch(console.error);
     });
@@ -4331,23 +4333,35 @@ function linksCard(project, links) {
 function depsCard(project, id, after, blocks, opts) {
   const o = opts || {};
   const card = el("div", "card dcard");
-  card.append(el("div", "dhead", "Заблокировано задачами"));
-  if (!after.length) card.append(el("div", "empty", o.afterNote || "Никого не ждёт."));
-  for (const dep of after) card.append(depRow(project, id, "after", dep, o.ro));
-
-  if (!o.ro) {
-    const skip = [id].concat(after.map((dep) => dep.id));
-    card.append(taskPick(project, {
-      hint: "после какой задачи делается эта",
-      skip,
-      pick: (dep) => { addDep(project, id, dep).catch(console.error); },
-    }));
-    card.append(armRow(project, id, o));
-  }
-
-  card.append(el("div", "dhead", "Блокирует выполнение задач"));
-  if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
-  for (const dep of blocks) card.append(depRow(project, id, "blocks", dep, o.ro));
+  let edit = !o.ro && !o.local;
+  const draw = () => {
+    card.replaceChildren();
+    const entries = o.local ? o.local.ids.map((key) => after.find((dep) => dep.id === key) || { id: key }) : after;
+    card.append(el("div", "dhead", "Заблокировано задачами"));
+    if (!entries.length) card.append(el("div", "empty", o.afterNote || "Никого не ждёт."));
+    const remove = o.local ? (key) => {
+      o.local.ids.splice(o.local.ids.indexOf(key), 1);
+      draw(); o.local.change();
+    } : null;
+    for (const dep of entries) card.append(depRow(project, id, "after", dep, !edit, remove));
+    if (edit) {
+      card.append(taskPick(project, {
+        hint: "после какой задачи делается эта",
+        extra: o.local ? o.local.extra || [] : [],
+        skip: [id].concat(entries.map((dep) => dep.id)),
+        pick: (dep) => {
+          if (o.local) { o.local.ids.push(dep); draw(); o.local.change(); }
+          else addDep(project, id, dep).catch(console.error);
+        },
+      }));
+      if (!o.local) card.append(armRow(project, id, o));
+    }
+    card.append(el("div", "dhead", "Блокирует выполнение задач"));
+    if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
+    for (const dep of blocks) card.append(depRow(project, id, "blocks", dep, o.ro || Boolean(o.local)));
+  };
+  card.setEdit = (on) => { if (o.local) { edit = on && !o.ro; draw(); } };
+  draw();
   return card;
 }
 
@@ -5346,6 +5360,7 @@ function formPage(cfg) {
   }
 
   let file = null;
+  let deps = null;
   let edit = Boolean(cfg.edit);
   let dressPen = () => {};
   // Блок ранга живёт в двух видах: просмотр показывает компактный текст итога
@@ -5368,6 +5383,7 @@ function formPage(cfg) {
     // или резал его на телефоне (замер QA 2026-11-05).
     fitTitle();
     if (file && file.setEdit) file.setEdit(on);
+    if (deps && deps.setEdit) deps.setEdit(on);
     rankMode(on);
     dressPen();
     if (cfg.onEdit) cfg.onEdit(on);
@@ -5679,9 +5695,10 @@ function formPage(cfg) {
     out.file = file;
   }
   if (has.deps) {
-    grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || [],
-      { ro: Boolean(cfg.depsRO), afterNote: cfg.afterNote || "",
-        armed: Boolean(cfg.armed), arm: cfg.arm || null, sect: cfg.sect || "" }));
+    deps = depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || [],
+      { ro: Boolean(cfg.depsRO), local: cfg.localDeps || null, afterNote: cfg.afterNote || "",
+        armed: Boolean(cfg.armed), arm: cfg.arm || null, sect: cfg.sect || "" });
+    grid.append(deps);
   }
   if (cfg.links && ((cfg.links.lld || []).length || (cfg.links.tasks || []).length)) {
     grid.append(linksCard(cfg.project, cfg.links));
@@ -5774,6 +5791,139 @@ function paintedNode(box, key) {
     if (kid.dataset && kid.dataset.pkey === key) return kid;
   }
   return null;
+}
+
+function taskForm(cfg) {
+  const { project, id, detail, row } = cfg;
+  const capabilities = cfg.capabilities || {};
+  // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
+  const base = (row.r_parts || []).map(Number);
+  const form = {
+    title: row.title || "",
+    type: row.type || "task",
+    cost: row.cost || "-",
+    parts: base.slice(),
+    due: row.due || "",
+    control: row.control == null ? "" : String(row.control),
+    text: detail.text || "",
+  };
+  const patchBody = () => {
+    const out = {};
+    if (form.title.trim() && form.title.trim() !== (row.title || "")) out.title = form.title.trim();
+    if (form.type !== (row.type || "task")) out.type = form.type;
+    if (form.cost !== (row.cost || "-")) out.cost = form.cost;
+    const parts = RANK_PARTS.map((_, i) => (form.parts[i] === base[i] ? null : form.parts[i]));
+    if (parts.some((v) => v !== null)) out.r_parts = parts;
+    // Срок едет прочерком снятия, а не пустой строкой: пустое поле значит
+    // «не трогать», и иначе снятый срок не отличался бы от нетронутого.
+    if (form.due !== (row.due || "")) out.due = form.due || "-";
+    // Контроль едет тем же правилом: прочерк снимает, пустое поле не трогает.
+    // Значение проверяет taskctl, клиент гонять его не обязан.
+    const hadControl = row.control == null ? "" : String(row.control);
+    if (form.control !== hadControl) out.control = form.control === "" ? "-" : form.control;
+    return out;
+  };
+  // Текст файла едет, только когда он вправду изменён: PUT переписывает
+  // постановку целиком, и лишний заход коммитил бы её впустую.
+  const textBody = () => (detail.file && form.text !== (detail.text || "") ? form.text : null);
+
+  form.after = (detail.after || []).map((dep) => dep.id);
+  const cleanAfter = JSON.stringify(form.after);
+  // Срок и контроль стоят одним блоком над описанием и открыты сразу, без
+  // карандаша (находки 4 и 6 DK-1503): срок это часть строки, которую читают
+  // на каждом заходе, и прятать его за режимом правки значило прятать половину
+  // смысла строки. Дата выбирается пикером поля, а контроль считается от срока
+  // и потому живёт рядом, а не отдельной карточкой: без срока его не ставит
+  // taskctl, снятие контроля срок не трогает, а снятие срока при живом
+  // контроле taskctl отбивает сам, словами в ответе правки.
+  const dueBox = el("fieldset", "dfield duebox");
+  dueBox.append(el("legend", "", "срок и контроль"));
+  const dueInput = el("input", "duein");
+  dueInput.type = "date";
+  dueInput.value = form.due;
+  dueInput.setAttribute("aria-label", "срок задачи " + id + ", дата");
+  const dueClear = el("button", "btn duereset", "Снять срок");
+  dueClear.type = "button";
+  dueClear.title = "Убрать срок со строки";
+  const dueNow = () => {
+    form.due = dueInput.value || "";
+    dueClear.hidden = !form.due;
+    view.touch();
+  };
+  dueInput.addEventListener("change", dueNow);
+  dueInput.addEventListener("input", dueNow);
+  dueClear.addEventListener("click", () => {
+    dueInput.value = "";
+    dueNow();
+  });
+  dueClear.hidden = !form.due;
+  const controlInput = el("input", "duein ctrl");
+  controlInput.type = "number";
+  controlInput.min = "0";
+  controlInput.max = "365";
+  controlInput.placeholder = "дней до срока";
+  controlInput.value = form.control;
+  controlInput.setAttribute("aria-label", "контроль задачи " + id + ", за сколько дней до срока проверка работ");
+  const controlClear = el("button", "btn duereset", "Снять контроль");
+  controlClear.type = "button";
+  controlClear.title = "Убрать контроль со строки";
+  const controlNow = () => {
+    form.control = controlInput.value;
+    controlClear.hidden = form.control === "";
+    view.touch();
+  };
+  controlInput.addEventListener("change", controlNow);
+  controlInput.addEventListener("input", controlNow);
+  controlClear.addEventListener("click", () => {
+    controlInput.value = "";
+    controlNow();
+  });
+  controlClear.hidden = form.control === "";
+  dueBox.append(dueInput, dueClear, el("span", "ctrlword", "контроль"), controlInput, controlClear);
+
+  const view = formPage({
+    key: "task", project, id, detail, chatRow: row, rankRow: row,
+    num: row.id, titleLabel: "заголовок задачи " + id,
+    titleRead: cfg.titleRead || "", titleHint: cfg.titleHint || "",
+    form, chips: cfg.chips || [], tailChips: cfg.tailChips || [], top: cfg.top || [],
+    afterChips: (cfg.afterChips || []).concat(dueBox),
+    crumb: cfg.crumb || [], links: detail.links || null,
+    has: { title: true, type: true, cost: true, rank: true, deps: true,
+      chat: Boolean(capabilities.ownChat), file: true, make: Boolean(capabilities.work),
+      pencil: !cfg.decided && !cfg.isNew, read: true },
+    after: detail.after || [], blocks: detail.blocks || [],
+    localDeps: cfg.localDeps ? {
+      ids: form.after, extra: cfg.dependencies || [],
+      change: () => view.touch(),
+    } : null,
+    depsRO: Boolean(cfg.decided),
+    armed: Boolean(detail.armed), arm: detail.arm || null, sect: row.sect || "",
+    actions: cfg.actions || [],
+    edit: Boolean(cfg.edit), always: Boolean(cfg.isNew), flatBar: Boolean(cfg.isNew),
+    saveLabel: cfg.isNew ? "Сохранить задачу" : "Сохранить",
+    penOff: cfg.decided ? "Решённую задачу править нельзя: исход уже применён к записи" : "",
+    ...(cfg.onQuit ? { quitLabel: "Не заводить", onQuit: cfg.onQuit } : {}),
+    onEdit: cfg.onEdit,
+    check: () => {
+      const patch = patchBody();
+      const text = textBody();
+      const dirty = Object.keys(patch).length > 0 || text !== null || JSON.stringify(form.after) !== cleanAfter;
+      if (cfg.onDirty) cfg.onDirty(dirty);
+      return { dirty, refusal: draftRefusal(form, text), off: Boolean(cfg.decided) };
+    },
+    onSave: () => {
+      const patch = patchBody();
+      const text = textBody();
+      if (draftRefusal(form, text)) return;
+      Promise.resolve(cfg.onSave({ form, patch, text })).catch(console.error);
+    },
+    onDrop: cfg.onDrop,
+  });
+  if (cfg.decided) {
+    for (const node of view.page.querySelectorAll("input, select, textarea, .duereset")) node.disabled = true;
+  }
+  view.form = form;
+  return view;
 }
 
 // pre это заказ строки, отправленный до сборки экрана: переход по ссылке шлёт
@@ -5869,17 +6019,6 @@ async function renderTask(project, works, id, pre) {
     return;
   }
 
-  // Черновик формы: поля правятся у себя, а на сервер уезжают вместе.
-  const base = (row.r_parts || []).map(Number);
-  const form = {
-    title: row.title || "",
-    type: row.type || "task",
-    cost: row.cost || "-",
-    parts: base.slice(),
-    due: row.due || "",
-    control: row.control == null ? "" : String(row.control),
-    text: detail.text || "",
-  };
   const isGoal = /^Цель:/.test(row.title || "");
   const work = (works || []).find((w) => w.id === id);
 
@@ -5908,26 +6047,6 @@ async function renderTask(project, works, id, pre) {
   if (ctl) tail.push(ctl);
   for (const chip of stateChips) tail.push(chip);
 
-  const patchBody = () => {
-    const out = {};
-    if (form.title.trim() && form.title.trim() !== (row.title || "")) out.title = form.title.trim();
-    if (form.type !== (row.type || "task")) out.type = form.type;
-    if (form.cost !== (row.cost || "-")) out.cost = form.cost;
-    const parts = RANK_PARTS.map((_, i) => (form.parts[i] === base[i] ? null : form.parts[i]));
-    if (parts.some((v) => v !== null)) out.r_parts = parts;
-    // Срок едет прочерком снятия, а не пустой строкой: пустое поле значит
-    // «не трогать», и иначе снятый срок не отличался бы от нетронутого.
-    if (form.due !== (row.due || "")) out.due = form.due || "-";
-    // Контроль едет тем же правилом: прочерк снимает, пустое поле не трогает.
-    // Значение проверяет taskctl, клиент гонять его не обязан.
-    const hadControl = row.control == null ? "" : String(row.control);
-    if (form.control !== hadControl) out.control = form.control === "" ? "-" : form.control;
-    return out;
-  };
-  // Текст файла едет, только когда он вправду изменён: PUT переписывает
-  // постановку целиком, и лишний заход коммитил бы её впустую.
-  const textBody = () => (detail.file && form.text !== (detail.text || "") ? form.text : null);
-
   // Состав цели стоит над содержимым: с экрана цели смотрят прежде всего на
   // него. Ждать его отрисовка задачи не обязана, состав приезжает отдельным
   // запросом и встаёт на своё место сам.
@@ -5938,97 +6057,20 @@ async function renderTask(project, works, id, pre) {
     goalComposition(project, id, comp).catch(console.error);
   }
 
-  // Срок и контроль стоят одним блоком над описанием и открыты сразу, без
-  // карандаша (находки 4 и 6 DK-1503): срок это часть строки, которую читают
-  // на каждом заходе, и прятать его за режимом правки значило прятать половину
-  // смысла строки. Дата выбирается пикером поля, а контроль считается от срока
-  // и потому живёт рядом, а не отдельной карточкой: без срока его не ставит
-  // taskctl, снятие контроля срок не трогает, а снятие срока при живом
-  // контроле taskctl отбивает сам, словами в ответе правки.
-  const dueBox = el("fieldset", "dfield duebox");
-  dueBox.append(el("legend", "", "срок и контроль"));
-  const dueInput = el("input", "duein");
-  dueInput.type = "date";
-  dueInput.value = form.due;
-  dueInput.setAttribute("aria-label", "срок задачи " + id + ", дата");
-  const dueClear = el("button", "btn duereset", "Снять срок");
-  dueClear.type = "button";
-  dueClear.title = "Убрать срок со строки";
-  const dueNow = () => {
-    form.due = dueInput.value || "";
-    dueClear.hidden = !form.due;
-    view.touch();
-  };
-  dueInput.addEventListener("change", dueNow);
-  dueInput.addEventListener("input", dueNow);
-  dueClear.addEventListener("click", () => {
-    dueInput.value = "";
-    dueNow();
-  });
-  dueClear.hidden = !form.due;
-  const controlInput = el("input", "duein ctrl");
-  controlInput.type = "number";
-  controlInput.min = "0";
-  controlInput.max = "365";
-  controlInput.placeholder = "дней до срока";
-  controlInput.value = form.control;
-  controlInput.setAttribute("aria-label", "контроль задачи " + id + ", за сколько дней до срока проверка работ");
-  const controlClear = el("button", "btn duereset", "Снять контроль");
-  controlClear.type = "button";
-  controlClear.title = "Убрать контроль со строки";
-  const controlNow = () => {
-    form.control = controlInput.value;
-    controlClear.hidden = form.control === "";
-    view.touch();
-  };
-  controlInput.addEventListener("change", controlNow);
-  controlInput.addEventListener("input", controlNow);
-  controlClear.addEventListener("click", () => {
-    controlInput.value = "";
-    controlNow();
-  });
-  controlClear.hidden = form.control === "";
-  dueBox.append(dueInput, dueClear, el("span", "ctrlword", "контроль"), controlInput, controlClear);
-
-  const view = formPage({
-    key: "task", project, id, detail, chatRow: row, rankRow: row,
-    num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
-    // Шапка и степпер этапа (DK-1119, макет 2b) встают между полосой чипов и
-    // описанием: то же место, где раньше читался чип stageChip. Блок срока и
-    // контроля встаёт туда же.
-    afterChips: [stageFormBlocks(row), dueBox],
-    links: detail.links || null,
-    has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
-      file: true, make: true, pencil: true, read: true },
-    after: detail.after || [], blocks: detail.blocks || [],
-    // Взвод и его состояние приезжают тем же ответом, что зависимости: они и
-    // живут на доске одним заголовком строки.
-    armed: Boolean(detail.armed), arm: detail.arm || null, sect: row.sect || "",
+  const view = taskForm({
+    project, id, detail, row, chips, tailChips: tail, top,
+    afterChips: [stageFormBlocks(row)],
+    capabilities: { work: true, ownChat: true },
     actions: taskActions(project, id, row),
-    // Признак правки живёт в черновике: следующая честная перерисовка экрана
-    // (она бывает после сохранения) откроет задачу тем же режимом.
     edit: taskDraft.id === id && taskDraft.edit,
-    onEdit: (on) => {
-      taskDraft.id = id;
-      taskDraft.edit = on;
-    },
-    check: () => {
-      const patch = patchBody();
-      const text = textBody();
-      const dirty = Object.keys(patch).length > 0 || text !== null;
-      taskDraft.id = id;
-      taskDraft.dirty = dirty;
-      return { dirty, refusal: draftRefusal(form, text) };
-    },
-    onSave: () => {
-      const patch = patchBody();
-      const text = textBody();
-      if (draftRefusal(form, text)) return;
-      saveTaskDraft(project, id, Object.keys(patch).length ? patch : null, text).catch(console.error);
-    },
+    onEdit: (on) => { taskDraft.id = id; taskDraft.edit = on; },
+    onDirty: (dirty) => { taskDraft.id = id; taskDraft.dirty = dirty; },
+    onSave: ({ patch, text }) => saveTaskDraft(project, id, Object.keys(patch).length ? patch : null, text),
     onDrop: () => {
       taskDraft.dirty = false;
       taskDraft.edit = false;
+      const shown = paintedNode(groups, TASK_PKEY);
+      if (shown) shown.dataset.psign = "";
       renderTask(project, works, id).catch(console.error);
     },
   });
@@ -17291,12 +17333,22 @@ function preparedSrow(project, draftId, task) {
 // утверждённый макет): карточка состава тем же видом, что задачи цели, стоит
 // над описанием. Актуальные задачи видны сразу, решённые сворачиваются, а
 // пустой состав говорит словами и держит ручную подготовку.
+function draftConclusion(project, view) {
+  const text = String(view && view.conclusion || "");
+  const box = el("div", "card");
+  if (!text) { box.hidden = true; return box; }
+  const head = el("div", "chd");
+  head.append(el("b", "", "Заключение разбора"));
+  box.append(head, mdRender(text, project));
+  return box;
+}
+
 function draftPreparedComp(project, view) {
   const card = el("div", "card comp");
   const head = el("div", "chd");
   head.append(el("b", "", "Задачи разбора"));
   const state = view && view.state || {};
-  const tasks = Array.isArray(state.proposals) ? state.proposals : [];
+  const tasks = (Array.isArray(state.proposals) ? state.proposals : []).filter((p) => p.outcome === "add");
   const live = tasks.filter((t) => !t.status);
   const done = tasks.filter((t) => t.status);
   const id = view && view.id || "";
@@ -17344,83 +17396,15 @@ function preparedTableRow(project, view, draft, typeTitles) {
   stateb.append(state);
   row.append(statec);
   const { cell: srcc, box: srcb } = tblCell("dsrc");
-  const count = (view.state.proposals || []).filter((p) => !p.status).length;
-  srcb.append(el("span", "", count + " " + plural(count, "задача", "задачи", "задач")));
+  const count = (view.state.proposals || []).filter((p) => p.outcome === "add" && !p.status).length;
+  srcb.append(el("span", "", count ? count + " " + plural(count, "задача", "задачи", "задач") : "Заключение разбора"));
   row.append(srcc);
   row.addEventListener("click", () => { goKeepingChat(project + "/draft/" + view.id); });
   return row;
 }
 
-// preparedPropChip это короткие свойства подготовленной задачи для строки
-// статуса: экран согласования открывается чтением по стандарту форм DK-1438,
-// свойства стоят чипами, пустые не встают вовсе. Длинные тексты (барьер,
-// довод, причина) чипами не бывают, они блоками под описанием.
-const preparedPropChip = [
-  ["тип", "board_type"], ["ранг", "rank"], ["цена", "size"], ["приёмка", "accept"],
-  ["ответственный", "assignee"], ["срок", "due"], ["контроль", "control"],
-  ["после", "after"], ["приписка к", "target"], ["вернуться до", "until"],
-];
-
-// Чип свойства подготовки читается словом, а не кодом доски: тип и приёмка
-// подписями, ранг итогом суммы (DK-1564, замер QA 2026-11-06). Код приёмки и
-// слагаемые ранга уходят в подсказку: они говорят, из чего итог собрался.
-function preparedPropChipNode(label, fld, raw) {
-  if (fld === "rank") {
-    const sum = rankSum(raw);
-    const chip = el("span", "chip", label + " " + sum);
-    if (sum !== String(raw).trim()) withTip(chip, "слагаемые: " + raw);
-    return chip;
-  }
-  if (fld === "accept") {
-    return withTip(el("span", "chip", acceptTitles[raw] || raw), "вид приёмки: " + raw);
-  }
-  if (fld === "board_type") {
-    return el("span", "chip", label + " " + (boardTypeTitles[raw] || raw));
-  }
-  return el("span", "chip", label + " " + raw);
-}
-
-// Поля правки подготовленной задачи: короткие свойства одной рамкой в строку
-// с переносом, приёмка закрытым списком, тексты своей рамкой каждый. Набор
-// полей по исходу тот же, что у формы до перестройки экрана, поменялся вид
-// (DK-1438, решения 3 и 4), а не предметная механика.
 const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
-const preparedShortRow = [
-  ["Тип строки", "board_type", ["add"]],
-  ["Ранг", "rank", ["add"]],
-  ["Цена", "size", ["add"]],
-  ["Приёмка", "accept", ["add"], ["agent", "mixed", "user"]],
-  ["Барьер приёмки", "barrier", ["add"], BARRIER_VALUES],
-  ["Ответственный", "assignee", ["add"]],
-  ["Срок", "due", ["add"]],
-  ["Контроль", "control", ["add"]],
-  ["После", "after", ["add"]],
-  ["Куда приписать", "target", ["attach"]],
-  ["Вернуться до", "until", ["defer"]],
-];
-const preparedTextRows = [
-  ["Довод разбора", "rationale", ["add", "attach", "defer", "drop"]],
-  ["Причина", "reason", ["defer", "drop"]],
-];
-
-// Режим правки подготовленной задачи переживает перерисовку по фокусу окна:
-// тот же трюк, что у правки задачи и записи. Ключ это черновик вместе с
-// задачей, у черновика задач несколько.
 const preparedDraft = { key: "", edit: false };
-
-// preparedBody собирает сравнимый слепок полей задачи: по нему форма узнаёт
-// свою тронутость, а сохранение собирает тело из тех же полей.
-function preparedBody(v) {
-  return {
-    title: String(v.title || ""), text: String(v.text || ""), board_type: String(v.board_type || ""),
-    rank: String(v.rank || ""), size: String(v.size || ""), accept: String(v.accept || ""),
-    barrier: String(v.barrier || ""), control: String(v.control || ""), assignee: String(v.assignee || ""),
-    due: String(v.due || ""), target: String(v.target || ""), until: String(v.until || ""),
-    rationale: String(v.rationale || ""), reason: String(v.reason || ""),
-    outcome: String(v.outcome || ""),
-    after: String(v.after || "").split(",").map((s) => s.trim()).filter(Boolean),
-  };
-}
 
 async function savePreparedTask(project, id, view, edited) {
   const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared",
@@ -17438,245 +17422,6 @@ async function savePreparedTask(project, id, view, edited) {
     goKeepingChat(project + "/draft/" + id + "/prepared/" + (assigned[edited.id] || edited.id));
     await refresh();
   }
-}
-
-// preparedTaskScreen собирает экран подготовленной задачи на каркасе formPage
-// (провал приёмки 2026-11-05): чтение по умолчанию, описание собрано разметкой
-// тем же файловым блоком, что у задачи и записи, свойства стоят чипами,
-// правка включается карандашом,
-// несёт рамки с подписью в грани и кончается «Сохранить» либо «Отменить
-// правку».
-function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
-  const decided = Boolean(task.status);
-  const prepareNeeded = !decided && !isNew && view.ready === false
-    && (!view.state || !view.state.pack_revision || !view.state.prepared_source);
-  const value = Object.assign({}, task, {
-    title: task.title || "", text: task.text || "",
-    after: Array.isArray(task.after) ? task.after.join(", ") : "",
-  });
-  const barrierParts = String(value.barrier || "").split(":");
-  if (barrierParts.length > 1 && BARRIER_VALUES.includes(barrierParts[0].trim()) && barrierParts[0].trim()) {
-    const paragraph = "Барьер приёмки: " + value.barrier;
-    const text = String(value.text || "").trim();
-    if (barrierParts.slice(1).join(":").trim()) {
-      const nl = text.indexOf("\n");
-      value.text = text.startsWith("# ")
-        ? (nl < 0 ? text : text.slice(0, nl)) + "\n\n" + paragraph + "\n\n" + (nl < 0 ? "" : text.slice(nl + 1))
-        : paragraph + "\n\n" + text;
-    }
-    value.barrier = barrierParts[0].trim();
-  }
-  const clean = JSON.stringify(preparedBody(value));
-  const ownKey = id + "/" + task.id;
-  let page = null;
-
-  // Чтение: короткие свойства чипами в строке статуса, рядом со статусом.
-  const propChips = [];
-  for (const [label, fld] of preparedPropChip) {
-    const raw = fld === "after" ? value.after : task[fld];
-    if (String(raw || "").trim()) propChips.push(preparedPropChipNode(label, fld, raw));
-  }
-  // Исходный черновик стоит компактной меткой сверху, первым в строке статуса
-  // (DK-1564, утверждённый макет): номер записи вместе с коротким названием
-  // ссылкой, и искать эту связь в конце описания не требуется.
-  const sourceChip = el("span", "chip");
-  const sourceLink = el("button", "linkish", "из " + id + (sourceTitle ? ": " + sourceTitle : ""));
-  sourceLink.type = "button";
-  sourceLink.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id); });
-  sourceChip.append(sourceLink);
-  const chips = [sourceChip, preparedStatusChip(task)].concat(propChips);
-
-  // Правка: исход списком, короткие свойства рамкой в строку, тексты рамками.
-  const editFields = el("div", "pedit");
-  const kindRow = el("label", "pick");
-  kindRow.append(el("span", "pl", "исход"));
-  const kind = el("select");
-  kind.setAttribute("aria-label", "исход подготовки");
-  for (const [k, title] of Object.entries(draftOutcomeTitles)) {
-    const o = el("option", "", title);
-    o.value = k;
-    o.selected = k === value.outcome;
-    kind.append(o);
-  }
-  kind.addEventListener("change", () => {
-    value.outcome = kind.value;
-    showFields();
-    if (page) page.touch();
-  });
-  kindRow.append(kind);
-  editFields.append(kindRow);
-  const propsFrame = el("fieldset", "dfield");
-  propsFrame.append(el("legend", "", "Свойства задачи"));
-  const propsRow = el("div", "pshort");
-  propsFrame.append(propsRow);
-  editFields.append(propsFrame);
-  const shortFields = [];
-  for (const [label, fld, kinds, list] of preparedShortRow) {
-    let field;
-    if (list) {
-      const cur = String(value[fld] || "");
-      const vals = !cur || list.includes(cur) ? list : [cur].concat(list);
-      field = pickField(label, vals, cur, (v) => {
-        value[fld] = v;
-        if (page) page.touch();
-      });
-    } else {
-      field = el("label", "pinp");
-      field.append(el("span", "", label));
-      const input = el("input");
-      input.value = value[fld] || "";
-      input.addEventListener("input", () => {
-        value[fld] = input.value;
-        if (page) page.touch();
-      });
-      field.append(input);
-    }
-    shortFields.push({ node: field, kinds });
-    propsRow.append(field);
-  }
-  const textFrames = [];
-  for (const [label, fld, kinds] of preparedTextRows) {
-    const frame = el("fieldset", "dfield");
-    frame.append(el("legend", "", label));
-    const ta = el("textarea", "parea");
-    ta.rows = 2;
-    ta.value = value[fld] || "";
-    ta.addEventListener("input", () => {
-      value[fld] = ta.value;
-      if (page) page.touch();
-    });
-    frame.append(ta);
-    textFrames.push({ node: frame, kinds });
-    editFields.append(frame);
-  }
-  const showFields = () => {
-    for (const f of shortFields) f.node.hidden = !f.kinds.includes(value.outcome);
-    for (const f of textFrames) f.node.hidden = !f.kinds.includes(value.outcome);
-  };
-  showFields();
-
-  // Чтение: длинные тексты блоками под описанием, у решённой задачи тем же
-  // местом квитанция со ссылками на результат.
-  const readNotes = el("div", "pnotes");
-  const notes = [];
-  if (task.barrier) notes.push(["Барьер приёмки", task.barrier]);
-  if (task.rationale) notes.push(["Довод разбора", task.rationale]);
-  if (task.reason) notes.push(["Причина", task.reason]);
-  const receipt = task.result || {};
-  if (receipt.reason) notes.push(["Итог", receipt.reason]);
-  for (const [label, text] of notes) {
-    const one = el("div", "pnote");
-    one.append(el("span", "pnote-l", label), el("span", "pn-t", text));
-    readNotes.append(one);
-  }
-  if (decided) {
-    const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
-    if (ids.length) {
-      const one = el("div", "pnote");
-      one.append(el("span", "pnote-l", "Результат"));
-      for (const got of ids) {
-        const link = el("button", "linkish", got);
-        link.type = "button";
-        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got));
-        one.append(link, document.createTextNode(" "));
-      }
-      readNotes.append(one);
-    }
-  }
-
-  const actions = [];
-
-  page = formPage({
-    key: "draft-prepared", project, id,
-    crumb: [
-      { text: "Доска " + project, go: () => { goKeepingChat(project); } },
-      { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
-      { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
-      // Своя крошка у задачи своя: номер доски, закреплённый за задачей до
-      // заведения (DK-1564).
-      { text: preparedNumber(task) },
-    ],
-    num: preparedNumber(task),
-    // Заголовок задачи не бывает пустым: у задачи без своего названия его
-    // занимает смысловой fallback из текста, причины или исхода, тот же, что
-    // в таблице накопителя и в составе записи (DK-1564). Поле правки в чтении
-    // показывает его же, а в правке остаётся честно пустым.
-    titleText: preparedTitle(task),
-    titleRead: !isNew && !String(task.title || "").trim() ? preparedTitle(task) : "",
-    titleHint: isNew ? NEW_PLACEHOLDER : "",
-    titleLabel: "заголовок задачи " + task.id,
-    form: value,
-    detail: { file: "docs/tasks/prepared/" + id + ".md", text: task.text || "", note: "описания нет" },
-    chips,
-    afterChips: [editFields],
-    extra: [readNotes],
-    actions,
-    has: { title: !decided, file: true, pencil: !decided && !isNew, read: !isNew },
-    // Решённую задачу править нельзя, и карандаш говорит об этом подсказкой,
-    // а не пропажей: молчащая кнопка читалась бы поломкой экрана.
-    penOff: decided ? "Решённую задачу править нельзя: исход уже применён к записи" : "",
-    penLabel: "Править задачу",
-    edit: isNew || (preparedDraft.key === ownKey && preparedDraft.edit),
-    always: isNew,
-    flatBar: isNew,
-    saveLabel: isNew ? "Сохранить задачу" : "Сохранить",
-    // Выход живёт только на форме заведения: у сохранённой задачи его роль
-    // играет «Отменить правку», и одинокая кнопка «Не заводить» держала в
-    // чтении пустую полосу (замер QA 2026-11-05).
-    ...(isNew ? {
-      quitLabel: "Не заводить",
-      onQuit: (btn) => {
-        if (btn && JSON.stringify(preparedBody(value)) !== clean && !btn.classList.contains("armed")) {
-          btn.classList.add("armed");
-          btn.rename("Задача не записана, выйти?");
-          return;
-        }
-        draftPreparedDirty.delete(id);
-        goKeepingChat(project + "/draft/" + id);
-      },
-    } : {}),
-    onEdit: (on) => {
-      preparedDraft.key = ownKey;
-      preparedDraft.edit = on;
-      editFields.hidden = !on;
-      readNotes.hidden = on;
-      for (const chip of propChips) chip.hidden = on;
-      for (const act of actions) act.hidden = on;
-      if (on) showFields();
-      if (page) page.touch();
-    },
-    check: () => {
-      const dirty = JSON.stringify(preparedBody(value)) !== clean
-        || (prepareNeeded && preparedDraft.key === ownKey && preparedDraft.edit);
-      if (dirty) draftPreparedDirty.add(id); else draftPreparedDirty.delete(id);
-      const refusal = value.outcome === "add" && !String(value.title || "").trim()
-        ? "у задачи нужен заголовок: по нему её ищут на доске" : "";
-      return { dirty, refusal };
-    },
-    onSave: () => {
-      const body = preparedBody(value);
-      const edited = Object.assign({}, value, body, {
-        revision: task.revision + (isNew ? 0 : 1),
-        after: body.after,
-      });
-      savePreparedTask(project, id, view, edited).catch(console.error);
-    },
-    onDrop: () => {
-      draftPreparedDirty.delete(id);
-      preparedDraft.edit = false;
-      // Отпечаток снимается руками: данные с сервера те же, и без этого
-      // перерисовка оставила бы на экране прежний узел вместе с брошенной
-      // правкой в поле.
-      const shown = findKey(document.getElementById("groups"), "draft-prepared-page");
-      if (shown) shown.dataset.psign = "";
-      renderDraftPrepared(project, id, task.id).catch(console.error);
-    },
-  });
-  // Полоса действий встаёт на место после вставки экрана в дерево: до неё у
-  // строк статуса нет родителя, и место полосы выбирается по нему. Тот же
-  // отложенный ход, что у подгонки высоты заголовка.
-  setTimeout(() => { page.touch(); }, 0);
-  return page.page;
 }
 
 // renderDraftPrepared это экран подготовленной задачи (DK-1564, решение 4):
@@ -17709,10 +17454,15 @@ async function renderDraftPrepared(project, id, key) {
   const task = isNew
     ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add", board_type: "task", size: "-", accept: "agent" }
     : tasks.find((p) => p.id === key);
+  if (task && task.outcome !== "add") return goDraftInstead(project, id);
+  if (task && task.status === "accepted" && task.result && (task.result.ids || []).length) {
+    return goTaskInstead(project, task.result.ids[0]);
+  }
   const sourceTitle = sourceDraftTitle(record);
+  if (draftPreparedDirty.has(id) && preparedDraft.key === id + "/" + key) return;
   sync(groups, [{
     key: "draft-prepared-page",
-    sign: [id, key, JSON.stringify(task), sourceTitle].join("|"),
+    sign: [id, key, view.snapshot, JSON.stringify(task), sourceTitle].join("|"),
     make: () => {
       if (!task) {
         return formPage({
@@ -17725,7 +17475,64 @@ async function renderDraftPrepared(project, id, key) {
           titleText: key, detail: { note: "задача " + key + " в записи " + id + " не найдена" },
         }).page;
       }
-      return preparedTaskScreen(project, id, view, task, isNew, sourceTitle);
+      const number = preparedNumber(task);
+      const ownKey = id + "/" + key;
+      const sourceChip = el("span", "chip");
+      const sourceLink = el("button", "linkish", "из " + id + (sourceTitle ? ": " + sourceTitle : ""));
+      sourceLink.type = "button";
+      sourceLink.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id); });
+      sourceChip.append(sourceLink);
+      const value = Object.assign({}, task);
+      const barrier = /^([^:]+):([\s\S]*)$/.exec(String(value.barrier || ""));
+      if (barrier && BARRIER_VALUES.includes(barrier[1].trim())) {
+        value.barrier = barrier[1].trim();
+        if (barrier[2].trim()) value.text = String(value.text || "").trimEnd() + "\n\nБарьер приёмки: " + task.barrier + "\n";
+      }
+      const row = {
+        id: number, title: task.title || "", type: task.board_type || "task", cost: task.size || "-",
+        r_parts: RANK_PARTS.map((_, i) => Number(String(task.rank || "").split("+")[i] || 0)),
+        due: task.due || "", control: task.control === "" || task.control == null ? null : task.control,
+        accept: task.accept || "agent",
+      };
+      const accept = acceptChip(row);
+      const form = taskForm({
+        project, id: number, row,
+        detail: { file: "docs/tasks/prepared/" + id + ".md", text: value.text || "", note: "описания нет",
+          after: (task.after || []).map((dep) => ({ id: dep })), blocks: [] },
+        chips: [sourceChip, preparedStatusChip(task)], tailChips: accept ? [accept] : [],
+        capabilities: { work: false, ownChat: false }, localDeps: true,
+        dependencies: tasks.filter((p) => p.outcome === "add" && p.status !== "rejected")
+          .map((p) => ({ id: preparedNumber(p), title: preparedTitle(p) })),
+        titleRead: !String(task.title || "").trim() ? preparedTitle(task) : "",
+        titleHint: isNew ? NEW_PLACEHOLDER : "",
+        isNew, decided: Boolean(task.status),
+        edit: isNew || (!task.status && preparedDraft.key === ownKey && preparedDraft.edit),
+        onEdit: (on) => { preparedDraft.key = ownKey; preparedDraft.edit = on; },
+        onDirty: (dirty) => { if (dirty) draftPreparedDirty.add(id); else draftPreparedDirty.delete(id); },
+        onSave: ({ form }) => {
+          const edited = Object.assign({}, value, {
+            title: form.title.trim(), text: form.text, board_type: form.type, size: form.cost,
+            rank: form.parts.join("+"), due: form.due, control: form.control, after: form.after.slice(),
+            revision: task.revision + (isNew ? 0 : 1),
+          });
+          return savePreparedTask(project, id, view, edited);
+        },
+        onDrop: () => {
+          draftPreparedDirty.delete(id); preparedDraft.edit = false;
+          const shown = findKey(groups, "draft-prepared-page");
+          if (shown) shown.dataset.psign = "";
+          renderDraftPrepared(project, id, task.id).catch(console.error);
+        },
+        ...(isNew ? { onQuit: (btn) => {
+          if (draftPreparedDirty.has(id) && !btn.classList.contains("armed")) {
+            btn.classList.add("armed"); btn.rename("Задача не записана, выйти?"); return;
+          }
+          draftPreparedDirty.delete(id); preparedDraft.edit = false;
+          goKeepingChat(project + "/draft/" + id);
+        } } : {}),
+      });
+      setTimeout(() => form.touch(), 0);
+      return form.page;
     },
   }]);
 }
@@ -18010,7 +17817,7 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        afterChips: [reason, draftPreparedComp(project, prepared)]
+        afterChips: [reason, draftConclusion(project, prepared), draftPreparedComp(project, prepared)]
           .concat(metaEditor ? [metaEditor] : []),
         // Поле мысли стоит после описания и оформлено как поле, а не как
         // белая сыпь над текстом записи (DK-1564, утверждённый макет).
@@ -21691,7 +21498,9 @@ function proposalComment(draft) {
 function preparedFlat(shown) {
   const out = [];
   for (const source of shown.sources || []) {
-    for (const p of source.proposals || []) out.push({ source: source.source, task: p, title: p.title || p.id });
+    for (const p of source.proposals || []) {
+      if (p.outcome === "add") out.push({ source: source.source, task: p, title: p.title || p.id });
+    }
   }
   return out;
 }
@@ -21711,8 +21520,11 @@ function preparedPickWire(feed, pick, shown) {
   const head = askPickHeads(askCardSteps(pick.ask))[0] || "";
   let host = head ? askPickHost(feed, [head], "") : null;
   let lines = host ? preparedMatchLines(host, flat) : [];
-  if (lines.length !== flat.length) {
-    host = askPickFallback([preparedQuestionBlock(flat, project)], pick.ask);
+  const shownText = host ? askPickText(host).replace(/\s+/g, " ") : "";
+  const missingConclusion = shown.sources.some((source) => source.conclusion &&
+    !shownText.includes(askPickText(mdRender(source.conclusion, project)).replace(/\s+/g, " ")));
+  if (!host || lines.length !== flat.length || missingConclusion) {
+    host = askPickFallback([preparedQuestionBlock(shown, project)], pick.ask);
     feed.append(host);
     lines = preparedMatchLines(host, flat);
     if (lines.length !== flat.length) return;
@@ -21752,11 +21564,14 @@ function preparedPickWire(feed, pick, shown) {
   askPickSave(pick.addr, pick);
 }
 
-// preparedQuestionBlock собирает строки вопроса той же формы для дописи в
-// конец ленты при промахе реплики: голова и строка-ссылка на каждую задачу.
-function preparedQuestionBlock(flat, project) {
-  const lines = ["Подготовил задачи, согласуй их описание."];
-  for (const item of flat) lines.push(preparedLineText(item, project));
+function preparedQuestionBlock(shown, project) {
+  const lines = ["Подготовил заключение разбора. Согласуй весь результат."];
+  const flat = preparedFlat(shown);
+  for (const source of shown.sources || []) {
+    lines.push("Разбор " + source.source + ": #" + project + "/draft/" + source.source);
+    if (source.conclusion) lines.push(source.conclusion);
+    for (const item of flat.filter((item) => item.source === source.source)) lines.push(preparedLineText(item, project));
+  }
   return { text: lines.join("\n\n"), options: [] };
 }
 
@@ -21797,7 +21612,7 @@ function sameSelection(a, b) {
 function proposalAttachment(proposal) {
   const card = el("details", "selection-attachment proposal-attachment");
   card.open = true;
-  card.append(el("summary", "", "Решения по подготовленным задачам"));
+  card.append(el("summary", "", "Решения по разбору"));
   const entries = proposal.results || proposal.decisions || [];
   for (const d of entries) {
     const action = d.result || (d.action === "accept" ? "подтвердить" : "отклонить");

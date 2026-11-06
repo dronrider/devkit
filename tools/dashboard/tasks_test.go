@@ -2089,7 +2089,7 @@ func TestStaticTaskClosedScreen(t *testing.T) {
 	if cut < 0 {
 		t.Fatal("в renderTask нет ветки закрытой задачи")
 	}
-	stop := strings.Index(body[cut:], "// Черновик формы")
+	stop := strings.Index(body[cut:], "\n  const isGoal =")
 	if stop < 0 {
 		t.Fatal("ветка закрытой задачи не кончается перед черновиком формы")
 	}
@@ -2104,7 +2104,7 @@ func TestStaticTaskClosedScreen(t *testing.T) {
 	}
 	// Карточка зависимостей в чтении: ни поля добавления, ни кнопок «Снять».
 	deps := funcBody(t, app, "function depsCard(")
-	if !strings.Contains(deps, "if (!o.ro)") || !strings.Contains(deps, "o.afterNote") {
+	if !strings.Contains(deps, "let edit = !o.ro") || !strings.Contains(deps, "o.afterNote") {
 		t.Error("карточка зависимостей не умеет читаться без правки")
 	}
 	if row := funcBody(t, app, "function depRow("); !strings.Contains(row, "if (!ro)") {

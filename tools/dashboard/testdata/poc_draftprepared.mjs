@@ -1,110 +1,104 @@
-import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, fail, appPathArg } from "./poc_dom.mjs";
+import assert from "node:assert/strict";
+import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, appPathArg } from "./poc_dom.mjs";
 
-// Экран подготовленной задачи после провала приёмки 2026-11-05: открывается
-// чтением по стандарту форм DK-1438, описание собрано разметкой, короткие
-// свойства чипами, длинные тексты блоками, правка включается карандашом и
-// несёт рамки с подписями в грани. Согласование стоит кнопками в командной
-// панели и уезжает на время правки.
-const writes = [];
-const state = { version: 1, state: "active", analysis: "ok", proposals: [
-  { id: "chat-delivery", board_id: "XR-005", revision: 1, outcome: "add", title: "Доставка чата записи",
-    board_type: "bug", rank: "25+5+3+0+4", size: "L", accept: "mixed",
-    barrier: "глаза: прогон стенда и живой экран", rationale: "дефект виден на приёмке",
-    text: "# Доставка чата записи\n\nРеплика уезжает в чат записи.\n\n- пункт один\n- пункт два\n" },
-] };
-let snapshot = "s1";
+const writes = [], constructors = [];
+const original = { id: "prepared-one", board_id: "XR-005", revision: 1, outcome: "add", title: "Доставка чата",
+  board_type: "bug", rank: "25+5+3+5+4", size: "L", accept: "mixed", barrier: "глаза: проверить вид",
+  due: "2026-11-15", control: "3", after: ["XR-1"], text: "# Доставка чата\n\nОписание доставки.\n", rationale: "сохранённый довод" };
+const projectedText = original.text.trimEnd() + "\n\nБарьер приёмки: " + original.barrier + "\n";
+const state = { version: 1, state: "active", pack_revision: 2, proposals: [structuredClone(original),
+  { id: "drop-one", revision: 1, outcome: "drop", reason: "устарело", text: "" }, { ...original, id:"prepared-two",board_id:"XR-006",title:"Соседняя подготовленная задача" }] };
+const row = { id: "XR-7", title: original.title, type: original.board_type, cost: original.size,
+  r_parts: [25,5,3,5,4], p: "P2", sect: "backlog", section: "Backlog", due: original.due, control: 3 };
 const { sandbox, byId } = makeSandbox(appPathArg(), (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };
-  if (path === "/api/harnesses") return { harnesses: [] };
   if (path === "/api/projects/demo/drafts/types") return { types: [{ name: "task", title: "Задача" }] };
-  if (path === "/api/projects/demo/drafts/prepared/confirm" && init && init.method === "POST") {
-    const body = JSON.parse(init.body); writes.push({ confirm: body });
-    state.proposals[0].status = "accepted";
-    state.proposals[0].result = { ids: ["XR-1"], outcome: "add", reason: "задача на доске" };
-    return { results: [{ ids: ["XR-1"] }] };
-  }
-  if (path === "/api/projects/demo/drafts/XR-9/prepared" && init && init.method === "PUT") {
-    const body = JSON.parse(init.body); writes.push(body); state.proposals[0] = body.proposal; snapshot = "s2";
+  if (path.endsWith("/drafts/XR-9/prepared") && init?.method === "PUT") {
+    const body = JSON.parse(init.body); writes.push({ path, ...body }); state.proposals[0] = body.proposal;
     return { message: "задача сохранена" };
   }
-  if (path === "/api/projects/demo/drafts/XR-9/prepared") return { id: "XR-9", snapshot, basis: "d1", state };
-  if (path === "/api/projects/demo/drafts/XR-9") return { id: "XR-9", text: "# Встреча по доставке\n", hash: "h", type: "task", source: "thought", lock: "unlocked" };
-  if (path.endsWith("/board")) return { board: { prefix: "XR", sections: [] }, works: [] };
+  if (path.endsWith("/drafts/XR-9/prepared")) return { id: "XR-9", snapshot: "s1", basis: "b1", ready: true, state };
+  if (path.endsWith("/drafts/XR-9")) return { id: "XR-9", text: "# Встреча по доставке\n", type: "task", source: "thought", lock: "unlocked" };
+  if (path.includes("/tasks/") && init?.method) { writes.push({ path, method: init.method, body: JSON.parse(init.body) }); return {}; }
+  if (path.endsWith("/tasks/XR-005")) return { row:{...row,id:"XR-005"},file:"docs/tasks/XR-005.md",text:original.text,after:[],blocks:[] };
+  if (path.endsWith("/tasks/XR-7")) return { row, file: "docs/tasks/XR-7.md", text: original.text, after: [{ id: "XR-1" }], blocks: [] };
+  if (path.endsWith("/board")) return { board: { prefix: "XR", sections: [{key:"backlog",rows:[{id:"XR-2",title:"Вторая зависимость"}]}] }, works: [] };
   if (path.includes("/chats")) return { chats: [], models: [] };
-  if (path === "/api/quota") return { harnesses: [] };
   return {};
 });
-async function openScreen(hash) {
-  sandbox.location.hash = hash;
-  await sandbox.refresh(); await settle();
-}
-function chipText(node) {
-  return allByClass(node, "chip").map(dump).join(" | ");
-}
-function legendField(root, label) {
-  return allByClass(root, "dfield").find((n) => n.children[0] && n.children[0].textContent === label);
-}
-await openScreen("demo/draft/XR-9/prepared/chat-delivery");
+const sharedForm = sandbox.taskForm;
+if (sharedForm) sandbox.taskForm = (cfg) => { constructors.push(cfg); return sharedForm(cfg); };
 const groups = byId.get("groups");
-// Чтение по умолчанию: описание собрано разметкой, поля правки спрятаны.
-const view = byClass(groups, "fview");
-if (!view || view.hidden) fail("описание не показано разметкой в чтении");
-if (!dump(view).includes("Реплика уезжает в чат записи") || !dump(view).includes("пункт один")) fail("текст описания не собран в чтении");
-const editBox = allByClass(groups, "pedit")[0];
-if (!editBox || !editBox.hidden) fail("поля правки не спрятаны в чтении");
-const chipsLine = chipText(groups);
-for (const part of ["На согласовании", "тип Баг", "ранг 37", "цена L", "Проверка с вашим участием"]) {
-  if (!chipsLine.includes(part)) fail("в чтении нет чипа " + part);
+async function open(hash) { sandbox.location.hash = hash; await sandbox.refresh(); await settle(); }
+const due = () => allByClass(groups, "duein").find(n => n.type === "date");
+const title = () => byClass(groups, "tedit");
+const text = () => tag(byClass(groups, "fbody"), "TEXTAREA");
+const save = () => deepBtn(groups, "Сохранить");
+const pen = () => deepBtn(groups, "tpen");
+const fields = () => ["tedit", "rcard", "duebox", "fbody", "dcard"].map(c => allByClass(groups, c).length);
+await open("demo/XR-7");
+const normalFields = fields();
+assert.deepEqual(normalFields, [1,1,1,1,1]);
+assert.ok(byClass(groups, "fview") && !byClass(groups, "fview").hidden);
+await open("demo/draft/XR-9/prepared/prepared-one");
+assert.deepEqual(fields(), normalFields, "normal/prepared показывают разные поля полной формы");
+await open("demo/XR-7");
+pen().handlers.click({}); title().value = "Не записывать"; title().handlers.input({});
+assert.ok(save() && !save().hidden);
+await deepBtn(groups, "Отменить правку").handlers.click({}); await settle();
+assert.equal(title().value, original.title); assert.equal(writes.length, 0);
+due().value = "2026-11-16"; due().handlers.input({});
+await save().handlers.click({}); await settle();
+assert.equal(writes[0].method, "PATCH"); assert.equal(writes[0].body.due, "2026-11-16");
+await open("demo/draft/XR-9/prepared/prepared-one");
+assert.deepEqual(fields(), normalFields, "normal/prepared показывают разные поля полной формы");
+assert.ok(constructors.some(c => c.capabilities.work && c.capabilities.ownChat));
+assert.ok(constructors.some(c => !c.capabilities.work && !c.capabilities.ownChat && c.localDeps));
+assert.equal(dump(byClass(groups, "idbig")), "XR-005");
+assert.ok(dump(groups).includes("из XR-9: Встреча по доставке"));
+assert.equal(dump(byClass(groups, "rbig")).includes("42"), true);
+assert.equal(due().value, original.due); assert.equal(byClass(groups, "ctrl").value, "3");
+for (const cls of ["pedit", "pshort", "parea", "darm"]) assert.equal(allByClass(groups, cls).length, 0, cls);
+for (const label of ["Исход", "Вернуться до", "Довод разбора", "Причина", "Свойства задачи", "Выполнить", "Продолжить", "Начать разговор"]) {
+  assert.equal(Boolean(deepBtn(groups, label)), false, label);
 }
-// Ранг показан итогом суммы, а слагаемые ушли в подсказку: формула в чипе
-// шире строки статуса и кодами не читается (DK-1564, замер QA 2026-11-06).
-{
-  const tipOf = (node) => String((node && ((node.attrs || {}).title || node.title)) || "");
-  const rank = allByClass(groups, "chip").find((c) => dump(c).includes("ранг 37"));
-  if (!rank || !tipOf(rank).includes("25+5+3+0+4")) {
-    fail("слагаемые ранга не уехали в подсказку чипа: " + chipsLine);
-  }
-  const accept = allByClass(groups, "chip").find((c) => dump(c).includes("Проверка с вашим участием"));
-  if (!accept || !tipOf(accept).includes("mixed")) {
-    fail("код приёмки не уехал в подсказку чипа: " + chipsLine);
-  }
-}
-// Шапка называет задачу её номером доски, а источник стоит ссылкой сверху
-// (DK-1564, утверждённый макет): номер и запись встречают раньше описания.
-const idbig = byClass(groups, "idbig");
-if (!idbig || dump(idbig) !== "XR-005") fail("шапка задачи не названа номером доски");
-if (!chipsLine.includes("из XR-9: Встреча по доставке")) fail("в чтении нет ссылки на исходную запись");
-const notes = byClass(groups, "pnotes");
-if (!notes || notes.hidden || !dump(notes).includes("Барьер приёмки") || !dump(notes).includes("прогон стенда и живой экран")) fail("длинные тексты не стоят блоками в чтении");
-if (!dump(notes).includes("Довод разбора")) fail("довод разбора не показан в чтении");
-if (deepBtn(groups, "Подтвердить") || deepBtn(groups, "Отклонить")) fail("у подготовленной задачи остались отдельные решения");
-// Выход «Не заводить» живёт только на форме заведения: у сохранённой задачи
-// его роль играет отмена правки, и кнопка не держит пустую полосу в чтении.
-if (deepBtn(groups, "Не заводить")) fail("в чтении сохранённой задачи есть кнопка выхода");
-// Правка включается карандашом и несёт рамки с подписями в грани.
-const pen = deepBtn(groups, "tpen"); if (!pen) fail("нет карандаша правки");
-pen.handlers.click({});
-if (editBox.hidden) fail("правка не открылась карандашом");
-if (!legendField(groups, "Свойства задачи")) fail("нет рамки свойств задачи");
-if (!legendField(groups, "Довод разбора")) fail("нет рамки довода разбора");
-const text = tag(byClass(groups, "fbody"), "TEXTAREA");
-if (!text || text.hidden) fail("описание не правится большим полем");
-// Повторный карандаш возвращает чтение, и согласование встаёт на место.
-pen.handlers.click({});
-if (!editBox.hidden) fail("правка не закрылась повторным карандашом");
-const backView = byClass(groups, "fview");
-if (!backView || backView.hidden) fail("после выхода из правки описание не вернулось в чтение");
-pen.handlers.click({});
-if (editBox.hidden) fail("правка не открылась повторно");
-text.value = "Реплика уезжает в чат записи. Поправка разбора."; text.handlers.input({});
-const save = deepBtn(groups, "Сохранить"); if (!save) fail("нет сохранения правки");
-save.handlers.click({}); await settle();
-const put = writes.find((w) => !w.confirm);
-if (!put || put.base !== "s1" || put.proposal.revision !== 2 || put.proposal.text !== "Реплика уезжает в чат записи. Поправка разбора.") fail("правка не доехала");
-// После сохранения экран возвращается в чтение.
-await openScreen("demo/draft/XR-9/prepared/chat-delivery");
-const back = allByClass(byId.get("groups"), "pedit")[0];
-if (!back || !back.hidden) fail("после сохранения экран не вернулся в чтение");
-if (deepBtn(byId.get("groups"), "Подтвердить") || deepBtn(byId.get("groups"), "Отклонить")) fail("после правки вернулось отдельное решение");
-if (writes.some((w) => w.confirm)) fail("просмотр или правка применили результат");
-console.log("экран подготовленной задачи читается и правится без отдельных решений");
+assert.equal(groups.querySelectorAll("button").some(n => String(n.attrs?.["aria-label"] || "").startsWith("Чат по задаче")), false);
+assert.ok(!save() || save().hidden);
+pen().handlers.click({});
+assert.ok(!save() || save().hidden, "карандаш создал фиктивную правку");
+assert.equal(byClass(groups, "rcard").classList.contains("redit"), true);
+assert.equal(text().hidden, false);
+text().value += "Отменить"; text().handlers.input({});
+await deepBtn(groups, "Отменить правку").handlers.click({}); await settle();
+assert.equal(text().value, projectedText); assert.ok(!save() || save().hidden);
+pen().handlers.click({});
+text().value += "Поправка"; text().handlers.input({});
+byClass(groups, "ctrl").value = "5"; byClass(groups, "ctrl").handlers.input({});
+const remove = deepBtn(byClass(groups, "dcard"), "Снять"); assert.ok(remove);
+remove.handlers.click({ stopPropagation() {} });
+assert.ok(!dump(byClass(groups, "dcard")).includes("XR-1"));
+await settle();
+const candidate = allByClass(groups, "tprow").find(n => dump(n).includes("XR-2")); assert.ok(candidate);
+candidate.handlers.click({ stopPropagation() {} });
+assert.ok(dump(byClass(groups, "dcard")).includes("XR-2"));
+await settle();
+const sibling = allByClass(groups, "tprow").find(n => dump(n).includes("XR-006")); assert.ok(sibling);
+sibling.handlers.click({ stopPropagation() {} });
+assert.equal(allByClass(groups, "tprow").some(n => dump(n).includes("drop-one")), false);
+const pendingText = text().value;
+await sandbox.refresh(); await settle(); assert.equal(text().value, pendingText, "refresh затёр правку подготовленной задачи");
+await save().handlers.click({}); await settle();
+const put = writes.find(w => w.proposal);
+assert.equal(put.base, "s1"); assert.equal(put.proposal.revision, 2);
+assert.equal(put.proposal.text, projectedText + "Поправка"); assert.equal(put.proposal.control, "5");
+assert.deepEqual(put.proposal.after, ["XR-2", "XR-006"]);
+assert.equal(put.proposal.rationale, original.rationale); assert.equal(put.proposal.barrier, "глаза");
+assert.deepEqual(state.proposals[1], { id: "drop-one", revision: 1, outcome: "drop", reason: "устарело", text: "" });
+assert.equal(writes.some(w => w.path.includes("/tasks/XR-005")), false, "зависимости prepared ушли на ручку задачи");
+assert.ok(!save() || save().hidden); assert.equal(byClass(groups, "fview").hidden, false);
+state.proposals[0].status = "accepted"; state.proposals[0].result = {outcome:"add",ids:["XR-005"]};
+await open("demo/draft/XR-9/prepared/prepared-one");
+assert.equal(sandbox.location.hash.replace(/^#/,""), "demo/XR-005", "ссылка принятой add не ведёт к задаче на доске");
+assert.equal(constructors.at(-1).capabilities.work,true);
+assert.equal(constructors.at(-1).capabilities.ownChat,true);
+console.log("normal/prepared используют общую полную форму, правка, отмена, срок и локальные зависимости работают");

@@ -60,7 +60,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cli(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"карточка один","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"карточка два","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
+	raw, err = cli(`{"complete":true,"conclusion":"Удалить устаревший фрагмент и лишнее.","proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"карточка один","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"карточка два","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}
@@ -69,7 +69,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err != nil || json.Unmarshal([]byte(raw), &view) != nil {
 		t.Fatalf("second source: %s %v", raw, err)
 	}
-	raw, err = cli(`{"complete":true,"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"карточка третья","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-5", "--base", view.Snapshot)
+	raw, err = cli(`{"complete":true,"conclusion":"Удалить лишнее из другой записи.","proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"карточка третья","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-5", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}

@@ -10,7 +10,7 @@ const state = { version: 1, state: "active", pack_revision: 7, proposals: [
   { id: "first", board_id: "XR-099", revision: 2, outcome: "add", title: "Доставка", text: "# Доставка\n\nОписание", board_type: "bug", rank: "50+8+3+5+3", size: "L", accept: "mixed", barrier: "глаза: проверить вид" },
   { id: "last", board_id: "XR-100", revision: 3, outcome: "drop", title: "Лишнее", text: "Лишнее", reason: "устарело" },
 ] };
-const view = () => ({ id: "XR-9", snapshot: "s1", basis: "b1", ready, reason, state });
+const view = () => ({ conclusion: "Удалить лишнее: устарело. Создать задачу доставки.", id: "XR-9", snapshot: "s1", basis: "b1", ready, reason, state });
 const { sandbox, byId } = makeSandbox(appPathArg(), async (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };
   if (path === "/api/projects/demo/drafts/XR-9/prepared" && init && init.method === "PUT") {
@@ -45,7 +45,7 @@ assert.equal(rows.length, 1, "согласование должно показы
 assert.equal(allByClass(groups, "dsrow").length, 1, "исходник повторяется в секциях списка");
 assert.equal(rows[0].children.length, 8);
 assert.equal(allByClass(rows[0], "dpick").length, 0, "в согласовании остался выбор задач");
-assert.ok(dump(rows[0]).includes("XR-9") && dump(rows[0]).includes("2 задачи"));
+assert.ok(dump(rows[0]).includes("XR-9") && dump(rows[0]).includes("1 задача"));
 assert.equal(deepBtn(groups, "Подтвердить выбранные"), null);
 rows[0].handlers.click({});
 assert.ok(sandbox.location.hash.includes("draft/XR-9") && !sandbox.location.hash.includes("prepared/"));
@@ -68,9 +68,6 @@ assert.equal(deepBtn(groups, "Подтвердить"), null);
 assert.equal(deepBtn(groups, "Отклонить"), null);
 const pen = deepBtn(groups, "tpen"); assert.ok(pen); pen.handlers.click({});
 assert.ok(!deepBtn(groups, "Сохранить") || deepBtn(groups, "Сохранить").hidden, "готовый разбор требует сохранения без правки");
-const barrier = allByClass(groups, "pick").find((p) => dump(p.children[0]) === "Барьер приёмки");
-assert.ok(barrier.querySelector("select").children.some((o) => o.selected && o.value === "глаза"));
-assert.ok(byClass(groups, "fbody").querySelector("textarea").value.includes("Барьер приёмки: глаза: проверить вид"));
 pen.handlers.click({});
 ready = false; reason = "Появились неразобранные мысли";
 await open(start);
@@ -111,32 +108,18 @@ assert.equal(deepBtn(groups, "Подтвердить разбор"), null);
 assert.equal(deepBtn(groups, "Подготовить вручную"), null);
 assert.ok(allByClass(groups, "srow").some((n) => dump(n).includes("XR-099")));
 assert.equal(await sandbox.confirmDraftPrepared("/api/projects/demo", []), false);
-// Унаследованный разбор завершается существующим сохранением без выдуманной правки.
+// Сервер уже рассчитал готовность legacy без записи и фиктивного Save.
 state.state = "active";
 for (const task of state.proposals) { delete task.status; delete task.result; }
-delete state.pack_revision; delete state.prepared_source;
-state.proposals[0].barrier = "глаза";
-ready = false; reason = "Проверьте и сохраните подготовленные описания, чтобы завершить разбор";
-releaseConfirm = null;
-await open(source);
-assert.ok(deepBtn(groups, "Подтвердить разбор").disabled && dump(groups).includes(reason));
-await open(source + "/prepared/first");
-assert.ok(!deepBtn(groups, "Сохранить") || deepBtn(groups, "Сохранить").hidden);
-const original = JSON.parse(JSON.stringify(state.proposals[0]));
-deepBtn(groups, "tpen").handlers.click({});
-const reviewedSave = deepBtn(groups, "Сохранить");
-assert.ok(reviewedSave && !reviewedSave.hidden && !reviewedSave.disabled, "проверенное legacy описание нельзя сохранить без искусственной правки");
-await reviewedSave.handlers.click({}); await settle();
-assert.equal(savedTasks.length, 1);
-assert.equal(savedTasks[0].proposal.text, original.text);
-assert.equal(savedTasks[0].proposal.title, original.title);
-assert.equal(savedTasks[0].proposal.revision, original.revision + 1);
+state.pack_revision = 1; state.prepared_source = "effective-legacy-source";
+ready = true; reason = ""; releaseConfirm = null;
 await open(source);
 const reviewedConfirm = deepBtn(groups, "Подтвердить разбор");
 assert.ok(reviewedConfirm && !reviewedConfirm.disabled);
+assert.ok(dump(groups).includes("Удалить лишнее: устарело"));
+assert.equal(allByClass(groups, "srow").length, 1);
 await reviewedConfirm.handlers.click({}); await settle();
-assert.equal(writes.length, 3);
-assert.equal(writes[2].decisions.length, 2);
-assert.equal(writes[2].snapshots[0].revision, 1);
-assert.equal(state.state, "history");
-console.log("весь разбор подтверждается с формы черновика, legacy завершается сохранением без искусственной правки");
+assert.equal(savedTasks.length, 0, "legacy потребовал сохранить подготовленную задачу");
+assert.equal(writes.length, 3); assert.equal(writes[2].decisions.length, 2);
+assert.equal(writes[2].snapshots[0].revision, 1); assert.equal(state.state, "history");
+console.log("весь разбор подтверждается с исходника, готовый legacy согласуется без Save");

@@ -58,6 +58,8 @@ const title = byAria(groups, "заголовок задачи"); if (!title) fai
 title.value = "ручная задача"; title.handlers.input({});
 const text = tag(byClass(groups, "fbody"), "TEXTAREA"); if (!text) fail("нет поля описания");
 text.value = "описание руками"; text.handlers.input({});
+await sandbox.refresh(); await settle();
+if (tag(byClass(groups, "fbody"), "TEXTAREA").value !== "описание руками") fail("обновление стёрло новую подготовленную задачу");
 const save = deepBtn(groups, "Сохранить задачу"); if (!save) fail("нет сохранения");
 save.handlers.click({}); await settle();
 const first = writes[0];

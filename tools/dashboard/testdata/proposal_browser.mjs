@@ -15,7 +15,9 @@ try {
   const second = () => page.getByLabel('Подтвердить разбор XR-5', {exact:true});
   await first().waitFor(); await second().waitFor();
   assert.equal(await page.locator('.askfb input.caskpick').count(),2);
-  await page.locator('.askfb a[href="#demo/draft/XR-4/prepared/'+p1+'"]').waitFor();
+  await page.locator('.askfb').filter({hasText:'устарело'}).waitFor();
+  await page.locator('.askfb a[href="#demo/draft/XR-4"]').waitFor();
+  assert.equal(await page.locator('.askfb a[href*="/prepared/"]').count(),0,'операции показаны ссылками задач');
   // Свободный текст остаётся обсуждением даже при ранее отмеченном согласии.
   await first().check();
   const ta=page.locator('textarea.csay'); await ta.fill('почему такой исход?');
@@ -49,5 +51,5 @@ try {
   await page.reload(); await page.locator('.msg.me .proposal-attachment').filter({hasText:p1}).first().waitFor();
   assert.equal(await page.locator('.askresume').count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  console.log(JSON.stringify({comment:true,refresh:true,whole:true,retry:true,mobile:390}));
+  console.log(JSON.stringify({comment:true,refresh:true,whole:true,retry:true,conclusion:true,actionsOnly:true,taskLinks:0,mobile:390}));
 } finally { await context.close(); await browser.close(); }

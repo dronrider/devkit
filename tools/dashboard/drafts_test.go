@@ -1878,7 +1878,11 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err = draftproposal.Replace(data, completedLegacyPrepared(t, data, draftproposal.State{Version: 1, State: "active", Proposals: proposals}))
+		state := draftproposal.State{Version: 1, State: "active", Proposals: proposals}
+		if id != "XR-005" {
+			state = completedLegacyPrepared(t, data, state)
+		}
+		data, err = draftproposal.Replace(data, state)
 		if err != nil {
 			t.Fatal(err)
 		}

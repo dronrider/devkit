@@ -12,7 +12,7 @@ import (
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
-func TestLegacyBundleReadyByExistingCardSave(t *testing.T) {
+func TestLegacyBundleReadyWithoutSave(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	kit, _ := filepath.Abs("../..")
 	t.Setenv("DEVKIT_HOME", kit)
@@ -45,29 +45,15 @@ func TestLegacyBundleReadyByExistingCardSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if view.Ready || !strings.Contains(view.Reason, "сохраните") {
-		t.Fatalf("legacy guidance: %+v", view)
+	if !view.Ready || view.State.PackRevision != 1 {
+		t.Fatalf("legacy requires Save: %+v", view)
 	}
 	accepted := view.State.Proposals[0]
-	edited := view.State.Proposals[1]
-	edited.Revision++
-	payload, _ := json.Marshal(map[string]any{"base": view.Snapshot, "proposal": edited})
-	resp = doReq(t, c, "PUT", base, string(payload))
-	raw := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("existing Save failed: %d %s", resp.StatusCode, raw)
-	}
-	if err := json.Unmarshal([]byte(raw), &view); err != nil {
-		t.Fatal(err)
-	}
-	if !view.Ready || !reflect.DeepEqual(view.State.Proposals[0], accepted) {
-		t.Fatalf("save not ready or accepted changed: %s", raw)
-	}
 	pending := view.State.Proposals[1]
 	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: view.ID, Digest: view.Basis, Revision: view.State.PackRevision}}, Decisions: []draftproposal.Decision{{Source: view.ID, Proposal: pending.ID, Revision: pending.Revision, Action: "accept"}}}
-	payload, _ = json.Marshal(req)
+	payload, _ := json.Marshal(req)
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/prepared/confirm", string(payload))
-	raw = body(t, resp)
+	raw := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("whole confirm: %d %s", resp.StatusCode, raw)
 	}

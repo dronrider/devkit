@@ -13,12 +13,15 @@ try {
   // Вопрос согласования короткий: тел задач в чате нет, каждая задача это
   // строка-ссылка на свой экран (DK-1469, решение 4). Снимок записи в чат
   // не попадает и тут.
-  await page.locator('.askfb').getByText('Подготовил задачи',{exact:false}).waitFor();
+  await page.locator('.askfb').getByText('Подготовил заключение разбора. Согласуй весь результат.',{exact:true}).waitFor();
   const text = await page.locator('.askfb').innerText();
   assert.ok(!/Показанный снимок|[a-f0-9]{64}/.test(text));
   assert.ok(!text.includes('веточный результат'));
   assert.ok(!text.includes('## DoD'));
   assert.ok(text.includes('Результат'));
+  assert.ok(text.includes('Предлагаю создать подготовленные задачи.'));
+  await page.locator('.askfb a[href$="/draft/XR-4"]').waitFor();
+  assert.equal(await page.locator('.askfb input.caskpick').count(),1);
   await page.locator('.askfb a[href$="/draft/XR-4/prepared/'+key+'"]').waitFor();
   await page.getByLabel('Подтвердить разбор XR-4').check();
   assert.equal(await page.locator('textarea.csay').inputValue(),'');

@@ -16122,9 +16122,9 @@ function draftRunBarFill(bar, project, works, prepared) {
           sayResult("Сначала сохраните правки задач", true);
           return;
         }
-        await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), views,
+        const confirmed = await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), views,
           (view, p) => preparedPick.has(view.id + "/" + p.id));
-        preparedPickClear();
+        if (confirmed) preparedPickClear();
       } finally {
         ok.disabled = false;
       }
@@ -17231,11 +17231,12 @@ async function confirmDraftPrepared(projectBase, views, selection) {
     snapshots.push({ source: view.id, digest: view.basis });
     for (const p of tasks) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
   }
-  if (!decisions.length) { sayResult("Нет подготовленных задач для подтверждения", true); return; }
+  if (!decisions.length) { sayResult("Нет подготовленных задач для подтверждения", true); return false; }
   const result = await api(projectBase + "/drafts/prepared/confirm", { method: "POST", body: { snapshots, decisions } });
   const ids = result.ok ? (result.body.results || []).flatMap((r) => r.ids || []).join(", ") : "";
   sayResult(apiSaid(result) + (ids ? ": " + ids : ""), !result.ok);
   if (result.ok) await refresh();
+  return result.ok;
 }
 
 // draftIdeaBox это поле «Мысль по записи» под описанием (DK-1469, решение 3):
@@ -17498,11 +17499,13 @@ function preparedPropChipNode(label, fld, raw) {
 // с переносом, приёмка закрытым списком, тексты своей рамкой каждый. Набор
 // полей по исходу тот же, что у формы до перестройки экрана, поменялся вид
 // (DK-1438, решения 3 и 4), а не предметная механика.
+const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
 const preparedShortRow = [
   ["Тип строки", "board_type", ["add"]],
   ["Ранг", "rank", ["add"]],
   ["Цена", "size", ["add"]],
   ["Приёмка", "accept", ["add"], ["agent", "mixed", "user"]],
+  ["Барьер приёмки", "barrier", ["add"], BARRIER_VALUES],
   ["Ответственный", "assignee", ["add"]],
   ["Срок", "due", ["add"]],
   ["Контроль", "control", ["add"]],
@@ -17511,7 +17514,6 @@ const preparedShortRow = [
   ["Вернуться до", "until", ["defer"]],
 ];
 const preparedTextRows = [
-  ["Барьер приёмки", "barrier", ["add"]],
   ["Довод разбора", "rationale", ["add", "attach", "defer", "drop"]],
   ["Причина", "reason", ["defer", "drop"]],
 ];
@@ -17566,6 +17568,18 @@ function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
     title: task.title || "", text: task.text || "",
     after: Array.isArray(task.after) ? task.after.join(", ") : "",
   });
+  const barrierParts = String(value.barrier || "").split(":");
+  if (barrierParts.length > 1 && BARRIER_VALUES.includes(barrierParts[0].trim()) && barrierParts[0].trim()) {
+    const paragraph = "Барьер приёмки: " + value.barrier;
+    const text = String(value.text || "").trim();
+    if (barrierParts.slice(1).join(":").trim()) {
+      const nl = text.indexOf("\n");
+      value.text = text.startsWith("# ")
+        ? (nl < 0 ? text : text.slice(0, nl)) + "\n\n" + paragraph + "\n\n" + (nl < 0 ? "" : text.slice(nl + 1))
+        : paragraph + "\n\n" + text;
+    }
+    value.barrier = barrierParts[0].trim();
+  }
   const clean = JSON.stringify(preparedBody(value));
   const ownKey = id + "/" + task.id;
   let page = null;
@@ -17716,8 +17730,8 @@ function preparedTaskScreen(project, id, view, task, isNew, sourceTitle) {
     const accept = barBtn("btn btn-acc", "Подтвердить", "i-done");
     accept.addEventListener("click", async () => {
       if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку задачи", true); return; }
-      await confirmDraftPrepared(projectBase, [view], (_, p) => p.id === task.id);
-      goKeepingChat(project + "/draft/" + id);
+      const confirmed = await confirmDraftPrepared(projectBase, [view], (_, p) => p.id === task.id);
+      if (confirmed) await goKeepingResult(project + "/draft/" + id);
     });
     const reject = barBtn("btn", "Отклонить", "close");
     reject.addEventListener("click", () => {
@@ -18222,7 +18236,6 @@ const ACCEPT_VALUES = ["agent", "mixed", "user"];
 // сам, и без пустого «выбрать барьер» неотправленная форма уезжала бы
 // барьером «глаза», которого человек не называл.
 const BARRIER_PLACEHOLDER = "выбрать барьер";
-const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
 // Уровень разбора спрашивается прямо на записи (DK-520): груминг заходит по
 // накопителю сверху, и метка, поставленная им, появлялась бы тогда, когда
 // разбор уже идёт. Значение по умолчанию средний: обычная очередь.

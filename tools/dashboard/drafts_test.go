@@ -2110,3 +2110,14 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatalf("error source: %+v %v", state, err)
 	}
 }
+
+func TestStaticDraftPreparedConfirmResult(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftconfirmresult.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("результат подтверждения: %v\n%s", err, out)
+	}
+}

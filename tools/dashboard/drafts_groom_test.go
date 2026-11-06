@@ -218,6 +218,134 @@ func TestDraftPreparedAdoptsLegacyOnRead(t *testing.T) {
 	}
 }
 
+// Состав согласования накопителя читается одним ответом на все записи
+// (DK-1623): прежде экран звал ручку записи на каждый черновик, и при сотнях
+// записей волна запросов клала канал дашборда и посредника. Общая ручка стоит
+// на закреплении номеров taskctl без ID, ей же держится закрепление карточек
+// старого вида, а повторное чтение номера не меняет.
+func TestDraftsPreparedServedInOneResponse(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+
+	// Пустой накопитель отвечает пустым списком видов, а не отказом: пустая
+	// секция согласования неотличима от неотрисованной, если молчит словами.
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/prepared", "")
+	empty := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("пустой состав согласования: %d %s", resp.StatusCode, empty)
+	}
+	if !strings.Contains(empty, `"views":[]`) {
+		t.Fatalf("пустой накопитель пришёл не пустым списком видов: %s", empty)
+	}
+
+	for _, title := range []string{"первая", "вторая", "третья", "четвёртая", "пятая", "шестая"} {
+		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			`{"title": "`+title+`", "prio": "mid"}`).Body.Close()
+	}
+	// XR-005 ложится старым блоком в саму запись: карточка без номера и решённая
+	// карточка, как они остались до DK-1564. Остальные записи без подготовленных
+	// задач вовсе.
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := draftproposal.State{Version: 1, State: "active", Analysis: "старый разбор", Proposals: []draftproposal.Proposal{
+		{ID: "chat-delivery", Revision: 3, Outcome: "add", Title: "Доставка чата", Text: "текст задачи"},
+		{ID: "done-key", Revision: 1, Outcome: "drop", Text: "лишнее", Reason: "устарело", Status: "rejected"},
+	}}
+	data, err = draftproposal.Replace(data, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func() (map[string]map[string]any, string) {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/prepared", "")
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("общий состав согласования: %d %s", resp.StatusCode, text)
+		}
+		var v struct {
+			Views []map[string]any `json:"views"`
+		}
+		if err = json.Unmarshal([]byte(text), &v); err != nil {
+			t.Fatalf("ответ не разобрался: %v\n%s", err, text)
+		}
+		byID := map[string]map[string]any{}
+		for _, view := range v.Views {
+			byID[view["id"].(string)] = view
+		}
+		return byID, text
+	}
+	byID, text := read()
+	if len(byID) != 6 {
+		t.Fatalf("видов %d, а записей в накопителе 6:\n%s", len(byID), text)
+	}
+	// Запись без подготовленных задач приходит с пустым списком карточек, а не
+	// пропадает из ответа: экран считает секции по одним и тем же видам.
+	if props, _ := byID["XR-006"]["state"].(map[string]any); props != nil {
+		if list, _ := props["proposals"].([]any); len(list) != 0 {
+			t.Errorf("у записи без подготовленных задач оказался состав: %v", byID["XR-006"]["state"])
+		}
+	}
+	// Снимок и база на месте: по ним экран держит правку и подтверждение.
+	view := byID["XR-005"]
+	snapshot, _ := view["snapshot"].(string)
+	basis, _ := view["basis"].(string)
+	if snapshot == "" || basis == "" {
+		t.Errorf("у вида записи нет снимка или базы: %v", view)
+	}
+	st := view["state"].(map[string]any)
+	var number string
+	for _, raw := range st["proposals"].([]any) {
+		p := raw.(map[string]any)
+		boardID, _ := p["board_id"].(string)
+		switch p["id"] {
+		case "chat-delivery":
+			number = regexp.MustCompile(`^XR-[0-9]+$`).FindString(boardID)
+			if number == "" {
+				t.Errorf("карточка старого вида осталась без номера: %v", p)
+			}
+		case "done-key":
+			if boardID != "" || p["status"] != "rejected" {
+				t.Errorf("решённая карточка тронута закреплением: %v", p)
+			}
+		}
+	}
+	if number == "" {
+		t.Fatalf("карточка старого вида пропала из состава: %s", text)
+	}
+
+	// Повторное общее чтение номер не меняет и ничего не пишет.
+	byID, text = read()
+	for _, raw := range byID["XR-005"]["state"].(map[string]any)["proposals"].([]any) {
+		p := raw.(map[string]any)
+		boardID, _ := p["board_id"].(string)
+		if p["id"] == "chat-delivery" && boardID != number {
+			t.Fatalf("номер при повторном чтении сменился: %q, был %q\n%s", boardID, number, text)
+		}
+	}
+
+	// Битый prepared-файл одной записи виден словами отказа, а не пустым
+	// списком: молчаливая пустота неотличима от пустого накопителя.
+	broken := draftproposal.PreparedPath(e.proj, "XR-007")
+	if err = os.WriteFile(broken, []byte("not toml {{{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/prepared", "")
+	if resp.StatusCode == http.StatusOK || !strings.Contains(body(t, resp), "error") {
+		t.Fatalf("битая запись читается молча: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if err = os.Remove(broken); err != nil {
+		t.Fatal(err)
+	}
+	if _, text = read(); !strings.Contains(text, `"XR-005"`) {
+		t.Fatalf("после починки состав не читается: %s", text)
+	}
+}
+
 func TestDraftFailedGroomStatusAndRetry(t *testing.T) {
 	for _, prepared := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "prepared"}[prepared], func(t *testing.T) {

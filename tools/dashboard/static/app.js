@@ -16297,8 +16297,7 @@ async function renderDrafts(project, works) {
   // своей ручкой.
   countsSet({ sess: (works || []).length,
     drafts: ((r.ok && r.body.drafts) || []).length });
-  // Строки черновиков с подготовленным разбором живут раньше
-  // отрисовки таблицы и заполняются ответами ручек записей.
+  // Строки черновиков с подготовленным разбором заполняются общим ответом.
   const preparedRows = [];
   const items = [{
     key: "board-kind",
@@ -16335,8 +16334,11 @@ async function renderDrafts(project, works) {
   }
   const drafts = r.body.drafts || [];
   const projectBase = "/api/projects/" + encodeURIComponent(project);
-  const preparedViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/prepared")));
-  if (preparedViews.some((v) => !v.ok)) {
+  // Состав согласования читается одним общим ответом на весь накопитель, а не
+  // запросом по каждой записи (DK-1623): при сотнях черновиков волна запросов
+  // по ID клала канал и посредника, и восстановление связи поднимало её заново.
+  const preparedAll = await api(projectBase + "/drafts/prepared");
+  if (!preparedAll.ok) {
     items.push({ key: "draft-prepared-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
   }
   // Тип записи словом для колонки типа: словарь типов принадлежит проекту, и
@@ -16344,10 +16346,10 @@ async function renderDrafts(project, works) {
   const typesView = await api(projectBase + "/drafts/types");
   const typeTitles = {};
   for (const t of (typesView.ok && typesView.body.types) || []) typeTitles[t.name] = t.title;
-  for (const v of preparedViews) {
-    if (!v.ok || !v.body || !v.body.state || v.body.state.state === "history") continue;
-    if ((v.body.state.proposals || []).some((p) => !p.status)) {
-      preparedRows.push({ view: v.body, draft: drafts.find((d) => d.id === v.body.id) || { id: v.body.id } });
+  for (const v of (preparedAll.ok && preparedAll.body && preparedAll.body.views) || []) {
+    if (!v || !v.state || v.state.state === "history") continue;
+    if ((v.state.proposals || []).some((p) => !p.status)) {
+      preparedRows.push({ view: v, draft: drafts.find((d) => d.id === v.id) || { id: v.id } });
     }
   }
   preparedRows.sort((a, b) => draftNum(a.draft) - draftNum(b.draft));

@@ -13,6 +13,13 @@ try {
   const page = await context.newPage();
   page.on("pageerror", (e) => console.error("pageerror:", e.message));
   const open = async (hash) => { await page.goto(base + "/#demo/" + hash); };
+  const formFields = async () => [
+    await page.locator("#groups textarea.tedit").count(),
+    await page.locator("#groups .rcard").count(),
+    await page.locator("#groups .duebox").count(),
+    await page.locator("#groups .fbody").count(),
+    await page.locator("#groups .dcard").filter({has:page.locator(".dhead",{hasText:"Заблокировано задачами"})}).count(),
+  ];
   const source = async (id) => { await open("draft/" + id); await page.getByText("Задачи разбора", { exact: true }).waitFor(); };
   const confirm = async (count) => {
     const btn = page.getByRole("button", { name: "Подтвердить разбор", exact: true });
@@ -43,6 +50,10 @@ try {
   await open("draft/XR-005/prepared/p1");
   await page.waitForURL(/#demo\/draft\/XR-005$/);
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
+  await page.screenshot({ path:join(evidence,"source-read.png"),fullPage:true });
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({ path:join(evidence,"source-desktop.png"),fullPage:true });
+  await page.setViewportSize({width:390,height:844});
   await confirm(2);
   // Переход меняет URL раньше, чем refresh прочитает и отрисует список.
   console.log("rows immediately after navigation:", await page.locator("tbody.tsec tr.dsrow").count());
@@ -64,10 +75,15 @@ try {
   await page.getByText("История разбора", { exact: true }).waitFor();
   await open("XR-001");
   await page.getByLabel("заголовок задачи XR-001").waitFor();
-  const normalFields = await page.locator("#groups .tedit, #groups .rcard, #groups .duebox, #groups .fbody, #groups .dcard").count();
+  const normalFields = await formFields();
+  assert.deepEqual(normalFields,[1,1,1,1,1]);
   await page.screenshot({ path: join(evidence,"normal-read.png"), fullPage:true });
+  await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({ path:join(evidence,"normal-desktop.png"),fullPage:true });
+  await page.setViewportSize({width:390,height:844});
   const normalTitle = await page.getByLabel("заголовок задачи XR-001").inputValue();
   await page.getByRole("button", { name: "Править задачу", exact: true }).click();
+  await page.screenshot({ path:join(evidence,"normal-edit.png"),fullPage:true });
   await page.getByLabel("заголовок задачи XR-001").fill("Отменённое название");
   await page.getByRole("button", { name: "Отменить правку", exact: true }).click();
   await page.waitForFunction(title => document.querySelector("#groups .tedit")?.value === title, normalTitle);
@@ -82,11 +98,11 @@ try {
   const number = (await page.locator("#groups .idbig").innerText()).trim();
   const preparedTitle = page.getByLabel("заголовок задачи " + number, {exact:true});
   await preparedTitle.waitFor();
-  assert.equal(await page.locator("#groups .tedit, #groups .rcard, #groups .duebox, #groups .fbody, #groups .dcard").count(),normalFields);
+  assert.deepEqual(await formFields(),normalFields);
   assert.equal(await preparedTitle.inputValue(),"баг доставки ленты");
   assert.ok((await page.locator("#groups .rbig").innerText()).includes("42"));
   const richChips = (await page.locator(".tchips .chip").allInnerTexts()).join(" | ");
-  assert.ok(richChips.includes("На согласовании") && richChips.includes("Проверка с вашим участием"),richChips);
+  assert.ok(richChips.includes("На согласовании") && richChips.includes("mixed"),richChips);
   assert.equal(await page.getByRole("button", {name:/Чат по задаче/}).count(),0);
   await page.screenshot({ path: join(evidence,"prepared-read.png"), fullPage:true });
   for (const selector of [".pedit", ".pshort", ".parea", ".darm"]) assert.equal(await page.locator("#groups " + selector).count(),0,selector);
@@ -110,6 +126,7 @@ try {
   await page.locator("#groups .fview").waitFor({state:"visible"});
   assert.equal(await page.getByRole("button",{name:"Сохранить",exact:true}).count(),0);
   await page.setViewportSize({width:1440,height:1000});
+  await page.locator("#groups").evaluate(node=>{node.scrollTop=0;});
   await page.screenshot({ path: join(evidence,"prepared-desktop.png"), fullPage:true });
   await page.setViewportSize({width:390,height:844});
   const richView = await (await context.request.get(base + "/api/projects/demo/drafts/XR-010/prepared")).json();
@@ -128,6 +145,7 @@ try {
   await page.locator("#groups .fbody textarea").fill(richTask.text);
   await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^тип$/})}).locator("select").selectOption("bug");
   await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^цена$/})}).locator("select").selectOption("L");
+  await page.locator("#groups .rcard .rfold").click();
   const rankValues = [25,5,3,5,4];
   for (let i=0;i<rankValues.length;i++) await page.locator("#groups .rcard select").nth(i).selectOption(String(rankValues[i]));
   const saved = page.waitForResponse(r=>r.url().endsWith("/XR-008/prepared") && r.request().method()==="PUT");

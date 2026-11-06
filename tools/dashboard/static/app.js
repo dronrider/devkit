@@ -4229,7 +4229,7 @@ function taskPick(project, opts) {
 // дорога на экран соседа остаётся, ради неё карточку и открывают.
 function depRow(project, id, side, dep, ro, onDrop) {
   const row = el("div", "drow");
-  row.append(el("span", "id", dep.id));
+  row.append(el("span", "id", dep.number || dep.id));
   row.append(withFull(el("span", "dt", dep.title || dep.note || ""), dep.title || dep.note || ""));
   if (dep.section) {
     row.append(el("span", "chip" + (dep.sect === "in-progress" ? " c-run" : ""), dep.section));
@@ -4251,7 +4251,7 @@ function depRow(project, id, side, dep, ro, onDrop) {
     });
     row.append(drop);
   }
-  row.addEventListener("click", () => { goKeepingChat(project + "/" + dep.id); });
+  row.addEventListener("click", () => { goKeepingChat(dep.route || project + "/" + dep.id); });
   return row;
 }
 
@@ -4336,7 +4336,11 @@ function depsCard(project, id, after, blocks, opts) {
   let edit = !o.ro && !o.local;
   const draw = () => {
     card.replaceChildren();
-    const entries = o.local ? o.local.ids.map((key) => after.find((dep) => dep.id === key) || { id: key }) : after;
+    const entries = o.local ? o.local.ids.map((key) => {
+      const known = (o.local.extra || []).find((dep) => dep.id === key || (dep.aliases || []).includes(key))
+        || after.find((dep) => dep.id === key);
+      return Object.assign({}, known || {}, { id: key });
+    }) : after;
     card.append(el("div", "dhead", "Заблокировано задачами"));
     if (!entries.length) card.append(el("div", "empty", o.afterNote || "Никого не ждёт."));
     const remove = o.local ? (key) => {
@@ -17360,7 +17364,7 @@ function draftPreparedComp(project, view) {
   card.append(head);
   if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
-      state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленного пока нет.";
+      state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленных задач нет";
     card.append(el("div", "empty", message));
     return card;
   }
@@ -17502,7 +17506,9 @@ async function renderDraftPrepared(project, id, key) {
         chips: [sourceChip, preparedStatusChip(task)], tailChips: accept ? [accept] : [],
         capabilities: { work: false, ownChat: false }, localDeps: true,
         dependencies: tasks.filter((p) => p.outcome === "add" && p.status !== "rejected")
-          .map((p) => ({ id: preparedNumber(p), title: preparedTitle(p) })),
+          .map((p) => ({ id: preparedNumber(p), number: preparedNumber(p), aliases: [p.id], title: preparedTitle(p),
+            route: p.status === "accepted" && p.result && (p.result.ids || []).length
+              ? project + "/" + p.result.ids[0] : project + "/draft/" + id + "/prepared/" + p.id })),
         titleRead: !String(task.title || "").trim() ? preparedTitle(task) : "",
         titleHint: isNew ? NEW_PLACEHOLDER : "",
         isNew, decided: Boolean(task.status),

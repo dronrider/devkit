@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, appPathArg } from "./poc_dom.mjs";
 
 const writes = [], constructors = [];
+let snapshot = "s1";
 const original = { id: "prepared-one", board_id: "XR-005", revision: 1, outcome: "add", title: "Доставка чата",
   board_type: "bug", rank: "25+5+3+5+4", size: "L", accept: "mixed", barrier: "глаза: проверить вид",
   due: "2026-11-15", control: "3", after: ["XR-1"], text: "# Доставка чата\n\nОписание доставки.\n", rationale: "сохранённый довод" };
@@ -17,7 +18,7 @@ const { sandbox, byId } = makeSandbox(appPathArg(), (path, init) => {
     const body = JSON.parse(init.body); writes.push({ path, ...body }); state.proposals[0] = body.proposal;
     return { message: "задача сохранена" };
   }
-  if (path.endsWith("/drafts/XR-9/prepared")) return { id: "XR-9", snapshot: "s1", basis: "b1", ready: true, state };
+  if (path.endsWith("/drafts/XR-9/prepared")) return { id: "XR-9", snapshot, basis: "b1", ready: true, state };
   if (path.endsWith("/drafts/XR-9")) return { id: "XR-9", text: "# Встреча по доставке\n", type: "task", source: "thought", lock: "unlocked" };
   if (path.includes("/tasks/") && init?.method) { writes.push({ path, method: init.method, body: JSON.parse(init.body) }); return {}; }
   if (path.endsWith("/tasks/XR-005")) return { row:{...row,id:"XR-005"},file:"docs/tasks/XR-005.md",text:original.text,after:[],blocks:[] };
@@ -96,6 +97,23 @@ assert.equal(put.proposal.rationale, original.rationale); assert.equal(put.propo
 assert.deepEqual(state.proposals[1], { id: "drop-one", revision: 1, outcome: "drop", reason: "устарело", text: "" });
 assert.equal(writes.some(w => w.path.includes("/tasks/XR-005")), false, "зависимости prepared ушли на ручку задачи");
 assert.ok(!save() || save().hidden); assert.equal(byClass(groups, "fview").hidden, false);
+const boardDependency = allByClass(groups,"drow").find(n=>dump(n).includes("XR-2")); assert.ok(boardDependency);
+boardDependency.handlers.click({}); await settle();
+assert.equal(sandbox.location.hash.replace(/^#/,""),"demo/XR-2","зависимость доски потеряла обычную дорогу");
+await open("demo/draft/XR-9/prepared/prepared-one");
+const siblingDependency = allByClass(groups,"drow").find(n=>dump(n).includes("XR-006")); assert.ok(siblingDependency);
+siblingDependency.handlers.click({}); await settle();
+assert.equal(sandbox.location.hash.replace(/^#/,""),"demo/draft/XR-9/prepared/prepared-two","зависимость prepared не открывает подготовленную задачу");
+state.proposals[2].status = "accepted"; state.proposals[2].result = {outcome:"add",ids:["XR-006"]}; snapshot = "s2";
+await open("demo/draft/XR-9/prepared/prepared-one");
+allByClass(groups,"drow").find(n=>dump(n).includes("XR-006")).handlers.click({}); await settle();
+assert.equal(sandbox.location.hash.replace(/^#/,""),"demo/XR-006","принятая зависимость не ведёт на доску");
+delete state.proposals[2].status; delete state.proposals[2].result;
+state.proposals[0].after = ["prepared-two"]; snapshot = "s3";
+await open("demo/draft/XR-9/prepared/prepared-one");
+const legacyDependency = allByClass(groups,"drow").find(n=>dump(n).includes("XR-006")); assert.ok(legacyDependency);
+legacyDependency.handlers.click({}); await settle();
+assert.equal(sandbox.location.hash.replace(/^#/,""),"demo/draft/XR-9/prepared/prepared-two","legacy key зависимости не ведёт на prepared");
 state.proposals[0].status = "accepted"; state.proposals[0].result = {outcome:"add",ids:["XR-005"]};
 await open("demo/draft/XR-9/prepared/prepared-one");
 assert.equal(sandbox.location.hash.replace(/^#/,""), "demo/XR-005", "ссылка принятой add не ведёт к задаче на доске");

@@ -45,7 +45,7 @@ await openScreen("demo/draft/XR-9");
   const board = byId.get("groups");
   const comp = allByClass(board, "comp").find((n) => dump(n).includes("Задачи разбора"));
   if (!comp) fail("на экране записи нет карточки состава задач разбора");
-  if (!dump(comp).includes("Подготовленного пока нет")) fail("пустой состав не сказал об этом словами");
+  if (!dump(comp).includes("Подготовленных задач нет")) fail("пустой состав не сказал об этом словами");
   const entry = deepBtn(comp, "Подготовить вручную");
   if (!entry) fail("в составе нет ручной подготовки");
   entry.handlers.click({});

@@ -9,7 +9,7 @@ const writes = [];
 const state = { version: 1, state: "active", analysis: "ok", proposals: [
   { id: "chat-delivery", board_id: "XR-005", revision: 1, outcome: "add", title: "Доставка чата записи",
     board_type: "bug", rank: "25+5+3+0+4", size: "L", accept: "mixed",
-    barrier: "прогон стенда и живой экран", rationale: "дефект виден на приёмке",
+    barrier: "глаза: прогон стенда и живой экран", rationale: "дефект виден на приёмке",
     text: "# Доставка чата записи\n\nРеплика уезжает в чат записи.\n\n- пункт один\n- пункт два\n" },
 ] };
 let snapshot = "s1";

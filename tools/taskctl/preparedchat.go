@@ -212,7 +212,7 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 			for _, p := range state.Proposals {
 				if p.Status == "" {
 					p.Text = ""
-					if matches && basis != source.Basis && !idRe.MatchString(p.ID) {
+					if matches && basis != source.Basis {
 						for _, old := range source.Proposals {
 							if old.ID == p.ID && old.BoardID == "" {
 								p.BoardID = ""

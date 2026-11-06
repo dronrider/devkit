@@ -40,7 +40,8 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 	}
 	input, err := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{cards})
+		Complete  bool                     `json:"complete"`
+	}{cards, true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,8 @@ func TestConcurrentPreparedConfirmationReplays(t *testing.T) {
 	p := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}
 	input, err := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{[]draftproposal.Proposal{p}})
+		Complete  bool                     `json:"complete"`
+	}{[]draftproposal.Proposal{p}, true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	input := []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"убрать","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"другое","reason":"лишнее"}]}`)
+	input := []byte(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"убрать","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"другое","reason":"лишнее"}]}`)
 	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +200,26 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := prepareConfirmation(root, first)
+	before, err := collectDocs(root)
+	if err != nil {
+		l.Close()
+		t.Fatal(err)
+	}
+	if _, err = prepareConfirmation(root, first); err == nil {
+		l.Close()
+		t.Fatal("partial confirmation accepted")
+	}
+	l.Close()
+	after, err := collectDocs(root)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("partial confirmation changed docs", err)
+	}
+	different := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: view.State.Proposals[0].ID, Revision: 1, Action: "accept"}, {Source: "XR-008", Proposal: view.State.Proposals[1].ID, Revision: 1, Action: "accept"}}}
+	l, err = drafttx.Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := prepareConfirmation(root, different)
 	if err == nil {
 		err = l.Apply(root, plan.Changes)
 	}
@@ -206,23 +227,20 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftPrepared(root, "XR-008")
-	if err != nil {
-		t.Fatal(err)
+	if len(plan.Results) != 2 {
+		t.Fatalf("full pack: %+v", plan)
 	}
-	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "active" || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[1].Status != "" {
-		t.Fatalf("partial: %s", raw)
-	}
-	different := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: view.State.Proposals[0].ID, Revision: 1, Action: "accept"}, {Source: "XR-008", Proposal: view.State.Proposals[1].ID, Revision: 1, Action: "accept"}}}
 	l, err = drafttx.Acquire(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = prepareConfirmation(root, different)
-	l.Close()
-	if err == nil {
-		t.Fatal("accepted card ran in a different batch")
+	defer l.Close()
+	if _, err = prepareConfirmation(root, first); err == nil {
+		t.Fatal("partial request replayed as full confirmation")
+	}
+	replay, err := prepareConfirmation(root, different)
+	if err != nil || !replay.Repeated {
+		t.Fatalf("full replay: %+v %v", replay, err)
 	}
 }
 
@@ -247,7 +265,8 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	}
 	payload, _ := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "материал", Reason: "устарело"}}})
+		Complete  bool                     `json:"complete"`
+	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "материал", Reason: "устарело"}}, true})
 	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +296,7 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := draftproposal.Load(root, "XR-008", data)
-	if err != nil || state.State != "history" || len(state.Receipts) != 1 {
+	if err != nil || state.State != "history" || len(state.Receipts) != 2 {
 		t.Fatalf("state %+v %v", state, err)
 	}
 }
@@ -306,7 +325,8 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	card := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "частный фрагмент"}
 	in, _ := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-	}{[]draftproposal.Proposal{card}})
+		Complete  bool                     `json:"complete"`
+	}{[]draftproposal.Proposal{card}, true})
 	raw, err = cmdDraftPreparedSave(root, "XR-008", v.Snapshot, in)
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +373,7 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Первый результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Первый результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
 	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -372,11 +392,11 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "history" || len(view.State.Receipts) != 1 || len(view.State.Receipts[0].IDs) == 0 {
+	if view.State.State != "history" || len(view.State.Receipts) != 2 || len(view.State.Receipts[0].IDs) == 0 {
 		t.Fatalf("state: %+v", view.State)
 	}
 	old := view.State
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +425,7 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "history" || len(view.State.Receipts) != 2 {
+	if view.State.State != "history" || len(view.State.Receipts) != 4 {
 		t.Fatalf("final: %+v", view.State)
 	}
 }
@@ -435,7 +455,7 @@ func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
 	raw, err = cmdDraftPreparedSave(tree, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +490,7 @@ func TestPreparedConfirmLegacyBarrierReservedID(t *testing.T) {
 			}
 			p := draftproposal.Proposal{ID: "chat-delivery", BoardID: "XR-099", Revision: 1, Outcome: "add", Title: "Доставка", Text: fixtureTaskBody, BoardType: "bug", Rank: "50+8+3+5+3", Size: "L", Accept: "mixed", Barrier: barrier}
 			state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{p}}
-			if err = draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+			if err = draftproposal.SavePrepared(root, "XR-008", readyLegacyPrepared(t, root, "XR-008", state)); err != nil {
 				t.Fatal(err)
 			}
 			raw, err := cmdDraftPrepared(root, "XR-008")
@@ -542,7 +562,7 @@ func TestPreparedConfirmUnknownBarrierIsAtomic(t *testing.T) {
 	}
 	for _, barrier := range []string{"неизвестный: пояснение", "прогон стенда", "Глаза: пояснение", "глаза доступа: пояснение"} {
 		p := draftproposal.Proposal{ID: "chat-delivery", BoardID: "XR-099", Revision: 1, Outcome: "add", Title: "Доставка", Text: fixtureTaskBody, BoardType: "bug", Rank: "50+8+3+5+3", Size: "L", Accept: "mixed", Barrier: barrier}
-		if err = draftproposal.SavePrepared(root, "XR-008", draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{p}}); err != nil {
+		if err = draftproposal.SavePrepared(root, "XR-008", readyLegacyPrepared(t, root, "XR-008", draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{p}})); err != nil {
 			t.Fatal(err)
 		}
 		raw, err := cmdDraftPrepared(root, "XR-008")

@@ -68,6 +68,13 @@ func cmdDraftIdea(root, id, text string, c CommitOpts) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("текст мысли пуст, дайте содержательный пункт")
 	}
+	all, err := loadDraftsWithHistory(root, true)
+	if err != nil {
+		return "", err
+	}
+	if old := findDraft(all, id); old != nil && old.History {
+		return "", fmt.Errorf("%s: разбор завершён и сохранён в истории; новую мысль запишите отдельным черновиком", id)
+	}
 	d, err := findDraftFor(root, id)
 	if err != nil {
 		return "", err

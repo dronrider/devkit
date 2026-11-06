@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -21,6 +22,8 @@ import (
 // сохранения срезается из записи вовсе.
 
 type preparedView struct {
+	Ready    bool                `json:"ready"`
+	Reason   string              `json:"reason"`
 	ID       string              `json:"id"`
 	Snapshot string              `json:"snapshot"`
 	Basis    string              `json:"basis"`
@@ -54,7 +57,8 @@ func preparedViewOf(root, id string, record []byte, state draftproposal.State) (
 	if err != nil {
 		return preparedView{}, err
 	}
-	return preparedView{ID: id, Snapshot: snapshot, Basis: basis, State: state}, nil
+	reason := preparedNotReady(record, state)
+	return preparedView{ID: id, Snapshot: snapshot, Basis: basis, State: state, Ready: reason == "", Reason: reason}, nil
 }
 
 func cmdDraftPrepared(root, id string) (string, error) {
@@ -160,8 +164,10 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 		return "", fmt.Errorf("%s: запись изменилась, откройте её снова", id)
 	}
 	var incoming struct {
-		Proposals []draftproposal.Proposal `json:"proposals"`
-		Analysis  *string                  `json:"analysis"`
+		Proposals      []draftproposal.Proposal `json:"proposals"`
+		Analysis       *string                  `json:"analysis"`
+		Complete       bool                     `json:"complete"`
+		ReplacePending bool                     `json:"replace_pending"`
 	}
 	dec := json.NewDecoder(strings.NewReader(string(input)))
 	dec.DisallowUnknownFields()
@@ -185,6 +191,24 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	arch, err := LoadArchive(archivePath(root))
 	if err != nil {
 		return "", err
+	}
+	if incoming.ReplacePending {
+		keep := map[string]bool{}
+		for _, p := range incoming.Proposals {
+			keep[p.ID] = true
+		}
+		retained := make([]draftproposal.Proposal, 0, len(old.Proposals))
+		for _, p := range old.Proposals {
+			if p.Status != "" || keep[p.ID] {
+				retained = append(retained, p)
+			} else if p.BoardID != "" {
+				old.RetiredIDs = append(old.RetiredIDs, p.BoardID)
+			} else if idRe.MatchString(p.ID) {
+				old.RetiredIDs = append(old.RetiredIDs, p.ID)
+			}
+		}
+		old.Proposals = retained
+		sort.Strings(old.RetiredIDs)
 	}
 	index := map[string]int{}
 	for i, p := range old.Proposals {
@@ -265,6 +289,17 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	if incoming.Analysis != nil {
 		old.Analysis = *incoming.Analysis
 	}
+	old.PackRevision++
+	old.PreparedSource = ""
+	if incoming.Complete {
+		if err = validatePreparedBundle(root, id, record, old); err != nil {
+			return "", err
+		}
+		old.PreparedSource, err = preparedMaterialDigest(record)
+		if err != nil {
+			return "", err
+		}
+	}
 	changes, err := preparedChanges(root, id, record, old)
 	if err != nil {
 		return "", err
@@ -285,67 +320,5 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 }
 
 func cmdDraftPreparedReject(root, id, task, base, reason string) (string, error) {
-	if strings.TrimSpace(reason) == "" {
-		return "", fmt.Errorf("укажите причину отказа")
-	}
-	l, err := drafttx.Acquire(root)
-	if err != nil {
-		return "", err
-	}
-	defer l.Close()
-	if _, err := findDraftFor(root, id); err != nil {
-		return "", err
-	}
-	record, state, err := readPrepared(root, id)
-	if err != nil {
-		return "", err
-	}
-	snapshot, err := preparedSnapshot(state, record)
-	if err != nil {
-		return "", err
-	}
-	if base == "" || base != snapshot {
-		return "", fmt.Errorf("%s: запись изменилась, откройте её снова", id)
-	}
-	found := false
-	allDone := len(state.Proposals) > 0
-	for i := range state.Proposals {
-		p := &state.Proposals[i]
-		if p.ID == task || p.BoardID == task {
-			if p.Status != "" {
-				return "", fmt.Errorf("%s: решение уже принято", p.ID)
-			}
-			p.Status = "rejected"
-			// Квиток уходит и в журнал receipts: по нему результат
-			// переживает следующий заход, а не только текущий ответ команды.
-			p.Result = &draftproposal.Receipt{Source: id, Proposal: p.ID, Revision: p.Revision, Outcome: p.Outcome, Result: "отклонено", Reason: strings.TrimSpace(reason)}
-			state.Receipts = append(state.Receipts, *p.Result)
-			found = true
-		}
-		if p.Status == "" {
-			allDone = false
-		}
-	}
-	if !found {
-		return "", fmt.Errorf("задача %s не найдена", task)
-	}
-	if allDone {
-		state.State = "history"
-	}
-	changes, err := preparedChanges(root, id, record, state)
-	if err != nil {
-		return "", err
-	}
-	if err = l.Apply(root, changes); err != nil {
-		return "", err
-	}
-	material, _, err := draftproposal.Material(record)
-	if err != nil {
-		return "", err
-	}
-	view, err := preparedViewOf(root, id, material, state)
-	if err != nil {
-		return "", err
-	}
-	return marshal(view)
+	return "", fmt.Errorf("подтверждается весь разбор черновика; обсудите или исправьте задачи и подтвердите разбор целиком")
 }

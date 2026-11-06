@@ -70,6 +70,7 @@ try {
   await page.getByRole("button", { name: "Править задачу", exact: true }).click();
   await page.getByLabel("заголовок задачи XR-001").fill("Отменённое название");
   await page.getByRole("button", { name: "Отменить правку", exact: true }).click();
+  await page.waitForFunction(title => document.querySelector("#groups .tedit")?.value === title, normalTitle);
   assert.equal(await page.getByLabel("заголовок задачи XR-001").inputValue(), normalTitle);
   await page.getByLabel("срок задачи XR-001, дата", { exact:true }).fill("2026-12-20");
   const normalSaved = page.waitForResponse(r=>r.url().endsWith("/tasks/XR-001") && r.request().method()==="PATCH");
@@ -96,7 +97,7 @@ try {
   await page.screenshot({ path: join(evidence,"prepared-edit.png"), fullPage:true });
   await preparedTitle.fill("Отменённая подготовленная задача");
   await page.getByRole("button",{name:"Отменить правку",exact:true}).click();
-  await page.getByLabel("заголовок задачи " + number,{exact:true}).waitFor();
+  await page.waitForFunction(() => document.querySelector("#groups .tedit")?.value === "баг доставки ленты");
   assert.equal(await page.getByLabel("заголовок задачи " + number,{exact:true}).inputValue(),"баг доставки ленты");
   await page.getByRole("button", { name: "Править задачу", exact: true }).click();
   await page.getByLabel("заголовок задачи " + number,{exact:true}).fill("баг доставки ленты после правки");
@@ -106,7 +107,7 @@ try {
   await page.getByRole("button",{name:"Сохранить",exact:true}).click();
   const preparedResp = await preparedSaved;
   assert.equal(preparedResp.status(),200,await preparedResp.text());
-  await page.getByText("из XR-010:",{exact:false}).first().waitFor();
+  await page.locator("#groups .fview").waitFor({state:"visible"});
   assert.equal(await page.getByRole("button",{name:"Сохранить",exact:true}).count(),0);
   await page.setViewportSize({width:1440,height:1000});
   await page.screenshot({ path: join(evidence,"prepared-desktop.png"), fullPage:true });

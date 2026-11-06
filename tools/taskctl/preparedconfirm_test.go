@@ -455,3 +455,117 @@ func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
 		t.Fatal("refusal changed files")
 	}
 }
+
+func TestPreparedConfirmLegacyBarrierReservedID(t *testing.T) {
+	for _, barrier := range []string{"глаза: пользователь принимает вид индикатора; доставка после выката", "доступ: нужно окружение", "согласие: ждём разрешения"} {
+		t.Run(barrier, func(t *testing.T) {
+			root := setup(t)
+			kit, err := filepath.Abs("../../kit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+			if _, err = cmdDraft(root, "Материал", "mid", CommitOpts{}); err != nil {
+				t.Fatal(err)
+			}
+			p := draftproposal.Proposal{ID: "chat-delivery", BoardID: "XR-099", Revision: 1, Outcome: "add", Title: "Доставка", Text: fixtureTaskBody, BoardType: "bug", Rank: "50+8+3+5+3", Size: "L", Accept: "mixed", Barrier: barrier}
+			state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{p}}
+			if err = draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := cmdDraftPrepared(root, "XR-008")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var view preparedView
+			if err = json.Unmarshal([]byte(raw), &view); err != nil {
+				t.Fatal(err)
+			}
+			req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: p.ID, Revision: 1, Action: "accept"}}}
+			input, _ := json.Marshal(req)
+			raw, err = cmdDraftPreparedConfirm(root, input, CommitOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var first confirmationResult
+			if err = json.Unmarshal([]byte(raw), &first); err != nil {
+				t.Fatal(err)
+			}
+			if first.Repeated || len(first.Results) != 1 || !reflect.DeepEqual(first.Results[0].IDs, []string{p.BoardID}) {
+				t.Fatalf("first: %s", raw)
+			}
+			body, err := os.ReadFile(taskFileAbs(root, p.BoardID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, _, _ := strings.Cut(barrier, ":")
+			if !strings.Contains(string(body), "- барьер «"+key+"»:") || strings.Count(string(body), "Барьер приёмки: "+barrier) != 1 {
+				t.Fatalf("body: %s", body)
+			}
+			boardBefore, _ := os.ReadFile(boardPath(root))
+			raw, err = cmdDraftPreparedConfirm(root, input, CommitOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var repeated confirmationResult
+			if err = json.Unmarshal([]byte(raw), &repeated); err != nil {
+				t.Fatal(err)
+			}
+			if !repeated.Repeated || !reflect.DeepEqual(first.Results, repeated.Results) {
+				t.Fatalf("repeat: %s", raw)
+			}
+			boardAfter, _ := os.ReadFile(boardPath(root))
+			bodyAfter, _ := os.ReadFile(taskFileAbs(root, p.BoardID))
+			if !bytes.Equal(boardBefore, boardAfter) || !bytes.Equal(body, bodyAfter) {
+				t.Fatal("replay changed board/body")
+			}
+			_, stored, err := readPrepared(root, "XR-008")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.Proposals[0].Barrier != p.Barrier || stored.Proposals[0].Text != view.State.Proposals[0].Text || stored.Proposals[0].Status != "accepted" {
+				t.Fatalf("legacy content rewritten: %+v", stored.Proposals[0])
+			}
+		})
+	}
+}
+
+func TestPreparedConfirmUnknownBarrierIsAtomic(t *testing.T) {
+	root := setup(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+	if _, err = cmdDraft(root, "Материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, barrier := range []string{"неизвестный: пояснение", "прогон стенда", "Глаза: пояснение", "глаза доступа: пояснение"} {
+		p := draftproposal.Proposal{ID: "chat-delivery", BoardID: "XR-099", Revision: 1, Outcome: "add", Title: "Доставка", Text: fixtureTaskBody, BoardType: "bug", Rank: "50+8+3+5+3", Size: "L", Accept: "mixed", Barrier: barrier}
+		if err = draftproposal.SavePrepared(root, "XR-008", draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{p}}); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := cmdDraftPrepared(root, "XR-008")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var view preparedView
+		json.Unmarshal([]byte(raw), &view)
+		req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: p.ID, Revision: 1, Action: "accept"}}}
+		before, err := collectDocs(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = prepareConfirmation(root, req)
+		if err == nil || !strings.Contains(err.Error(), "не из закрытого списка") {
+			t.Fatalf("%q: %v", barrier, err)
+		}
+		after, err := collectDocs(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(before, after) {
+			t.Fatalf("%q: rejected confirmation mutated docs", barrier)
+		}
+	}
+}

@@ -12,7 +12,7 @@
 //
 // Зовётся: node testdata/poc_draftsbulk.mjs static/app.js
 
-import { makeSandbox, settle, dump, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, dump, byClass, allByClass, appPathArg } from "./poc_dom.mjs";
 
 const app = appPathArg();
 
@@ -21,11 +21,12 @@ for (let i = 1; i <= 466; i += 1) {
   drafts.push({ id: "XR-D" + i, title: "мысль " + i, prio: "mid", type: "task",
     moved: "2026-11-06", age_words: "сегодня", order: "Проведи груминг XR-D" + i });
 }
-const view = (id, proposals) => ({ id, snapshot: "s-" + id, basis: "b-" + id,
-  state: { version: 1, state: "active", proposals } });
+const view = (id, proposals) => ({ id, ready: !!(proposals && proposals.length), snapshot: "s-" + id, basis: "b-" + id,
+  state: { version: 1, state: "active", complete: !!(proposals && proposals.length), proposals } });
 const bulk = { views: drafts.map((d) => d.id === "XR-D1"
   ? view("XR-D1", [{ id: "chat-delivery", board_id: "XR-99", revision: 1, outcome: "add",
-    title: "Доставка чата", text: "# Доставка чата\n\nОписание" }])
+    title: "Доставка чата", text: "# Доставка чата\n\nОписание" },
+    { id: "another", board_id: "XR-100", revision: 1, outcome: "add", title: "Вторая задача", text: "Описание" }])
   : view(d.id, null)) };
 
 const { sandbox, byId, asked } = makeSandbox(app, (path, init) => {
@@ -59,10 +60,12 @@ await sandbox.refresh(); await settle();
 
 // --- карточки из общего ответа встают в секцию согласования ---
 {
-  const groups = dump(byId.get("groups"));
-  check(groups.includes("Согласовать заведение"), "секция согласования не нарисована");
-  check(groups.includes("Доставка чата"), "карточка из общего ответа не попала в секцию");
-  check(groups.includes("XR-99"), "номер карточки из общего ответа не показан");
+  const section = byClass(byId.get("groups"), "tsec");
+  const text = dump(section);
+  check(text.includes("Согласовать заведение"), "секция согласования не нарисована");
+  check(text.includes("мысль 1") && text.includes("XR-D1"), "исходник из общего ответа не попал в согласование");
+  check(text.includes("2 задачи"), "в строке исходника не показан весь состав разбора");
+  check(allByClass(section, "dsrow").length === 1, "две задачи одного разбора не собраны в одну строку");
 }
 
 // --- обновление экрана поднимает второй общий ответ, а не волну по записям ---

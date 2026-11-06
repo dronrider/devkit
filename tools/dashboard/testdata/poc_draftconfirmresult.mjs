@@ -20,6 +20,7 @@ const { sandbox, byId } = makeSandbox(appPathArg(), async (path, init) => {
     ready = true; reason = "";
     return view();
   }
+  if (path === "/api/projects/demo/drafts/prepared") return { views: [view()] };
   if (path === "/api/projects/demo/drafts/XR-9/prepared") return view();
   if (path === "/api/projects/demo/drafts/XR-9") return { id: "XR-9", file: "docs/tasks/drafts/XR-9.md", text: "# Исходник\n\nМатериал", type: "task", source: "thought", lock: "unlocked", groomed: true };
   if (path === "/api/projects/demo/drafts") return { drafts: state.state === "history" ? [] : [{ id: "XR-9", title: "Исходник", type: "task", prio: "mid" }] };

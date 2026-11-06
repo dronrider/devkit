@@ -77,6 +77,19 @@ def _visible_blocks(content):
             if isinstance(block, dict) and block.get("type") != "thinking"]
 
 
+def _has_visible_content(record):
+    """Есть ли в записи разговора видимый блок.
+
+    Клиент 2.1.312 пишет thinking и text одной реплики отдельными
+    assistant-строками с одним message.id: thinking-only строка это не
+    отдельный ответ, а невидимая часть того же.
+    """
+    if record.get("type") != "assistant":
+        return True
+    content = (record.get("message") or {}).get("content")
+    return bool(_visible_blocks(content))
+
+
 def load_seed(path, expected_uuid, expected_cwd):
     """Прочитать и проверить seed-журнал новой синтетической сессии.
 
@@ -97,7 +110,8 @@ def load_seed(path, expected_uuid, expected_cwd):
         raise ProjectionError(
             "каталог seed-журнала не совпадает с ожидаемым %s" % expected_cwd)
     conversation = [record for record in records
-                    if record.get("type") in ("user", "assistant")]
+                    if record.get("type") in ("user", "assistant")
+                    and _has_visible_content(record)]
     shapes = [record.get("type") for record in conversation]
     if shapes != ["user", "assistant"]:
         raise ProjectionError(

@@ -44,6 +44,47 @@ def write_seed(directory, prefix="", answer="RESUME_PROBE_READY."):
     return path
 
 
+def write_seed_split_reply(directory):
+    """Seed-журнал формы реального клиента 2.1.312.
+
+    Thinking и text одной реплики записаны отдельными assistant-строками с
+    одним message.id и разными apiBlockIndex, вопрос лежит строкой со
+    служебной приставкой CLI.
+    """
+    user_uuid = str(uuid.uuid4())
+    thinking_uuid = str(uuid.uuid4())
+    records = [
+        {"parentUuid": None, "isSidechain": False, "userType": "external",
+         "cwd": CWD, "sessionId": SEED_UUID, "version": "2.1.312",
+         "gitBranch": "dk-1624", "type": "user",
+         "message": {"role": "user",
+                     "content": "приставка CLI вне нашего вопроса\n\n"
+                                 + native_projection.SEED_PROMPT},
+         "uuid": user_uuid, "timestamp": "2026-11-06T18:00:00.000Z"},
+        {"parentUuid": user_uuid, "isSidechain": False,
+         "userType": "external", "cwd": CWD, "sessionId": SEED_UUID,
+         "version": "2.1.312", "gitBranch": "dk-1624", "type": "assistant",
+         "apiBlockIndex": 0,
+         "message": {"id": "msg_seed", "role": "assistant",
+                     "content": [{"type": "thinking",
+                                  "thinking": "размышление не переносится",
+                                  "signature": "sig-do-not-copy"}]},
+         "uuid": thinking_uuid, "timestamp": "2026-11-06T18:00:01.000Z"},
+        {"parentUuid": thinking_uuid, "isSidechain": False,
+         "userType": "external", "cwd": CWD, "sessionId": SEED_UUID,
+         "version": "2.1.312", "gitBranch": "dk-1624", "type": "assistant",
+         "apiBlockIndex": 1,
+         "message": {"id": "msg_seed", "role": "assistant",
+                     "content": [{"type": "text",
+                                  "text": "RESUME_PROBE_READY."}]},
+         "uuid": str(uuid.uuid4()), "timestamp": "2026-11-06T18:00:02.000Z"},
+    ]
+    path = Path(directory) / (SEED_UUID + ".jsonl")
+    path.write_text("".join(json.dumps(record, ensure_ascii=False) + "\n"
+                            for record in records), encoding="utf-8")
+    return path
+
+
 def history_events():
     return [
         {"type": "system", "subtype": "init"},
@@ -161,6 +202,28 @@ class ProjectionTest(Stand):
         self.assertEqual(records[3]["message"]["stop_reason"], "end_turn")
         self.assertEqual(records[4]["message"]["usage"],
                          {"input_tokens": 0, "output_tokens": 0})
+
+    def test_seed_with_split_reply_is_accepted(self):
+        self.seed_path.unlink()
+        self.seed_path = write_seed_split_reply(self.dir)
+        code, out, err = self.run_main()
+        self.assertEqual(code, 0, err)
+        new_uuid = [line.split(": ")[1] for line in out.splitlines()
+                    if line.startswith("native uuid: ")][0]
+        target = self.dir / (new_uuid + ".jsonl")
+        journal = target.read_text(encoding="utf-8")
+        records = [json.loads(line) for line in journal.splitlines()]
+        # seed остался одной парой: thinking-строка не отдельный ответ
+        self.assertEqual(records[0]["type"], "user")
+        self.assertEqual(records[1]["type"], "assistant")
+        self.assertEqual(records[0]["message"]["content"],
+                         [{"type": "text", "text":
+                           native_projection.SEED_PROMPT}])
+        self.assertEqual(records[1]["message"]["content"],
+                         [{"type": "text", "text": "RESUME_PROBE_READY."}])
+        self.assertNotIn("размышление", journal)
+        self.assertNotIn("sig-do-not-copy", journal)
+        self.assertNotIn("приставка CLI", journal)
 
     def test_cli_prefix_of_seed_question_not_copied(self):
         self.seed_path.unlink()

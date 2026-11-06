@@ -480,6 +480,15 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, груминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
+	prepared, err := draftproposal.Load(found.Path, id, was)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if prepared.State == "history" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf("%s: разбор завершён и сохранён в истории; новую мысль запишите отдельным черновиком", id)})
+		return
+	}
 	if strings.TrimSpace(body.Text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "пустой текст затёр бы запись черновика: жду JSON {\"text\": \"...\"}"})

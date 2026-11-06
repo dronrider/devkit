@@ -29,6 +29,20 @@ func draftIDFromMsg(msg string) string {
 	return strings.TrimSpace(id)
 }
 
+func readyLegacyPrepared(t *testing.T, root, id string, state draftproposal.State) draftproposal.State {
+	t.Helper()
+	record, err := os.ReadFile(draftPath(root, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PreparedSource, err = preparedMaterialDigest(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PackRevision = 1
+	return state
+}
+
 func TestPreparedSaveAndStale(t *testing.T) {
 	root := setup(t)
 	kit, err := filepath.Abs("../../kit")
@@ -107,7 +121,7 @@ func TestPreparedSaveReservesStableBoardID(t *testing.T) {
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
 	card := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{card}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{card}})
 	saved, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +166,7 @@ func TestPreparedSaveReservesStableBoardID(t *testing.T) {
 	edit := card
 	edit.ID = id
 	edit.Revision = 2
-	payload, _ = json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{edit}})
+	payload, _ = json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{edit}})
 	saved, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +266,7 @@ func TestPreparedLegacyShortKeyStillWorks(t *testing.T) {
 	}
 	revised := old.Proposals[0]
 	revised.Revision = 2
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{revised}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{revised}})
 	saved, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +333,7 @@ func TestPreparedAdoptIssuesStableBoardID(t *testing.T) {
 	if _, err := cmdDraft(root, "живой аналог", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := draftproposal.SavePrepared(root, "XR-008", legacyChatDelivery()); err != nil {
+	if err := draftproposal.SavePrepared(root, "XR-008", readyLegacyPrepared(t, root, "XR-008", legacyChatDelivery())); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cmdDraftPreparedAdopt(root, []string{"XR-008"})
@@ -355,21 +369,24 @@ func TestPreparedAdoptIssuesStableBoardID(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("повторное закрепление переписало файл")
 	}
-	// Отказ по старому ключу из ссылки продолжает находить задачу.
 	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftPreparedReject(root, "XR-008", "chat-delivery", view.Snapshot, "не так")
-	if err != nil {
-		t.Fatal(err)
+	beforeReject, _ := collectDocs(root)
+	if _, err = cmdDraftPreparedReject(root, "XR-008", "chat-delivery", view.Snapshot, "не так"); err == nil {
+		t.Fatal("individual rejection accepted after number adoption")
 	}
-	json.Unmarshal([]byte(raw), &view)
-	if view.State.Proposals[0].Status != "rejected" || view.State.Proposals[0].ID != "chat-delivery" || view.State.Proposals[0].BoardID != number {
-		t.Fatalf("отказ по старому ключу: %s", raw)
+	afterReject, _ := collectDocs(root)
+	if !reflect.DeepEqual(beforeReject, afterReject) {
+		t.Fatal("rejection changed prepared files")
 	}
+	if view.State.Proposals[0].ID != "chat-delivery" || view.State.Proposals[0].BoardID != number {
+		t.Fatal("legacy key changed")
+	}
+
 }
 
 // TestPreparedAdoptConfirmByLegacyKeyUsesNumber: подтверждение унаследованной
@@ -384,7 +401,7 @@ func TestPreparedAdoptConfirmByLegacyKeyUsesNumber(t *testing.T) {
 	if _, err := cmdDraft(root, "живой аналог", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := draftproposal.SavePrepared(root, "XR-008", legacyChatDelivery()); err != nil {
+	if err := draftproposal.SavePrepared(root, "XR-008", readyLegacyPrepared(t, root, "XR-008", legacyChatDelivery())); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cmdDraftPreparedAdopt(root, nil)
@@ -447,7 +464,7 @@ func TestAddExplicitIDRefusesReserved(t *testing.T) {
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
 	card := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}
-	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{card}})
+	payload, _ := json.Marshal(map[string]any{"complete": true, "proposals": []draftproposal.Proposal{card}})
 	saved, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +539,7 @@ func TestPreparedRejectPartialAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
-	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
+	if _, err = cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := cmdDraftPrepared(root, "XR-008")
@@ -531,30 +548,39 @@ func TestPreparedRejectPartialAndHistory(t *testing.T) {
 	}
 	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop"},{"id":"p2","revision":1,"outcome":"drop"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"первое","reason":"не нужно"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"лишнее"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftPreparedReject(root, "XR-008", assignedKey(view, "p1"), view.Snapshot, "не нужно")
+	before, err := collectDocs(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "active" || view.State.Proposals[0].Result.Reason != "не нужно" {
-		t.Fatalf("partial: %s", raw)
+	for _, key := range []string{"p1", "p2"} {
+		if _, err = cmdDraftPreparedReject(root, "XR-008", assignedKey(view, key), view.Snapshot, "не нужно"); err == nil {
+			t.Fatal("individual rejection accepted")
+		}
 	}
-	raw, err = cmdDraftPreparedReject(root, "XR-008", assignedKey(view, "p2"), view.Snapshot, "лишнее")
-	if err != nil {
+	after, err := collectDocs(root)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("rejection changed docs", err)
+	}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}}
+	for _, p := range view.State.Proposals {
+		req.Decisions = append(req.Decisions, draftproposal.Decision{Source: "XR-008", Proposal: p.ID, Revision: p.Revision, Action: "accept"})
+	}
+	input, _ := json.Marshal(req)
+	if _, err = cmdDraftPreparedConfirm(root, input, CommitOpts{}); err != nil {
 		t.Fatal(err)
-	}
-	json.Unmarshal([]byte(raw), &view)
-	if view.State.State != "history" {
-		t.Fatalf("history: %s", raw)
 	}
 	raw, err = cmdDraftPrepared(root, "XR-008")
-	if err != nil || !strings.Contains(raw, "не нужно") {
-		t.Fatalf("history read: %s %v", raw, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.State != "history" || len(view.State.Receipts) != 3 {
+		t.Fatalf("history: %s", raw)
 	}
 }
 
@@ -582,12 +608,20 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 	if view.State.State != "active" || len(view.State.Proposals) != 0 || view.State.Analysis != "empty" {
 		t.Fatalf("empty: %s", raw)
 	}
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"старое","reason":"нет нужды"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"нет нужды"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"старое","reason":"нет нужды"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"нет нужды"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftPreparedReject(root, "XR-008", assignedKey(view, "p1"), view.Snapshot, "отклонено человеком")
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}}
+	for _, p := range view.State.Proposals {
+		req.Decisions = append(req.Decisions, draftproposal.Decision{Source: "XR-008", Proposal: p.ID, Revision: p.Revision, Action: "accept"})
+	}
+	input, _ := json.Marshal(req)
+	if _, err = cmdDraftPreparedConfirm(root, input, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +631,7 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	if len(view.State.Proposals) != 3 || view.State.Proposals[0].Status != "rejected" || view.State.Proposals[0].Result.Reason != "отклонено человеком" {
+	if len(view.State.Proposals) != 3 || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[0].Result.Reason != "нет нужды" || view.State.Proposals[1].Status != "accepted" {
 		t.Fatalf("reanalysis: %s", raw)
 	}
 }

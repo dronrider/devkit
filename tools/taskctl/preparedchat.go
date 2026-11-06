@@ -31,13 +31,13 @@ func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []
 	text := "Подготовил задачи, согласуй их описание."
 	var options []chat.Option
 	for _, s := range shown.Sources {
+		options = append(options, chat.Option{Label: "Подтвердить разбор " + s.Source})
 		for _, p := range s.Proposals {
 			title := p.Title
 			if title == "" {
 				title = p.ID
 			}
 			text += fmt.Sprintf("\n\n%s: #%s/draft/%s/prepared/%s", title, project, s.Source, p.ID)
-			options = append(options, chat.Option{Label: "Подтвердить " + title})
 		}
 	}
 	return text, options
@@ -65,7 +65,10 @@ func preparedChatQuestion(root, anchor string, also []string) (chat.Question, er
 		if err := json.Unmarshal([]byte(raw), &view); err != nil {
 			return chat.Question{}, err
 		}
-		s := chat.PreparedSource{Source: id, Basis: view.Basis}
+		if !view.Ready {
+			return chat.Question{}, fmt.Errorf("%s: %s", id, view.Reason)
+		}
+		s := chat.PreparedSource{Source: id, Basis: view.Basis, Revision: view.State.PackRevision}
 		for _, p := range view.State.Proposals {
 			if p.Status == "" {
 				p.Text = ""

@@ -108,6 +108,29 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		return out, nil
 	}
 	out.Results = nil
+	for _, snap := range request.Snapshots {
+		rec := records[snap.Source]
+		if reason := preparedNotReady(rec.data, rec.state); reason != "" {
+			return out, fmt.Errorf("%s: %s", snap.Source, reason)
+		}
+		if snap.Revision != 0 && snap.Revision != rec.state.PackRevision {
+			return out, fmt.Errorf("%s: редакция разбора изменилась", snap.Source)
+		}
+		pending := 0
+		for _, p := range rec.state.Proposals {
+			if p.Status == "" {
+				pending++
+			}
+		}
+		if len(decisions[snap.Source]) != pending {
+			return out, fmt.Errorf("%s: подтвердите весь разбор целиком", snap.Source)
+		}
+		for _, d := range decisions[snap.Source] {
+			if d.Action != "accept" {
+				return out, fmt.Errorf("%s: подтвердите весь разбор целиком; отказ обсудите в чате", snap.Source)
+			}
+		}
+	}
 	for _, d := range request.Decisions {
 		if d.Action == "accept" {
 			if err := boardGuard(root, "draft prepared confirm"); err != nil {
@@ -216,6 +239,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		}
 		if done {
 			rec.state.State = "history"
+			rec.state.Receipts = append(rec.state.Receipts, draftproposal.Receipt{Key: out.Key, Source: snap.Source, Revision: rec.state.PackRevision, Outcome: "bundle", Result: "разбор подтверждён"})
 		}
 		// Состояние пишется в prepared-файл staging-дерева, а старый блок
 		// срезается из записи материала, если он там ещё был.
@@ -270,6 +294,7 @@ func copyState(s draftproposal.State) draftproposal.State {
 		out.Proposals[i].After = append([]string(nil), s.Proposals[i].After...)
 	}
 	out.Receipts = append([]draftproposal.Receipt(nil), s.Receipts...)
+	out.RetiredIDs = append([]string(nil), s.RetiredIDs...)
 	return out
 }
 

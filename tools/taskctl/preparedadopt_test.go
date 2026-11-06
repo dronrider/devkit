@@ -35,7 +35,7 @@ func legacyAskForAdoptionKey(t *testing.T, target bool, key string) (string, pre
 		card.Target = "XR-001"
 	}
 	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{card}}
-	if err = draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+	if err = draftproposal.SavePrepared(root, "XR-008", readyLegacyPrepared(t, root, "XR-008", state)); err != nil {
 		t.Fatal(err)
 	}
 	printed, err := cmdPreparedChatAsk(root, "XR-008", nil, askDeps{Main: root}, func(string) string { return "" })
@@ -47,7 +47,7 @@ func legacyAskForAdoptionKey(t *testing.T, target bool, key string) (string, pre
 		t.Fatal(err)
 	}
 	source := q.Prepared.Sources[0]
-	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: source.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: key, Revision: 1, Action: "accept"}}}
+	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Revision: source.Revision, Digest: source.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: key, Revision: 1, Action: "accept"}}}
 	ask, err := os.ReadFile(chat.AskPath(root, chat.TaskName("XR-008")))
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func testLegacyAskAdoptionReplay(t *testing.T, proposalKey string) {
 		t.Fatal(err)
 	}
 	saved, err := draftproposal.ParsePrepared(rawState)
-	if err != nil || len(saved.Receipts) != 1 {
+	if err != nil || len(saved.Receipts) != 2 {
 		t.Fatalf("повтор добавил квитанцию: %v %v", saved, err)
 	}
 	after, err = os.ReadFile(chat.AskPath(root, chat.TaskName("XR-008")))

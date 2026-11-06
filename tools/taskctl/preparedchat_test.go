@@ -53,8 +53,8 @@ func TestPreparedChatReceiptRecoveryCannotApply(t *testing.T) {
 }
 
 func TestPreparedChatShownOnly(t *testing.T) {
-	q := chat.PreparedQuestion{Version: 1, Tree: "/tmp/project", Anchor: "XR-1", Sources: []chat.PreparedSource{{Source: "XR-1", Basis: "basis", Proposals: []draftproposal.Proposal{{ID: "one", Revision: 3, Outcome: "drop"}}}}}
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-1", Digest: "basis"}}, Decisions: []draftproposal.Decision{{Source: "XR-1", Proposal: "one", Revision: 3, Action: "reject", Reason: "лишнее"}}}
+	q := chat.PreparedQuestion{Version: 1, Tree: "/tmp/project", Anchor: "XR-1", Sources: []chat.PreparedSource{{Source: "XR-1", Basis: "basis", Revision: 1, Proposals: []draftproposal.Proposal{{ID: "one", Revision: 3, Outcome: "drop"}}}}}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-1", Revision: 1, Digest: "basis"}}, Decisions: []draftproposal.Decision{{Source: "XR-1", Proposal: "one", Revision: 3, Action: "accept"}}}
 	if err := chat.CheckPreparedAnswer(q, q.Tree, req); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"одно","reason":"лишнее"},{"id":"p2","revision":1,"outcome":"drop","text":"другое","reason":"лишнее"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"одно","reason":"лишнее"},{"id":"p2","revision":1,"outcome":"drop","text":"другое","reason":"лишнее"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,8 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	}
 	if !strings.Contains(question.Text, "Подготовил задачи, согласуй их описание.") ||
 		!strings.Contains(question.Text, "#"+filepath.Base(root)+"/draft/XR-008/prepared/"+assignedKey(view, "p1")) ||
-		len(question.Options) != 2 || question.Options[0].Label != "Подтвердить "+assignedKey(view, "p1") {
+		len(question.Options) != 1 || question.Options[0].Label != "Подтвердить разбор XR-008" ||
+		question.Prepared.Sources[0].Revision != view.State.PackRevision || question.Prepared.Sources[0].Revision < 1 {
 		t.Fatalf("вопрос без ссылок: %s %+v", question.Text, question.Options)
 	}
 	printed, err := cmdPreparedChatAsk(root, "XR-008", nil, askDeps{Main: root}, func(string) string { return "" })
@@ -113,7 +114,7 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if !ok || ask.Questions[0].Prepared == nil {
 		t.Fatal(err)
 	}
-	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "reject", Reason: "не подходит"}}}
+	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Revision: view.State.PackRevision, Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}, {Source: "XR-008", Proposal: assignedKey(view, "p2"), Revision: 1, Action: "accept"}}}
 	input, _ := json.Marshal(answer)
 	forged := ask
 	copyQ := *question.Prepared
@@ -159,7 +160,7 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.State.Proposals[0].Status != "rejected" || view.State.Proposals[1].Status != "" || len(view.State.Receipts) != 1 {
+	if view.State.State != "history" || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[1].Status != "accepted" || len(view.State.Receipts) != 3 {
 		t.Fatalf("state %+v", view.State)
 	}
 }

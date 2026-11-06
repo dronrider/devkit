@@ -324,6 +324,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}", s.auth(s.handleDraftPut))
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}/meta", s.auth(s.handleDraftMeta))
 	mux.HandleFunc("POST /api/projects/{p}/drafts/prepared/confirm", s.auth(s.handleDraftPreparedConfirm))
+	mux.HandleFunc("GET /api/projects/{p}/drafts/prepared", s.auth(s.handleDraftsPrepared))
 	mux.HandleFunc("GET /api/projects/{p}/drafts/{id}/prepared", s.auth(s.handleDraftPrepared))
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}/prepared", s.auth(s.handleDraftPreparedSave))
 	mux.HandleFunc("GET /api/projects/{p}/drafts/{id}/prepared/{key}", s.auth(s.handleDraftPreparedTask))

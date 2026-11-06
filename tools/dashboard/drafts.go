@@ -977,6 +977,42 @@ func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleDraftsPrepared отдаёт состав согласования всех записей накопителя
+// одним ответом (DK-1623): экран накопителя прежде звал ручку записи на каждый
+// черновик, и при сотнях записей две волны запросов клали канал и посредника.
+// Общий ответ стоит на `taskctl draft prepared adopt` без ID: утилита обходит
+// все черновики одним замком и одной транзакцией, закрепляет номера карточкам
+// без них и возвращает виды всех записей. Чистое чтение памяти доски не
+// снимает: закрепление писало файлы, и память гасится вместе с его коммитом.
+func (s *server) handleDraftsPrepared(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "подготовленные задачи накопителя")
+	if found == nil {
+		return
+	}
+	out, code, err := taskctlDo(found.Path, "draft", "prepared", "adopt")
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result struct {
+		Adopted []string          `json:"adopted"`
+		Views   []json.RawMessage `json:"views"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "подготовленные задачи не прочитались"})
+		return
+	}
+	if len(result.Adopted) > 0 {
+		s.forgetBoard(found.Path)
+		for _, id := range result.Adopted {
+			if note := commitDocs(found.Path, boardCommitMsg(id, "закрепление номеров подготовки"), draftFileRel(id), preparedFileRel(id)); note != "" {
+				s.logf("закрепление номеров %s в %s: %s", id, found.Name, note)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"views": result.Views})
+}
+
 func (s *server) handleDraftPrepared(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "подготовленные задачи записи")
 	if found == nil {

@@ -8,7 +8,10 @@ import (
 )
 
 type adoptResult struct {
-	Changed int            `json:"changed"`
+	Changed int `json:"changed"`
+	// Adopted называет записи, получившие номера: дашборд коммитит файлы
+	// закрепления по этому списку (DK-1623), количество Changed его не заменяет.
+	Adopted []string       `json:"adopted"`
 	Views   []preparedView `json:"views"`
 }
 
@@ -59,7 +62,7 @@ func cmdDraftPreparedAdopt(root string, ids []string) (string, error) {
 	}
 	entries := make([]entry, 0, len(chosen))
 	var changes []drafttx.Change
-	out := adoptResult{Views: []preparedView{}}
+	out := adoptResult{Adopted: []string{}, Views: []preparedView{}}
 	for _, id := range chosen {
 		record, state, err := readPrepared(root, id)
 		if err != nil {
@@ -95,6 +98,7 @@ func cmdDraftPreparedAdopt(root string, ids []string) (string, error) {
 			if err = drafttx.RecordNumberAdoption(root, id, before, after); err != nil {
 				return "", err
 			}
+			out.Adopted = append(out.Adopted, id)
 			ch, err := preparedChanges(root, id, record, state)
 			if err != nil {
 				return "", err

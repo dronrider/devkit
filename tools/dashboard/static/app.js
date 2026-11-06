@@ -16358,7 +16358,7 @@ async function renderDrafts(project, works) {
     drafts: ((r.ok && r.body.drafts) || []).length });
   // Строки подготовленных задач секции согласования: массив живёт раньше
   // своих строк, потому что полоса запуска берёт его в замыкание, а заполняется
-  // он позже, ответами ручек записей.
+  // он позже, общим ответом состава согласования.
   const preparedRows = [];
   const items = [{
     key: "board-kind",
@@ -16395,8 +16395,11 @@ async function renderDrafts(project, works) {
   }
   const drafts = r.body.drafts || [];
   const projectBase = "/api/projects/" + encodeURIComponent(project);
-  const preparedViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/prepared")));
-  if (preparedViews.some((v) => !v.ok)) {
+  // Состав согласования читается одним общим ответом на весь накопитель, а не
+  // запросом по каждой записи (DK-1623): при сотнях черновиков волна запросов
+  // по ID клала канал и посредника, и восстановление связи поднимало её заново.
+  const preparedAll = await api(projectBase + "/drafts/prepared");
+  if (!preparedAll.ok) {
     items.push({ key: "draft-prepared-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
   }
   // Тип записи словом для колонки типа: словарь типов принадлежит проекту, и
@@ -16409,10 +16412,10 @@ async function renderDrafts(project, works) {
   // строкой как на доске, подтверждение отметками (DK-1564, утверждённый
   // макет). Решённые в секцию не попадают: их номер уже принадлежит строке или
   // отказу.
-  for (const v of preparedViews) {
-    if (!v.ok || !v.body || !v.body.state) continue;
-    for (const p of (v.body.state.proposals || [])) {
-      if (!p.status) preparedRows.push({ view: v.body, task: p });
+  for (const v of (preparedAll.ok && preparedAll.body && preparedAll.body.views) || []) {
+    if (!v || !v.state) continue;
+    for (const p of (v.state.proposals || [])) {
+      if (!p.status) preparedRows.push({ view: v, task: p });
     }
   }
   preparedRows.sort((a, b) => draftNum({ id: preparedNumber(a.task) }) - draftNum({ id: preparedNumber(b.task) }));

@@ -2121,3 +2121,18 @@ func TestStaticDraftPreparedConfirmResult(t *testing.T) {
 		t.Fatalf("результат подтверждения: %v\n%s", err, out)
 	}
 }
+
+// Накопитель читает состав согласования одним общим ответом, а не запросом по
+// каждой записи (DK-1623): при сотнях черновиков волна запросов по ID клала
+// канал и посредника, и восстановление связи поднимало её заново. Стенд считает
+// обращения клиента к prepared-ручкам при двенадцати записях.
+func TestStaticDraftsPreparedSingleRequest(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftsbulk.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("общее чтение состава согласования: %v\n%s", err, out)
+	}
+}

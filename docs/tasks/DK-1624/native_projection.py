@@ -90,12 +90,31 @@ def _has_visible_content(record):
     return bool(_visible_blocks(content))
 
 
+def _question_matches_prompt(question):
+    """Стоит ли исходный вопрос у границы текста seed-журнала.
+
+    Клиент может дописать служебный текст и до, и после исходного вопроса:
+    в одной подписке prompt оказывается в конце, в другой в начале, а сам
+    prompt повторяется в служебном хвосте. Проверяется позиция у начала или
+    конца с пробельной границей после/до него, а не вхождение в середине
+    чужого текста. В проекцию всё равно едет только точный SEED_PROMPT.
+    """
+    if question == SEED_PROMPT:
+        return True
+    if question.startswith(SEED_PROMPT):
+        return question[len(SEED_PROMPT)].isspace()
+    if question.endswith(SEED_PROMPT):
+        return question[-len(SEED_PROMPT) - 1].isspace()
+    return False
+
+
 def load_seed(path, expected_uuid, expected_cwd):
     """Прочитать и проверить seed-журнал новой синтетической сессии.
 
     Проверки защищают чужие сессии от проекции: имя файла и sessionId
     совпадают с ожидаемым UUID, cwd один и равен ожидаемому, разговор это
-    ровно одна пара с фиксированным вопросом и ответом-маркером.
+    ровно одна пара с фиксированным вопросом у границы текста и
+    ответом-маркером. В проекцию едут только точные вопрос и маркер.
     """
     records = read_jsonl(path)
     if not records:
@@ -118,9 +137,9 @@ def load_seed(path, expected_uuid, expected_cwd):
             "разговор seed-журнала не одна пара, а %s" % shapes)
     question = _plain_text(
         (conversation[0].get("message") or {}).get("content"))
-    if question != SEED_PROMPT and not question.endswith(SEED_PROMPT):
+    if not _question_matches_prompt(question):
         raise ProjectionError(
-            "вопрос seed-журнала не заканчивается на %r" % SEED_PROMPT)
+            "вопрос seed-журнала не содержит %r у границы текста" % SEED_PROMPT)
     answer_content = (conversation[1].get("message") or {}).get("content")
     if SEED_ANSWER not in _plain_text(answer_content):
         raise ProjectionError(
@@ -130,9 +149,11 @@ def load_seed(path, expected_uuid, expected_cwd):
     if "version" not in meta:
         raise ProjectionError("у первой записи seed-журнала нет поля version")
     return {
-        # Точный вопрос без служебной приставки CLI к user-тексту.
+        # Точный вопрос без служебной приставки или хвоста клиента.
         "question": SEED_PROMPT,
-        "answer_blocks": _visible_blocks(answer_content),
+        # Ответ нормализован к одному маркеру: размышления и чужой текст
+        # в проекцию не едут.
+        "answer_blocks": [{"type": "text", "text": SEED_ANSWER}],
         "meta": meta,
         "cwd": expected_cwd,
     }

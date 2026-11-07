@@ -17825,7 +17825,7 @@ async function renderDraft(project, works, id) {
         afterChips: [reason].concat(resultBlocks, metaEditor ? [metaEditor] : []),
         // Поле мысли стоит после описания и оформлено как поле, а не как
         // белая сыпь над текстом записи (DK-1564, утверждённый макет).
-        extra: text.ok && !history ? [draftIdeaBox(project, id, locked)] : [],
+        extra: text.ok && !history && text.body.ideas_allowed ? [draftIdeaBox(project, id, locked)] : [],
         // Значок чата в шапке остаётся рабочим входом, пока на форме нет
         // подписанной кнопки чата: у разбора без прошедшей ходки и под идущим
         // разбором дверь одна, а у разобранной записи её закрывает «Чат

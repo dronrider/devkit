@@ -171,6 +171,27 @@ const visibleSlot = () => allByClass(sandbox.document.getElementById("cpin"), "c
  if (groomPosts().length !== 1 || !groomPosts()[0].path.includes("/XR-23/groom")) fail("повтор после ошибки не поднялся");
 }
 
+for (const [name, allowed, groomed, error] of [
+  ["raw", true, false, false], ["incomplete", true, true, false],
+  ["first-error", true, true, true], ["empty", false, true, false],
+  ["proposals", false, true, false], ["retry-error", false, true, true],
+]) {
+  Object.assign(drafts["XR-12"], {ideas_allowed:allowed,groomed,groom_error:error});
+  form.text = "Текст записи\n\n## Идеи\n\n- Прежняя мысль\n";
+  await go("#demo");
+  await go("#demo/draft/XR-12");
+  const groups = byId.get("groups");
+  if (allByClass(groups, "draft-idea").length !== Number(allowed)) fail("поле мысли в состоянии " + name);
+  if (!dump(groups).includes("Прежняя мысль")) fail("прежняя мысль не читается в " + name);
+  if (groomed) {
+    posts.length=0;
+    deepBtn(groups,"Чат разбора").handlers.click({stopPropagation:()=>{}});
+    await settle();
+    if (!String(sandbox.location.hash).endsWith("/chat/XR-12")) fail("потерян тот же чат " + name);
+    if (posts.some(p=>/\/(groom|say)$/.test(p.path))) fail("открытие чата запустило ход " + name);
+  }
+}
+
 posts.length = 0;
 for (const id of ["XR-20", "XR-21", "XR-22"]) sandbox.draftPickSet(id, true);
 await sandbox.draftGroomStart("demo", works, "", "", "");

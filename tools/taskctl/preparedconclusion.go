@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -26,17 +28,36 @@ func resolvePrepared(root, id string, record []byte, state draftproposal.State) 
 	return state, ""
 }
 
-func preparedConclusion(root string, state draftproposal.State) (string, error) {
+func preparedConclusion(root, source string, state draftproposal.State) (string, error) {
 	var lines []string
-	if text := strings.TrimSpace(state.Conclusion); text != "" {
-		lines = append(lines, text)
+	authored := strings.TrimSpace(state.Conclusion)
+	if authored != "" {
+		lines = append(lines, authored)
+	}
+	if len(state.Proposals) > 0 {
+		lines = append(lines, "### Состав разбора")
 	}
 	for _, p := range state.Proposals {
-		if p.Outcome == "add" {
-			continue
-		}
 		var action string
 		switch p.Outcome {
+		case "add":
+			number := p.BoardID
+			if number == "" && idRe.MatchString(p.ID) {
+				number = p.ID
+			}
+			label := number
+			if label == "" {
+				label = "задачу"
+			}
+			route := fmt.Sprintf("#%s/draft/%s/prepared/%s", filepath.Base(taskMainRoot(root)), source, p.ID)
+			if p.Status == "accepted" && p.Result != nil && len(p.Result.IDs) > 0 {
+				label = p.Result.IDs[0]
+				route = label
+			}
+			action = "Создать [" + label + "](" + route + ")"
+			if title := strings.TrimSpace(p.Title); title != "" {
+				action += " - " + title
+			}
 		case "attach":
 			action = "Приписать к " + p.Target
 		case "defer":
@@ -67,15 +88,19 @@ func preparedConclusion(root string, state draftproposal.State) (string, error) 
 		} else if p.Status == "rejected" {
 			action += " (отклонено)"
 		}
-		for _, text := range []string{p.Text, p.Reason, p.Rationale} {
+		details := []string{p.Text, p.Reason, p.Rationale}
+		if p.Outcome == "add" {
+			details = []string{p.Reason, p.Rationale}
+		}
+		if authored != "" {
+			details = nil
+		}
+		for _, text := range details {
 			if text = strings.TrimSpace(text); text != "" {
 				action += ". " + text
 			}
 		}
 		lines = append(lines, "- "+action)
-	}
-	if len(lines) == 0 && len(state.Proposals) > 0 {
-		lines = append(lines, "Предлагаю создать подготовленные задачи.")
 	}
 	return strings.Join(lines, "\n\n"), nil
 }

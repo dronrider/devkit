@@ -37,7 +37,7 @@ func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []
 			text += "\n\n" + s.Conclusion
 		}
 		for _, p := range s.Proposals {
-			if p.Outcome != "add" {
+			if p.Outcome != "add" || strings.Contains(s.Conclusion, "### Состав разбора") {
 				continue
 			}
 			title := p.Title
@@ -219,7 +219,7 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 				return "", err
 			}
 			if source.Conclusion != "" || state.Conclusion != "" {
-				conclusion, err := preparedConclusion(root, state)
+				conclusion, err := preparedConclusion(root, source.Source, state)
 				if err != nil {
 					return "", err
 				}

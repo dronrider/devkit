@@ -59,7 +59,7 @@ func preparedViewOf(root, id string, record []byte, state draftproposal.State) (
 		return preparedView{}, err
 	}
 	effective, reason := resolvePrepared(root, id, record, state)
-	conclusion, err := preparedConclusion(root, effective)
+	conclusion, err := preparedConclusion(root, id, effective)
 	if err != nil {
 		return preparedView{}, err
 	}

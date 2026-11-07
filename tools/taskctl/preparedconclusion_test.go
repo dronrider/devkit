@@ -368,3 +368,51 @@ func TestConclusionDeferPreservesSourcePrivacy(t *testing.T) {
 		})
 	}
 }
+
+func TestConclusionMixedLegacyIncludesPreparedTask(t *testing.T) {
+	root, _ := conclusionFixture(t)
+	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{
+		{ID: "p1", BoardID: "XR-016", Revision: 1, Outcome: "add", Title: "Убрать зеркало вопроса", Text: fixtureTaskBody},
+		{ID: "p2", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "Приписка к существующей задаче"},
+		{ID: "p3", Revision: 1, Outcome: "drop", Target: "XR-009", Reason: "Устарело"},
+		{ID: "p4", Revision: 1, Outcome: "drop", Target: "XR-010", Reason: "Дубликат"},
+	}}
+	if err := draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := collectDocs(root)
+	view := conclusionView(t, root)
+	link := "[XR-016](#" + filepath.Base(root) + "/draft/XR-008/prepared/p1)"
+	for _, want := range []string{"### Состав разбора", "Создать " + link + " - Убрать зеркало вопроса", "Приписать к XR-001", "XR-009", "XR-010", "Устарело", "Дубликат"} {
+		if !strings.Contains(view.Conclusion, want) {
+			t.Fatalf("состав не содержит %q: %s", want, view.Conclusion)
+		}
+	}
+	if strings.Contains(view.Conclusion, fixtureTaskBody) {
+		t.Fatal("в заключение попало полное описание задачи")
+	}
+	after, _ := collectDocs(root)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("чтение переписало старый разбор")
+	}
+	state.Conclusion = "Предлагаю убрать зеркало вопроса и приписать замечание к прежней задаче."
+	if err := draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+		t.Fatal(err)
+	}
+	view = conclusionView(t, root)
+	if !strings.HasPrefix(view.Conclusion, state.Conclusion+"\n\n### Состав разбора") || strings.Count(view.Conclusion, link) != 1 {
+		t.Fatalf("авторское заключение изменено или состав продублирован: %s", view.Conclusion)
+	}
+	if strings.Contains(view.Conclusion, "Приписка к существующей задаче") {
+		t.Fatal("пояснение операции повторено под авторским заключением")
+	}
+	state.Proposals[0].Status = "accepted"
+	state.Receipts = []draftproposal.Receipt{{Source: "XR-008", Proposal: "p1", Revision: 1, Outcome: "add", IDs: []string{"XR-016"}, Result: "XR-016 заведена"}}
+	if err := draftproposal.SavePrepared(root, "XR-008", state); err != nil {
+		t.Fatal(err)
+	}
+	view = conclusionView(t, root)
+	if !strings.Contains(view.Conclusion, "[XR-016](XR-016)") || strings.Contains(view.Conclusion, "/prepared/p1") {
+		t.Fatalf("принятая задача открывается без квитанции: %s", view.Conclusion)
+	}
+}

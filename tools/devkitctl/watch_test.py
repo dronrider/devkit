@@ -3062,6 +3062,46 @@ class EscalationJournalTest(ResumeHelpers, Stand):
                          "дерево испачкано эскалацией: %s%s"
                          % (status.stdout, self.git("diff").stdout))
 
+    def test_user_dirty_edit_stays_untouched(self):
+        # Незакоммиченная правка человека переживает эскалации побайтно:
+        # сторожок её не затирает и не дополняет своими строками, а дифф
+        # остаётся ровно тем, что внёс человек. Проверка чистоты дерева
+        # по-прежнему видит эту грязь и слияние затронутого файла не пускает.
+        task = self.task_file(body="- Разработка: идёт.\n")
+        self.git("init", "-q")
+        self.git("config", "user.email", "stand@devkit")
+        self.git("config", "user.name", "стенд")
+        self.git("add", "docs")
+        self.git("commit", "-qm", "DK-901 стенд")
+        task.write_text(task.read_text(encoding="utf-8")
+                        + "- Правка человека: жду ответа смежника.\n",
+                        encoding="utf-8")
+        diff = self.git("diff")
+        status = self.git("status", "--porcelain")
+        self.assertEqual(diff.returncode, 0, diff.stdout)
+        self.assertEqual(status.returncode, 0, status.stdout)
+        self.assertEqual(status.stdout, " M docs/tasks/DK-901.md\n",
+                         "стенд не создал пользовательскую грязь: %s" % status.stdout)
+        dirty_bytes = task.read_bytes()
+        failures = {"DK-901": "задача DK-901: слияние отказано: очередь занята"}
+        # Три тика: первый отказ молчит, второй заводит инцидент, третий
+        # доводит счётчик повтора.
+        for _ in range(3):
+            watch.pipeline_incidents(str(self.proj), "слияние", failures,
+                                     home=self.home, call=Fake())
+        self.assertEqual(task.read_bytes(), dirty_bytes,
+                         "эскалация тронула пользовательскую правку")
+        recs = self.incidents()
+        self.assertEqual(len(recs), 1, recs)
+        self.assertEqual(recs[0]["seen"], 2, recs)
+        after = (self.git("diff"), self.git("status", "--porcelain"))
+        self.assertEqual(after[0].returncode, 0, after[0].stdout)
+        self.assertEqual(after[1].returncode, 0, after[1].stdout)
+        self.assertEqual(after[0].stdout, diff.stdout,
+                         "эскалация дополнила пользовательский дифф")
+        self.assertEqual(after[1].stdout, status.stdout,
+                         "дерево изменилось сверх правки человека")
+
     def test_repeats_glue_into_one_incident(self):
         # Повторные тики, включая смену даты, оставляют один инцидент одной
         # остановки со счётчиком повторов, а не по строке на каждый тик.

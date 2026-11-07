@@ -15,7 +15,9 @@ try {
   const second = () => page.getByLabel('Подтвердить разбор XR-5', {exact:true});
   await first().waitFor(); await second().waitFor();
   assert.equal(await page.locator('.askfb input.caskpick').count(),2);
-  await page.locator('.askfb').filter({hasText:'устарело'}).waitFor();
+  await page.locator('.askfb').filter({hasText:'Удалить устаревший фрагмент и лишнее.'}).waitFor();
+  await page.locator('.askfb').getByText('Состав разбора',{exact:true}).first().waitFor();
+  assert.equal(await page.locator('.askfb li').filter({hasText:'Удалить материал'}).count(),3,'потеряны операции всего Ask');
   await page.locator('.askfb a[href="#demo/draft/XR-4"]').waitFor();
   assert.equal(await page.locator('.askfb a[href*="/prepared/"]').count(),0,'операции показаны ссылками задач');
   // Свободный текст остаётся обсуждением даже при ранее отмеченном согласии.

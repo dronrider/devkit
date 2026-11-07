@@ -55,3 +55,34 @@ const opsMarks=allByClass(opsFeed,"caskpick"); assert.equal(opsMarks.length,1);
 opsMarks[0].handlers.click(click);
 assert.equal(sandbox.proposalAnswer(opsPick.proposalDraft).decisions[0].proposal,"c");
 console.log('proposal whole source marks, conclusions, add-only links and persistence: ok');
+
+sandbox.chatFeedIn("worktree");
+const canonical=structuredClone(shown);
+canonical.sources=[canonical.sources[0]];
+canonical.sources[0].proposals[0].board_id="XR-16";
+canonical.sources[0].proposals[0].title="Первая задача";
+canonical.sources[0].proposals[1].board_id="XR-17";
+canonical.sources[0].proposals[1].title="Вторая задача";
+canonical.sources[0].conclusion="Предлагаю две задачи и приписку.\n\n### Состав разбора\n\n- Создать [XR-16](#worktree/draft/XR-1/prepared/a) - Первая задача\n\n- Создать [XR-17](#worktree/draft/XR-1/prepared/b) - Вторая задача\n\n- Приписать к XR-3";
+const canonicalAsk={...pick.ask,text:"Подготовил заключение разбора и задачи. Согласуй весь результат.",prepared:canonical};
+for (const existingMessage of [false,true]) {
+  const canonicalFeed=makeNode("div");
+  if (existingMessage) {
+    const msg=makeNode("div");msg.className="msg";
+    const bb=makeNode("div");bb.className="bb";
+    bb.append(sandbox.mdRender(canonicalAsk.text+"\n\n"+canonical.sources[0].conclusion,"worktree"));
+    msg.append(bb);canonicalFeed.append(msg);
+  }
+  const canonicalPick={addr:"canonical-"+existingMessage,on:true,ask:canonicalAsk};
+  sandbox.preparedPickWire(canonicalFeed,canonicalPick,canonical);
+  assert.equal(allByClass(canonicalFeed,"askfb").length,existingMessage?0:1,"канонический состав не распознан в реплике");
+  const links=canonicalFeed.querySelectorAll("a").filter(a=>String(a.href).includes("/prepared/"));
+  assert.deepEqual(links.map(a=>a.href).sort(),["#worktree/draft/XR-1/prepared/a","#worktree/draft/XR-1/prepared/b"],"дублируются ссылки задач в составе и fallback");
+  assert.deepEqual(links.map(a=>a.textContent).sort(),["XR-16","XR-17"],"вместо номера показан служебный ключ");
+  const whole=allByClass(canonicalFeed,"caskpick");assert.equal(whole.length,1);
+  whole[0].handlers.click(click);
+  const decisions=sandbox.proposalAnswer(canonicalPick.proposalDraft).decisions;
+  assert.equal(decisions.length,3,"состав Ask потерял add или attach");
+  assert.deepEqual(Array.from(decisions,d=>d.proposal).sort(),["a","b","internal-attach"]);
+}
+console.log("canonical prepared href matches actual widget and fallback without duplicate add links: ok");

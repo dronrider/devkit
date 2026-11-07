@@ -21500,6 +21500,11 @@ function preparedFlat(shown) {
   return out;
 }
 
+function preparedHasTaskLink(node, item) {
+  const suffix = "/draft/" + item.source + "/prepared/" + item.task.id;
+  return [...node.querySelectorAll("a")].some((link) => String(link.href || "").endsWith(suffix));
+}
+
 function preparedLineText(item, project) {
   return item.title + ": #" + project + "/draft/" + item.source + "/prepared/" + item.task.id;
 }
@@ -21565,14 +21570,17 @@ function preparedQuestionBlock(shown, project) {
   for (const source of shown.sources || []) {
     lines.push("Разбор " + source.source + ": #" + project + "/draft/" + source.source);
     if (source.conclusion) lines.push(source.conclusion);
-    for (const item of flat.filter((item) => item.source === source.source)) lines.push(preparedLineText(item, project));
+    const conclusion = mdRender(source.conclusion || "", project);
+    for (const item of flat.filter((item) => item.source === source.source)) {
+      if (!preparedHasTaskLink(conclusion, item)) lines.push(preparedLineText(item, project));
+    }
   }
   return { text: lines.join("\n\n"), options: [] };
 }
 
-// preparedMatchLines находит в реплике строки-ссылки задач. Строка узнаётся по
-// заголовку с двоеточием, ссылка в ней ведёт на экран задачи; полного текста
-// у абзаца может не быть из-за свёртки, поэтому сверяется начало строки.
+// preparedMatchLines находит задачи по prepared-ссылке в составе разбора.
+// Старые реплики распознаются также по заголовку с двоеточием; у свёрнутого
+// абзаца может остаться только начало строки.
 function preparedMatchLines(host, flat) {
   // Строка задачи бывает абзацем или пунктом списка, но выборка идёт двумя
   // звеньями порознь: селектор с перечислением не везде поддержан, и часть
@@ -21585,7 +21593,7 @@ function preparedMatchLines(host, flat) {
     for (const node of nodes) {
       if (used.has(node)) continue;
       const text = askPickText(node).replace(/\s+/g, " ").trim();
-      if (!text.startsWith(want)) continue;
+      if (!text.startsWith(want) && !preparedHasTaskLink(node, item)) continue;
       used.add(node);
       out.push({ line: node, item });
       break;

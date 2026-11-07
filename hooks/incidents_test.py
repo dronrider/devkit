@@ -81,6 +81,35 @@ class IncidentsTest(unittest.TestCase):
                                home=self.home, now=now)
         self.assertNotEqual(one, two)
 
+    def test_other_root_is_other_incident(self):
+        """Один и тот же ID задачи живёт в основном чекауте и в дереве ветки:
+        корень входит в ключ повтора, и чужому корню запись не склеивается,
+        а своему счётчик повторов доезжает (DK-1460)."""
+        one = incidents.report("DK-15", incidents.PROC_GONE, "мёртвый замок",
+                               root="/чекаут", home=self.home)
+        two = incidents.report("DK-15", incidents.PROC_GONE, "мёртвый замок",
+                               root="/дерево-ветки", home=self.home)
+        self.assertNotEqual(one, two)
+        again = incidents.report("DK-15", incidents.PROC_GONE, "мёртвый замок",
+                                 root="/чекаут", home=self.home)
+        self.assertEqual(again, one)
+        seen = {r["root"]: r["seen"]
+                for r in incidents.read(home=self.home)}
+        self.assertEqual(seen, {"/чекаут": 2, "/дерево-ветки": 1})
+
+    def test_repeat_write_failure_returns_empty(self):
+        """Отказ обновления повтора не притворяется успехом (DK-1460): пустой
+        возврат говорит об отказе журнала, а не о дошедшей эскалации."""
+        first = incidents.report("DK-16", incidents.PROC_GONE, "мёртвый замок",
+                                 home=self.home)
+        self.assertTrue(first)
+        path = self.path()
+        path.chmod(0o444)
+        self.addCleanup(path.chmod, 0o644)
+        again = incidents.report("DK-16", incidents.PROC_GONE, "мёртвый замок",
+                                 home=self.home)
+        self.assertEqual(again, "")
+
     def test_settle_keeps_first_outcome(self):
         ident = incidents.report("DK-5", incidents.PROC_GONE, "замок с мёртвым pid",
                                  home=self.home)

@@ -39,10 +39,11 @@ await openScreen("demo/draft/XR-9");
 {
   const board = byId.get("groups");
   const comp = allByClass(board, "comp").find((n) => dump(n).includes("Задачи разбора"));
-  if (!comp) fail("на экране записи нет карточки состава задач разбора");
-  if (!dump(comp).includes("Подготовленных задач нет")) fail("пустой состав не сказал об этом словами");
-  if (deepBtn(comp, "Подготовить вручную")) fail("ручная подготовка осталась на форме");
+  if (comp || allByClass(board, "draft-conclusion").length) fail("пустые результаты заняли место на форме без разбора");
+  if (deepBtn(board, "Подготовить вручную")) fail("ручная подготовка осталась на форме");
 }
+const lockedThought = sandbox.draftIdeaBox("demo", "XR-9", true);
+if (!byAria(lockedThought, "Мысль по записи")?.disabled || !deepBtn(lockedThought, "Оставить мысль")?.disabled) fail("у закрытой записи доступны мысль или отправка");
 await openScreen("demo/draft/XR-9/prepared/new/chat/XR-9");
 if (sandbox.location.hash !== "#demo/draft/XR-9/chat/XR-9") fail("старый new не вернул источник с чатом: " + sandbox.location.hash);
 if (deepBtn(byId.get("groups"), "Сохранить задачу")) fail("старый new открыл создание");

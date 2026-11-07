@@ -20,7 +20,36 @@ try {
     await page.locator("#groups .fbody").count(),
     await page.locator("#groups .dcard").filter({has:page.locator(".dhead",{hasText:"Заблокировано задачами"})}).count(),
   ];
-  const source = async (id) => { await open("draft/" + id); await page.getByText("Задачи разбора", { exact: true }).waitFor(); };
+  const source = async (id) => { await open("draft/" + id); await page.getByText("Описание", { exact: true }).waitFor({timeout:10000}); };
+  const blocks = async (results, stem) => {
+    const captions = results ? ["Заключение разбора", "Задачи разбора", "Описание", "Мысль по записи"] : ["Описание", "Мысль по записи"];
+    await page.getByText("Описание", {exact:true}).waitFor();
+    assert.deepEqual(await page.locator("#groups .draft-block > legend").allTextContents(), captions);
+    for (const width of [390,1440]) {
+      await page.setViewportSize({width,height:1000});
+      const measured = await page.locator("#groups .draft-block").evaluateAll(nodes=>nodes.map(box=>{
+        const style=getComputedStyle(box),rect=box.getBoundingClientRect(),legend=box.querySelector(":scope > legend"),cap=getComputedStyle(legend),lr=legend.getBoundingClientRect(),body=box.querySelector(":scope > .draft-block-body"),inner=getComputedStyle(body);
+        return {border:style.borderTopWidth,borderColor:style.borderTopColor,radius:style.borderTopLeftRadius,left:style.paddingLeft,right:style.paddingRight,bottom:style.paddingBottom,font:cap.font,captionColor:cap.color,captionInset:lr.left-rect.left,captionTop:lr.top-rect.top,captionHeight:lr.height,contentTop:inner.paddingTop,contentLeft:inner.paddingLeft,contentRight:inner.paddingRight,top:rect.top,end:rect.bottom};
+      }));
+      const {top,end,...reference}=measured[0];
+      assert.equal(reference.border,"1px"); assert.equal(reference.radius,"10px");
+      assert.equal(reference.contentTop,"8px");
+      assert.ok(reference.captionTop<=1 && reference.captionHeight>8,JSON.stringify(reference));
+      assert.ok(parseFloat(reference.left)>=12 && parseFloat(reference.bottom)>=12,JSON.stringify(reference));
+      for (const {top,end,...style} of measured) assert.deepEqual(style,reference);
+      const gaps=measured.slice(1).map((m,i)=>m.top-measured[i].end);
+      for (const gap of gaps) assert.ok(Math.abs(gap-16)<=1,JSON.stringify(gaps));
+      assert.equal(await page.locator(".draft-conclusion .chd,.draft-tasks .chd,.draft-conclusion .mdh").filter({hasText:/^(Заключение разбора|Задачи разбора)$/}).count(),0);
+      const thought=page.getByRole("textbox",{name:"Мысль по записи",exact:true});
+      assert.equal(await thought.evaluate(node=>getComputedStyle(node).borderTopWidth),"0px");
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth && document.querySelector("#groups").scrollWidth<=document.querySelector("#groups").clientWidth),true);
+      await page.locator(".draft-idea").scrollIntoViewIfNeeded();
+      await page.screenshot({path:join(evidence,stem+"-thought-"+width+".png"),fullPage:true});
+      await page.locator("#groups").evaluate(node=>{node.scrollTop=0;});
+      await page.screenshot({path:join(evidence,stem+"-"+width+".png"),fullPage:true});
+    }
+    await page.setViewportSize({width:390,height:844});
+  };
   const confirm = async (count) => {
     const btn = page.getByRole("button", { name: "Подтвердить разбор", exact: true });
     await btn.waitFor();
@@ -34,6 +63,35 @@ try {
     await page.waitForURL(/#demo\/drafts(\/chat\/|$)/);
     return body;
   };
+  await source("XR-011");
+  await blocks(false,"unprepared");
+  const sourceEditor=page.getByLabel("текст файла задачи XR-011",{exact:true});
+  const originalSource=await sourceEditor.inputValue();
+  await page.getByRole("button",{name:"Править запись",exact:true}).click();
+  assert.equal(await sourceEditor.isVisible(),true);
+  assert.equal(await sourceEditor.evaluate(node=>node.clientHeight>=innerHeight*.38-1),true);
+  await sourceEditor.fill(originalSource+"\nОтменённое дополнение");
+  await page.getByRole("button",{name:"Отменить правку",exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector(".draft-description textarea")?.hidden);
+  assert.equal(await sourceEditor.inputValue(),originalSource);
+  await page.getByRole("button",{name:"Режим чтения",exact:true}).click();
+  assert.equal(await page.locator(".draft-description.wide").count(),1);
+  assert.equal(await page.locator(".draft-idea").isVisible(),false);
+  await page.getByRole("button",{name:"Выйти из режима чтения",exact:true}).click();
+  assert.equal(await page.locator(".draft-idea").isVisible(),true);
+  const thought=page.getByRole("textbox",{name:"Мысль по записи",exact:true});
+  await thought.fill("Дополнение с клавиатуры");
+  await thought.press("Shift+Enter");
+  assert.equal(await thought.inputValue(),"Дополнение с клавиатуры\n");
+  const thoughtSaved=page.waitForResponse(r=>r.url().endsWith("/drafts/XR-011/ideas") && r.request().method()==="POST");
+  await thought.press("Enter");
+  assert.equal((await thoughtSaved).status(),200);
+  await page.waitForFunction(()=>document.querySelector(".draft-idea textarea")?.value==="" && !document.querySelector(".draft-idea button")?.disabled);
+  await thought.fill("Дополнение кнопкой");
+  const buttonSaved=page.waitForResponse(r=>r.url().endsWith("/drafts/XR-011/ideas") && r.request().method()==="POST");
+  await page.getByRole("button",{name:"Оставить мысль",exact:true}).click();
+  assert.equal((await buttonSaved).status(),200);
+  await page.waitForFunction(()=>document.querySelector(".draft-idea textarea")?.value==="" && !document.querySelector(".draft-idea button")?.disabled);
   await open("drafts");
   await page.locator("tr.secband .shead").filter({ hasText: "Согласовать заведение" }).waitFor();
   await page.locator("tr.secband .shead").filter({ hasText: "Разбор и оформление" }).waitFor();
@@ -47,6 +105,7 @@ try {
   await page.getByText("Задачи разбора", { exact: true }).waitFor();
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
   assert.equal(await page.locator("div.srow").count(), 0);
+  await blocks(true,"actions-only");
   await open("draft/XR-005/prepared/p1");
   await page.waitForURL(/#demo\/draft\/XR-005$/);
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
@@ -100,16 +159,7 @@ try {
   assert.ok((await conclusion.innerText()).includes("Создать " + mixedAdd.board_id + " - баг доставки ленты"));
   assert.ok((await conclusion.innerText()).includes("Приписать к XR-001"));
   assert.ok((await conclusion.innerText()).includes("XR-005") && (await conclusion.innerText()).includes("XR-007"));
-  for (const width of [390,1440]) {
-    await page.setViewportSize({width,height:1000});
-    const space = await conclusion.evaluate(box=>{
-      const style = getComputedStyle(box),body=box.querySelector(".md"),b=getComputedStyle(body);
-      return {top:parseFloat(style.marginTop),left:parseFloat(b.paddingLeft),right:parseFloat(b.paddingRight),bottom:parseFloat(b.paddingBottom),width:document.documentElement.scrollWidth,view:innerWidth};
-    });
-    assert.ok(space.top>=12 && space.left>=12 && space.right>=12 && space.bottom>=12,JSON.stringify(space));
-    assert.ok(space.width<=space.view,JSON.stringify(space));
-    await page.screenshot({path:join(evidence,"mixed-conclusion-"+width+".png"),fullPage:true});
-  }
+  await blocks(true,"mixed-conclusion");
   await page.setViewportSize({width:1440,height:1000});
   await open("draft/XR-010/chat/XR-010");
   await page.getByText("Заключение разбора",{exact:true}).waitFor();
@@ -178,15 +228,17 @@ try {
   await source("XR-008");
   await page.getByText("Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить.", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Подготовить вручную", exact: true }).count(),0);
+  await blocks(false,"empty-analysis");
   const emptyBefore = await (await context.request.get(base + "/api/projects/demo/drafts/XR-008/prepared")).json();
   await open("draft/XR-008/prepared/new/chat/XR-008");
   await page.waitForURL(/#demo\/draft\/XR-008\/chat\/XR-008$/);
-  await page.getByText("Задачи разбора",{exact:true}).waitFor();
+  await page.getByText("Описание",{exact:true}).waitFor();
   assert.equal(await page.getByRole("button",{name:"Сохранить задачу",exact:true}).count(),0);
   const emptyAfter = await (await context.request.get(base + "/api/projects/demo/drafts/XR-008/prepared")).json();
   assert.deepEqual(emptyAfter,emptyBefore,"исторический new создал или изменил подготовленный состав");
   await source("XR-009");
   await page.getByText("Не удалось разобрать запись. Можно повторить разбор.", { exact: true }).waitFor();
+  await blocks(false,"error-analysis");
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.setViewportSize({width:1440,height:1000});
   await source("XR-006"); await page.getByText("История разбора",{exact:true}).waitFor();

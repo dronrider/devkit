@@ -2015,7 +2015,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора", "богатая карточка"} {
+	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора", "богатая карточка", "ещё без разбора"} {
 		runTaskctl(t, e.proj, "draft", title)
 	}
 	for id, analysis := range map[string]string{"XR-008": "empty", "XR-009": "error"} {
@@ -2058,6 +2058,9 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := draftproposal.State{Version: 1, State: "active", Proposals: proposals}
+		if id == "XR-010" {
+			state.Conclusion = "## Заключение разбора\n\nПредлагаю исправить доставку ленты и убрать устаревшие записи."
+		}
 		if id != "XR-005" && id != "XR-010" {
 			state = completedLegacyPrepared(t, data, state)
 		}

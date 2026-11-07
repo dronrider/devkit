@@ -4740,6 +4740,15 @@ function mdRenderSections(text, project) {
   return box;
 }
 
+function formContentBlock(caption, kind) {
+  const block = el("fieldset", "dfield draft-block " + kind);
+  block.append(el("legend", "", caption));
+  const body = el("div", "draft-block-body");
+  block.append(body);
+  return { block, body };
+}
+
+
 // Блок постановки: по умолчанию просмотр разметки, правка по карандашу
 // (замечание 1 девятого круга POC). Сырой текст в поле ввода читается хуже
 // собранного: постановка длинная, со списками и таблицами, и глазами её берут
@@ -4747,15 +4756,18 @@ function mdRenderSections(text, project) {
 // CSP дашборда не пускает, а тащить библиотеку ради шести правил незачем.
 // Текст в дерево кладётся только узлами (createTextNode), никакого innerHTML,
 // поэтому угловые скобки из постановки остаются текстом и разметкой не станут.
-function filePanel(project, id, detail, form, touch, edit, canMake) {
-  const card = el("div", "card fpanel");
+
+function filePanel(project, id, detail, form, touch, edit, canMake, caption) {
+  const content = caption ? formContentBlock(caption, "draft-description fpanel") : null;
+  const card = content ? content.block : el("div", "card fpanel");
   const head = el("div", "fhead");
   // Путь файла постановки в шапке блока не нужен: человек читает описание, а
   // не разбирается, где оно лежит (замечание 12). Шапка остаётся ради кнопки
   // «Завести файл» у задачи без постановки.
   head.append(el("span", "gap"));
-  const body = el("div", "fbody");
-  card.append(body);
+  const body = content ? content.body : el("div", "fbody");
+  body.classList.add("fbody");
+  if (!content) card.append(body);
   // Шапка встаёт в разметку только с живой кнопкой: после переезда карандаша,
   // чтения и действий в командную панель у задачи с файлом в ней не осталось
   // ничего, и над описанием стояла пустая полоса с разделителем. Прятать её
@@ -5691,7 +5703,7 @@ function formPage(cfg) {
   const grid = el("div", "tgrid");
   if (has.file || has.deps) page.append(grid);
   if (has.file) {
-    file = filePanel(cfg.project, cfg.id, cfg.detail || {}, form, touch, edit, has.make);
+    file = filePanel(cfg.project, cfg.id, cfg.detail || {}, form, touch, edit, has.make, cfg.fileCaption);
     // Кнопка в углу развёрнутого описания и кнопка в строке статуса это один
     // переключатель: нажатая любая из них возвращает страницу в обычный вид.
     file.onWideOff = () => { setRead(false); };
@@ -17215,19 +17227,13 @@ async function confirmDraftPrepared(projectBase, views) {
   return result.ok;
 }
 
-// draftIdeaBox это поле «Мысль по записи» под описанием (DK-1469, решение 3):
-// человек пишет текстом мысль, она ложится датированным пунктом в раздел
-// «Идеи» записи, а судьбу пункту приписывает грумер на разборе. Оформлено тем
-// же тёмным полем с подписью в грани рамки, что и прочие поля форм, и стоит
-// одной строкой с кнопкой (DK-1564, утверждённый макет).
 function draftIdeaBox(project, id, locked) {
-  const box = el("section", "draft-idea");
-  const frame = el("fieldset", "dfield");
-  frame.append(el("span", "", "Мысль по записи"));
-  const input = el("input");
+  const { block: box, body } = formContentBlock("Мысль по записи", "draft-idea");
+  const input = el("textarea");
+  input.rows = 3;
+  input.setAttribute("aria-label", "Мысль по записи");
   input.placeholder = "напишите мысль, не заходя в разбор";
   input.disabled = locked;
-  frame.append(input);
   const send = el("button", "btn", "Оставить мысль");
   send.type = "button";
   send.disabled = locked;
@@ -17243,9 +17249,11 @@ function draftIdeaBox(project, id, locked) {
   };
   send.addEventListener("click", () => { put().catch(console.error); });
   input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") { ev.preventDefault(); put().catch(console.error); }
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); put().catch(console.error); }
   });
-  box.append(frame, send);
+  const footer = el("div", "draft-idea-footer");
+  footer.append(send);
+  body.append(input, footer);
   return box;
 }
 
@@ -17333,38 +17341,30 @@ function preparedSrow(project, draftId, task) {
   return row;
 }
 
-// draftPreparedComp это состав задач разбора на экране записи (DK-1564,
-// утверждённый макет): карточка состава тем же видом, что задачи цели, стоит
-// над описанием. Актуальные задачи видны сразу, решённые сворачиваются, а
-// пустой состав сообщает, что агент не подготовил задач.
 function draftConclusion(project, view) {
   const text = String(view && view.conclusion || "");
-  const box = el("div", "card comp draft-conclusion");
-  if (!text) { box.hidden = true; return box; }
-  const head = el("div", "chd");
-  head.append(el("b", "", "Заключение разбора"));
-  box.append(head, mdRender(text, project));
-  return box;
+  const { block, body } = formContentBlock("Заключение разбора", "draft-conclusion");
+  const rendered = mdRender(text, project);
+  const heading = rendered.firstElementChild;
+  if (heading && heading.classList.contains("mdh") && heading.textContent.trim() === "Заключение разбора") heading.remove();
+  body.append(rendered);
+  return block;
 }
 
 function draftPreparedComp(project, view) {
-  const card = el("div", "card comp");
-  const head = el("div", "chd");
-  head.append(el("b", "", "Задачи разбора"));
+  const { block: card, body } = formContentBlock("Задачи разбора", "draft-tasks comp");
   const state = view && view.state || {};
   const tasks = (Array.isArray(state.proposals) ? state.proposals : []).filter((p) => p.outcome === "add");
   const live = tasks.filter((t) => !t.status);
   const done = tasks.filter((t) => t.status);
   const id = view && view.id || "";
-  if (live.length) head.append(el("span", "cnt", live.length + " на согласовании"));
-  card.append(head);
   if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
       state.analysis === "empty" ? "Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить." : "Подготовленных задач нет";
-    card.append(el("div", "empty", message));
+    body.append(el("div", "empty", message));
     return card;
   }
-  for (const task of live) card.append(preparedSrow(project, id, task));
+  for (const task of live) body.append(preparedSrow(project, id, task));
   if (done.length) {
     const fold = el("div", "more", "Ещё " + done.length + " " +
       plural(done.length, "решённая задача", "решённые задачи", "решённых задач"));
@@ -17377,7 +17377,7 @@ function draftPreparedComp(project, view) {
         ? "Ещё " + done.length + " " + plural(done.length, "решённая задача", "решённые задачи", "решённых задач")
         : "Свернуть решённые";
     });
-    card.append(fold, box);
+    body.append(fold, box);
   }
   return card;
 }
@@ -17758,6 +17758,15 @@ async function renderDraft(project, works, id) {
         actions.push(groom);
       }
       const prepared = preparedResult.ok ? preparedResult.body : null;
+      const hasResults = prepared && (String(prepared.conclusion || "").trim() ||
+        (prepared.state && (prepared.state.proposals || []).length));
+      const resultBlocks = hasResults ? [draftConclusion(project, prepared), draftPreparedComp(project, prepared)] : [];
+      const analysis = prepared && prepared.state && prepared.state.analysis;
+      if (!hasResults && (analysis === "empty" || analysis === "error")) {
+        resultBlocks.push(el("div", "hint", analysis === "error"
+          ? "Не удалось разобрать запись. Можно повторить разбор."
+          : "Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить."));
+      }
       const pending = prepared && prepared.state && (prepared.state.proposals || []).some((p) => !p.status);
       let accepting = false;
       const accept = !history && pending ? barBtn("btn btn-acc", "Подтвердить разбор", "i-done") : null;
@@ -17812,8 +17821,8 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        afterChips: [reason, draftConclusion(project, prepared), draftPreparedComp(project, prepared)]
-          .concat(metaEditor ? [metaEditor] : []),
+        fileCaption: "Описание",
+        afterChips: [reason].concat(resultBlocks, metaEditor ? [metaEditor] : []),
         // Поле мысли стоит после описания и оформлено как поле, а не как
         // белая сыпь над текстом записи (DK-1564, утверждённый макет).
         extra: text.ok && !history ? [draftIdeaBox(project, id, locked)] : [],

@@ -913,7 +913,6 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* состав цели сабтасками и накопитель черновиков (макет «06 Цель»): шапка со
    счётчиками и полосой прогресса, строки задач под ней */
 .comp{margin-top:14px}
-.draft-conclusion > .md{padding:var(--sp2) var(--sp4) var(--sp4)}
 .chd{display:flex;align-items:center;gap:var(--sp3);padding:var(--sp3) var(--sp4) var(--sp2);flex-wrap:wrap}
 .chd b{font:600 13px var(--sans);color:var(--tx)}
 .chd .cnt{font:500 12px var(--mono);color:var(--tx3)}
@@ -978,19 +977,13 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
 .dwhyin{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
-/* подготовленные задачи записи и мысль по записи (DK-1564): секции под
-   текстом записи, задача строкой с рамкой и дорогой на свой экран, мысль
-   полем с кнопкой в один ряд */
-.draft-prepared,.draft-idea{margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
-.draft-prepared h2,.draft-idea h2{margin:0;font:600 11px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
-.draft-prepared > p,.draft-idea > p{margin:0;font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
+/* Подготовленные задачи записи (DK-1564). */
+.draft-prepared{margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.draft-prepared h2{margin:0;font:600 11px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
+.draft-prepared > p{margin:0;font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
 .draft-prepared-task{display:flex;flex-direction:column;gap:6px;align-items:flex-start;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1)}
 .draft-prepared-task p{margin:0;font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
-.draft-idea{flex-direction:row;flex-wrap:wrap}
-.draft-idea .dfield{flex:1 1 240px;display:block;padding:0 12px}
-.draft-idea .dfield span{display:block;padding:9px 0 2px;font:500 11.5px var(--sans);color:var(--tx3)}
-.draft-idea .dfield input,.dfield input{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans)}
-.draft-idea .btn{flex:0 0 auto}
+.dfield input{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans)}
 
 /* Экран подготовленной задачи (DK-1564, провал приёмки 2026-11-05): чтение по
    стандарту форм DK-1438, правка отдельным режимом. Короткие свойства правки
@@ -1134,6 +1127,20 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .dfield legend{padding:0 6px;margin-left:2px;font:500 11.5px var(--sans);color:var(--tx3)}
 .dfield textarea{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans);white-space:pre-wrap}
 .dfield textarea.tbig{min-height:108px}
+.draft-block{margin:var(--sp4) 0 0;padding:0 var(--sp4) var(--sp3)}
+.draft-block > .draft-block-body{min-width:0;padding:var(--sp2) 0 0}
+.draft-block.draft-description{margin:0}
+.draft-description .fbody textarea{min-height:44vh;font:400 12.5px/1.7 var(--mono);resize:vertical}
+.tgrid:has(> .draft-description){margin-top:var(--sp4)}
+.draft-tasks .srow{padding:3px 0;min-height:0;border:0}
+.draft-tasks .empty{padding:0;text-align:left}
+.draft-idea textarea{min-height:69px;resize:vertical}
+.draft-idea-footer{display:flex;justify-content:flex-end;margin-top:10px}
+@media(max-width:900px){
+  .draft-block{padding:0 var(--sp3) var(--sp3)}
+  .draft-idea textarea{font-size:16px}
+  .draft-description .fbody textarea{min-height:38vh}
+}
 .dfield:focus-within{border-color:var(--acc)}
 .dfield.err{border-color:var(--block)}
 .dfield.err legend{color:var(--block)}

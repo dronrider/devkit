@@ -55,10 +55,8 @@ mkdir "$lock" 2>/dev/null || exit 0
         # разделяет записи, и по журналу видно всю цепочку отказов, а не
         # только последний (DK-457, инцидент 19.08 разбирался три захода
         # именно потому, что журнал перезаписывался и след того дня стёрся).
-        # Строки записи сперва собираются в переменную, файл получает их
-        # одним вызовом printf. Несколько записей подряд в открытый файл
-        # читатель мог застать на середине: отбивку без тела следом (находка
-        # ревью на прогоне под нагрузкой, DK-457).
+        # Даже один printf может писать по строкам. Читатель получает
+        # готовый снимок журнала только после замены соседнего файла.
         record=$({
             printf -- '---\n'
             date '+%Y-%m-%dT%H:%M:%S'
@@ -66,15 +64,33 @@ mkdir "$lock" 2>/dev/null || exit 0
             printf '%s\n' "$out"
             echo "код возврата: $code"
         } 2>&1)
-        printf '%s\n' "$record" >> "$log" 2>/dev/null
-        if [ -f "$log" ]; then
-            size=$(wc -c <"$log" 2>/dev/null)
-            set -- $size
-            size=${1:-0}
-            if [ "${size:-0}" -gt "$log_limit" ] 2>/dev/null; then
-                tail -n "$log_keep" "$log" >"$log.tmp" 2>/dev/null && mv "$log.tmp" "$log" 2>/dev/null
+        publish_journal() (
+            failed() {
+                printf '%s\n' "ошибка записи журнала: $1" >"$dir/quota-refresh.error" 2>/dev/null
+                exit 1
+            }
+            stage=$(mktemp -d "$dir/quota-refresh.XXXXXX") || failed подготовка
+            trap 'rm -f "$stage/journal" "$stage/capped"; rmdir "$stage"' 0
+            if [ -f "$log" ]; then
+                tail -n +1 "$log" >"$stage/journal" || failed чтение
+            else
+                : >"$stage/journal" || failed подготовка
             fi
-        fi
+            printf '%s\n' "$record" >>"$stage/journal" || failed запись
+            size=$(wc -c <"$stage/journal") || failed размер
+            set -- $size
+            case "${1:-}" in
+            ''|*[!0-9]*) failed размер ;;
+            esac
+            if [ "$1" -gt "$log_limit" ]; then
+                tail -n "$log_keep" "$stage/journal" >"$stage/capped" || failed обрезка
+                mv "$stage/capped" "$stage/journal" || failed обрезка
+            fi
+            [ ! -d "$log" ] || failed публикация
+            mv "$stage/journal" "$log" || failed публикация
+            rm -f "$dir/quota-refresh.error"
+        )
+        publish_journal
     fi
     rmdir "$lock" 2>/dev/null
 } </dev/null >/dev/null 2>&1 &

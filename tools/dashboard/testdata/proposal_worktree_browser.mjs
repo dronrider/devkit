@@ -8,6 +8,8 @@ try {
   assert.equal((await context.request.post(base+'/api/login',{data:{token}})).status(),200);
   const prepared = await (await context.request.get(base+'/__worktree?mode=state')).json();
   const key = prepared.key;
+  const number = prepared.number;
+  assert.match(number,/^XR-\d+$/);
   const page = await context.newPage();
   await page.goto(base+'/#demo/chat/'+sid);
   // Вопрос согласования короткий: тел задач в чате нет, каждая задача это
@@ -19,7 +21,12 @@ try {
   assert.ok(!text.includes('веточный результат'));
   assert.ok(!text.includes('## DoD'));
   assert.ok(text.includes('Результат'));
-  assert.ok(text.includes('Предлагаю создать подготовленные задачи.'));
+  await page.locator('.askfb').getByText('Состав разбора',{exact:true}).waitFor();
+  const creation=page.locator('.askfb li').filter({hasText:'Создать '+number+' - Результат'});
+  assert.equal(await creation.count(),1,text);
+  const taskLink=creation.locator('a[href$="/draft/XR-4/prepared/'+key+'"]');
+  assert.equal(await taskLink.innerText(),number);
+  assert.equal(await page.locator('.askfb a[href*="/prepared/"]').count(),1);
   await page.locator('.askfb a[href$="/draft/XR-4"]').waitFor();
   assert.equal(await page.locator('.askfb input.caskpick').count(),1);
   await page.locator('.askfb a[href$="/draft/XR-4/prepared/'+key+'"]').waitFor();

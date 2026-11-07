@@ -193,7 +193,7 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 				rows = strings.Count(string(board), "| "+receipt.IDs[0]+" |")
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"key": state.Proposals[0].ID, "status": state.Proposals[0].Status, "mainUnchanged": string(main) == before, "oldCarrier": old, "otherCarrier": len(otherLines) > 0, "rows": rows})
+			json.NewEncoder(w).Encode(map[string]any{"key": state.Proposals[0].ID, "number": state.Proposals[0].BoardID, "status": state.Proposals[0].Status, "mainUnchanged": string(main) == before, "oldCarrier": old, "otherCarrier": len(otherLines) > 0, "rows": rows})
 		default:
 			http.Error(w, "mode", 400)
 		}

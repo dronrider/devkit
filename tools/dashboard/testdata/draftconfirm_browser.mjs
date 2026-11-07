@@ -21,8 +21,8 @@ try {
     await page.locator("#groups .dcard").filter({has:page.locator(".dhead",{hasText:"Заблокировано задачами"})}).count(),
   ];
   const source = async (id) => { await open("draft/" + id); await page.getByText("Описание", { exact: true }).waitFor({timeout:10000}); };
-  const blocks = async (results, stem) => {
-    const captions = results ? ["Заключение разбора", "Задачи разбора", "Описание", "Мысль по записи"] : ["Описание", "Мысль по записи"];
+  const blocks = async (results, stem, ideas = !results) => {
+    const captions = (results ? ["Заключение разбора", "Задачи разбора", "Описание"] : ["Описание"]).concat(ideas ? ["Мысль по записи"] : []);
     await page.getByText("Описание", {exact:true}).waitFor();
     assert.deepEqual(await page.locator("#groups .draft-block > legend").allTextContents(), captions);
     for (const width of [390,1440]) {
@@ -41,10 +41,13 @@ try {
       for (const gap of gaps) assert.ok(Math.abs(gap-16)<=1,JSON.stringify(gaps));
       assert.equal(await page.locator(".draft-conclusion .chd,.draft-tasks .chd,.draft-conclusion .mdh").filter({hasText:/^(Заключение разбора|Задачи разбора)$/}).count(),0);
       const thought=page.getByRole("textbox",{name:"Мысль по записи",exact:true});
-      assert.equal(await thought.evaluate(node=>getComputedStyle(node).borderTopWidth),"0px");
+      assert.equal(await thought.count(), Number(ideas));
+      if (ideas) assert.equal(await thought.evaluate(node=>getComputedStyle(node).borderTopWidth),"0px");
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth && document.querySelector("#groups").scrollWidth<=document.querySelector("#groups").clientWidth),true);
-      await page.locator(".draft-idea").scrollIntoViewIfNeeded();
-      await page.screenshot({path:join(evidence,stem+"-thought-"+width+".png"),fullPage:true});
+      if (ideas) {
+        await page.locator(".draft-idea").scrollIntoViewIfNeeded();
+        await page.screenshot({path:join(evidence,stem+"-thought-"+width+".png"),fullPage:true});
+      }
       await page.locator("#groups").evaluate(node=>{node.scrollTop=0;});
       await page.screenshot({path:join(evidence,stem+"-"+width+".png"),fullPage:true});
     }
@@ -106,6 +109,13 @@ try {
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
   assert.equal(await page.locator("div.srow").count(), 0);
   await blocks(true,"actions-only");
+  const oldSource = await (await context.request.get(base + "/api/projects/demo/drafts/XR-005")).json();
+  const oldPrepared = await (await context.request.get(base + "/api/projects/demo/drafts/XR-005/prepared")).json();
+  const staleThought = await context.request.post(base + "/api/projects/demo/drafts/XR-005/ideas", {data:{text:"Замечание из устаревшей формы"}});
+  assert.equal(staleThought.status(),400);
+  assert.match(await staleThought.text(),/Чате разбора/);
+  assert.deepEqual(await (await context.request.get(base + "/api/projects/demo/drafts/XR-005")).json(),oldSource);
+  assert.deepEqual(await (await context.request.get(base + "/api/projects/demo/drafts/XR-005/prepared")).json(),oldPrepared);
   await open("draft/XR-005/prepared/p1");
   await page.waitForURL(/#demo\/draft\/XR-005$/);
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
@@ -228,7 +238,7 @@ try {
   await source("XR-008");
   await page.getByText("Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить.", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Подготовить вручную", exact: true }).count(),0);
-  await blocks(false,"empty-analysis");
+  await blocks(false,"empty-analysis",false);
   const emptyBefore = await (await context.request.get(base + "/api/projects/demo/drafts/XR-008/prepared")).json();
   await open("draft/XR-008/prepared/new/chat/XR-008");
   await page.waitForURL(/#demo\/draft\/XR-008\/chat\/XR-008$/);

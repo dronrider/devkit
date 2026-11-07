@@ -53,7 +53,7 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 		// такой обход пропускает (DK-904).
 		body += "  " + tmuxNoServer + ";;\n"
 	} else {
-		body += fmt.Sprintf("  if [ -f %q ] && [ -f %q ]; then %s; fi\n  printf '%%s' '%s';;\n",
+		body += fmt.Sprintf("  if [ -f %q ] && [ -f %q ]; then %s; fi\n  printf '%%b' '%s';;\n",
 			sendGoneKnob(logPath), sendGoneMark(logPath), tmuxNoServer, sessions)
 	}
 	body += fmt.Sprintf("send-keys)\n  if [ -f %q ]; then"+

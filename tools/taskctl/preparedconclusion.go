@@ -29,15 +29,26 @@ func resolvePrepared(root, id string, record []byte, state draftproposal.State) 
 }
 
 func preparedConclusion(root, source string, state draftproposal.State) (string, error) {
+	return preparedConclusionProjection(root, source, state, false)
+}
+
+func preparedLegacyConclusion(root, source string, state draftproposal.State) (string, error) {
+	return preparedConclusionProjection(root, source, state, true)
+}
+
+func preparedConclusionProjection(root, source string, state draftproposal.State, legacy bool) (string, error) {
 	var lines []string
 	authored := strings.TrimSpace(state.Conclusion)
 	if authored != "" {
 		lines = append(lines, authored)
 	}
-	if len(state.Proposals) > 0 {
+	if !legacy && len(state.Proposals) > 0 {
 		lines = append(lines, "### Состав разбора")
 	}
 	for _, p := range state.Proposals {
+		if legacy && p.Outcome == "add" {
+			continue
+		}
 		var action string
 		switch p.Outcome {
 		case "add":
@@ -92,7 +103,7 @@ func preparedConclusion(root, source string, state draftproposal.State) (string,
 		if p.Outcome == "add" {
 			details = []string{p.Reason, p.Rationale}
 		}
-		if authored != "" {
+		if !legacy && authored != "" {
 			details = nil
 		}
 		for _, text := range details {
@@ -101,6 +112,9 @@ func preparedConclusion(root, source string, state draftproposal.State) (string,
 			}
 		}
 		lines = append(lines, "- "+action)
+	}
+	if legacy && len(lines) == 0 && len(state.Proposals) > 0 {
+		lines = append(lines, "Предлагаю создать подготовленные задачи.")
 	}
 	return strings.Join(lines, "\n\n"), nil
 }

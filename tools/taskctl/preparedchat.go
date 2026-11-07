@@ -218,23 +218,18 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 			if err != nil {
 				return "", err
 			}
-			if source.Conclusion != "" || state.Conclusion != "" {
-				conclusion, err := preparedConclusion(root, source.Source, state)
-				if err != nil {
-					return "", err
-				}
-				if source.Conclusion != conclusion {
-					return "", fmt.Errorf("%s: показанное заключение изменилось", source.Source)
-				}
-			}
+
+			compared := state
+			compared.Proposals = append([]draftproposal.Proposal(nil), state.Proposals...)
 			var cards []draftproposal.Proposal
-			for _, p := range state.Proposals {
+			for i, p := range compared.Proposals {
 				if p.Status == "" {
 					p.Text = ""
 					if matches && basis != source.Basis {
 						for _, old := range source.Proposals {
 							if old.ID == p.ID && old.BoardID == "" {
 								p.BoardID = ""
+								compared.Proposals[i].BoardID = ""
 							}
 						}
 					}
@@ -243,6 +238,23 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 			}
 			if !matches || !reflect.DeepEqual(cards, source.Proposals) {
 				return "", fmt.Errorf("%s: показанные задачи изменились", source.Source)
+			}
+			if source.Conclusion != "" || state.Conclusion != "" {
+				conclusion, err := preparedConclusion(root, source.Source, compared)
+				if err != nil {
+					return "", err
+				}
+				if source.Conclusion != conclusion {
+					// Старое представление допустимо только после проверки тех же входов
+					// и нормализации номера по служебному переходу adopt.
+					legacy, err := preparedLegacyConclusion(root, source.Source, compared)
+					if err != nil {
+						return "", err
+					}
+					if source.Conclusion != legacy {
+						return "", fmt.Errorf("%s: показанное заключение изменилось", source.Source)
+					}
+				}
 			}
 		}
 		data, err := json.Marshal(req)

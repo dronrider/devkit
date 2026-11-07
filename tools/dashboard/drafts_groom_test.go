@@ -405,12 +405,14 @@ func TestDraftIdeaThroughRealTaskctl(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVKIT_HOME", kit)
-	if err = draftproposal.SavePrepared(st.e.proj, "XR-4", draftproposal.State{Version: 1, State: "active", Analysis: "empty"}); err != nil {
-		t.Fatal(err)
+	if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
+		writeScript(t, st.e.bin, "taskctl", "exec "+shQuote(st.bin)+" \"$@\"")
 	}
-	phrase := "После разбора добавить доступ к исходнику"
+	base := draftThoughtsServer(t, st.e)
+	url := base + "/api/projects/demo/drafts/XR-4"
+	phrase := "До разбора добавить доступ к исходнику"
 	payload, _ := json.Marshal(map[string]string{"text": phrase})
-	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/drafts/XR-4/ideas", string(payload))
+	resp := doReq(t, st.c, "POST", url+"/ideas", string(payload))
 	output := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("CLI записал мысль, но API ответил ошибкой: %d %s", resp.StatusCode, output)
@@ -423,12 +425,30 @@ func TestDraftIdeaThroughRealTaskctl(t *testing.T) {
 	if err != nil || strings.Count(string(data), phrase) != 1 {
 		t.Fatalf("мысль не записана ровно один раз: %s %v", data, err)
 	}
-	resp = doReq(t, st.c, "GET", st.e.srv.URL+"/api/projects/demo/drafts/XR-4", "")
+	resp = doReq(t, st.c, "GET", url, "")
 	var detail map[string]any
 	if err = json.Unmarshal([]byte(body(t, resp)), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail["ideas_undecided"] != float64(1) || detail["groomed"] != true {
-		t.Fatalf("новый повод после записи мысли не виден: %v", detail)
+	if detail["ideas_undecided"] != float64(1) || detail["groomed"] != false || detail["ideas_allowed"] != true {
+		t.Fatalf("мысль сырого черновика не видна: %v", detail)
+	}
+	if !strings.Contains(detail["text"].(string), phrase) {
+		t.Fatalf("сохранённая мысль не читается: %v", detail)
+	}
+	if err = draftproposal.SavePrepared(st.e.proj, "XR-4", draftproposal.State{Version: 1, State: "active", Analysis: "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	preparedPath := draftproposal.PreparedPath(st.e.proj, "XR-4")
+	beforePrepared := readFile(t, preparedPath)
+	boardPath := filepath.Join(st.e.proj, "docs", "TASKS.md")
+	beforeBoard := readFile(t, boardPath)
+	resp = doReq(t, st.c, "POST", url+"/ideas", `{"text":"Замечание после успешного пустого разбора"}`)
+	output = body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(output, "Чате разбора") {
+		t.Fatalf("мысль после результата: %d %s", resp.StatusCode, output)
+	}
+	if readFile(t, st.path) != string(data) || readFile(t, preparedPath) != beforePrepared || readFile(t, boardPath) != beforeBoard {
+		t.Fatal("отказ после результата изменил исходник, комплект или доску")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
 const draftIdeasHeading = "## Идеи"
@@ -82,6 +84,14 @@ func cmdDraftIdea(root, id, text string, c CommitOpts) (string, error) {
 	t, err := loadDraftText(d.Path)
 	if err != nil {
 		return "", err
+	}
+	record := []byte(strings.Join(t.lines, "\n"))
+	state, err := draftproposal.Load(root, id, record)
+	if err != nil {
+		return "", err
+	}
+	if draftproposal.HasGroomResult(record, state) {
+		return "", fmt.Errorf("%s: результаты разбора сохранены; оставьте замечание в «Чате разбора» этой записи", id)
 	}
 	t.addIdea("- " + timeNow().Format(draftDateLayout) + ": " + text)
 	if err := t.save(); err != nil {

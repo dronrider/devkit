@@ -252,9 +252,7 @@ func TestConclusionModernIncompleteAndNewIdeasRemainBlocked(t *testing.T) {
 	if err = draftproposal.SavePrepared(root, view.ID, state); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = cmdDraftIdea(root, view.ID, "Новая неразобранная мысль", CommitOpts{}); err != nil {
-		t.Fatal(err)
-	}
+	writeSavedDraftIdea(t, root, view.ID, "Новая неразобранная мысль")
 	view = conclusionView(t, root)
 	if view.Ready {
 		t.Fatal("legacy с новыми мыслями стал готов")

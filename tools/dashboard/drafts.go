@@ -397,6 +397,8 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	// чата разбора отличает первый разбор, повторный повод и просто разговор.
 	ideasTotal, ideasUndecided := draftideas.Count(text)
 	groomed := draftGroomed(found.Path, id, text)
+	state, stateErr := draftproposal.Load(found.Path, id, text)
+	ideasAllowed := stateErr == nil && !draftproposal.HasGroomResult(text, state)
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Грумить»,
 	// и подсказка на ней читает то же поле, что и строка накопителя. Оба
 	// исхода едут сразу, order на «грумить» и orderRun на «выполнить»
@@ -411,7 +413,7 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		"hash": draftHash(text),
 		// Мысли и разбор теми же полями, что и у отказа повтора: экрану
 		// достаточно пары чисел и признака, текст пунктов он уже вёз.
-		"ideas_total": ideasTotal, "ideas_undecided": ideasUndecided, "groomed": groomed, "groom_error": draftGroomError(found.Path, id, text)}
+		"ideas_total": ideasTotal, "ideas_undecided": ideasUndecided, "ideas_allowed": ideasAllowed, "groomed": groomed, "groom_error": draftGroomError(found.Path, id, text)}
 	// И ожидание разговора тем же полем: кнопка чата груминга на экране записи
 	// помечает его так же, как строка накопителя.
 	if wait, ok := askWaiting(found.Path, id, s.now()); ok {

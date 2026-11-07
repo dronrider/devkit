@@ -170,9 +170,7 @@ func TestBundleReadinessAndStaleRevision(t *testing.T) {
 	if _, err = cmdDraftPreparedConfirm(root, data, CommitOpts{}); err == nil {
 		t.Fatal("stale request accepted")
 	}
-	if _, err = cmdDraftIdea(root, view.ID, "ещё не разобрано", CommitOpts{}); err != nil {
-		t.Fatal(err)
-	}
+	writeSavedDraftIdea(t, root, view.ID, "ещё не разобрано")
 	record, state, _ := readPrepared(root, view.ID)
 	if reason := preparedNotReady(record, state); !strings.Contains(reason, "мысли") {
 		t.Fatalf("new idea readiness: %s", reason)
@@ -393,9 +391,7 @@ func TestBundleRawEmptyAndFatesBeforeComplete(t *testing.T) {
 		t.Fatal("empty complete changed files")
 	}
 	root, view, _ = bundleFixture(t)
-	if _, err := cmdDraftIdea(root, view.ID, "новая мысль", CommitOpts{}); err != nil {
-		t.Fatal(err)
-	}
+	writeSavedDraftIdea(t, root, view.ID, "новая мысль")
 	text, err := os.ReadFile(draftPath(root, view.ID))
 	if err != nil {
 		t.Fatal(err)

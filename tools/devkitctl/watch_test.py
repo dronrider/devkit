@@ -1975,7 +1975,16 @@ class PipelineIncidentTest(Stand):
 
     def marks(self):
         import duty
-        return duty.task_marks(str(self.proj))
+        hook = duty.incidents_mod()
+        return [(r.get("task"), "%s: %s" % (r.get("reason"), r.get("why")))
+                for r in hook.read(home=str(self.home))
+                if r.get("root") == str(self.proj)]
+
+    def seen(self):
+        import duty
+        recs = [r for r in duty.incidents_mod().read(home=str(self.home))
+                if r.get("root") == str(self.proj)]
+        return [r.get("seen") for r in recs]
 
     def test_merge_skip_reaches_duty_on_second_tick_without_duplicates(self):
         self.sweep()
@@ -1985,9 +1994,15 @@ class PipelineIncidentTest(Stand):
         self.assertEqual(len(marks), 1)
         self.assertEqual(marks[0][0], "DK-902")
         self.assertIn("незакоммиченные правки", marks[0][1])
+        # Повторные тики дополняют ту же запись счётчиком (DK-1460), файл
+        # задачи чист, и второго адреса дежурному не заводится.
         for _ in range(3):
             self.sweep()
         self.assertEqual(self.marks(), marks)
+        self.assertGreater(self.seen()[0], 1, self.seen())
+        task = (self.proj / "docs" / "tasks" / "DK-902.md").read_text(encoding="utf-8")
+        self.assertNotIn("исход дежурному", task,
+                         "эскалация легла строкой в файл задачи: %s" % task)
 
     def test_merge_regcheck_notifies_once_without_duty(self):
         item = {"id": "DK-902", "waiting": True, "changed": True,
@@ -2052,20 +2067,25 @@ class PipelineIncidentTest(Stand):
         self.assertEqual(self.marks(), [])
 
     def test_success_and_new_reason_restart_repeat_detection(self):
+        # Память повторов перезапускается после успеха и смены причины, а вот
+        # адрес дежурному один: журнал держит открытую остановку операции, и
+        # повтор доводит её счётчик, не заводя второй адрес (DK-1460).
         self.sweep()
         self.sweep()
+        self.assertEqual(len(self.marks()), 1)
         self.items = []
         self.sweep()
         self.items = [{"id": "DK-902", "line": "незакоммиченные правки", "failed": True}]
         self.sweep()
-        self.assertEqual(len(self.marks()), 1)
         self.sweep()
-        self.assertEqual(len(self.marks()), 2)
+        self.assertEqual(len(self.marks()), 1)
+        self.assertGreater(self.seen()[0], 1, self.seen())
         self.items[0]["line"] = "нет сценария проверки"
         self.sweep()
-        self.assertEqual(len(self.marks()), 2)
         self.sweep()
-        self.assertEqual(len(self.marks()), 3)
+        self.assertEqual(len(self.marks()), 1)
+        self.assertIn("незакоммиченные правки", self.marks()[0][1],
+                      "первоначальная причина затёрта повтором: %s" % self.marks())
 
     def test_failed_root_notification_is_retried_until_delivery(self):
         for failure in (1, OSError("уведомитель временно недоступен")):
@@ -2663,6 +2683,11 @@ class ResumeHelpers:
         tmux = self.tmux if tmux is None else tmux
         return watch.resume_failed(self.now, call, self.home, tmux, lambda: online, taskctl)
 
+    def incidents(self):
+        """Записи журнала инцидентов стенда: сюда ложится исход дежурному."""
+        import duty
+        return duty.incidents_mod().read(home=str(self.home))
+
     def duty_shouts(self):
         """Уведомления исхода дежурному в этом стенде: от падения они идут
         только оттуда, прочие зовы сторожка тик в эти тесты не несёт."""
@@ -2857,8 +2882,8 @@ class ResumeTest(ResumeHelpers, Stand):
     def test_old_failure_is_not_raised(self):
         # Падение старше потолка: имя панели к этому сроку носит уже другой
         # разговор, и реплика уехала бы чужому. Исчерпание заранее: попытки на
-        # такое не тратятся, исход уходит дежурному записью в задачу да
-        # уведомлением (DK-1321).
+        # такое не тратятся, исход уходит дежурному инцидентом в журнале да
+        # уведомлением (DK-1321, DK-1460), файл задачи остаётся чистым.
         self.task_file()
         self.notify("turn_failed", watch.RESUME_STALE // 60 + 60)
         self.chat(transcript_ago_minutes=watch.RESUME_STALE // 60 + 120)
@@ -2868,9 +2893,12 @@ class ResumeTest(ResumeHelpers, Stand):
         self.assertEqual(len(self.call.argv_with("notify.py")), 1,
                          "исход не ушёл дежурному: %s" % self.call.calls)
         self.assert_quiet_escalation()
-        record = "\n".join(self.stage_lines())
-        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
-        self.assertIn("простой старше двенадцати часов", record)
+        rec = self.incidents()[-1]
+        self.assertEqual(rec["reason"], watch.STALE_REASON, self.incidents())
+        self.assertIn("простой старше двенадцати часов", rec["why"])
+        text = self.task_file().read_text(encoding="utf-8")
+        self.assertNotIn("эскалация", text,
+                         "исход лёг строкой в файл задачи: %s" % text)
         self.assertIn("исход дежурному", " ".join(lines))
         self.assertEqual(self.state()[self.SID]["tries"], 0,
                          "на старое падение потрачена попытка")
@@ -2907,8 +2935,8 @@ class ResumeFailedTest(ResumeHelpers, Stand):
 
     Падение должно дотянуться через последующие уведомления простоя, три
     отказа подряд и простой старше двенадцати часов кончаются исходом дежурному
-    (запись в файле задачи да уведомление), пустой баланс уходит туда же сразу,
-    а доведение проверяет тик тем же прогоном сценария."""
+    (инцидент в журнале да уведомление, DK-1460), пустой баланс уходит туда же
+    сразу, а доведение проверяет тик тем же прогоном сценария."""
 
     def test_idle_notice_keeps_the_failure(self):
         # Шаг 1 сценария: падение, а через минуту уведомление простоя. Раньше
@@ -2925,7 +2953,7 @@ class ResumeFailedTest(ResumeHelpers, Stand):
 
     def test_three_failures_end_in_a_duty_record(self):
         # Шаг 2 сценария: три подряд падения, и на четвёртом тике исход уходит
-        # дежурному записью в задачу да уведомлением.
+        # дежурному инцидентом в журнале да уведомлением.
         self.task_file()
         self.chat(transcript_ago_minutes=40)
         for n in range(watch.RESUME_TRIES):
@@ -2937,17 +2965,17 @@ class ResumeFailedTest(ResumeHelpers, Stand):
         self.assertEqual(len(self.duty_shouts()), 1,
                          "исход не ушёл дежурному: %s" % self.call.calls)
         self.assert_quiet_escalation()
-        record = "\n".join(self.stage_lines())
-        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
-        self.assertIn("подъём не помог %d раз подряд" % watch.RESUME_TRIES, record)
+        rec = self.incidents()[-1]
+        self.assertEqual(rec["reason"], watch.SPENT_REASON, self.incidents())
+        self.assertIn("подъём не помог %d раз подряд" % watch.RESUME_TRIES,
+                      rec["why"])
         self.assertIn("исход дежурному", " ".join(lines))
         self.assertEqual(self.state()[self.SID]["said"], "эскалация")
         # Тот же тик второй раз молчит: уведомление каждые пять минут человек
         # выключит вместе со сторожком, и запись не дублируется.
         self.assertEqual(self.resume(), [])
         self.assertEqual(len(self.duty_shouts()), 1)
-        marks = [ln for ln in self.stage_lines() if watch.DUTY_MARK in ln]
-        self.assertEqual(len(marks), 1, "исход записан дважды: %s" % record)
+        self.assertEqual(len(self.incidents()), 1, "исход записан дважды")
 
     def test_debt_outcome_goes_to_duty_at_once(self):
         # Шаг 3 сценария: падение с пустым балансом подписки. Резюм его не
@@ -2965,9 +2993,9 @@ class ResumeFailedTest(ResumeHelpers, Stand):
                          "исход с пустым балансом поднимали репликой: %s" % self.call.calls)
         self.assertEqual(self.state()[self.SID]["tries"], 0,
                          "попытка потрачена на пустой баланс")
-        record = "\n".join(self.stage_lines())
-        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
-        self.assertIn(watch.DEBT_MARK, record, "причина не названа: %s" % record)
+        rec = self.incidents()[-1]
+        self.assertEqual(rec["reason"], watch.DEBT_REASON, self.incidents())
+        self.assertIn(watch.DEBT_MARK, rec["why"], "причина не названа: %s" % rec)
         self.assertIn("исход дежурному", " ".join(lines))
         shouts = self.duty_shouts()
         self.assertEqual(len(shouts), 1, "исход не ушёл дежурному: %s" % self.call.calls)
@@ -2995,6 +3023,95 @@ class ResumeFailedTest(ResumeHelpers, Stand):
         self.assertIn("ход упал, подъём 1", text)
         self.assertIn("прогон сценария поднят", text)
         self.assertEqual(rc, 0, text)
+
+
+class EscalationJournalTest(ResumeHelpers, Stand):
+    """Эскалация дежурному живёт журналом инцидентов, а не строкой в файле
+    задачи (DK-1460). Незакоммиченная строка держала грязь в рабочем дереве,
+    и слияние задачи останавливалось на записи самого сторожка: повторные тики
+    копили строки до ручного коммита."""
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.proj)] + list(args),
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True)
+
+    def test_clean_repo_stays_clean(self):
+        # Регрессия DK-1460, как она стояла на DK-1605 и DK-1606: слияние
+        # отказывает, повтор отказа уходит дежурному, и чистое дерево
+        # остаётся чистым. Пользовательские изменения файла задачи не тронуты
+        # побайтно, и повтор слияния не останавливается на служебной записи.
+        # Тест зовёт только старые входы нарочно: на прежнем коде он падает
+        # самой грязью tracked файла, а не нехваткой новых символов.
+        task = self.task_file(body="- Разработка: идёт.\n")
+        self.git("init", "-q")
+        self.git("config", "user.email", "stand@devkit")
+        self.git("config", "user.name", "стенд")
+        self.git("add", "docs")
+        self.git("commit", "-qm", "DK-901 стенд")
+        before = task.read_text(encoding="utf-8")
+        failures = {"DK-901": "задача DK-901: слияние отказано: очередь занята"}
+        watch.pipeline_incidents(str(self.proj), "слияние", failures,
+                                 home=self.home, call=Fake())
+        watch.pipeline_incidents(str(self.proj), "слияние", failures,
+                                 home=self.home, call=Fake())
+        self.assertEqual(task.read_text(encoding="utf-8"), before,
+                         "эскалация тронула файл задачи")
+        status = self.git("status", "--porcelain")
+        self.assertEqual((status.returncode, status.stdout), (0, ""),
+                         "дерево испачкано эскалацией: %s%s"
+                         % (status.stdout, self.git("diff").stdout))
+
+    def test_repeats_glue_into_one_incident(self):
+        # Повторные тики, включая смену даты, оставляют один инцидент одной
+        # остановки со счётчиком повторов, а не по строке на каждый тик.
+        day1 = datetime(2026, 11, 6, 12, 0, 0)
+        day2 = datetime(2026, 11, 7, 12, 0, 0)
+        one = watch.duty_incident(str(self.proj), "DK-901", watch.SPENT_REASON,
+                                  "подъём не помог 3 раз подряд, сессия a",
+                                  day1, self.home)
+        two = watch.duty_incident(str(self.proj), "DK-901", watch.SPENT_REASON,
+                                  "подъём не помог 3 раз подряд, сессия b",
+                                  day2, self.home)
+        self.assertEqual(one, two)
+        recs = self.incidents()
+        self.assertEqual(len(recs), 1, recs)
+        self.assertEqual(recs[0]["seen"], 2)
+        self.assertEqual(recs[0]["why"],
+                         "подъём не помог 3 раз подряд, сессия a",
+                         "первоначальная причина затёрта повтором")
+
+    def test_other_reason_and_root_are_other_incidents(self):
+        # Инциденты с разными причинами и корнями не склеиваются: один и тот
+        # же ID живёт в основном чекауте и в дереве ветки.
+        one = watch.duty_incident(str(self.proj), "DK-901", watch.STALE_REASON,
+                                  "простой", self.now, self.home)
+        two = watch.duty_incident(str(self.proj), "DK-901", watch.DEBT_REASON,
+                                  "баланс", self.now, self.home)
+        three = watch.duty_incident(str(self.dir / "сосед"), "DK-901",
+                                    watch.STALE_REASON, "простой",
+                                    self.now, self.home)
+        self.assertEqual(len({one, two, three}), 3)
+        self.assertEqual(len(self.incidents()), 3)
+
+    def test_journal_failure_is_said_aloud(self):
+        # Отказ записи журнала назван словами, а не пропущен: молчание
+        # выглядело бы успешной эскалацией.
+        path = self.home / ".devkit" / "incidents.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.mkdir()
+        note = watch.duty_incident(str(self.proj), "DK-901", watch.SPENT_REASON,
+                                   "подъём не помог", self.now, self.home)
+        self.assertIn("запись не ушла", note)
+        self.assertEqual(self.incidents(), [])
+
+    def test_talk_without_task_writes_nothing(self):
+        # Общий отказ конвейера без ID задачи адреса дежурному не имеет:
+        # записи нет, и исход уходит громким зовом человеку в месте вызова.
+        note = watch.duty_incident(str(self.proj), None, watch.SPENT_REASON,
+                                   "очередь занята", self.now, self.home)
+        self.assertIn("записи нет", note)
+        self.assertEqual(self.incidents(), [])
 
 
 class TestRegistryPane(unittest.TestCase):

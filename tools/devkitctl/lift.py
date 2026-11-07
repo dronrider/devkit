@@ -156,6 +156,11 @@ LIFT_LOG = "lift.log"
 # находки следующего захода. Без потолка заход дёргал бы её вечно.
 LIFT_TRIES = 3
 
+# Код причины эскалации дежурному на строку без распознанного состояния
+# (DK-1460). Эскалация ложится инцидентом в журнал, а не строкой в файл
+# задачи: строка без коммита держала грязь в дереве и блокировала слияние.
+UNKNOWN_REASON = "состояние строки неизвестно"
+
 # Через сколько секунд счётчик попыток забывается. Строку, поднятую сутки
 # назад, считать той же попыткой незачем.
 FORGET = 86400
@@ -442,21 +447,13 @@ def diagnostic_rows(rows, home=None):
     return out
 
 
-def report_diagnostic(root, tid, why, call=None, act=True):
+def report_diagnostic(root, tid, why, call=None, act=True, home=None):
     """Запись исхода служит и адресом дежурного, и памятью повторного тика."""
-    import duty
     import watch
     words = "задача %s в %s: %s" % (tid, root, why)
     if not act:
         return words + "; передалась бы дежурному"
-    path = Path(root, "docs", "tasks", tid + ".md")
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    if any(duty.parse_mark(ln) == why for ln in duty.stage_lines(text)):
-        return words + "; исход дежурному уже записан"
-    note = watch.task_record(root, tid, why)
+    note = watch.duty_incident(root, tid, UNKNOWN_REASON, why, home=user_home(home))
     said = watch.shout("нужен разбор состояния: задача %s" % tid, why,
                        root, call=call, task=tid, quiet=True)
     return words + "; исход дежурному, %s; %s" % (note, said)
@@ -717,7 +714,8 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
         else:
             diagnostics.append((r, why))
     diagnosed = {r.get("id") for r, _ in diagnostics}
-    diagnostic_words = [report_diagnostic(root, r["id"], why, call=call, act=act)
+    diagnostic_words = [report_diagnostic(root, r["id"], why, call=call, act=act,
+                                          home=home)
                         for r, why in diagnostics]
     found = [Find(r.get("id") or "", "", "во входе чата лежит реплика человека", True)
              for r in replied]
@@ -767,7 +765,7 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
         if f.reply:
             spent_words.append(call_human(root, f.id, call=call))
         else:
-            spent_words.append(escalate_duty(root, f.id, f.why, call=call))
+            spent_words.append(escalate_duty(root, f.id, f.why, call=call, home=home))
         mark_lifted(root, f.id, home, now=when)
     if not found:
         if spent_words:
@@ -836,22 +834,31 @@ def call_human(root, tid, call=None):
     return "задача %s в %s: человек позван к лежащей реплике, %s" % (tid, root, said)
 
 
-def escalate_duty(root, tid, why, call=None):
-    """Исход дежурному на исчерпание попыток подъёма: запись в файле задачи и
+def escalate_duty(root, tid, why, call=None, home=None):
+    """Исход дежурному на исчерпание попыток подъёма: инцидент в журнале и
     фоновое уведомление, тем же исходом, каким кончается исчерпание подъёма
     упавшего хода (DK-1361). Запись и уведомитель живут у сторожка, второй
     копии тут не заводится. Громкий зов человеку остаётся хвостом разбора
     дежурного, а не этим уведомлением."""
     import watch
-    note = watch.task_record(root, tid, "%s, подъём не помог %d раз подряд"
-                             % (why, LIFT_TRIES))
+    note = watch.duty_incident(root, tid, watch.SPENT_REASON,
+                               "%s, подъём не помог %d раз подряд"
+                               % (why, LIFT_TRIES), home=user_home(home))
     said = watch.shout("подъём не помог: задача %s" % tid,
                        "%s в %s: строка поднималась %d раза подряд, сессия не "
-                       "удержалась. Исход дежурному: запись в файл задачи и это "
+                       "удержалась. Исход дежурному: инцидент в журнале и это "
                        "фоновое уведомление; поднимется дежурный"
                        % (tid, os.path.basename(root.rstrip("/")), LIFT_TRIES),
                        root, call=call, task=tid, quiet=True)
     return "задача %s в %s: исход дежурному, %s; %s" % (tid, root, note, said)
+
+
+def user_home(home=None):
+    """Дом пользователя по дому состояния: у lift состояние лежит в
+    `~/.devkit`, а журнал инцидентов в `~`, и переход между ними один."""
+    if not home:
+        return None
+    return os.path.dirname(os.path.abspath(str(home))) or None
 
 
 def run_order(root, tid, order, call=None, taskctl=None, reply=False):

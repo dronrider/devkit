@@ -256,10 +256,14 @@ NOT_LIFE = ("idle_prompt", "agent_needs_input", "subagent_stop")
 # номер и слово, потому что харнес кладёт их и в тип ошибки, и в текст последней
 # реплики, а по одному номеру падение неспецифично.
 DEBT_MARK = "402 Insufficient balance"
-# Раздел файла задачи, куда ложится исход, и слово-маркер самой записи: по
-# нему тик дежурного находит строку, с которой пора подняться (DK-1323).
-STAGE_SECTION = "## Ход работы"
-DUTY_MARK = "эскалация дежурному"
+# Коды причин оперативных эскалаций дежурному (DK-1460). Эскалация ложится
+# записью в журнал инцидентов, а не строкой в файл задачи: незакоммиченная
+# строка держала грязь в рабочем дереве, и слияние задачи останавливалось на
+# записи самого сторожка. Код причины устойчив и различает остановки: по нему
+# журнал склеивает повторы одной остановки и разводит разные.
+STALE_REASON = "простой головы"
+DEBT_REASON = "пустой баланс подписки"
+SPENT_REASON = "подъём не помог"
 # Счёт попыток подъёма по сессиям: строки «сессия <ID> падение <метка> попыток
 # <N> исход <слово>».
 RESUME_STATE = "~/.devkit/watch.resume"
@@ -956,81 +960,30 @@ def debt_reason(text):
     return ""
 
 
-def fence_mask(rows):
-    """Маска строк внутри ограждённых блоков кода, как taskform.FenceMask:
-    строка ограждения и весь блок лежат в маске, закрытие это ограждение того
-    же знака не короче и без хвоста. Вывод, вложенный в файл задачи, сплошь и
-    рядом несёт чужие заголовки разделов, и второй раз ими считаться нельзя."""
-    mask, opened = [], ""
-    for ln in rows:
-        m = re.match(r"(`{3,}|~{3,})", ln.lstrip(" \t"))
-        m = m.group(1) if m else ""
-        if not opened:
-            mask.append(bool(m))
-            if m:
-                opened = m
-            continue
-        mask.append(True)
-        if m and m[0] == opened[0] and len(m) >= len(opened) \
-                and not ln.lstrip(" \t")[len(m):].strip():
-            opened = ""
-    return mask
+def duty_incident(root, task, reason, why, now=None, home=None):
+    """Оперативная эскалация дежурному записью в журнал инцидентов (DK-1460).
+    Возврат это слово для строки отчёта, где запись лежит либо почему её
+    не было.
 
-
-def insert_stage(text, line):
-    """Строка в конец раздела «Ход работы» файла задачи: место разделу выбирает
-    форма, а не хвост файла, та же вставка, что у taskform.InsertIntoSection.
-    Раздела в файле нет, значит он заводится в конце: файла задачи без него
-    почти не бывает, и терять запись из-за редкого шаблона дороже, чем встать
-    ниже по форме."""
-    rows = text.rstrip("\n") + "\n"
-    rows = rows.split("\n")
-    mask = fence_mask(rows)
-    head = -1
-    for i, ln in enumerate(rows):
-        if not mask[i] and ln.startswith(STAGE_SECTION):
-            head = i
-            break
-    if head < 0:
-        if rows and not rows[-1].strip():
-            rows = rows[:-1]
-        return "\n".join(rows + ["", STAGE_SECTION, "", line]) + "\n"
-    end = len(rows)
-    for i in range(head + 1, len(rows)):
-        if not mask[i] and rows[i].startswith("## "):
-            end = i
-            break
-    while end > head + 1 and not rows[end - 1].strip():
-        end -= 1
-    ins = [line] if end > head + 1 else ["", line]
-    return "\n".join(rows[:end] + ins + rows[end:])
-
-
-def task_record(root, task, why, now=None):
-    """Строка исхода в раздел «Ход работы» файла задачи. Возврат это слово для
-    строки отчёта, где запись лежит либо почему её не было.
-
-    Запись это адрес дежурного (DK-1323): слово DUTY_MARK стоит в ней и не
-    меняется. Файла у разговора может не быть (чат без задачи, строка без
-    файла), и это не отказ: исход всё равно уходит уведомлением, а писать
-    некуда называется словами, как и у записи судьбы ревью (DK-756). Коммит
-    запись не ждёт: watch.py git не дёргает, файл доедет следующей правкой
-    доски."""
-    now = datetime.now() if now is None else now
+    Запись это адрес дежурного (DK-1323): дежурный находит её тем же обходом
+    журнала, что и остановки конвейера, а исторические строки с меткой в
+    файлах задач продолжают читаться наравне с ней. Коммитимых файлов запись
+    не трогает: строка в файле задачи оставляла грязь в рабочем дереве, и
+    слияние задачи останавливалось на записи самого сторожка. Задачи у
+    разговора может не быть (чат без задачи, общий отказ конвейера), и это
+    не отказ: адреса у инцидента нет, и исход уходит громким зовом человеку
+    в местах вызова. Отказ журнала называется словами, а не пропускается:
+    молчание было бы ложной отметкой успешной эскалации."""
     if not task or task == "-":
         return "записи нет: у разговора нет задачи"
-    rel = "docs/tasks/%s.md" % task
-    path = Path(root, rel)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return "записи нет: файла %s нет" % rel
-    line = "- %s %s: %s." % (now.strftime("%Y-%m-%d"), DUTY_MARK, why)
-    try:
-        path.write_text(insert_stage(text, line), encoding="utf-8")
-    except OSError as e:
-        return "запись не ушла: %s" % e
-    return "запись в %s" % rel
+    import duty
+    hook = duty.incidents_mod()
+    if hook is None:
+        return "запись не ушла: модуль инцидентов не нашёлся"
+    ident = hook.report(task, reason, why, root=str(root), home=home, now=now)
+    if not ident:
+        return "запись не ушла: журнал инцидентов не записался"
+    return "инцидент %s" % ident
 
 
 def net_probe(host=NET_HOST, port=NET_PORT, timeout=NET_TIMEOUT):
@@ -1251,14 +1204,15 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
         task = field(row, "задача") or (fall["task"] if fall["task"] != "-" else "")
         root = field(row, "дерево") or here()
 
-        def outcome(title, why):
-            # Исход идёт дежурному: строка в файле задачи и фоновое уведомление
-            # (DK-1323). Слой дежурного поднимается тиком по метке записи, а
-            # громкий зов человеку остаётся хвостом его разбора, а не этим
-            # уведомлением. Команда продолжения в тихий уведомитель не едет:
-            # её носит хвост разбора, когда ясно, чем кончился исход.
-            note = task_record(root, task, "%s, сессия %s" % (why, sid), now)
-            said = shout(title, "%s в %s: %s. Исход дежурному: запись в файл задачи "
+        def outcome(title, why, reason):
+            # Исход идёт дежурному: инцидент в журнале и фоновое уведомление
+            # (DK-1323, DK-1460). Слой дежурного поднимается тиком по записи
+            # журнала, а громкий зов человеку остаётся хвостом его разбора,
+            # а не этим уведомлением. Команда продолжения в тихий уведомитель
+            # не едет: её носит хвост разбора, когда ясно, чем кончился исход.
+            note = duty_incident(root, task, reason, "%s, сессия %s" % (why, sid),
+                                 now, home)
+            said = shout(title, "%s в %s: %s. Исход дежурному: инцидент в журнале "
                                 "и это фоновое уведомление; поднимется дежурный"
                          % (sid, os.path.basename(root.rstrip("/")), why),
                          root, call, task, quiet=True)
@@ -1281,17 +1235,18 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
             # не тратятся, исход уходит дежурному.
             human = say.human_age(age)
             outcome("ход упал %s назад" % human,
-                    "ход упал %s назад, простой старше двенадцати часов" % human)
+                    "ход упал %s назад, простой старше двенадцати часов" % human,
+                    STALE_REASON)
             continue
         debt = debt_reason(fall.get("text"))
         if debt:
             # Пустой баланс резюмом не лечится: три попытки прожгли бы время
             # тика, и исход уходит дежурному сразу с названием причины.
-            outcome("ход упал: " + debt, debt + ": резюмом не лечится")
+            outcome("ход упал: " + debt, debt + ": резюмом не лечится", DEBT_REASON)
             continue
         if tries >= RESUME_TRIES:
             outcome("ход упал: подъём не помог",
-                    "подъём не помог %d раз подряд" % RESUME_TRIES)
+                    "подъём не помог %d раз подряд" % RESUME_TRIES, SPENT_REASON)
             continue
         pane = field(row, "tmux")
         if not pane:
@@ -1375,18 +1330,22 @@ def pipeline_incidents(root, operation, failures, home=None, call=None, taskctl=
         current[task] = entry
         if not same:
             lines.append(line)
-        elif not entry["sent"]:
-            why = "%s: %s" % (operation, line)
-            recorded = task_record(root, task if task != "*" else None, why)
-            if recorded.startswith("запись в "):
+        else:
+            recorded = duty_incident(root, task if task != "*" else None,
+                                     operation, line, home=home)
+            if recorded.startswith("инцидент "):
+                # Повтор доводит счётчик той же записи, а строка отчёта и зов
+                # уходят один раз: тик повторяется каждые пять минут, и дежурный
+                # по той же остановке не поднимается дважды.
+                if not entry["sent"]:
+                    lines.append("%s; исход дежурному, %s" % (line, recorded))
                 entry["sent"] = True
-                lines.append("%s; %s, %s" % (line, DUTY_MARK, recorded))
-            else:
+            elif not entry["sent"]:
                 diagnostic = ("shipctl -C %s queue --drain --json" % root if operation == "слияние"
                               else "shipctl -C %s ship --drain" % root if operation == "выкат"
                               else "taskctl -C %s closable" % root)
                 said, delivered = shout_result("конвейер стоит: " + operation,
-                                               why + "; " + recorded + "; диагностика: " + diagnostic,
+                                               line + "; " + recorded + "; диагностика: " + diagnostic,
                                                root, call, task=None if task == "*" else task)
                 entry["sent"] = delivered
                 lines.append("%s; %s; уведомление: %s" % (line, recorded, said))

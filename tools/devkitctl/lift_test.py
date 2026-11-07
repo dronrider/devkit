@@ -545,12 +545,17 @@ class TriesCase(unittest.TestCase):
 
 class DutyCase(unittest.TestCase):
     """Исчерпание попыток подъёма кончается исходом дежурному (DK-1361):
-    записью в задаче и фоновым уведомлением, как исчерпание подъёма упавшего
-    хода. Строка не остаётся ждать человека молча."""
+    инцидентом в журнале и фоновым уведомлением, как исчерпание подъёма
+    упавшего хода (DK-1460). Строка не остаётся ждать человека молча."""
 
     def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home)]))
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.dir)]))
+        # Дом состояния это ~/.devkit, а журнал инцидентов лежит на дом
+        # выше: временный каталог держит оба, и стенд не пишет в общий
+        # родитель машинных временных каталогов.
+        self.home = self.dir / "state" / ".devkit"
+        self.home.mkdir(parents=True)
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.root)]))
         tasks = self.root / "docs" / "tasks"
@@ -558,6 +563,10 @@ class DutyCase(unittest.TestCase):
         self.task_file = tasks / "DK-21.md"
         self.task_file.write_text("# DK-21: строка\n\n## Ход работы\n",
                                   encoding="utf-8")
+
+    def incidents(self):
+        import duty
+        return duty.incidents_mod().read(home=str(self.dir / "state"))
 
     def spent(self):
         for _ in range(lift.LIFT_TRIES):
@@ -573,17 +582,21 @@ class DutyCase(unittest.TestCase):
         said = " ".join(lines)
         self.assertIn("сессия не удержалась", said)
         self.assertIn("исход дежурному", said)
-        doc = self.task_file.read_text(encoding="utf-8")
-        self.assertIn("эскалация дежурному", doc)
-        self.assertIn("подъём не помог 3 раз подряд", doc)
+        recs = self.incidents()
+        self.assertEqual(len(recs), 1, recs)
+        import watch
+        self.assertEqual(recs[0]["reason"], watch.SPENT_REASON, recs)
+        self.assertIn("подъём не помог 3 раз подряд", recs[0]["why"])
+        self.assertNotIn("эскалация дежурному",
+                         self.task_file.read_text(encoding="utf-8"),
+                         "исход лёг строкой в файл задачи")
         # Второй заход по той же строке не повторяет ни записи, ни зова:
         # счётчик попыток сверх потолка значит, что исход уже ушёл.
         lift.lift_root(str(self.root), call=call, taskctl="taskctl",
                        home=str(self.home))
         shouts = [a for a in call.calls if "notify.py" in " ".join(a)]
         self.assertEqual(len(shouts), 1)
-        self.assertEqual(self.task_file.read_text(encoding="utf-8").count(
-            "эскалация дежурному"), 1)
+        self.assertEqual(len(self.incidents()), 1, self.incidents())
 
     def test_missing_stage_with_dependency_escalates_without_starting(self):
         waiting = {"id": "DK-21", "held_by": ["DK-543"], "accept": "mixed"}
@@ -595,11 +608,12 @@ class DutyCase(unittest.TestCase):
             self.assertIn("DK-543", " ".join(lines))
             self.assertIn("исход дежурному", " ".join(lines))
         self.assertFalse(any("run" in a for a in call.calls))
-        doc = self.task_file.read_text(encoding="utf-8")
-        self.assertEqual(doc.count("эскалация дежурному"), 1)
-        self.assertIn("состояние исполнителя неизвестно", doc)
-        self.assertIn("запуск работы запрещён", doc)
-        self.assertIn("без разработки и снятия зависимостей", doc)
+        recs = self.incidents()
+        self.assertEqual(len(recs), 1, recs)
+        why = "%s: %s" % (recs[0]["reason"], recs[0]["why"])
+        self.assertIn("состояние исполнителя неизвестно", why)
+        self.assertIn("запуск работы запрещён", why)
+        self.assertIn("без разработки и снятия зависимостей", why)
         self.assertEqual(waiting["held_by"], ["DK-543"])
 
     def test_missing_stage_without_dependency_also_needs_diagnosis(self):
@@ -609,7 +623,7 @@ class DutyCase(unittest.TestCase):
         self.assertEqual(raised, 0)
         self.assertIn("без записи этапа", " ".join(lines))
         self.assertIn("передалась бы дежурному", " ".join(lines))
-        self.assertNotIn("эскалация дежурному", self.task_file.read_text(encoding="utf-8"))
+        self.assertEqual(self.incidents(), [], "сухой прогон записал инцидент")
         self.assertFalse(any("run" in a for a in call.calls))
 
     def test_dependency_blocks_resume_of_known_orphan(self):

@@ -334,11 +334,13 @@ class DutyAgentTest(unittest.TestCase):
                          % (m.group(1), duty.ORDER))
         self.assertTrue(duty.duty_order(self.TASK, self.WHY).startswith(duty.ORDER))
 
-    def test_mark_is_one_for_watch_and_duty(self):
-        # Метка записи одна на сторожа, который её пишет, и на разбор: он
-        # читает её отсюда же, и вторая копия слова разошлась бы с первой.
+    def test_mark_stays_with_the_reader(self):
+        # Метка осталась только у читателя исторических записей: с DK-1460
+        # эскалации пишет журнал инцидентов, и второй копии слова у сторожка
+        # больше нет.
         import watch
-        self.assertEqual(watch.DUTY_MARK, duty.DUTY_MARK)
+        self.assertFalse(hasattr(watch, "DUTY_MARK"),
+                         "у сторожка снова своя копия метки записи")
 
     def test_watch_tick_carries_the_duty(self):
         # Тик сторожа зовёт дежурного по записи исхода: сценарий проверки зовёт
@@ -421,6 +423,22 @@ class IncidentDutyTest(unittest.TestCase):
         order = ran[0][ran[0].index("--order") + 1]
         self.assertIn("возобновление", order.lower())
         self.assertIn("не обходи без разрешения", order)
+
+    def test_escalation_incident_rises_duty(self):
+        # Эскалация сторожка ложится тем же журналом (DK-1460): дежурный
+        # получает новый инцидент существующим механизмом, и файл задачи
+        # не трогается.
+        import watch
+        self.hook.settle(self.ident, self.hook.RESUMED, home=self.home)
+        ident = watch.duty_incident(str(self.proj), self.TASK, watch.SPENT_REASON,
+                                    "подъём не помог 3 раз подряд, сессия x",
+                                    home=self.home)
+        self.assertTrue(ident, "эскалация не записалась инцидентом")
+        lines = self.duty_lines()
+        ran = self.runs()
+        self.assertEqual(len(ran), 1, self.call.calls)
+        order = ran[0][ran[0].index("--order") + 1]
+        self.assertIn(watch.SPENT_REASON, order)
 
     def test_incident_of_other_root_is_silent(self):
         other = self.hook.report("DK-902", self.hook.IDLE_RUNS, "воронка",

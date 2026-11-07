@@ -1,9 +1,6 @@
 import { makeSandbox, settle, allByClass, byClass, tag, deepBtn, dump, fail, appPathArg } from "./poc_dom.mjs";
 
-// Ручная подготовка задачи с экрана записи (DK-1564): кнопка «Подготовить
-// вручную» в составе задач разбора. Приём на сервере требует первую редакцию 1,
-// а правка сохранённой задачи идёт следующей редакцией. Пустая форма ручной
-// подготовки открывается сразу в правке, сохранённая задача чтением.
+// Задачи готовит агент. Пользователь правит существующие задачи, а старый new возвращает исходник.
 const writes = [];
 const state = { version: 1, state: "active", analysis: "", proposals: [] };
 let snapshot = "s1";
@@ -40,32 +37,18 @@ function byAria(root, part) {
 }
 await openScreen("demo/draft/XR-9");
 {
-  // Пустой состав задач разбора говорит словами и держит ручную подготовку
-  // (DK-1564, утверждённый макет): кнопка в голове карточки состава.
   const board = byId.get("groups");
   const comp = allByClass(board, "comp").find((n) => dump(n).includes("Задачи разбора"));
   if (!comp) fail("на экране записи нет карточки состава задач разбора");
   if (!dump(comp).includes("Подготовленных задач нет")) fail("пустой состав не сказал об этом словами");
-  const entry = deepBtn(comp, "Подготовить вручную");
-  if (!entry) fail("в составе нет ручной подготовки");
-  entry.handlers.click({});
-  if (!sandbox.location.hash.includes("/prepared/new")) fail("ручная подготовка открыла не пустую форму: " + sandbox.location.hash);
+  if (deepBtn(comp, "Подготовить вручную")) fail("ручная подготовка осталась на форме");
 }
-await openScreen("demo/draft/XR-9/prepared/new");
-const groups = byId.get("groups");
-if (!deepBtn(groups, "Не заводить")) fail("на форме заведения нет выхода");
-const title = byAria(groups, "заголовок задачи"); if (!title) fail("нет поля заголовка");
-title.value = "ручная задача"; title.handlers.input({});
-const text = tag(byClass(groups, "fbody"), "TEXTAREA"); if (!text) fail("нет поля описания");
-text.value = "описание руками"; text.handlers.input({});
-await sandbox.refresh(); await settle();
-if (tag(byClass(groups, "fbody"), "TEXTAREA").value !== "описание руками") fail("обновление стёрло новую подготовленную задачу");
-const save = deepBtn(groups, "Сохранить задачу"); if (!save) fail("нет сохранения");
-save.handlers.click({}); await settle();
-const first = writes[0];
-if (!first || first.base !== "s1" || !String(first.proposal.id).startsWith("manual-")) fail("ручная задача не уехала на сервер");
-if (first.proposal.revision !== 1) fail("первая редакция ушла revision " + first.proposal.revision + ", а не 1");
-if (first.proposal.title !== "ручная задача" || first.proposal.outcome !== "add") fail("поля ручной задачи не доехали");
+await openScreen("demo/draft/XR-9/prepared/new/chat/XR-9");
+if (sandbox.location.hash !== "#demo/draft/XR-9/chat/XR-9") fail("старый new не вернул источник с чатом: " + sandbox.location.hash);
+if (deepBtn(byId.get("groups"), "Сохранить задачу")) fail("старый new открыл создание");
+if (writes.length) fail("новая задача записана без агента");
+state.proposals.push({id:"legacy-p1",board_id:"XR-16",revision:1,outcome:"add",title:"задача агента",text:"описание агента",board_type:"task",size:"M",accept:"agent"});
+const first = {proposal:state.proposals[0]};
 // Дальше правка сохранённой задачи растёт редакцией и идёт с карандаша:
 // сохранённая задача открывается чтением.
 await openScreen("demo/draft/XR-9/prepared/" + first.proposal.id);
@@ -75,7 +58,7 @@ const saved = tag(byClass(byId.get("groups"), "fbody"), "TEXTAREA"); if (!saved)
 saved.value = "описание поправлено"; saved.handlers.input({});
 const edit = deepBtn(byId.get("groups"), "Сохранить"); if (!edit) fail("нет сохранения правки");
 edit.handlers.click({}); await settle();
-const second = writes[1];
-if (!second || second.base !== "s2" || second.proposal.id !== first.proposal.id) fail("правка не уехала на сервер");
+const second = writes[0];
+if (!second || second.base !== "s1" || second.proposal.id !== first.proposal.id) fail("правка не уехала на сервер");
 if (second.proposal.revision !== 2) fail("правка ушла revision " + second.proposal.revision + ", а не 2");
-console.log("ручная подготовка сохраняется первой редакцией и растёт дальше");
+console.log("ручного создания нет, старый new сохраняет чат, существующая задача редактируется");

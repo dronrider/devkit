@@ -17336,10 +17336,10 @@ function preparedSrow(project, draftId, task) {
 // draftPreparedComp это состав задач разбора на экране записи (DK-1564,
 // утверждённый макет): карточка состава тем же видом, что задачи цели, стоит
 // над описанием. Актуальные задачи видны сразу, решённые сворачиваются, а
-// пустой состав говорит словами и держит ручную подготовку.
+// пустой состав сообщает, что агент не подготовил задач.
 function draftConclusion(project, view) {
   const text = String(view && view.conclusion || "");
-  const box = el("div", "card");
+  const box = el("div", "card comp draft-conclusion");
   if (!text) { box.hidden = true; return box; }
   const head = el("div", "chd");
   head.append(el("b", "", "Заключение разбора"));
@@ -17357,14 +17357,10 @@ function draftPreparedComp(project, view) {
   const done = tasks.filter((t) => t.status);
   const id = view && view.id || "";
   if (live.length) head.append(el("span", "cnt", live.length + " на согласовании"));
-  const create = el("button", "btn btn-sm", "Подготовить вручную");
-  create.type = "button";
-  create.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/new"); });
-  if (state.state !== "history") head.append(el("span", "gap"), create);
   card.append(head);
   if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
-      state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленных задач нет";
+      state.analysis === "empty" ? "Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить." : "Подготовленных задач нет";
     card.append(el("div", "empty", message));
     return card;
   }
@@ -17430,9 +17426,9 @@ async function savePreparedTask(project, id, view, edited) {
 
 // renderDraftPrepared это экран подготовленной задачи (DK-1564, решение 4):
 // сюда ведёт строка-ссылка из реплики согласования. Открывается чтением по
-// стандарту форм DK-1438, правка включается карандашом, ключ new открывает
-// пустую форму ручной подготовки сразу в правке.
+// стандарту форм DK-1438, правка включается карандашом.
 async function renderDraftPrepared(project, id, key) {
+  if (key === "new") return goDraftInstead(project, id);
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
   // Запись читается вместе с подготовленным: её первая строка это короткое
@@ -17454,10 +17450,7 @@ async function renderDraftPrepared(project, id, key) {
   }
   const view = result.body;
   const tasks = view.state && Array.isArray(view.state.proposals) ? view.state.proposals : [];
-  const isNew = key === "new";
-  const task = isNew
-    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add", board_type: "task", size: "-", accept: "agent" }
-    : tasks.find((p) => p.id === key);
+  const task = tasks.find((p) => p.id === key);
   if (task && task.outcome !== "add") return goDraftInstead(project, id);
   if (task && task.status === "accepted" && task.result && (task.result.ids || []).length) {
     return goTaskInstead(project, task.result.ids[0]);
@@ -17510,9 +17503,8 @@ async function renderDraftPrepared(project, id, key) {
             route: p.status === "accepted" && p.result && (p.result.ids || []).length
               ? project + "/" + p.result.ids[0] : project + "/draft/" + id + "/prepared/" + p.id })),
         titleRead: !String(task.title || "").trim() ? preparedTitle(task) : "",
-        titleHint: isNew ? NEW_PLACEHOLDER : "",
-        isNew, decided: Boolean(task.status),
-        edit: isNew || (!task.status && preparedDraft.key === ownKey && preparedDraft.edit),
+        decided: Boolean(task.status),
+        edit: !task.status && preparedDraft.key === ownKey && preparedDraft.edit,
         onEdit: (on) => { preparedDraft.key = ownKey; preparedDraft.edit = on; },
         onDirty: (dirty) => { if (dirty) draftPreparedDirty.add(id); else draftPreparedDirty.delete(id); },
         onSave: ({ form }) => {
@@ -17523,7 +17515,7 @@ async function renderDraftPrepared(project, id, key) {
               const pending = tasks.find((p) => p.outcome === "add" && !p.status && preparedNumber(p) === dep);
               return pending ? pending.id : dep;
             }),
-            revision: task.revision + (isNew ? 0 : 1),
+            revision: task.revision + 1,
           });
           return savePreparedTask(project, id, view, edited);
         },
@@ -17533,13 +17525,6 @@ async function renderDraftPrepared(project, id, key) {
           if (shown) shown.dataset.psign = "";
           renderDraftPrepared(project, id, task.id).catch(console.error);
         },
-        ...(isNew ? { onQuit: (btn) => {
-          if (draftPreparedDirty.has(id) && !btn.classList.contains("armed")) {
-            btn.classList.add("armed"); btn.rename("Задача не записана, выйти?"); return;
-          }
-          draftPreparedDirty.delete(id); preparedDraft.edit = false;
-          goKeepingChat(project + "/draft/" + id);
-        } } : {}),
       });
       setTimeout(() => form.touch(), 0);
       return form.page;

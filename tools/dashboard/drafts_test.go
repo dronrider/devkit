@@ -1802,14 +1802,14 @@ func TestStaticDraftProposalEditingAndReject(t *testing.T) {
 	}
 }
 
-func TestStaticDraftManualPrepare(t *testing.T) {
+func TestStaticDraftAgentPreparationOnly(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node не найден")
 	}
 	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftmanual.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
-		t.Fatalf("ручная подготовка: %v\n%s", err, out)
+		t.Fatalf("задачи готовит агент: %v\n%s", err, out)
 	}
 }
 
@@ -1879,7 +1879,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := draftproposal.State{Version: 1, State: "active", Proposals: proposals}
-		if id != "XR-005" {
+		if id != "XR-005" && id != "XR-010" {
 			state = completedLegacyPrepared(t, data, state)
 		}
 		data, err = draftproposal.Replace(data, state)
@@ -2047,6 +2047,9 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		"XR-010": {
 			{ID: "p5", Revision: 1, Outcome: "add", Title: "баг доставки ленты", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "mixed", Barrier: "глаза", Text: richAddBody},
 			{ID: "p6", Revision: 1, Outcome: "add", Title: "предшественник подготовленной задачи", BoardType: "bug", Rank: "25+5+3+5+4", Size: "L", Accept: "agent", Text: richAddBody},
+			{ID: "p7", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "Замечание из смешанного разбора"},
+			{ID: "p8", Revision: 1, Outcome: "drop", Target: "XR-005", Reason: "Завершённый материал"},
+			{ID: "p9", Revision: 1, Outcome: "drop", Target: "XR-007", Reason: "Устаревший материал"},
 		},
 	} {
 		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
@@ -2055,7 +2058,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := draftproposal.State{Version: 1, State: "active", Proposals: proposals}
-		if id != "XR-005" {
+		if id != "XR-005" && id != "XR-010" {
 			state = completedLegacyPrepared(t, data, state)
 		}
 		data, err = draftproposal.Replace(data, state)

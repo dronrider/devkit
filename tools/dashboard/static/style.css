@@ -913,6 +913,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* состав цели сабтасками и накопитель черновиков (макет «06 Цель»): шапка со
    счётчиками и полосой прогресса, строки задач под ней */
 .comp{margin-top:14px}
+.draft-conclusion > .md{padding:var(--sp2) var(--sp4) var(--sp4)}
 .chd{display:flex;align-items:center;gap:var(--sp3);padding:var(--sp3) var(--sp4) var(--sp2);flex-wrap:wrap}
 .chd b{font:600 13px var(--sans);color:var(--tx)}
 .chd .cnt{font:500 12px var(--mono);color:var(--tx3)}

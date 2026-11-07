@@ -68,7 +68,7 @@ try {
   await page.getByText("Заключение разбора", { exact: true }).waitFor();
   for (const [id,count] of [["XR-006",2],["XR-007",1]]) { await source(id); await confirm(count); }
   await open("XR-001");
-  await page.locator(".ffold .foldh").filter({ hasText: "Из черновика" }).click();
+  await page.locator(".ffold .foldh").filter({ hasText: "третья карточка" }).click();
   await page.locator(".ffold").filter({ hasText: "третья карточка" }).first().waitFor();
   await page.getByRole("link", { name: "черновик XR-006", exact: true }).click();
   await page.waitForURL(/#demo\/draft\/XR-006/);
@@ -93,7 +93,33 @@ try {
   await page.getByRole("button", {name:"Сохранить",exact:true}).click();
   assert.equal((await normalSaved).status(),200);
   await page.getByLabel("срок задачи XR-001, дата", {exact:true}).waitFor();
+  await source("XR-010");
+  const mixedView = await (await context.request.get(base + "/api/projects/demo/drafts/XR-010/prepared")).json();
+  const mixedAdd = mixedView.state.proposals.find(p=>p.id==="p5");
+  const conclusion = page.locator(".draft-conclusion");
+  assert.ok((await conclusion.innerText()).includes("Создать " + mixedAdd.board_id + " - баг доставки ленты"));
+  assert.ok((await conclusion.innerText()).includes("Приписать к XR-001"));
+  assert.ok((await conclusion.innerText()).includes("XR-005") && (await conclusion.innerText()).includes("XR-007"));
+  for (const width of [390,1440]) {
+    await page.setViewportSize({width,height:1000});
+    const space = await conclusion.evaluate(box=>{
+      const style = getComputedStyle(box),body=box.querySelector(".md"),b=getComputedStyle(body);
+      return {top:parseFloat(style.marginTop),left:parseFloat(b.paddingLeft),right:parseFloat(b.paddingRight),bottom:parseFloat(b.paddingBottom),width:document.documentElement.scrollWidth,view:innerWidth};
+    });
+    assert.ok(space.top>=12 && space.left>=12 && space.right>=12 && space.bottom>=12,JSON.stringify(space));
+    assert.ok(space.width<=space.view,JSON.stringify(space));
+    await page.screenshot({path:join(evidence,"mixed-conclusion-"+width+".png"),fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  await open("draft/XR-010/chat/XR-010");
+  await page.getByText("Заключение разбора",{exact:true}).waitFor();
+  const mixedLink = page.locator(".draft-conclusion a").filter({hasText:mixedAdd.board_id});
+  assert.equal(await mixedLink.getAttribute("href"),"#demo/draft/XR-010/prepared/p5");
+  await mixedLink.click();
+  await page.waitForURL(/#demo\/draft\/XR-010\/prepared\/p5\/chat\/XR-010$/);
+  await page.setViewportSize({width:390,height:844});
   await open("draft/XR-010/prepared/p5");
+
   await page.locator("#groups .idbig").filter({hasText:/XR-/}).waitFor();
   const number = (await page.locator("#groups .idbig").innerText()).trim();
   const preparedTitle = page.getByLabel("заголовок задачи " + number, {exact:true});
@@ -137,34 +163,28 @@ try {
   assert.deepEqual(richTask.after,["p6"],"реальный Save не сохранил canonical legacy dependency key");
   assert.equal(richTask.title,"баг доставки ленты после правки"); assert.equal(richTask.control,"3");
   await source("XR-010");
-  const rich = await confirm(2);
-  const materialized = await (await context.request.get(base + "/api/projects/demo/tasks/" + richTask.board_id)).json();
-  assert.ok(materialized.after.some(dep=>dep.id===richSibling.board_id),"whole confirm потерял ребро на созданную строку предшественника");
-  console.log(JSON.stringify({legacySiblingSave:true,topological:true}));
+  const rich = await confirm(5);
   const ids = rich.results.flatMap(r=>r.ids || []);
   assert.ok(ids.length);
   await page.locator("#flashes").filter({ hasText:ids[0] }).waitFor();
+  const materialized = await (await context.request.get(base + "/api/projects/demo/tasks/" + richTask.board_id)).json();
+  assert.ok(materialized.after.some(dep=>dep.id===richSibling.board_id),"whole confirm потерял ребро на созданную строку предшественника");
+  await source("XR-010");
+  await page.locator(".draft-conclusion a").filter({hasText:richTask.board_id}).click();
+  await page.waitForURL(new RegExp("#demo/"+richTask.board_id+"(/chat/|$)"));
+  await open("draft/XR-010/prepared/p5/chat/XR-010");
+  await page.waitForURL(new RegExp("#demo/"+richTask.board_id+"/chat/XR-010$"));
+  console.log(JSON.stringify({legacySiblingSave:true,topological:true,mixedConclusion:true,acceptedReceiptLink:true}));
   await source("XR-008");
-  await page.getByText("Разбор ничего не подготовил. Можно подготовить задачу вручную.", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Подготовить вручную", exact: true }).click();
-  await page.waitForURL(/#demo\/draft\/XR-008\/prepared\/new/);
-  await page.locator("#groups textarea.tedit").fill("ручная задача");
-  await page.locator("#groups .fbody textarea").fill(richTask.text);
-  await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^тип$/})}).locator("select").selectOption("bug");
-  await page.locator("#groups .tchips .pick").filter({has:page.locator(".pl",{hasText:/^цена$/})}).locator("select").selectOption("L");
-  await page.locator("#groups .rcard .rfold").click();
-  const rankValues = [25,5,3,5,4];
-  for (let i=0;i<rankValues.length;i++) await page.locator("#groups .rcard select").nth(i).selectOption(String(rankValues[i]));
-  const saved = page.waitForResponse(r=>r.url().endsWith("/XR-008/prepared") && r.request().method()==="PUT");
-  await page.getByRole("button", { name: "Сохранить задачу", exact: true }).click();
-  const savedResp = await saved;
-  assert.equal(savedResp.status(), 200, await savedResp.text());
-  const savedBody = await savedResp.json();
-  const manualID = Object.values(savedBody.assigned || {})[0];
-  assert.match(manualID || "", /^XR-[0-9]+$/);
-  await page.waitForURL(new RegExp("#demo/draft/XR-008/prepared/" + manualID + "(/chat/)?$"));
-  assert.equal(await page.getByRole("button", {name:"Подтвердить",exact:true}).count(),0);
-  await source("XR-008"); await confirm(1);
+  await page.getByText("Разбор ничего не подготовил. Обсудите с агентом, что нужно уточнить.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Подготовить вручную", exact: true }).count(),0);
+  const emptyBefore = await (await context.request.get(base + "/api/projects/demo/drafts/XR-008/prepared")).json();
+  await open("draft/XR-008/prepared/new/chat/XR-008");
+  await page.waitForURL(/#demo\/draft\/XR-008\/chat\/XR-008$/);
+  await page.getByText("Задачи разбора",{exact:true}).waitFor();
+  assert.equal(await page.getByRole("button",{name:"Сохранить задачу",exact:true}).count(),0);
+  const emptyAfter = await (await context.request.get(base + "/api/projects/demo/drafts/XR-008/prepared")).json();
+  assert.deepEqual(emptyAfter,emptyBefore,"исторический new создал или изменил подготовленный состав");
   await source("XR-009");
   await page.getByText("Не удалось разобрать запись. Можно повторить разбор.", { exact: true }).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -174,8 +194,8 @@ try {
   const archived = await context.request.post(base + "/__archive");
   assert.equal(archived.status(),200,await archived.text());
   await open("XR-001");
-  await page.locator(".ffold .foldh").filter({hasText:"Из черновика"}).click();
+  await page.locator(".ffold .foldh").filter({hasText:"третья карточка"}).click();
   await page.getByRole("link",{name:"черновик XR-006",exact:true}).click();
   await page.getByText("История разбора",{exact:true}).waitFor();
-  console.log(JSON.stringify({sources:4,whole:true,history:true,attach:true,manual:true,evidence,sharedForm:true,normalEdit:true,preparedEdit:true,cancel:true,forbiddenControls:false,legacySiblingSave:true,topological:true,widths:[390,1440]}));
+  console.log(JSON.stringify({sources:4,whole:true,history:true,attach:true,agentPreparationOnly:true,evidence,sharedForm:true,normalEdit:true,preparedEdit:true,cancel:true,forbiddenControls:false,legacySiblingSave:true,topological:true,widths:[390,1440]}));
 } finally { await context.close(); await browser.close(); }

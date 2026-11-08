@@ -373,7 +373,7 @@ func writeShownProposal(t *testing.T, project, rawCards, mode string) {
 	if mode == "устаревшая редакция разбора" {
 		revision = 2
 	}
-	options := []any{map[string]any{"label": "Подтвердить разбор OB-069"}}
+	options := []any{map[string]any{"label": "Подтвердить разбор OB-069", "recommended": mode != "нет рекомендации"}}
 	if mode == "отдельное согласие на задачу" {
 		options = []any{map[string]any{"label": "Подтвердить p1"}}
 	}
@@ -422,6 +422,7 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		pass                 bool
 	}{
 		{"порядок", "taskctl draft prepared save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"нет рекомендации", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
 		{"разбор не готов", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
 		{"нет редакции разбора", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},
 		{"устаревшая редакция разбора", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"text":"полное описание"},{"id":"p2","revision":1,"text":"второе описание"}]`, false},

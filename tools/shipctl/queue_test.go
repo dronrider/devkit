@@ -117,6 +117,31 @@ func TestQueueDrainEmptyNoop(t *testing.T) {
 	}
 }
 
+// TestQueueDrainNamesHeldRows: очередь из одних снятых строк не пуста, и хвост
+// отчёта обязан называть снятые и причины. Тик повторяет хвост в журнале
+// каждые пять минут, и прежнее «очередь слияний пуста» маскировала стоящую
+// работу до отдельного вызова queue (DK-1334).
+func TestQueueDrainNamesHeldRows(t *testing.T) {
+	root := queueSetup(t)
+	for _, id := range []string{"XR-001", "XR-007"} {
+		if _, err := cmdQueue(root, QueueParams{Hold: id, Reason: "жду ответа смежника"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, noQueue) {
+		t.Fatalf("очередь из снятых строк не пуста, а напечатано: %q", msg)
+	}
+	for _, id := range []string{"XR-001", "XR-007"} {
+		if !strings.Contains(msg, "снята "+id) || !strings.Contains(msg, "жду ответа смежника") {
+			t.Errorf("снятая строка не названа с причиной: %q", msg)
+		}
+	}
+}
+
 // loadRedTest это команда тестов, красная нагрузочным падением компонента
 // вне диффа задачи: строки итога печатаются в том же виде, в каком их даёт
 // раннер, и тест сам называет себя замером стенного времени.
@@ -640,6 +665,40 @@ func TestQueueJSONDependencyIsWaiting(t *testing.T) {
 	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
 	if len(items) != 1 || !items[0].Waiting || items[0].Failed || !strings.Contains(items[0].Line, "предпосылку") {
 		t.Fatalf("неснятое ребро это ожидание: %+v", items)
+	}
+}
+
+// TestQueueJSONNamesHeldRows: снятые строки едут в машинный отчёт признаком
+// held, а не отказом. По нему тик отличает стоящую снятую работу от пустой
+// очереди и не эскалирует её дежурному: у снятой уже есть исполнитель и
+// поручение (DK-1334).
+func TestQueueJSONNamesHeldRows(t *testing.T) {
+	root := queueSetup(t)
+	for _, id := range []string{"XR-001", "XR-007"} {
+		if _, err := cmdQueue(root, QueueParams{Hold: id, Reason: "жду ответа смежника"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := cmdQueueJSON(root, QueueParams{Drain: true, Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("снятые строки не приехали в отчёт: %s", raw)
+	}
+	for _, it := range got.Items {
+		if it["held"] != true || it["failed"] != nil {
+			t.Fatalf("снятая строка это стоящая работа, а не отказ: %s", raw)
+		}
+		if line, _ := it["line"].(string); !strings.Contains(line, "снята") {
+			t.Fatalf("строка отчёта не называет снятую: %s", raw)
+		}
 	}
 }
 

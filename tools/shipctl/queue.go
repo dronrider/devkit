@@ -319,21 +319,28 @@ func sinceWords(d time.Duration) string {
 	}
 }
 
+// queueHeldLine печатает снятую строку: позицию в очереди она не занимает, а
+// возраст и причина говорят, что за работа стоит и почему её нет в разливе.
+// Возраст печатается рядом с причиной: снятая строка неделями без него
+// неотличима от вчерашней, и разбор её откладывается до бесконечности
+// (DK-1322).
+func queueHeldLine(it queueItem) string {
+	age := ""
+	if !it.Mark.At.IsZero() {
+		age = ", " + sinceWords(time.Since(it.Mark.At)) + " назад"
+	}
+	return fmt.Sprintf("снята %s (ранг %d%s): %s", it.ID, it.Rank, age, it.Mark.Reason)
+}
+
 // queueLines печатает очередь строками: позиция, задача, ранг, повторы и
 // причина прошлого отказа. Снятая строка идёт с пометкой и позиции не
-// занимает: она в составе не участвует, пока её не вернули. Возраст снятия
-// печатается рядом с причиной: снятая строка неделями без него неотличима от
-// вчерашней, и разбор её откладывается до бесконечности (DK-1322).
+// занимает: она в составе не участвует, пока её не вернули.
 func queueLines(items []queueItem) []string {
 	var out []string
 	pos := 0
 	for _, it := range items {
 		if it.Mark.Held {
-			age := ""
-			if !it.Mark.At.IsZero() {
-				age = ", " + sinceWords(time.Since(it.Mark.At)) + " назад"
-			}
-			out = append(out, fmt.Sprintf("    снята %s (ранг %d%s): %s", it.ID, it.Rank, age, it.Mark.Reason))
+			out = append(out, "    "+queueHeldLine(it))
 			continue
 		}
 		pos++
@@ -421,6 +428,7 @@ type queueReport struct {
 	Line    string      `json:"line"`
 	Failed  bool        `json:"failed,omitempty"`
 	Waiting bool        `json:"waiting,omitempty"`
+	Held    bool        `json:"held,omitempty"`
 	Merged  bool        `json:"merged,omitempty"`
 	Block   *queueBlock `json:"block,omitempty"`
 	Changed bool        `json:"changed,omitempty"`
@@ -541,9 +549,18 @@ func queueDrain(root string, p QueueParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var notes, skipped []string
+	var notes, skipped, held []string
 	for _, it := range items {
 		if it.Mark.Held {
+			// Снятая строка стоит в составе без попытки слияния, и молчание
+			// о ней приравнивало очередь из одних снятых к пустой: тик печатал
+			// «очередь слияний пуста», и стоящая работа была видна только
+			// отдельным вызовом queue (DK-1334).
+			line := queueHeldLine(it)
+			held = append(held, line)
+			if p.Report != nil {
+				p.Report(queueReport{ID: it.ID, Line: line, Held: true})
+			}
 			continue
 		}
 		merged, note, stop, skip := queueTry(root, it, p)
@@ -565,7 +582,11 @@ func queueDrain(root string, p QueueParams) (string, error) {
 		return strings.Join(notes, "\n"), nil
 	}
 	if len(skipped) > 0 {
-		return fmt.Sprintf("%s: готовых веток нет.\n    %s", noQueue, strings.Join(skipped, "\n    ")), nil
+		tail := append(skipped, held...)
+		return fmt.Sprintf("%s: готовых веток нет.\n    %s", noQueue, strings.Join(tail, "\n    ")), nil
+	}
+	if len(held) > 0 {
+		return "очередь слияний: готовых веток нет, стоит снятая работа\n    " + strings.Join(held, "\n    "), nil
 	}
 	return noQueue + ": ни одной строки In progress с веткой", nil
 }

@@ -18,7 +18,9 @@ func TestQueueRetryResumesAfterCodeChange(t *testing.T) {
 	}
 
 	for _, item := range queueJSONItems(t, root, QueueParams{Drain: true, Test: loadRedTest}) {
-		if item.ID == "XR-001" {
+		// Снятая строка может ехать в отчёт признаком held, а попыткой слияния
+		// стать не должна: служебная запись не возвращает ветку в разлив.
+		if item.ID == "XR-001" && (item.Failed || item.Waiting || item.Merged) {
 			t.Fatalf("снятая ветка снова ушла на слияние после служебной записи: %+v", item)
 		}
 	}

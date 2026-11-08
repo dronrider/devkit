@@ -4040,6 +4040,7 @@ def main(argv):
     t.add_argument("path", help="каталог go-модуля либо каталог с тестами *_test.py")
     t.add_argument("rest", nargs=argparse.REMAINDER,
                    help="хвост ключей самому прогону (-run TestX, -v)")
+    sub.add_parser("recovery-check", help="изолированная проверка восстановления без внешней модели")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
     sub.add_parser("waitcheck",
@@ -4083,6 +4084,9 @@ def main(argv):
         rc = user.main(["--gender", a.gender] if a.gender else [])
     elif a.cmd == "test":
         rc = testrun.run(a.path, a.rest)
+    elif a.cmd == "recovery-check":
+        import recovery_check
+        rc = recovery_check.main()
     elif a.cmd == "selfcheck":
         rc = selfcheck.main()
     elif a.cmd == "waitcheck":

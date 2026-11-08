@@ -1138,7 +1138,9 @@ def duty_rows(root, call=None, taskctl=None, home=None):
     её по корню."""
     import duty
     try:
-        return duty.duty_root(root, call=call, taskctl=taskctl, home=home)
+        recovery_call = None if isinstance(call, Timed) and call.call is run_soft else call
+        return duty.duty_root(root, call=call, taskctl=taskctl, home=home,
+                              recovery_call=recovery_call)
     except Exception as e:
         return ["корень %s: разбор дежурного не отработал, %s" % (root, e)]
 

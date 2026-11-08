@@ -1049,10 +1049,14 @@ func main() {
 		again := fs.String("again", "", "заказ следующих проходов")
 		hidden := fs.Bool("hidden", false, "поднято без человека")
 		reply := fs.Bool("reply", false, "заказ по лежащей в чате задачи реплике человека")
+		continueStopped := fs.Bool("continue-stopped", false, "явно продолжить остановленную пользователем задачу")
+		recoveryAttempt := fs.String("recovery-attempt", "", "машинная метка попытки восстановления")
+		previousRun := fs.String("recovery-run", "", "ID исходного запуска восстановления")
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden]`)
 		out, code, rerr := cmdRun(root(*dir), pos[0], runOpts{harness: *harness, model: *model,
-			order: *order, again: *again, hidden: *hidden, reply: *reply})
+			order: *order, again: *again, hidden: *hidden, reply: *reply,
+			continueStopped: *continueStopped, recoveryAttempt: *recoveryAttempt, previousRun: *previousRun})
 		if rerr != nil {
 			logRun(code)
 			fmt.Fprintln(os.Stderr, "ошибка:", rerr)

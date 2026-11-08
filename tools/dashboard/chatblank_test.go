@@ -468,6 +468,25 @@ func TestStaticChatBlank(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Первая реплика заготовки с задачей поднимает её сессию и при живом ожидании
+// строки: дорога задачи в chatWay стояла раньше ветки подъёма, и реплика из
+// панели незачатого разговора уходила ручкой /tasks/<ID>/message во вход
+// старого разговора (DK-1655). Сторожит стенд testdata/poc_chatblankwait.mjs:
+// подъём зовёт свою запись, ручка задачи молчит, а самой дороге задачи
+// остаются панели без свежей заготовки.
+func TestStaticChatBlankWaitTask(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд заготовки с ожидающей строкой пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatblankwait.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("заготовка при ожидающей строке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Пустой выбор моделей называет себя словами. Живой случай: «нельзя поменять
 // модель в новом чате» (замечание пользователя). Список моделей дашборд не
 // сочиняет, он целиком приезжает от agentctl, и когда лестницы ярусов в ответе

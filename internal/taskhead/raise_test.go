@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 // Стенд лестницы. Настоящих tmux, клиента и оболочки тут нет: tmux играет
@@ -795,5 +796,112 @@ func TestRaiseReservesBeforeClientStart(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("start stuck")
+	}
+}
+
+func TestStoppedTaskNeedsExplicitContinuation(t *testing.T) {
+	s := newStand(t, true, true)
+	if err := taskstate.SetStopped(s.home, s.root, "DK-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Raise(s.req()); err == nil {
+		t.Fatal("ручная остановка обойдена")
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "new-session") {
+		t.Fatal("остановленная задача поднята")
+	}
+	q := s.req()
+	q.ContinueStopped = true
+	result, err := Raise(q)
+	if err != nil || result.Code != 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+}
+
+func TestRecoveryRejectsChangedOriginalRunBeforeLaunch(t *testing.T) {
+	s := newStand(t, true, true)
+	q := s.req()
+	q.RecoveryAttempt = "RV-11111111111111111111111111111111"
+	q.PreviousRun = "unknown"
+	if _, err := Raise(q); err == nil {
+		t.Fatal("неизвестный исходный запуск разрешён")
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "new-session") {
+		t.Fatal("неизвестный запуск поднят")
+	}
+}
+
+func recoveryRequest(t *testing.T, s *stand) Request {
+	t.Helper()
+	g, err := taskstate.Acquire(s.home, s.root, "DK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Start("original", "stub", "strong", ""); err != nil {
+		t.Fatal(err)
+	}
+	g.State.Run.PID, g.State.Run.Group = 999999999, 999999999
+	if err = g.Save(); err != nil {
+		t.Fatal(err)
+	}
+	g.Close()
+	lock := LockPath(s.home, "DK-1")
+	if err = os.MkdirAll(lock, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(lock, "pid"), []byte("999999999\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	q := s.req()
+	q.Model, q.Order = "strong", "synthetic restore"
+	q.PreviousRun = "original"
+	q.RecoveryAttempt = "RV-11111111111111111111111111111111"
+	return q
+}
+
+func TestRecoveryDoesNotSendToLiveWindow(t *testing.T) {
+	s := newStand(t, true, true)
+	q := recoveryRequest(t, s)
+	s.register(0, "alive-session", "DK-1", "заказ", "chat-DK-1", "%77")
+	s.pane("%77", "0 claude")
+	result, err := Raise(q)
+	if err != nil || result.Code != CodeBusy {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if got := s.tmux("keys.log"); got != "" {
+		t.Fatal("реплика ушла живой работе: " + got)
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "kill-session") || strings.Contains(got, "new-session") {
+		t.Fatal(got)
+	}
+}
+
+func TestRecoveryDoesNotReplaceNamedWindow(t *testing.T) {
+	s := newStand(t, true, true)
+	q := recoveryRequest(t, s)
+	if err := os.WriteFile(filepath.Join(s.d, "sessions", "task-DK-1"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Raise(q)
+	if err != nil || result.Code != CodeBusy {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "kill-session") || strings.Contains(got, "new-session") {
+		t.Fatal(got)
+	}
+}
+
+func TestRecoveryDoesNotFallBackAfterTmuxFailure(t *testing.T) {
+	s := newStand(t, true, true)
+	q := recoveryRequest(t, s)
+	if err := os.WriteFile(filepath.Join(s.d, "newfail"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Raise(q)
+	if err != nil || result.Code != CodeSetup {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if got := s.read("runner.log"); got != "" {
+		t.Fatal("печатный дубль поднят: " + got)
 	}
 }

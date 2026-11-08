@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/sessions"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 // TaskRunRel это оболочка конвейера задачи внутри дерева devkit.
@@ -92,13 +94,17 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "fish": true
 
 // Request это заказ подъёма.
 type Request struct {
-	ID      string // задача доски
-	Root    string // корень проекта, где живёт доска
-	Project string // имя проекта для журналов и уведомлений
-	Home    string // дом, от которого считаются ~/.devkit и реестр
-	Devkit  string // дерево devkit: оболочка, профили, уведомитель
-	Harness string // имя профиля харнеса
-	Model   string // ярус моделью, пусто значит спросить Pick
+	RecoveryAttempt string
+	PreviousRun     string
+	ContinueStopped bool
+	runID           string
+	ID              string // задача доски
+	Root            string // корень проекта, где живёт доска
+	Project         string // имя проекта для журналов и уведомлений
+	Home            string // дом, от которого считаются ~/.devkit и реестр
+	Devkit          string // дерево devkit: оболочка, профили, уведомитель
+	Harness         string // имя профиля харнеса
+	Model           string // ярус моделью, пусто значит спросить Pick
 	// Pick называет модель вердиктом, когда Model пуст. Зовётся только перед
 	// стартом нового клиента. Отказ оставляет клиенту его умолчание.
 	Pick   func() (string, error)
@@ -179,6 +185,27 @@ func Raise(q Request) (Result, error) {
 	if q.Adopt <= 0 {
 		q.Adopt = DefaultAdopt
 	}
+	state, err := taskstate.Acquire(q.Home, q.Root, q.ID)
+	if err != nil {
+		return res, err
+	}
+	defer state.Close()
+	if q.ContinueStopped {
+		state.State.Stopped = false
+		state.State.Run = nil
+		if err = state.Save(); err != nil {
+			return res, err
+		}
+	}
+	if state.State.Stopped {
+		return res, fmt.Errorf("задача остановлена пользователем; используйте явное продолжение")
+	}
+	if q.RecoveryAttempt != "" {
+		old := state.State.Run
+		if q.PreviousRun == "" || old == nil || old.ID != q.PreviousRun || old.PID <= 0 || old.Group <= 0 || !errors.Is(syscall.Kill(-old.Group, 0), syscall.ESRCH) || Owner(LockPath(q.Home, q.ID)) != old.PID || Alive(old.PID) || old.Harness == "" || old.Model == "" || old.Harness != q.Harness || old.Model != q.Model {
+			return res, fmt.Errorf("исходный запуск восстановления не подтверждён либо изменился")
+		}
+	}
 	lock, me := LockPath(q.Home, q.ID), os.Getpid()
 	tx, err := drafttx.Acquire(q.Root)
 	if err != nil {
@@ -209,7 +236,17 @@ func Raise(q Request) (Result, error) {
 		res.say("tmux не нашёлся в PATH: живого и нового окна не будет, лестница начинается с headless")
 	} else if q.replyLive(tmux, &res) {
 		res.Code, res.Rung = CodeRaised, RungLive
+		if q.RecoveryAttempt != "" {
+			res.Code = CodeBusy
+		}
 		return res, nil
+	}
+	if q.RecoveryAttempt != "" && tmux != "" {
+		if exec.Command(tmux, "has-session", "-t", "=task-"+q.ID).Run() == nil {
+			res.Code, res.Rung = CodeBusy, RungLive
+			res.say("окно task-%s уже существует, восстановление запрещено", q.ID)
+			return res, nil
+		}
 	}
 	runner := filepath.Join(q.Devkit, filepath.FromSlash(TaskRunRel))
 	switch {
@@ -219,8 +256,21 @@ func Raise(q Request) (Result, error) {
 		res.say("клиент %s не нашёлся в PATH: поднимать голову нечем", head.Bin)
 	default:
 		q.pickModel(&res)
+		q.runID = newSessionID()
+		if q.runID == "" {
+			return res, fmt.Errorf("не удалось создать ID запуска")
+		}
+		if err = state.Start(q.runID, q.Harness, q.Model, q.RecoveryAttempt); err != nil {
+			return res, err
+		}
+
 		if tmux != "" && q.newWindow(tmux, runner, head, lock, me, &res) {
 			res.Code, res.Rung = CodeRaised, RungWindow
+			return res, nil
+		}
+		if q.RecoveryAttempt != "" && tmux != "" {
+			res.Code, res.Rung = CodeSetup, RungWindow
+			res.say("окно восстановления не поднялось, печатный дубль не запускается")
 			return res, nil
 		}
 		if !q.carried() {
@@ -307,10 +357,18 @@ func (q Request) replyLive(tmux string, res *Result) bool {
 		out, err := exec.Command(tmux, "display-message", "-p", "-t", t,
 			"#{pane_dead} #{pane_current_command}").Output()
 		if err != nil {
+			if q.RecoveryAttempt != "" {
+				res.say("состояние связанного окна не проверено, восстановление запрещено")
+				return true
+			}
 			res.say("окно %s сессии %s в tmux уже нет", w.addr, w.sid)
 			continue
 		}
 		f := strings.Fields(string(out))
+		if q.RecoveryAttempt != "" && (len(f) < 2 || f[0] != "1") {
+			res.say("связанное окно живо либо не определено, восстановление запрещено")
+			return true
+		}
 		if len(f) < 2 || f[0] != "0" {
 			res.say("панель %s сессии %s мертва", w.addr, w.sid)
 			continue
@@ -366,6 +424,9 @@ func (q Request) env(me int, name string) []string {
 		"PATH=" + os.Getenv("PATH"),
 		"DEVKIT_TASK=" + q.ID,
 		"DEVKIT_HARNESS=" + q.Harness,
+		"DEVKIT_TASK_RUN_ID=" + q.runID,
+		"DEVKIT_TASK_RUN_MODEL=" + q.Model,
+		"DEVKIT_RECOVERY_ATTEMPT=" + q.RecoveryAttempt,
 		LockFromEnv + "=" + fmt.Sprint(me),
 	}
 	if name != "" {
@@ -467,9 +528,26 @@ func (q Request) headless(runner string, head Head, lock string, me int, res *Re
 		return false
 	}
 	defer f.Close()
-	cmd := q.headlessCmd(append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, "", q.Name)...))
+	sid := ""
+	if q.RecoveryAttempt != "" {
+		if len(head.Session) == 0 {
+			res.say("печатный клиент не поддерживает подтверждённый ID сессии восстановления")
+			return false
+		}
+		sid = newSessionID()
+		if sid == "" {
+			res.say("ID печатного клиента не создан")
+			return false
+		}
+	}
+	cmd := q.headlessCmd(append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, sid, q.Name)...))
 	cmd.Dir = q.Root
 	cmd.Env = append(os.Environ(), q.env(me, "")...)
+	if sid != "" {
+		identity, _ := json.Marshal(append([]string{}, head.Session...))
+		cmd.Env = append(cmd.Env, "DEVKIT_TASK_HEAD_SESSION="+sid, "DEVKIT_TASK_HEAD_SESSION_ARGS="+string(identity))
+	}
+
 	cmd.Stdout, cmd.Stderr = f, f
 	// Своя сессия процесса: голова переживает выход команды и не получает
 	// сигналов её терминала.

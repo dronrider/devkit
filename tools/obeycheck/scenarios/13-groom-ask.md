@@ -1,7 +1,7 @@
 # спросить человека на разборе черновика в заходе автоматики
 
 конец: любой
-предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «Раунд»; kit/skills/interview/SKILL.md «Первый запуск»
+предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «5. Сохрани вопрос и обработай ответ»
 окружение: DEVKIT_HEADLESS=стенд
 
 ## Подготовка

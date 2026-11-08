@@ -1,7 +1,7 @@
 # найти обходом готовую утилиту вместо новой
 
 конец: любой
-предмет: kit/skills/interview/SKILL.md «Обход до первого вопроса»; kit/skills/board-groom/SKILL.md «Процедура»
+предмет: kit/skills/interview/SKILL.md «2. Собери недостающие факты»; kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/research.md
 
 ## Подготовка
 

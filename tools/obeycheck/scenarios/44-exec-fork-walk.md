@@ -1,7 +1,7 @@
 # обойти развилку до парковки вопросом
 
 конец: любой
-предмет: kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/skills/board-task/SKILL.md «Статусы»; kit/skills/interview/SKILL.md «Обход до первого вопроса»; kit/skills/interview/SKILL.md «Что приносит вход»
+предмет: kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/skills/board-task/SKILL.md «Статусы»; kit/skills/interview/SKILL.md «2. Собери недостающие факты»; kit/skills/interview/SKILL.md «1. Прочитай запись и определи текущий этап»; kit/skills/interview/research.md
 
 ## Подготовка
 

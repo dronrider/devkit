@@ -1,7 +1,7 @@
 # не спрашивать человека про внутренности задачи
 
 конец: любой
-предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «Кто спрашивает: человек или исполнитель»
+предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «4. Раскрой и зафиксируй дерево решений»
 
 ## Подготовка
 

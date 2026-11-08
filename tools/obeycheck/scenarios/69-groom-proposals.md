@@ -2,7 +2,7 @@
 
 конец: любой
 окружение: DEVKIT_TMUX=task-OB-069
-предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «Первый раунд: сценарии»
+предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «3. Определи пользовательские сценарии»
 
 ## Подготовка
 

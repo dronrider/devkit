@@ -1149,8 +1149,8 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
     """Подъём упавшего хода (DK-510, DK-1321). Возврат это строки отчёта, как
     у пробуждения и страховки.
 
-    Хук StopFailure про упавший ход только кричит. Он выполняется внутри
-    умирающего хода и нового ничего не поднимет. Собственные попытки харнеса
+    Обрыв посреди ответа уже ведёт notify через turn_recover, такие падения
+    этот тик пропускает по отметке владения. Собственные попытки харнеса
     короче инцидента, ради которого сторож заведён. Закрытый на переезде
     ноутбук возвращается в сеть через десятки минут, а ход к тому времени давно
     упал. Тик видит падение по журналу уведомителя, дожидается сети и подаёт
@@ -1186,6 +1186,13 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
             # снимается, и следующее падение начинает его заново.
             state.pop(sid, None)
             continue
+        # Этот обрыв уже принадлежит хуку; второй отправитель нарушит лимит.
+        managed = home_path(home, "~/.devkit/turn-recover/%s.json" % sid)
+        try:
+            if json.loads(managed.read_text()).get("managed"):
+                continue
+        except (OSError, ValueError):
+            pass
         live.add(sid)
         prev = state.get(sid, {})
         mark = fall["when"].strftime(STAMP)

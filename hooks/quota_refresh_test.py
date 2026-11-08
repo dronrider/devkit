@@ -3,8 +3,8 @@
 не поднимаются, вместо них заглушки: проверяется обвязка хука (условия запуска,
 замок, журнал), а не съём панели, у него свои тесты.
 
-Хук на sh по правилу языка там и остаётся, поэтому зовётся он как процесс, а
-тест лежит рядом с ним.
+Shell-хук и Python-компонент журнала запускаются по своим путям из чекаута.
+Паузы и отказы ввода-вывода задаются только подставными командами теста.
 """
 import os
 import shutil
@@ -20,7 +20,7 @@ HOOK = os.path.join(HERE, "quota-refresh.sh")
 # Системная часть PATH подставная: проверка «инструментов нет» иначе держалась
 # бы на том, чего нет в /usr/bin именно на этой машине.
 SYS_TOOLS = ("sh", "dirname", "mkdir", "rmdir", "date", "find", "sleep",
-             "wc", "tail", "mv", "mktemp", "rm")
+             "wc", "tail", "mv", "mktemp", "rm", "python3")
 
 
 def awaited(path, timeout=10.0):
@@ -102,6 +102,72 @@ printf() {
         code = code.replace("FINISH", finish)
         self.stub("sh", "#!/bin/sh\nexec %s -c %s \"$@\"\n" %
                   (shlex.quote(shutil.which("sh")), shlex.quote(code)))
+
+    def journal_io(self, phase, fail=False):
+        # Загружается компонент по фактическому argv shell-хука. Подмена
+        # затрагивает только нужную операцию ввода-вывода в этом процессе.
+        script = '''import runpy
+import sys
+import time
+from pathlib import Path
+from unittest.mock import patch
+program = runpy.run_path(sys.argv[1])
+namespace = program["publish"].__globals__
+phase = PHASE
+fail = FAIL
+paused = Path(PAUSED)
+release = Path(RELEASE)
+def barrier():
+    paused.write_text("paused\\n", encoding="utf-8")
+    while not release.exists():
+        time.sleep(0.005)
+if phase == "подготовка":
+    context = patch.object(namespace["tempfile"], "TemporaryDirectory", side_effect=OSError)
+elif phase == "чтение":
+    original = Path.read_bytes
+    def controlled(path):
+        if path.name == "quota-refresh.log":
+            raise OSError
+        return original(path)
+    context = patch.object(Path, "read_bytes", controlled)
+elif phase == "запись":
+    original = Path.write_bytes
+    def controlled(path, data):
+        if path.name != "journal":
+            return original(path, data)
+        if fail:
+            original(path, data[:4])
+            raise OSError
+        with path.open("wb") as stream:
+            stream.write(data[:4])
+            stream.flush()
+            barrier()
+            stream.write(data[4:])
+        return len(data)
+    context = patch.object(Path, "write_bytes", controlled)
+elif phase == "размер":
+    original = Path.stat
+    def controlled(path, *args, **kwargs):
+        if path.name == "journal":
+            raise OSError
+        return original(path, *args, **kwargs)
+    context = patch.object(Path, "stat", controlled)
+elif phase == "обрезка":
+    original = namespace["cap_lines"]
+    def controlled(data, keep):
+        if fail:
+            raise OSError
+        barrier()
+        return original(data, keep)
+    context = patch.dict(namespace, {"cap_lines": controlled})
+else:
+    context = patch.object(namespace["os"], "replace", side_effect=OSError)
+with context:
+    sys.exit(program["main"](sys.argv[2:]))
+'''
+        script = script.replace("PHASE", repr(phase)).replace("FAIL", repr(fail))
+        script = script.replace("PAUSED", repr(self.paused)).replace("RELEASE", repr(self.release))
+        self.stub("python3", "#!%s\n%s" % (shutil.which("python3"), script))
 
     def resume_writer(self):
         with open(self.release, "w", encoding="utf-8") as f:
@@ -188,7 +254,7 @@ printf() {
         self.assertTrue(self.wait_unlocked(), "замок не снялся после первого запуска")
         previous = read(self.log)
 
-        self.stream_printf()
+        self.journal_io("запись")
         self.stub("agentctl", '#!/bin/sh\necho "$*" >> "%s"\n'
                               'echo "второй отказ" >&2\nexit 1\n' % self.mark)
         self.assertEqual(self.run_hook(), 0)
@@ -224,13 +290,7 @@ printf() {
             self.assertTrue(self.wait_unlocked(), "замок не снялся")
 
         previous = read(self.log)
-        gate = ('#!/bin/sh\nif [ "$2" = "5" ]; then\n'
-                'printf "paused\\n" > %s\n'
-                'while [ ! -f %s ]; do sleep 0.005; done\nfi\n'
-                'exec %s "$@"\n') % (shlex.quote(self.paused),
-                                         shlex.quote(self.release),
-                                         shlex.quote(shutil.which("tail")))
-        self.stub("tail", gate)
+        self.journal_io("обрезка")
         self.assertEqual(self.run_hook(extra_env=env_extra), 0)
         try:
             self.assertTrue(awaited(self.paused), "обрезка не началась")
@@ -255,38 +315,17 @@ printf() {
         with open(foreign, "w", encoding="utf-8") as f:
             f.write("чужой временный файл\n")
         self.stub("agentctl", '#!/bin/sh\necho "ответ с закрытыми данными" >&2\nexit 1\n')
-        failures = (("mktemp", "подготовка", None),
-                    ("tail", "чтение", "+1"),
-                    ("sh", "запись", None),
-                    ("wc", "размер", None),
-                    ("tail", "обрезка", "5"),
-                    ("mv", "публикация", None))
-        for tool, phase, argument in failures:
+        for phase in ("подготовка", "чтение", "запись", "размер", "обрезка", "публикация"):
             with self.subTest(phase=phase):
                 previous = read(self.log)
                 before = set(os.listdir(state))
-                if tool == "sh":
-                    self.stream_printf(fail=True)
-                elif argument:
-                    self.stub(tool, '#!/bin/sh\n[ "$2" != %s ] || exit 1\n'
-                                    'exec %s "$@"\n' % (shlex.quote(argument),
-                                                         shlex.quote(shutil.which(tool))))
-                elif tool == "mv":
-                    self.stub(tool, '#!/bin/sh\n[ "$2" != %s ] || exit 1\n'
-                                    'exec %s "$@"\n' % (shlex.quote(self.log),
-                                                         shlex.quote(shutil.which("mv"))))
-                else:
-                    self.stub(tool, "#!/bin/sh\nexit 1\n")
+                self.journal_io(phase, fail=True)
                 extra = {"QUOTA_REFRESH_LOG_LIMIT": "1", "QUOTA_REFRESH_LOG_KEEP": "5"}
                 self.assertEqual(self.run_hook(extra_env=extra), 0)
                 try:
-                    if tool == "sh":
-                        self.assertTrue(awaited(self.paused), "запись не началась")
-                        self.assertEqual(read(self.log), previous)
-                finally:
-                    self.resume_writer()
                     self.assertTrue(self.wait_unlocked(), "замок остался после отказа")
-                    os.unlink(os.path.join(self.bin, tool))
+                finally:
+                    os.unlink(os.path.join(self.bin, "python3"))
                 self.assertEqual(read(self.log), previous, "отказ повредил прежний журнал")
                 self.assertEqual(read(self.error), "ошибка записи журнала: %s\n" % phase)
                 self.assertEqual(set(os.listdir(state)), before | {"quota-refresh.error"},
@@ -296,6 +335,18 @@ printf() {
                 self.assertFalse(os.path.exists(self.error), "ошибка не очищена после успеха")
                 self.assertTrue(read(self.log).startswith(previous), "при повторе потерялась история")
                 self.assertEqual(set(os.listdir(state)), before)
+
+    def test_incomplete_pipe_record_is_not_published(self):
+        self.stream_printf(fail=True)
+        self.assertEqual(self.run_hook(), 0)
+        try:
+            self.assertTrue(awaited(self.paused), "писатель не дошел до отбивки")
+            self.assertEqual(read(self.log), "")
+        finally:
+            self.resume_writer()
+            self.assertTrue(self.wait_unlocked(), "замок остался после обрыва записи")
+        self.assertEqual(read(self.log), "")
+        self.assertEqual(read(self.error), "ошибка записи журнала: запись\n")
 
     def test_nothing_to_take_a_snapshot_with(self):
         # Уходим молча и следов не оставляем, ругаться на это дело devkitctl

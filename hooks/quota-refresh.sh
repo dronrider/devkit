@@ -64,33 +64,7 @@ mkdir "$lock" 2>/dev/null || exit 0
             printf '%s\n' "$out"
             echo "код возврата: $code"
         } 2>&1)
-        publish_journal() (
-            failed() {
-                printf '%s\n' "ошибка записи журнала: $1" >"$dir/quota-refresh.error" 2>/dev/null
-                exit 1
-            }
-            stage=$(mktemp -d "$dir/quota-refresh.XXXXXX") || failed подготовка
-            trap 'rm -f "$stage/journal" "$stage/capped"; rmdir "$stage"' 0
-            if [ -f "$log" ]; then
-                tail -n +1 "$log" >"$stage/journal" || failed чтение
-            else
-                : >"$stage/journal" || failed подготовка
-            fi
-            printf '%s\n' "$record" >>"$stage/journal" || failed запись
-            size=$(wc -c <"$stage/journal") || failed размер
-            set -- $size
-            case "${1:-}" in
-            ''|*[!0-9]*) failed размер ;;
-            esac
-            if [ "$1" -gt "$log_limit" ]; then
-                tail -n "$log_keep" "$stage/journal" >"$stage/capped" || failed обрезка
-                mv "$stage/capped" "$stage/journal" || failed обрезка
-            fi
-            [ ! -d "$log" ] || failed публикация
-            mv "$stage/journal" "$log" || failed публикация
-            rm -f "$dir/quota-refresh.error"
-        )
-        publish_journal
+        printf '%s\n' "$record" | python3 "$here/quota_journal.py" "$dir" "$code" "$log_limit" "$log_keep"
     fi
     rmdir "$lock" 2>/dev/null
 } </dev/null >/dev/null 2>&1 &

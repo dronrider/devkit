@@ -256,7 +256,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                              с --here в названной директории
 
 Поднимать голову задачи:
-  run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden]
+  run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden] [--continue-stopped]
                                               лестница носителей: реплика в живое
                                               окно задачи, новое окно tmux с
                                               task-run.py, headless, громкий зов
@@ -1053,7 +1053,7 @@ func main() {
 		recoveryAttempt := fs.String("recovery-attempt", "", "машинная метка попытки восстановления")
 		previousRun := fs.String("recovery-run", "", "ID исходного запуска восстановления")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden]`)
+		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden] [--continue-stopped]`)
 		out, code, rerr := cmdRun(root(*dir), pos[0], runOpts{harness: *harness, model: *model,
 			order: *order, again: *again, hidden: *hidden, reply: *reply,
 			continueStopped: *continueStopped, recoveryAttempt: *recoveryAttempt, previousRun: *previousRun})

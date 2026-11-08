@@ -242,6 +242,17 @@ func TestUsageTextAcceptBarrier(t *testing.T) {
 	}
 }
 
+// TestUsageTextRunContinueStopped: блок run называет флаг явного
+// продолжения остановленной задачи. Страница taskctl ссылается на него
+// как на основной способ продолжения из терминала, и молчаливая шапка
+// разводит пользователя с документацией.
+func TestUsageTextRunContinueStopped(t *testing.T) {
+	block := usageEntry(t, "run")
+	if !strings.Contains(block, "--continue-stopped") {
+		t.Errorf("в блоке run нет флага продолжения: %s", block)
+	}
+}
+
 // usageEntry вырезает из шапки блок одной подкоманды: от строки, начатой
 // её именем с двойным отступом, до следующей строки с таким же отступом и
 // именем другой команды. Продолжения блока начинаются глубже.

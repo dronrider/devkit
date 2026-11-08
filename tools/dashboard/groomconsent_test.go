@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,12 @@ import (
 )
 
 func TestGroomConsentWaiting(t *testing.T) {
+	for _, selection := range []string{"all", "one-source"} {
+		t.Run(selection, func(t *testing.T) { groomConsentWaiting(t, selection) })
+	}
+}
+
+func groomConsentWaiting(t *testing.T, selection string) {
 	st := newScenarioStand(t)
 	kit, _ := filepath.Abs("../..")
 	t.Setenv("DEVKIT_HOME", kit)
@@ -55,18 +63,6 @@ func TestGroomConsentWaiting(t *testing.T) {
 	if err := json.Unmarshal([]byte(printed), &question); err != nil {
 		t.Fatal(err)
 	}
-	var delivery struct {
-		Delivery string `json:"delivery"`
-	}
-	json.Unmarshal([]byte(printed), &delivery)
-	if delivery.Delivery != "panel" {
-		t.Fatalf("panel delivery: %s", printed)
-	}
-	for _, option := range question.Options {
-		if !option.Recommended {
-			t.Fatal("source recommendation missing")
-		}
-	}
 	now := time.Now()
 	event := func(id, name string, input any) string {
 		raw, _ := json.Marshal(map[string]any{"type": "assistant", "timestamp": now.Format(time.RFC3339Nano), "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": id, "name": name, "input": input}}}})
@@ -86,6 +82,47 @@ ls|list-sessions) printf 'task-XR-4\t1\t1794141800\n';;
 send-keys) printf '%s\n' "$*" >> `+shQuote(keys)+`;;
 has-session) exit 0;;
 esac`)
+	initialMaterial := readFile(t, st.path)
+	initialAsk, _ := chat.ReadAsk(chat.AskPath(st.e.proj, chat.TaskName("XR-4")))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__consent-fixture", func(w http.ResponseWriter, r *http.Request) {
+		askPath := chat.AskPath(st.e.proj, chat.TaskName("XR-4"))
+		switch r.URL.Query().Get("mode") {
+		case "writer":
+			if err := os.Remove(askPath); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			if err := os.WriteFile(st.path, []byte(initialMaterial+"\nПоправка во время записи\n"), 0600); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			writeSession(t, st.e.home, st.e.proj, "", scenarioPanelSID, plainTalk+native+event("writer", "Bash", map[string]string{"command": "save"}), now)
+			writePeerAged(t, st.e.home, scenarioPanelSID, "task-XR-4", "busy", now.UnixMilli())
+		case "restore":
+			if err := os.WriteFile(st.path, []byte(initialMaterial), 0600); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			writeSession(t, st.e.home, st.e.proj, "", scenarioPanelSID, plainTalk+native, now)
+			writePeerAged(t, st.e.home, scenarioPanelSID, "task-XR-4", "waiting", now.UnixMilli())
+			if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), initialAsk); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			if err := os.Chtimes(askPath, now.Add(-time.Second), now.Add(-time.Second)); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		default:
+			http.Error(w, "mode", 400)
+			return
+		}
+		w.WriteHeader(200)
+	})
+	mux.Handle("/", st.e.s.handler())
+	browserServer := httptest.NewServer(mux)
+	t.Cleanup(browserServer.Close)
 	chrome := findChrome()
 	if chrome == "" {
 		t.Fatal("Chrome is required for consent symptom")
@@ -96,11 +133,24 @@ esac`)
 	}
 	browser := func(mode string) {
 		t.Helper()
-		cmd := exec.Command(node, "testdata/groom_consent_browser.mjs", st.e.srv.URL, chrome, st.e.cfg.Token, scenarioPanelSID, mode)
+		cmd := exec.Command(node, "testdata/groom_consent_browser.mjs", browserServer.URL, chrome, st.e.cfg.Token, scenarioPanelSID, mode, selection)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("browser %s: %s %v", mode, out, err)
 		} else {
 			t.Log(string(out))
+		}
+	}
+	browser("surface")
+	var delivery struct {
+		Delivery string `json:"delivery"`
+	}
+	json.Unmarshal([]byte(printed), &delivery)
+	if delivery.Delivery != "panel" {
+		t.Fatalf("panel delivery: %s", printed)
+	}
+	for _, option := range question.Options {
+		if !option.Recommended {
+			t.Fatal("source recommendation missing")
 		}
 	}
 	status := func(want bool) {
@@ -205,4 +255,13 @@ esac`)
 		t.Fatalf("literal keys sent into native modal: %s", data)
 	}
 	status(true)
+	var remaining struct {
+		State draftproposal.State `json:"state"`
+	}
+	if json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-5")), &remaining) != nil {
+		t.Fatal("remaining view")
+	}
+	if selection == "one-source" && (remaining.State.State != "active" || remaining.State.Proposals[0].Status != "") {
+		t.Fatal("unchecked source was applied")
+	}
 }

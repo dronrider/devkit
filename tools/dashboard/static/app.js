@@ -15130,7 +15130,7 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop || !r.ok) return;
       let ask = r.body.ask || null;
-      if (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length)) ask = pick.ask;
+      if (pick.proposalDraft && (ta.value || pick.touched)) ask = pick.ask;
       else if (askPickKey(pick.ask) !== askPickKey(ask)) {
         pick.selected = null;
         pick.ordinary = null;
@@ -15138,6 +15138,7 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
         pick.selection = null;
         pick.choices = {};
         pick.attached = {};
+        pick.touched = false;
         askPickRender(pick);
         pick.proposalDraft = null;
       }
@@ -21566,6 +21567,7 @@ function preparedPickWire(feed, pick, shown) {
       ev.stopPropagation();
       if (mark.disabled) return;
       const on = !mark.classList.contains("on");
+      pick.touched = true;
       askPickMark(mark, on);
       draft.decisions = draft.decisions.filter((d) => d.source !== source.source);
       if (on) draft.decisions.push(...source.proposals.map((p) =>

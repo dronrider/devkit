@@ -165,10 +165,8 @@ func (s *server) rememberProposalContext(sid string, q chat.PreparedQuestion, a 
 	for _, source := range q.Sources {
 		item.ShownSources = append(item.ShownSources, source.Source)
 	}
-	if len(a.Snapshots) == len(q.Sources) {
-		if shown, tools := s.groomConsent(q.Tree, sid); shown != nil && reflect.DeepEqual(*shown, q) {
-			item.NativeTools = tools
-		}
+	if shown, tools := s.groomConsent(q.Tree, sid); shown != nil && reflect.DeepEqual(*shown, q) {
+		item.NativeTools = tools
 	}
 	st := s.chatStoreRead(sid)
 	if source, mode := s.inheritedGroomContext(sid, q.Anchor); source != "" {

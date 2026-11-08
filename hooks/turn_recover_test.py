@@ -142,20 +142,27 @@ class RecoveryTest(unittest.TestCase):
         server.listen()
         frames = []
         def receive():
-            with server.accept()[0] as conn:
-                data = b""
-                while True:
-                    part = conn.recv(4096)
-                    if not part:
-                        break
-                    data += part
-                frames.append(json.loads(data))
+            for _ in range(2):
+                with server.accept()[0] as conn:
+                    data = b""
+                    while True:
+                        part = conn.recv(4096)
+                        if not part:
+                            break
+                        data += part
+                    frames.append(json.loads(data))
         worker = threading.Thread(target=receive)
         worker.start()
-        self.assertEqual(recovery.socket_send(dict(self.row, messagingSocketPath=path)), "socket")
+        for _ in range(2):
+            self.assertEqual(recovery.socket_send(dict(self.row, messagingSocketPath=path)), "socket")
         worker.join(2)
         self.assertEqual(frames[0]["priority"], "next")
         self.assertIn(recovery.MESSAGE, frames[0]["message"]["content"])
+        self.assertNotEqual(frames[0]["from"], frames[1]["from"])
+        self.assertNotEqual(frames[0]["msg_id"], frames[1]["msg_id"])
+        for frame in frames:
+            self.assertIn('from-name="devkit"', frame["message"]["content"])
+            self.assertIn(recovery.MESSAGE, frame["message"]["content"])
 
     def test_notify_suppresses_only_scheduled_recovery(self):
         sess = event()

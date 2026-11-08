@@ -514,6 +514,30 @@ a:hover{text-decoration:underline}
 .hpop[hidden]{display:none}
 .hph{display:block;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;
   color:var(--tx3);padding:9px 11px 8px}
+/* Первая строка списка моделей: подпись слева, переключатель «Автоматически»
+   справа (DK-1570, замечание пользователя). Ширину строке даёт то же меню. */
+.hhead{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:9px 11px 8px}
+.hhead .hph{padding:0}
+/* Включённый переключатель гасит ручной выбор: строки подписок и шкала глубины
+   не нажимаются, а пара машины остаётся видимой. */
+.auto{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
+.autotx{font:500 11px var(--sans);color:var(--tx2)}
+.auto input{position:absolute;opacity:0;width:0;height:0}
+.auto .sw{position:relative;width:26px;height:15px;border-radius:8px;background:var(--bg3);
+  border:1px solid var(--line2);transition:background .15s ease,border-color .15s ease}
+.auto .sw::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;
+  border-radius:50%;background:var(--tx2);transition:left .15s ease,background .15s ease}
+.auto input:checked + .sw{background:color-mix(in oklab,var(--acc) 32%,var(--bg3));
+  border-color:color-mix(in oklab,var(--acc) 55%,var(--line2))}
+.auto input:checked + .sw::after{left:13px;background:var(--acc)}
+.auto input:focus-visible + .sw{outline:1px solid var(--acc);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.auto .sw,.auto .sw::after{transition:none}}
+.is-auto .hrow:not(.on){opacity:.45;pointer-events:none}
+.is-auto .eff{pointer-events:none}
+.is-auto .effmark,.is-auto .effrail,.is-auto .efffill,.is-auto .effdot{opacity:.45}
+.is-auto .effdot.verd{opacity:1}
+.is-auto .effthumb{opacity:.9}
 /* Строка меню это подписка, модель и ярус целиком (DK-1570). Имя слева, чип
    называет ярус и подписку, полоски остатка окна и недели стоят ниже. Подписок
    одного вида может быть несколько, и различает строки чип, а не имя модели. */

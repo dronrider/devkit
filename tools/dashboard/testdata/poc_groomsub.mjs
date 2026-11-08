@@ -12,7 +12,8 @@
 //
 // Зовётся: node testdata/poc_groomsub.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg,
+  autoBox, autoSet }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -76,6 +77,11 @@ const openMenu = () => {
     "opus pro, claude-code", "glm-5.3 base, glm-code"]) {
     if (!text.includes(want)) fail("в меню разбора нет «" + want + "»: " + text);
   }
+  // Разбор черновика это форма записи, и переключатель «Автоматически» есть и
+  // тут: включённый оставляет пару машины, то есть умолчание лестницы (DK-1570).
+  const sw = autoBox(pop);
+  if (!sw) fail("в меню разбора нет переключателя «Автоматически»: " + dump(pop));
+  if (!sw.checked) fail("переключатель разбора открылся снятым");
   const marks = allByClass(pop, "effmark").map((b) => dump(b).trim());
   if (JSON.stringify(marks) !== JSON.stringify(["low", "medium", "high", "xhigh"])) {
     fail("шкала глубины разбора не из четырёх ступеней anthropic: " + JSON.stringify(marks));
@@ -107,6 +113,7 @@ if (posted[0].body.effort) {
 {
   const was = posted.length;
   const { pop } = openMenu();
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -122,6 +129,29 @@ if (posted[0].body.effort) {
   }
   if (last.body.effort !== "max") {
     fail("выбранная глубина не доехала до заказа: " + JSON.stringify(last.body));
+  }
+}
+
+// --- ручная пара живёт один запуск и у разбора (DK-1570) ---
+// После пачки, поднятой рукой, переключатель вернулся во включённое положение,
+// и следующая пачка без касания меню едет умолчанием панели, а не прошлым
+// выбором.
+{
+  const { pop } = openMenu();
+  const sw = autoBox(pop);
+  if (!sw || !sw.checked) fail("после разбора переключатель остался снятым");
+  const on = allByClass(pop, "hrow")
+    .filter((h) => String(h.className).includes("on")).map((h) => dump(h).trim());
+  if (on.join(",") !== "opus pro, claude-code") {
+    fail("после разбора подсвечена не пара умолчания: " + on.join(","));
+  }
+  await confirm(pickOne().btn);
+  const last = posted[posted.length - 1];
+  if (!last.body || last.body.harness !== "claude-code" || last.body.tier !== "pro") {
+    fail("ручная пара пережила свой запуск разбора: " + JSON.stringify(last.body));
+  }
+  if (last.body.effort) {
+    fail("ручная глубина пережила свой запуск разбора: " + JSON.stringify(last.body));
   }
 }
 

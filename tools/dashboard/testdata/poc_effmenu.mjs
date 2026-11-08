@@ -10,7 +10,8 @@
 //
 // Зовётся: node testdata/poc_effmenu.mjs static/app.js
 
-import { makeSandbox, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg,
+  autoBox, autoSet }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -61,7 +62,7 @@ const { sandbox } = makeSandbox(app, (path, init) => {
   if (path === "/api/harnesses") return { harnesses };
   if (path === "/api/quota") return quota;
   if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
-  if (path.endsWith("/pick")) return { tier: "base", via: "строка доски", effort: "high" };
+  if (path.endsWith("/pick")) return { tier: "base", via: "claude-code", effort: "high" };
   if (path.includes("/chats")) return { chats, models: chatModels };
   if (path.includes("/sessions/")) {
     const sid = path.slice(path.indexOf("/sessions/") + 10).split("?")[0];
@@ -91,10 +92,16 @@ const markOn = (pop) => allByClass(pop, "effmark")
   const { pop } = openRowMenu();
   if (!pop) fail("у строки нет меню модели и глубины");
   const text = dump(pop).replace(/\s+/g, " ");
-  for (const want of ["Модель", "Глубина размышления",
+  for (const want of ["Модель", "Автоматически", "Глубина размышления",
     "haiku mini, claude-code", "opus pro, claude-code", "glm-5.3 pro, glm-code"]) {
     if (!text.includes(want)) fail("в меню нет «" + want + "»: " + text);
   }
+  // Переключатель стоит в первой строке списка моделей и включён по умолчанию:
+  // форма задачи открывается парой машины, а не ручным выбором (DK-1570).
+  const box = autoBox(pop);
+  if (!box) fail("в меню формы задачи нет переключателя «Автоматически»");
+  if (!box.checked) fail("переключатель «Автоматически» открылся снятым");
+  if (!byClass(pop, "is-auto")) fail("меню не помечено включённым переключателем: " + dump(pop));
   // Подписка со снимком несёт обе полоски, подписка без снимка ни одной:
   // пустая полоска читалась бы нулём, а ноль у остатка это исчерпанный лимит.
   const rows = allByClass(pop, "hrow");
@@ -113,9 +120,45 @@ const markOn = (pop) => allByClass(pop, "effmark")
   }
 }
 
+// --- включённый переключатель не пускает руку к строкам и шкале ---
+{
+  const { box, pop } = openRowMenu();
+  const before = markOn(pop);
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
+    .handlers.click({ stopPropagation: () => {} });
+  if (JSON.stringify(markOn(pop)) !== JSON.stringify(before)) {
+    fail("при включённом переключателе рука сдвинула глубину: " + JSON.stringify(markOn(pop)));
+  }
+  // Снятый переключатель возвращает ручной выбор, и он снова доезжает до дела.
+  autoSet(pop, false);
+  if (byClass(pop, "is-auto")) fail("снятый переключатель оставил меню в автоматическом виде");
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
+    .handlers.click({ stopPropagation: () => {} });
+  if (JSON.stringify(markOn(pop)) !== JSON.stringify(["max"])) {
+    fail("снятый переключатель не вернул ручной выбор: " + JSON.stringify(markOn(pop)));
+  }
+  // Обратно включённый переключатель снимает ручную пару и возвращает шкалу
+  // пары машины.
+  autoSet(pop, true);
+  if (!byClass(pop, "is-auto")) fail("включённый переключатель не пометил меню: " + dump(pop));
+  if (JSON.stringify(markOn(pop)) !== JSON.stringify(["high"])) {
+    fail("включённый переключатель не вернул бегунок к вердикту: " + JSON.stringify(markOn(pop)));
+  }
+  byClass(box, "rmain").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (last().body.tier || last().body.effort || last().body.harness) {
+    fail("включённый переключатель назвал за человека пару: " + JSON.stringify(last().body));
+  }
+}
+
 // --- шкала следует за выбранной подпиской: у семей ступени свои (v4) ---
 {
   const { pop } = openRowMenu();
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   const glm = allByClass(pop, "effmark").map((b) => dump(b).trim());
@@ -147,6 +190,7 @@ const markOn = (pop) => allByClass(pop, "effmark")
 // --- выбранный рукой уровень доезжает до заказа запуска и живёт один запуск ---
 {
   const { box, pop } = openRowMenu();
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -162,6 +206,12 @@ const markOn = (pop) => allByClass(pop, "effmark")
   if (JSON.stringify(markOn(pop)) !== JSON.stringify(["high"])) {
     fail("после запуска шкала держит ручной выбор: " + JSON.stringify(markOn(pop)));
   }
+  // Переключатель вернулся включённым не только классом, но и отметкой: снятая
+  // галочка при автоматическом меню читалась бы ручным выбором (DK-1570).
+  if (!autoBox(pop).checked) {
+    fail("после запуска переключатель остался снятым на вид");
+  }
+  if (!byClass(pop, "is-auto")) fail("после запуска меню осталось в ручном виде");
   byClass(box, "rmain").handlers.click({ stopPropagation: () => {} });
   await settle();
   const again = last().body;
@@ -173,6 +223,7 @@ const markOn = (pop) => allByClass(pop, "effmark")
 // --- клик по дорожке округляется до ближайшей ступени ---
 {
   const { box, pop } = openRowMenu();
+  autoSet(pop, false);
   const track = byClass(pop, "efftrack");
   track.getBoundingClientRect = () => ({ left: 0, top: 0, bottom: 0, height: 0, width: 100 });
   track.handlers.click({ clientX: 96, stopPropagation: () => {} });
@@ -194,6 +245,9 @@ const markOn = (pop) => allByClass(pop, "effmark")
   if (!sel) fail("выбора модели в панели разговора нет");
   const menu = byClass(panel, "menu");
   if (!menu) fail("меню модели и глубины не построено у выбора модели");
+  // В разговоре переключателя нет: там модель и глубину выбирают руками
+  // (DK-1570, замечание пользователя).
+  if (autoBox(menu)) fail("в меню разговора появился переключатель «Автоматически»");
   sel.handlers.mousedown({ preventDefault() {}, stopPropagation() {} });
   if (menu.hidden) fail("нажатие на выбор модели не открыло меню");
   // Повторное нажатие закрывает: меню не висит над строкой реплики.

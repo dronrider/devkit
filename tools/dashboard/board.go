@@ -275,7 +275,8 @@ type Work struct {
 	// задачи у него свой, но строку он не присваивает, и признак работы с него
 	// не берётся (leadsTask). На экране «Агенты» такая строка стоит наравне с
 	// остальными, ей нужны те же две дороги.
-	Talk bool `json:"talk,omitempty"`
+	Talk    bool `json:"talk,omitempty"`
+	Consent bool `json:"consent,omitempty"`
 	// Stopping говорит, что стоп по этой работе уже нажат и дожимается: ход
 	// прерван, а фоновые субагенты ещё дописывают своё (stopwait.go). Признак
 	// нужен экрану: без него кнопка выглядит нетронутой, и человек жмёт её
@@ -515,7 +516,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		list = append(list, Work{ID: id, Kind: kind, Session: turn,
 			Title: s.workTitle(projectPath, rows[id].Title, sid),
 			Sect:  rows[id].Sect, Via: workViaTmux, Started: sess.Created,
-			Own: own != "", Tmux: own, Model: s.chatModel(sid, sess.Name), Talk: talk[sess.Name],
+			Own: own != "", Tmux: own, Model: s.chatModel(sid, sess.Name), Talk: talk[sess.Name], Consent: s.hasGroomConsent(projectPath, sid),
 			// Подписка та же, что у транскрипта этой сессии: конвейер второй
 			// подписки пишет журнал в её дом, и по нему она и узнаётся.
 			Harness: s.harnessOfSession(projectPath, sid, roots),

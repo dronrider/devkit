@@ -3818,6 +3818,10 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "ask": aw})
 		return
 	}
+	if s.processedNativeConsent(found.Path, sid) {
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "consent": true, "continuation": continuation})
+		return
+	}
 	// Вопрос агента идёт первым и снимка панели не стоит: признак ожидания это
 	// файл, а живой tmux ему не нужен вовсе. Спрашивает тут заход, который сам
 	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
@@ -4735,12 +4739,16 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	if p.Status == "busy" {
 		busy = true
 	}
+	consent := s.hasGroomConsent(found.Path, sid)
+	if consent {
+		busy = false
+	}
 	said := p.Status
 	if said == "" {
 		said = "по транскрипту"
 	}
 	out := loginFlags(map[string]any{"session": sid, "live": true,
-		"busy": busy, "status": said, "where": peerWord(p)})
+		"busy": busy, "status": said, "where": peerWord(p), "consent": consent})
 	// Выходные токены хода (DK-919): сумма output_tokens ассистентских записей
 	// с последней реплики человека. Размышления уже лежат внутри выхода:
 	// output_tokens_details это разбивка выхода, а не слагаемое, и отдельного

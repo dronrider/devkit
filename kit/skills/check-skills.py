@@ -382,14 +382,8 @@ def check_team(here):
     return fails
 
 
-REVIEW_SECTIONS = ("## Вход", "## Порядок ревью", "## Сколько ревью нужно",
-                   "## Вопросы по уровням", "## Замечания и три яруса",
-                   "## Бюджет и стоп", "## Разговор с автором",
-                   "## Ревью чужой задачи",
-                   "## Отработка замечаний автором", "## Второй круг")
-REVIEW_TIERS = ("Блокирующее", "Неблокирующее", "Мелочь")
-REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths", "checks",
-               "publish", "pause")
+REVIEW_SECTIONS = ("## Ревью чужой задачи", "## Отработка замечаний автором")
+REVIEW_KEYS = ("critical_paths", "checks", "publish", "pause")
 # Чем держится сценарий чужого ревью (LLD DK-756): замечания копятся командой в
 # файл, публикует их отдельная команда, а между ними стоит вопрос человеку с
 # парковкой строки. Раздел без любого из трёх звеньев снова уводит замечания
@@ -399,11 +393,8 @@ REVIEW_SIDE_FILES = ("examples.md", "threads.md", "foreign.md")
 
 
 def check_review(here, root):
-    # Скилл ревью один на все входы (доска, MR, дифф без трекера), и цифры
-    # бюджетов он читает из конфига, а не из своего текста. Без раздела уровней
-    # ревьювер читает дифф целиком на любой мелочи, без ярусов всякое замечание
-    # снова гонит задачу на круг, а определение ревьювера, которое всё ещё
-    # запрещает править код, спорит со скиллом молча.
+    # Проверяем ссылки и маршруты, от которых зависят утилиты и публикация.
+    # Порядок критериев и глубина проверки остаются в скилле.
     fails = []
     text = read(os.path.join(here, "review", "SKILL.md"))
     if text is None:
@@ -413,14 +404,8 @@ def check_review(here, root):
     for heading in REVIEW_SECTIONS:
         if "\n" + heading not in body:
             fails.append("review: нет раздела «%s»" % heading[3:])
-    for level in range(4):
-        if "| %d," % level not in text:
-            fails.append("review: в таблице уровней нет уровня %d" % level)
-    for tier in REVIEW_TIERS:
-        if "- %s:" % tier not in text:
-            fails.append("review: ярус «%s» не описан" % tier)
     if ".devkit/review.conf" not in text:
-        fails.append("review: бюджеты не отданы конфигу .devkit/review.conf")
+        fails.append("review: нет ссылки на конфиг .devkit/review.conf")
     foreign = section(text, "## Ревью чужой задачи")
     if foreign:
         # Звенья ищутся в двух местах разом: раздел скилла ужат до указателя, а

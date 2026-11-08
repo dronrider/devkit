@@ -1163,21 +1163,15 @@ class TestLiveReply(SkillTree):
 
 
 class ReviewSkill(SkillTree):
-    """Скилл ревью: разделы, четыре уровня, три яруса, конфиг и определения."""
+    """Маршруты ревью, конфиг и определения без требований к шкале глубины."""
 
     SKILL = ("---\nname: review\ndescription: Ревью. Звать, когда ревьюят.\n---\n\n"
-             "# Ревью\n\nбюджет в .devkit/review.conf\n\n"
-             "рядом examples.md, threads.md и foreign.md\n\n## Вход\n\nпредмет\n\n"
-             "## Порядок ревью\n\nшаги\n\n"
-             "## Сколько ревью нужно\n\n| 0, пропуск |\n| 1, ворота |\n| 2, обычное |\n| 3, глубокое |\n\n"
-             "## Вопросы по уровням\n\nвопросы\n\n"
-             "## Замечания и три яруса\n\n- Блокирующее: правит.\n- Неблокирующее: отвечает.\n- Мелочь: сам.\n\n"
-             "## Бюджет и стоп\n\nстоп\n\n## Разговор с автором\n\nкоротко\n\n"
+             "# Ревью\n\nнастройки в .devkit/review.conf\n\n"
+             "рядом examples.md, threads.md и foreign.md\n\n"
              "## Ревью чужой задачи\n\nreview draft, потом вопрос человеку и парковка «ждёт "
              "подтверждения», за ней review publish\n\n"
-             "## Отработка замечаний автором\n\nшаги\n\n## Второй круг\n\nдельта\n")
-    CONF = ("level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\n"
-            "critical_paths = tools\nchecks = 2: вопрос\npublish = confirm\npause = 20-60\n")
+             "## Отработка замечаний автором\n\nшаги\n")
+    CONF = ("critical_paths = tools\nchecks = вопрос\npublish = confirm\npause = 20-60\n")
     AGENT = "---\nname: %s\neffort: high\n---\n\nТы ревьювер, читай скилл `review`.\n"
     EXEC = "---\nname: %s\neffort: high\n---\n\nТы исполнитель, замечания по разделу «Отработка замечаний автором».\n"
 
@@ -1212,25 +1206,14 @@ class ReviewSkill(SkillTree):
         fails = check_skills.check_review(self.here, self.root)
         self.assertTrue(any("не заведён" in f for f in fails), fails)
 
-    def test_lost_section(self):
-        self.write_review(skill=self.SKILL.replace("## Бюджет и стоп", "## Бюджет"))
-        fails = check_skills.check_review(self.here, self.root)
-        self.assertTrue(any("нет раздела «Бюджет и стоп»" in f for f in fails), fails)
+    def test_criteria_can_be_reorganized_without_levels_or_budgets(self):
+        self.write_review(skill=self.SKILL + "\n## Проверяем поведение\n\nПо рискам изменения.\n")
+        self.assertEqual(check_skills.check_review(self.here, self.root), [])
 
-    def test_lost_level(self):
-        self.write_review(skill=self.SKILL.replace("| 0, пропуск |\n", ""))
+    def test_config_reference_missing(self):
+        self.write_review(skill=self.SKILL.replace(".devkit/review.conf", "настройках"))
         fails = check_skills.check_review(self.here, self.root)
-        self.assertTrue(any("нет уровня 0" in f for f in fails), fails)
-
-    def test_lost_tier(self):
-        self.write_review(skill=self.SKILL.replace("- Мелочь: сам.\n", ""))
-        fails = check_skills.check_review(self.here, self.root)
-        self.assertTrue(any("ярус «Мелочь» не описан" in f for f in fails), fails)
-
-    def test_budget_hardcoded(self):
-        self.write_review(skill=self.SKILL.replace(".devkit/review.conf", "20 минут"))
-        fails = check_skills.check_review(self.here, self.root)
-        self.assertTrue(any("не отданы конфигу" in f for f in fails), fails)
+        self.assertTrue(any("нет ссылки на конфиг" in f for f in fails), fails)
 
     def test_conf_missing_and_key_lost(self):
         self.write_review(conf=False)

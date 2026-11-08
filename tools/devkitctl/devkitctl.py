@@ -479,6 +479,8 @@ HOOK_LAYOUT = (
     ("UserPromptSubmit", "", "python3 %s/hooks/chat-pointer.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("SessionStart", "", "sh %s/hooks/devkit-catchup.sh"),
+    # Возобновление и баннер живут в одном обработчике: хуки харнес зовёт
+    # параллельно. Stop снимает счёт, UserPromptSubmit отменяет отправку.
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/notify.py --hook claude-code"),

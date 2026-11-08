@@ -2938,6 +2938,17 @@ class ResumeFailedTest(ResumeHelpers, Stand):
     (инцидент в журнале да уведомление, DK-1460), пустой баланс уходит туда же
     сразу, а доведение проверяет тик тем же прогоном сценария."""
 
+    def test_hook_owned_failure_is_not_resumed_twice(self):
+        self.task_file()
+        self.notify("turn_failed")
+        self.chat()
+        path = self.home / ".devkit" / "turn-recover" / (self.SID + ".json")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"managed":true,"tries":3}')
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(self.ran(), [])
+        self.assertEqual(self.keys(), [])
+
     def test_idle_notice_keeps_the_failure(self):
         # Шаг 1 сценария: падение, а через минуту уведомление простоя. Раньше
         # последний повод сеанса падение съедал, и резюм не подавалось ни разу.

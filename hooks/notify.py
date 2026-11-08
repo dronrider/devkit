@@ -77,6 +77,7 @@ import time
 import urllib.parse
 
 import hookio
+import turn_recover
 
 WINDOW = 30          # окно троттлинга: один повод одной сессии не чаще, секунды
 # Признак сессии, поднятой подпроцессом делегирования: её ставит agentctl run
@@ -111,13 +112,9 @@ NOTIFICATION_REASONS = {
 SUBAGENT_REASON = "субагент отработал"
 TURN_DONE = "turn_done"
 TURN_REASON = "ход закончен"
-# Ход, убитый API-ошибкой. Часть сетевых обрывов харнес ретраит сам,
-# недокументированно (DK-172, docs/tasks/DK-172.md), поэтому сюда доезжает
-# только исчерпание этих попыток или неретраибельная ошибка, и молчать про
-# такое нельзя: сессия стоит до ручного «продолжай», а снаружи это неотличимо
-# от штатной работы. Подпись несёт тип ошибки из события (server_error,
-# rate_limit и прочие значения матчера StopFailure), пустой тип подписывается
-# словом без уточнения.
+# Ход, убитый API-ошибкой. Обрыв посреди ответа продолжает turn_recover;
+# остальные ошибки и исчерпание его попыток зовут человека баннером.
+# Подпись несёт тип ошибки из события, пустой тип остаётся без уточнения.
 TURN_FAILED = "turn_failed"
 FAIL_REASON = "ход упал"
 # Звать ли о конце хода, решает фокус: смотришь на окно этой сессии значит
@@ -816,6 +813,7 @@ def run_hook(protocol):
         # Ввод пользователя ничего не шлёт, он снимает отметку ожидания: иначе
         # общее окно с idle_prompt глушило бы и следующий конец хода той же
         # сессии, а это уже новый повод позвать.
+        turn_recover.reset(sess)
         clear_wait(session)
         return 0
     try:
@@ -842,7 +840,16 @@ def run_hook(protocol):
         log(session, key, None, "пропуск: песочница, %s" % sandbox, level=level,
             title=title, body=body, task=task, project=project)
         return 0
+    if key == TURN_FAILED:
+        if turn_recover.schedule(sess):
+            return 0
+        if turn_recover.eligible(sess):
+            with turn_recover.locked(session) as recovery:
+                tries = recovery.get("tries", 0)
+            if tries >= turn_recover.LIMIT:
+                body = "Продолжение не помогло %d раза. %s" % (tries, body)
     if key == TURN_DONE:
+        turn_recover.reset(sess)
         # Фокус спрашивается только тут. Запрос разрешения и вопрос агента зовут
         # всегда (сессия на них стоит намертво), а фоновым поводам лишний опрос
         # на каждого субагента ни к чему.

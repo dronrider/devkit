@@ -38,6 +38,7 @@ def publish(state, record, limit, keep):
                 staged.write_bytes(cap_lines(staged.read_bytes(), keep))
             phase = "публикация"
             os.replace(staged, log)
+            phase = "очистка"
         (state / "quota-refresh.error").unlink(missing_ok=True)
         return 0
     except OSError:

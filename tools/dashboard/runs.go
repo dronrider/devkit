@@ -754,6 +754,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
+	if !s.recoveryStopped(w, found.Path, id, false) {
+		return
+	}
 	kind := "task"
 	if isGoalTitle(row.Title) {
 		kind = "goal"
@@ -1037,6 +1040,9 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if !s.recoveryStopped(w, found.Path, id, true) {
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		s.logf("стоп %s отклонён: tmux не нашёлся 502", id)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})

@@ -3037,6 +3037,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
+	if !s.recoveryChatStopped(w, found, sid, "stop") {
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -3336,6 +3339,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Proposal != nil {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
+		return
+	}
+	if !s.recoveryChatStopped(w, found, sid, "continue") {
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
@@ -4405,6 +4411,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")
+	if (wasModel != model || wasHarness != harness) && !s.recoveryChatStopped(w, found, sid, "invalidate") {
+		return
+	}
 	st := s.chatStoreRead(sid)
 	st.Model, st.Harness = model, harness
 	if err := s.chatStoreWrite(sid, st); err != nil {
@@ -4517,6 +4526,9 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
+	if !s.recoveryStopped(w, found.Path, id, false) {
+		return
+	}
 	// Заказ собирается по месту: ветки живого чата и резюма несут своё имя
 	// tmux-сессии в closure, хотя сам текст заказа его больше не использует.
 	prompt := func(sess string) string {

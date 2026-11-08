@@ -42,7 +42,8 @@ type server struct {
 	archive map[string]archiveEntry
 	// Идущие опросы досок: дерево -> полёт (cache.go). По одному дереву летит
 	// один taskctl, остальные запросы ждут его или берут устаревший ответ.
-	flights map[string]*boardFlight
+	flights        map[string]*boardFlight
+	consentFlights map[string]*consentFlight
 	// Собранный обзор главной и идущий пересбор (overview.go): ответ стоит
 	// обхода всех досок машины, и живёт в памяти теми же дорогами, что доска.
 	ovCache  overviewView

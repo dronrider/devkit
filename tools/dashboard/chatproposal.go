@@ -162,7 +162,11 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 				continue
 			}
 			deliverySources = nil
-			for _, source := range context.Sources {
+			shownSources := context.ShownSources
+			if len(shownSources) == 0 {
+				shownSources = context.Sources
+			}
+			for _, source := range shownSources {
 				deliverySources = append(deliverySources, draftproposal.Snapshot{Source: source})
 			}
 			found = len(deliverySources) > 0
@@ -197,7 +201,15 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 			term = s.sayTermOf(sid, binds)
 		}
 		err = nil
-		if term != "" {
+		_, native := s.groomConsent(answer.Tree, sid)
+		if len(native) > 0 {
+			peer, live := s.peers()[sid]
+			if live && peerSay(peer.Sock, text) == nil {
+				err = nil
+			} else {
+				_, _, err = putChat(stage.MainRoot(answer.Tree), chat.TaskName(answer.Anchor), text, chat.TaskLine(s.now(), text))
+			}
+		} else if term != "" {
 			err = chatSend(term, text)
 		} else if match.Ask.Session != "" && s.deliverToCarrier(p, match.Ask.Session, answer.Anchor, text) {
 			// Живого терминала у носителя нет: ответ доезжает сокетом либо
@@ -268,7 +280,15 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 	if match != nil && last.Task == answer.Anchor && (last.Tree == answer.Tree || (last.Tree == "" && p.Path == answer.Tree)) {
 		term = s.sayTermOf(sid, binds)
 	}
-	if term != "" {
+	if s.processedNativeConsent(answer.Tree, sid) {
+		// A canonical reply must not become literal keys in the old modal.
+		peer, live := s.peers()[sid]
+		if live && peerSay(peer.Sock, wire) == nil {
+			err = nil
+		} else {
+			_, _, err = putChat(tree, name, wire, line)
+		}
+	} else if term != "" {
 		err = chatSend(term, wire)
 	} else {
 		_, _, err = putChat(tree, name, wire, line)

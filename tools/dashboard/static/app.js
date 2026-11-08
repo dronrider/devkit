@@ -13172,6 +13172,7 @@ function makeBusy(project, box) {
       " посреди хода: реплика поднимет разговор снова", true);
   };
   const apply = (b) => {
+    if (b.consent) { off(); return; }
     if (b.gone) return gone(b.at);
     if (!b.live) {
       // Процесса нет, и хода нам никто не обещал: плашке гореть не о чем.
@@ -15696,8 +15697,11 @@ function askPickBuild(pick, marks) {
 
 function askPickRender(pick) {
   if (!pick.send) return;
-  const choosing = Boolean(pick.on && pick.selection);
-  const recommendation = choosing && !String(pick.draft || "").trim() && pick.recommended;
+  const bundle = pick.proposalDraft;
+  const choosing = Boolean(pick.on && (pick.selection || bundle));
+  const defaults = bundle && bundle.shown.sources.every((source) => (source.proposals || []).length &&
+    source.proposals.every((p) => bundle.decisions.some((d) => d.source === source.source && d.proposal === p.id && d.revision === p.revision && d.action === "accept")));
+  const recommendation = choosing && !String(pick.draft || "").trim() && (bundle ? defaults : pick.recommended);
   let caption = pick.send.querySelector(".choice-caption");
   if (!caption) {
     caption = el("span", "choice-caption");
@@ -17152,7 +17156,7 @@ async function saveDraftText(project, id, text, base) {
 // tmux-сессии разбора не было вовсе (замечание пользователя по DK-502). Тот же
 // признак разводит работу и разговор у строк доски (talk).
 function draftGrooming(works, id) {
-  return Boolean((works || []).find((w) => w.id === id && w.via === "tmux" && !w.talk));
+  return Boolean((works || []).find((w) => w.id === id && w.via === "tmux" && !w.talk && !w.consent));
 }
 
 // Опрос движения работы: пока по строке может пойти или кончиться ход, экран
@@ -17774,9 +17778,9 @@ async function renderDraft(project, works, id) {
       const approvalGuard = () => {
         if (!accept) return;
         const why = accepting ? "Подтверждение разбора идёт" : form.text !== said || draftPreparedDirty.has(id)
-          ? "Сначала сохраните правку записи или задачи" : running ? "Сначала завершите разбор"
-          : prepared.ready ? "" : prepared.reason || "Разбор ещё не готов к подтверждению";
-        accept.disabled = Boolean(why);
+          ? "Сначала сохраните правку записи или задачи"
+          : running || prepared.ready ? "" : prepared.reason || "Разбор ещё не готов к подтверждению";
+        accept.disabled = running || Boolean(why);
         reason.textContent = why;
         reason.hidden = !why;
       };
@@ -21521,7 +21525,9 @@ function preparedLineText(item, project) {
 function preparedPickWire(feed, pick, shown) {
   if (!shown || shown.version !== 1 || !Array.isArray(shown.sources)) return;
   if (!pick.proposalDraft || JSON.stringify(pick.proposalDraft.shown) !== JSON.stringify(shown)) {
-    pick.proposalDraft = proposalDraft(shown, "");
+    const defaults = shown.sources.flatMap((source) => source.revision ? source.proposals.map((p) =>
+      ({ source: source.source, proposal: p.id, revision: p.revision, action: "accept" })) : []);
+    pick.proposalDraft = proposalDraft(shown, "", defaults);
   }
   const draft = pick.proposalDraft;
   const flat = preparedFlat(shown);
@@ -21565,6 +21571,7 @@ function preparedPickWire(feed, pick, shown) {
       if (on) draft.decisions.push(...source.proposals.map((p) =>
         ({ source: source.source, proposal: p.id, revision: p.revision, action: "accept" })));
       askPickSave(pick.addr, pick);
+      askPickRender(pick);
     });
     sourceLine.append(mark, document.createTextNode("Подтвердить разбор " + source.source));
     if (mark.disabled) sourceLine.append(document.createTextNode(". Покажите актуальный разбор черновика."));

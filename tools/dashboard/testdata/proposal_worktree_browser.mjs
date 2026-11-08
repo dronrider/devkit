@@ -34,7 +34,7 @@ try {
   assert.equal(await page.locator('textarea.csay').inputValue(),'');
   if (mode === 'linked') {
     const response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');
-    await page.getByRole('button',{name:'Отправить',exact:true}).click();
+    await page.getByRole('button',{name:'По рекомендации',exact:true}).click();
     assert.notEqual((await response).status(),200);
     await page.getByText(/линкованный worktree/).first().waitFor();
     const state=await (await context.request.get(base+'/__worktree?mode=state')).json();
@@ -42,7 +42,7 @@ try {
   } else {
     assert.equal((await context.request.get(base+'/__worktree?mode=break')).status(),200);
     let response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');
-    await page.getByRole('button',{name:'Отправить',exact:true}).click();
+    await page.getByRole('button',{name:'По рекомендации',exact:true}).click();
     assert.equal((await response).status(),502);
     let state=await (await context.request.get(base+'/__worktree?mode=state')).json();
     assert.equal(state.status,'accepted'); assert.equal(state.rows,1);

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 
 	"github.com/dronrider/devkit/internal/chat"
@@ -74,10 +75,12 @@ func (s *server) preserveGroomContext(sid, task string) error {
 // Delivery metadata contains no decisions or card text. Receipt keys and the
 // source IDs identify which existing records must be guarded and re-read.
 type proposalDeliveryContext struct {
-	Key     string   `json:"key"`
-	Tree    string   `json:"tree"`
-	Anchor  string   `json:"anchor"`
-	Sources []string `json:"sources"`
+	Key          string   `json:"key"`
+	Tree         string   `json:"tree"`
+	Anchor       string   `json:"anchor"`
+	Sources      []string `json:"sources"`
+	NativeTools  []string `json:"nativeTools,omitempty"`
+	ShownSources []string `json:"shownSources,omitempty"`
 }
 
 func proposalContextKey(a proposalAnswer) (string, error) {
@@ -102,6 +105,8 @@ func mergeProposalContexts(groups ...[]proposalDeliveryContext) []proposalDelive
 	for _, group := range groups {
 		for _, item := range group {
 			sources := item.Sources
+			nativeTools := item.NativeTools
+			shownSources := item.ShownSources
 			identity := item.Tree + "\x00" + item.Anchor + "\x00" + item.Key
 			i, ok := index[identity]
 			if !ok {
@@ -120,6 +125,26 @@ func mergeProposalContexts(groups ...[]proposalDeliveryContext) []proposalDelive
 					seen[id] = true
 				}
 			}
+			knownSources := map[string]bool{}
+			for _, id := range result[i].ShownSources {
+				knownSources[id] = true
+			}
+			for _, id := range shownSources {
+				if !knownSources[id] {
+					result[i].ShownSources = append(result[i].ShownSources, id)
+					knownSources[id] = true
+				}
+			}
+			knownTools := map[string]bool{}
+			for _, id := range result[i].NativeTools {
+				knownTools[id] = true
+			}
+			for _, id := range nativeTools {
+				if !knownTools[id] {
+					result[i].NativeTools = append(result[i].NativeTools, id)
+					knownTools[id] = true
+				}
+			}
 		}
 	}
 	return result
@@ -134,8 +159,16 @@ func (s *server) rememberProposalContext(sid string, q chat.PreparedQuestion, a 
 		return err
 	}
 	item := proposalDeliveryContext{Key: key, Tree: q.Tree, Anchor: q.Anchor}
-	for _, source := range q.Sources {
+	for _, source := range a.Snapshots {
 		item.Sources = append(item.Sources, source.Source)
+	}
+	for _, source := range q.Sources {
+		item.ShownSources = append(item.ShownSources, source.Source)
+	}
+	if len(a.Snapshots) == len(q.Sources) {
+		if shown, tools := s.groomConsent(q.Tree, sid); shown != nil && reflect.DeepEqual(*shown, q) {
+			item.NativeTools = tools
+		}
 	}
 	st := s.chatStoreRead(sid)
 	if source, mode := s.inheritedGroomContext(sid, q.Anchor); source != "" {

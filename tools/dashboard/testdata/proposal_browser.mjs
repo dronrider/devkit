@@ -15,6 +15,8 @@ try {
   const second = () => page.getByLabel('Подтвердить разбор XR-5', {exact:true});
   await first().waitFor(); await second().waitFor();
   assert.equal(await page.locator('.askfb input.caskpick').count(),2);
+  assert.equal(await first().isChecked(),true); assert.equal(await second().isChecked(),true);
+  await page.getByRole('button',{name:'По рекомендации',exact:true}).waitFor();
   await page.locator('.askfb').filter({hasText:'Удалить устаревший фрагмент и лишнее.'}).waitFor();
   await page.locator('.askfb').getByText('Состав разбора',{exact:true}).first().waitFor();
   assert.equal(await page.locator('.askfb li').filter({hasText:'Удалить материал'}).count(),3,'потеряны операции всего Ask');
@@ -25,7 +27,7 @@ try {
   const ta=page.locator('textarea.csay'); await ta.fill('почему такой исход?');
   await page.reload(); await first().waitFor(); assert.equal(await ta.inputValue(),'почему такой исход?');
   let response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');
-  await page.getByRole('button',{name:'Отправить',exact:true}).click();
+  await page.getByRole('button',{name:'Выбрать и обсудить',exact:true}).click();
   { const reply = await response; assert.equal(reply.status(),200,await reply.text()); }
   assert.equal(sent[0].proposal.mode,'comment'); assert.equal(sent[0].proposal.decisions.length,0);
   let view=await (await context.request.get(base+'/__proposal')).json();
@@ -36,7 +38,7 @@ try {
   assert.equal(await first().isChecked(),true); assert.equal(await second().isChecked(),true);
   assert.equal((await context.request.get(base+'/__delivery?mode=break')).status(),200);
   response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');
-  await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),502);
+  await page.getByRole('button',{name:'По рекомендации',exact:true}).click(); assert.equal((await response).status(),502);
   const answer=sent.at(-1).proposal;
   assert.equal(answer.decisions.length,3);
   assert.ok(answer.snapshots.every(s=>s.revision>0));

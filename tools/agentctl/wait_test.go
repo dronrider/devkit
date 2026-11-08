@@ -274,3 +274,14 @@ func TestWaitClosesPreviousEventStage(t *testing.T) {
 		t.Fatalf("после закрытия живым остался этап %+v", live)
 	}
 }
+
+func TestWaitGoneDoesNotTreatReadErrorAsAbsence(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	came, _, err := waitCheck(t.TempDir(), waitMark{Kind: waitGone, Target: filepath.Join(file, "child")}, time.Now())
+	if came || err == nil {
+		t.Fatalf("ошибка чтения принята за отсутствие: came=%v err=%v", came, err)
+	}
+}

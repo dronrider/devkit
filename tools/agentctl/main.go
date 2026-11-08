@@ -93,7 +93,9 @@ const usageText = `agentctl: выбор исполнителя под задач
                           подписку, не поднимая её сессию; refresh --all
                           обходит все включённые харнесы с объявленной квотой,
                           на этом режиме стоит периодический съём (тик
-                          сторожка цикла цели и демон дашборда)
+                          сторожка цикла цели и демон дашборда); --json печатает
+                          машинный вердикт по готовому снимку без съёма:
+                          свежесть, полнота, возможность запуска
   harness [--harness      окно в резолв харнеса: активный инструмент и чем он
            <имя>]         определён, включённый список после слияния слоёв,
           [--json]        маппинг уровней, режим делегирования, снимок квоты;
@@ -438,9 +440,16 @@ func main() {
 		name := fs.String("harness", "", "имя харнеса, чей остаток читает команда, перебивает детект")
 		ifStale := fs.Bool("if-stale", false, "снимать, только если снимок протух")
 		all := fs.Bool("all", false, "снять остаток всех включённых харнесов с объявленной квотой")
+		asJSON := fs.Bool("json", false, "машинный вердикт по готовому снимку JSON-ом, только чтение")
 		pos := frame.ParseArgs(fs, args[1:])
+		if *asJSON {
+			logCmd = ""
+		}
 		if len(pos) > 1 || (len(pos) == 1 && pos[0] != "refresh") {
-			fail(fmt.Errorf("жду: quota [refresh] [--harness <имя>] [--if-stale] [--all]"))
+			fail(fmt.Errorf("жду: quota [refresh] [--harness <имя>] [--if-stale] [--all] [--json]"))
+		}
+		if *asJSON && (len(pos) > 0 || *all || *ifStale) {
+			fail(fmt.Errorf("флаг --json только читает готовый снимок: с refresh, --all и --if-stale он не работает"))
 		}
 		if *all {
 			if *name != "" {
@@ -464,6 +473,10 @@ func main() {
 			if *ifStale {
 				fail(fmt.Errorf("флаг --if-stale идёт вместе с refresh: quota refresh --if-stale"))
 			}
+			if *asJSON {
+				msg, err = cmdQuotaJSON(q, timeNow())
+				break
+			}
 			msg, err = cmdQuota(q, timeNow())
 			break
 		}
@@ -475,6 +488,7 @@ func main() {
 		asJSON := fs.Bool("json", false, "машинная раскладка подписок JSON-ом")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "harness [--harness <имя>] [--json]")
 		if *asJSON {
+			logCmd = ""
 			// Пара флагов бессмысленна вместе: машинный вид не резолвит активный
 			// харнес вовсе, и перебивать в нём нечего.
 			if *name != "" {
@@ -542,6 +556,7 @@ func main() {
 		target := strings.Join(pos[2:], " ")
 		root, rerr := findRoot(*dir)
 		if *check {
+			logCmd = ""
 			if rerr != nil {
 				logRun(2)
 				fmt.Fprintln(os.Stderr, "ошибка:", rerr)

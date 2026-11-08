@@ -1872,6 +1872,23 @@ function effSlider(opts) {
   };
 }
 
+// Переключатель «Автоматически» стоит первой строкой списка моделей (DK-1570,
+// замечание пользователя). Включённый отнимает у человека модель и глубину и
+// оставляет ту пару, что поедет без него, выключенный возвращает ручной выбор.
+// Наружу едет подпись и сама отметка: сброс после запуска обязан вернуть
+// отметке включённое положение, а не только класс меню.
+function autoSwitch(on, tell) {
+  const wrap = el("label", "auto");
+  wrap.append(el("span", "autotx", "Автоматически"));
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = on;
+  wrap.append(box, el("span", "sw"));
+  withTip(wrap, "Автоматически: ручной выбор погашен, модель и уровень называет машина.");
+  box.addEventListener("change", () => tell(box.checked));
+  return { wrap, box };
+}
+
 // Тело выбора запуска: строки моделей, ползунок глубины и полоса исхода
 // записи. Меню одно на все входы, стрелка у кнопки пуска, три точки строки,
 // выбор модели в чате и кнопка груминга черновика (DK-1570), и собрано оно
@@ -1882,10 +1899,35 @@ function effSlider(opts) {
 // подписка» для подсветки, пусто подсвечивает строку-умолчание лестницы.
 // onModel меняет пару у того, кто меню собрал, getEffort и onEffort держат
 // глубину. Вердикт это уровень из agentctl pick или пусто: пусто значит кольца
-// нет, и ползунок стоит на high.
+// нет, и ползунок стоит на high. auto включает переключатель «Автоматически»:
+// он есть у формы задачи и у формы черновика, а в разговоре выбор остаётся
+// ручным (замечание пользователя).
 function runPickBody(into, opts) {
   const ladder = "ladder" in opts ? opts.ladder : modelLadder();
-  into.append(el("span", "hph", "Модель"));
+  // now с ключом это явный ответ вызывающего, и null тут значит «умолчание это
+  // вердикт, строки не подсвечены». Поле без ключа подсвечивает строку подписки
+  // по умолчанию.
+  const now = "now" in opts ? opts.now : (ladder.find((m) => m.pin) || ladder[0] || null);
+  const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
+  const keyOf = (m) => (m ? (m.model || "") + "\u0000" + (m.harness || "") : "");
+  const autoMenu = Boolean(opts.auto);
+  let auto = autoMenu;
+  // autoPick это пара, которую работа получит без выбора человека: у задачи её
+  // называет вердикт pick, у черновика вердикта нет, и там стоит умолчание
+  // лестницы.
+  let autoPick = now;
+  let picked = null;
+  let whyNote = null;
+  let autoInput = null;
+  const head = el("div", "hhead");
+  head.append(el("span", "hph", "Модель"));
+  if (autoMenu) {
+    const sw = autoSwitch(true, (on) => setAuto(on));
+    autoInput = sw.box;
+    head.append(sw.wrap);
+  }
+  into.append(head);
+  into.classList.toggle("is-auto", auto);
   // Лестница пуста, когда подписок на машине нет или список не прочитан:
   // молчать значило бы показать меню с одинокой шапкой, и причина стоит в
   // самом меню словами из того же ответа.
@@ -1897,26 +1939,30 @@ function runPickBody(into, opts) {
   // она поедет. Запускают широкой половиной кнопки, и меню от выбора строки не
   // закрывается: дальше человек выбирает глубину.
   const rows = [];
-  let picked = null;
-  // now с ключом это явный ответ вызывающего, и null тут значит «умолчание это
-  // вердикт, строки не подсвечены». Поле без ключа подсвечивает строку подписки
-  // по умолчанию.
-  const now = "now" in opts ? opts.now : (ladder.find((m) => m.pin) || ladder[0] || null);
-  const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
-  const keyOf = (m) => (m ? (m.model || "") + "\u0000" + (m.harness || "") : "");
+  const pickOf = new Map();
   // Ручной выбор помнится строкой: ушёл на другую подписку и вернулся, бегунок
   // стоит там, где его оставили, а не на вердикте (шкала v4).
   const hand = new Map();
-  let curKey = "";
+  let curKey = keyOf(now);
   const slider = effSlider({
     verdict: opts.verdict || "",
     get: () => hand.get(curKey) || "",
     set: (lv) => {
+      if (auto) return;
       if (lv) hand.set(curKey, lv);
       else hand.delete(curKey);
       if (opts.onEffort) opts.onEffort(lv);
     },
   });
+  // Подсвечена ровно одна строка: при включённом переключателе пара машины,
+  // при выключенном выбор человека.
+  const highlight = () => {
+    const target = auto ? autoPick : picked;
+    for (const r of rows) {
+      const m = pickOf.get(r);
+      r.classList.toggle("on", Boolean(target) && Boolean(m) && same(m, target));
+    }
+  };
   // Выбор строки пересобирает шкалу под её набор ступеней и возвращает бегунок
   // на её ручной выбор либо вердикт. Вызывающий узнаёт новый уровень тут же:
   // заказ запуска читает его по нажатию кнопки.
@@ -1926,6 +1972,22 @@ function runPickBody(into, opts) {
     slider.setLevels((m && m.levels) || []);
     if (opts.onEffort) opts.onEffort(hand.get(curKey) || "");
   };
+  // Переключение снимает ручную пару в обе стороны: включённая машина её не
+  // принимает, а выключенная начинает выбор с чистого листа и держит шкалу
+  // семьи пары машины.
+  const setAuto = (on) => {
+    auto = Boolean(on);
+    if (autoInput) autoInput.checked = auto;
+    into.classList.toggle("is-auto", auto);
+    picked = null;
+    hand.clear();
+    curKey = keyOf(autoPick);
+    slider.setLevels((autoPick && autoPick.levels) || []);
+    slider.repaint();
+    highlight();
+    if (opts.onModel) opts.onModel(null);
+    if (opts.onEffort) opts.onEffort("");
+  };
   // Начальный ручной выбор вызывающего ложится на открытую строку: разговор
   // помнит его между открытиями меню, и шкала обязана его показать.
   if (opts.getEffort) {
@@ -1934,19 +1996,21 @@ function runPickBody(into, opts) {
   }
   for (const m of ladder) {
     const row = modelMenuRow(m);
-    if (now && same(m, now)) {
-      row.classList.add("on");
-      pickRow(m);
-    }
+    pickOf.set(row, m);
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (auto) return;
       pickRow(m);
-      for (const r of rows) r.classList.toggle("on", r === row);
+      highlight();
       if (opts.onModel) opts.onModel(m);
     });
     rows.push(row);
     into.append(row);
   }
+  // Шкала открывается набором пары машины либо строки-умолчания: ступени
+  // семьи обязаны стоять на экране до первого касания.
+  pickRow(autoPick);
+  highlight();
   into.append(el("span", "hph gap", "Глубина размышления"));
   into.append(slider.root);
   // Полоса исхода записи (DK-1043): та же форма, что и остальное меню. Выбор
@@ -1975,13 +2039,55 @@ function runPickBody(into, opts) {
     into.append(bar);
   }
   return {
-    setVerdict: slider.setVerdict,
-    // Выбор модели и глубины жил один запуск (DK-1570): пуск возвращает меню к
-    // вердикту, и подсветка строки уходит вместе с выбором.
-    reset() {
-      for (const r of rows) r.classList.remove("on");
-      hand.clear();
+    // Вердикт приезжает ответом ручки pick целой парой: по ярусу и подписке
+    // находится строка, которую машина поставит без выбора человека, а уровень
+    // встаёт кольцом на шкалу.
+    setVerdict(v) {
+      const body = typeof v === "string" ? { effort: v } : (v || {});
+      slider.setVerdict(body.effort || "");
+      const row = body.tier
+        ? ladder.find((m) => m.tier === body.tier &&
+          (m.harness || "") === (body.via || "")) || null
+        : null;
+      if (!row) {
+        // Причина отказа стоит в самом меню: включённый переключатель без пары
+        // выглядел бы штатной работой, только погашенной.
+        if (body.note && !whyNote) {
+          whyNote = el("span", "mwhy", body.note);
+          into.append(whyNote);
+        }
+        return;
+      }
+      // Прикреплённая подписка строки Check сильнее вердикта: запуск едет ею,
+      // и подсветка обязана стоять на ней. Вердикт тогда называет только
+      // уровень.
+      if (!now) autoPick = row;
+      if (!auto) return;
+      curKey = keyOf(autoPick);
+      slider.setLevels((autoPick && autoPick.levels) || []);
       slider.repaint();
+      highlight();
+      if (opts.onEffort) opts.onEffort("");
+    },
+    // Выбор модели и глубины жил один запуск (DK-1570): пуск возвращает меню к
+    // паре машины, и подсветка выбора уходит вместе с ним.
+    reset() {
+      picked = null;
+      hand.clear();
+      auto = autoMenu;
+      if (autoInput) autoInput.checked = auto;
+      into.classList.toggle("is-auto", auto);
+      curKey = auto ? keyOf(autoPick) : "";
+      slider.setLevels((autoPick && autoPick.levels) || []);
+      slider.repaint();
+      highlight();
+      // Ручную пару держит вызывающий, и она тоже живёт один запуск. Без этого
+      // следующая пачка разбора уехала бы ручным выбором при включённом
+      // переключателе.
+      if (auto) {
+        if (opts.onModel) opts.onModel(null);
+        if (opts.onEffort) opts.onEffort("");
+      }
     },
   };
 }
@@ -1992,7 +2098,7 @@ function runPickBody(into, opts) {
 function armPickRing(project, id, menu) {
   api("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
     encodeURIComponent(id) + "/pick")
-    .then((r) => { if (r.ok && menu) menu.setVerdict(r.body.effort || ""); })
+    .then((r) => { if (r.ok && menu) menu.setVerdict(r.body || {}); })
     .catch(() => {});
 }
 
@@ -2010,7 +2116,9 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // tiers это либо список ярусов, либо пара «список и выбранный по умолчанию»:
   // у запуска задачи умолчание это вердикт, у цели и разбора pro. Список больше
   // не рисуется полосой: строка меню модели называет ярус вместе с подпиской
-  // (DK-1570), а умолчание подсвечивает строку лестницы.
+  // (DK-1570), а умолчание подсвечивает строку лестницы. Поле auto включает
+  // переключатель «Автоматически»: у формы задачи и у формы черновика он есть,
+  // у цели вердикта нет и переключать нечего.
   const tierList = (tiers && tiers.list) || tiers || [];
   let tier = (tiers && tiers.now) || (tierList.includes(RUN_TIER) ? RUN_TIER : (tierList[0] || ""));
   // Строка лестницы, выбранная в меню: она называет подписку и ярус разом.
@@ -2065,6 +2173,7 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     held = null;
   };
   menu = runPickBody(pop, {
+    auto: Boolean(tiers && tiers.auto),
     now: tier === TIER_VERDICT ? null
       : modelLadder().find((m) => m.tier === tier && (!pinned || m.harness === pinned)) || null,
     onModel: (m) => { model = m; },
@@ -2519,6 +2628,9 @@ function rowAction(project, row, sect) {
       const box = el("span", "rpick");
       let menu = null;
       menu = runPickBody(box, {
+        // У цели вердикта нет, и автоматического выбора там не бывает: ярус
+        // витка задан самим циклом.
+        auto: !goal,
         // Подсветка называет запуск по умолчанию: у Check это пара прикреплённой
         // подписки на рабочем ярусе, у очереди вердикт, и строка не подсвечена.
         now: tier === TIER_VERDICT
@@ -5175,7 +5287,7 @@ function taskActions(project, id, row) {
       talkWarn(row)].filter(Boolean).join(" "),
     afterOk, pin, null,
     isGoal ? { list: harnessTiers(), now: RUN_TIER }
-      : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT }));
+      : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT, auto: true }));
   return out;
 }
 
@@ -16262,6 +16374,7 @@ function draftRunBarFill(bar, project, works, prepared) {
   // сказать, сколько сессий встанет, надо на кнопке.
   const btn = el("button", "btn btn-sm btn-acc", "Грумить (" + picked.length + ")");
   withTip(btn, GROOM_HINT);
+  let groomMenu = null;
   const lift = () => {
     // Кнопка гаснет на время подъёма: пачка идёт по одной сессии, и второе
     // нажатие подняло бы их дважды. Прежде тут стояло подтверждение карточкой,
@@ -16272,6 +16385,7 @@ function draftRunBarFill(bar, project, works, prepared) {
     const depth = draftEffort;
     // Глубина разбора выбиралась на одну пачку: следующая едет вердиктом.
     draftEffort = "";
+    if (groomMenu) groomMenu.reset();
     Promise.resolve(draftGroomStart(project, works,
       now ? now.harness : "", now ? now.tier : "", depth))
       .catch(console.error).finally(() => { btn.disabled = false; });
@@ -16291,9 +16405,13 @@ function draftRunBarFill(bar, project, works, prepared) {
   pop.hidden = true;
   let held = null;
   let shut = () => {};
-  runPickBody(pop, {
+  groomMenu = runPickBody(pop, {
+    // Разбор черновика это форма записи: переключатель «Автоматически» есть и
+    // тут. Вердикта pick у черновика нет, и пара машины это умолчание лестницы,
+    // то есть ровно та, которой пачка пошла бы без выбора человека.
+    auto: true,
     now: modelLadderPick(draftModel),
-    onModel: (m) => { draftModel = m.model; },
+    onModel: (m) => { draftModel = m ? m.model : ""; },
     getEffort: () => draftEffort,
     onEffort: (lv) => { draftEffort = lv; },
   });
@@ -17868,7 +17986,7 @@ async function renderDraft(project, works, id) {
               if (ok) refresh().catch(console.error);
               return ok;
             }),
-          harnessTiers(),
+          { list: harnessTiers(), now: RUN_TIER, auto: true },
           {
             list: DRAFT_MODE_LABELS,
             now: groomMode,
@@ -18418,7 +18536,7 @@ function renderNew(project, kind) {
     saveMore: draft
       ? {
         label: "Сохранить и " + draftModeVerb(newForm.mode),
-        tiers: harnessTiers(),
+        tiers: { list: harnessTiers(), now: RUN_TIER, auto: true },
         modes: {
           list: DRAFT_MODE_LABELS,
           now: newForm.mode,

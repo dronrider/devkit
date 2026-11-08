@@ -314,6 +314,22 @@ export function tipOf(node) {
   return allByClass(node, "mm").map((n) => n.title || "").filter(Boolean).join(" ");
 }
 
+// Переключатель «Автоматически» в первой строке списка моделей (DK-1570). Стенд
+// нажимает его так же, как человек: отметкой и событием change.
+export function autoBox(pop) {
+  const label = byClass(pop, "auto");
+  if (!label) return null;
+  return (label.children || []).find((c) => c.tagName === "INPUT") || null;
+}
+
+export function autoSet(pop, on) {
+  const box = autoBox(pop);
+  if (!box) fail("в меню нет переключателя «Автоматически»: " + dump(pop));
+  box.checked = Boolean(on);
+  if (!box.handlers.change) fail("у переключателя «Автоматически» нет обработчика");
+  box.handlers.change();
+}
+
 // deepBtn ищет кнопку по подписи или по классу. Подпись у кнопок дашборда
 // лежит в дочернем узле (barBtn кладёт значок и текст), поэтому по textContent
 // самой кнопки её не найти.

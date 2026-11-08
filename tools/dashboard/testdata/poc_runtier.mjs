@@ -10,7 +10,8 @@
 //
 // Зовётся: node testdata/poc_runtier.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg,
+  autoBox, autoSet }
   from "./poc_dom.mjs";
 
 // Меню модели и глубины открывается тремя точками строки, а запуск идёт главной
@@ -48,7 +49,7 @@ const { sandbox } = makeSandbox(app, (path, init) => {
   }
   if (path === "/api/harnesses") return { harnesses };
   if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
-  if (path.endsWith("/pick")) return { tier: "base", via: "строка доски", effort: "medium" };
+  if (path.endsWith("/pick")) return { tier: "base", via: "claude-code", effort: "medium" };
   if (path.includes("/chats")) return { chats: [], models: [] };
   if (path === "/api/quota") return { harnesses: [] };
   return {};
@@ -60,13 +61,17 @@ const task = { id: "XR-002", title: "Обычная задача", sect: "backlo
 const goal = { id: "XR-100", title: "Цель: пробный цикл", sect: "backlog", r: 41, cost: "XL" };
 const last = () => posted[posted.length - 1];
 
-// --- у задачи умолчание это вердикт: ни одна строка не подсвечена ---
+// --- у задачи умолчание это вердикт, и переключатель «Автоматически» включён ---
 {
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
   if (!pop) fail("у строки нет меню выбора: " + dump(box));
-  const on = allByClass(pop, "hrow").filter((h) => String(h.className).includes("on"));
-  if (on.length) fail("без выбора человека подсвечена строка лестницы: " + dump(on[0]));
+  // Переключатель стоит первой строкой списка моделей и открыт включённым:
+  // форма задачи по умолчанию идёт парой машины (DK-1570).
+  const sw = autoBox(pop);
+  if (!sw) fail("в меню задачи нет переключателя «Автоматически»: " + dump(pop));
+  if (!sw.checked) fail("переключатель «Автоматически» открылся снятым");
+  if (!byClass(pop, "is-auto")) fail("меню не помечено автоматическим режимом: " + dump(pop));
   await settle();
   // Кольцо вердикта приезжает ответом ручки pick открытием меню: вердикт
   // принадлежит строке, а не разговору, и заранее его не видно.
@@ -75,6 +80,13 @@ const last = () => posted[posted.length - 1];
   if (JSON.stringify(verd) !== JSON.stringify(["medium"])) {
     fail("кольцо вердикта не приехало на шкалу: " + JSON.stringify(verd));
   }
+  // При включённом переключателе подсвечена строка пары машины: без неё
+  // человек не видел бы, чем задача поедет.
+  const on = allByClass(pop, "hrow").filter((h) => String(h.className).includes("on"))
+    .map((h) => dump(h).replace(/\s+/g, " ").trim());
+  if (on.length !== 1 || !on[0].includes("sonnet")) {
+    fail("пара машины не подсвечена в строках меню: " + JSON.stringify(on));
+  }
 }
 
 // --- вердикт вне набора ступеней поднимается до ближайшей сверху (шкала v4) ---
@@ -82,6 +94,7 @@ const last = () => posted[posted.length - 1];
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
   await settle();
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
     .handlers.click({ stopPropagation: () => {} });
   // У glm набора low, high, max, а вердикт medium: кольцо и бегунок встают на
@@ -115,6 +128,7 @@ const last = () => posted[posted.length - 1];
   posted.length = 0;
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("sonnet"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -134,6 +148,9 @@ const last = () => posted[posted.length - 1];
   const box = sandbox.rowAction("demo", goal, "backlog");
   const pop = openMenu(box);
   await settle();
+  // У цели вердикта на цикл нет, и автоматического выбора ей не бывает:
+  // переключателя в меню нет (DK-1570).
+  if (autoBox(pop)) fail("у цели появился переключатель «Автоматически»: " + dump(pop));
   const on = allByClass(pop, "hrow").filter((h) => String(h.className).includes("on"))
     .map((h) => dump(h).replace(/\s+/g, " ").trim());
   if (on.length !== 1 || !on[0].includes("opus")) {
@@ -155,6 +172,7 @@ const last = () => posted[posted.length - 1];
   posted.length = 0;
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -174,6 +192,7 @@ const last = () => posted[posted.length - 1];
     await settle();
   };
   const pop = openMenu(box);
+  autoSet(pop, false);
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
     .handlers.click({ stopPropagation: () => {} });
   await run();
@@ -184,10 +203,15 @@ const last = () => posted[posted.length - 1];
   if (last().body.tier || last().body.harness || last().body.effort) {
     fail("выбор пережил свой запуск: " + JSON.stringify(last().body));
   }
-  // Подсветка строки ушла вместе с выбором: меню снова без человека.
+  // Подсветка выбора ушла вместе с ним: меню вернулось к паре машины, и
+  // подсвечена снова строка вердикта, а не ручная (DK-1570).
   const shut = openMenu(box);
-  const on = allByClass(shut, "hrow").filter((h) => String(h.className).includes("on"));
-  if (on.length) fail("после запуска подсветка выбора осталась: " + dump(on[0]));
+  await settle();
+  const on = allByClass(shut, "hrow").filter((h) => String(h.className).includes("on"))
+    .map((h) => dump(h).replace(/\s+/g, " ").trim());
+  if (on.length !== 1 || !on[0].includes("sonnet")) {
+    fail("после запуска подсветка вернулась не к паре машины: " + JSON.stringify(on));
+  }
 }
 
 console.log("poc_runtier: ok");

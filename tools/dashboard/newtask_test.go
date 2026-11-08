@@ -811,8 +811,10 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 		`[DRAFT_MODE_RUN, "выполнить"]`,
 		"mode: DRAFT_MODE_GROOM",
 		// Вторая кнопка составная: меню несёт исход записи, а с подпиской и
-		// ярусом выбирают там же, той же формой, что у экрана записи.
-		"tiers: harnessTiers(),",
+		// ярусом выбирают там же, той же формой, что у экрана записи. У формы
+		// черновика есть переключатель «Автоматически», и умолчание у неё ярус
+		// запуска (DK-1570).
+		"tiers: { list: harnessTiers(), now: RUN_TIER, auto: true },",
 		`verb: (v) => "Сохранить и " + draftModeVerb(v)`,
 		"onSave: (harness, tier, mode, effort) => { saveDraft(mode, harness, tier, effort); }",
 	} {

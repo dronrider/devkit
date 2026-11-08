@@ -18,7 +18,8 @@ import shlex
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-@unittest.skipUnless(os.environ.get('DEVKIT_LIVE_RECOVERY') == '1' and shutil.which('claude'), 'нужны DEVKIT_LIVE_RECOVERY=1 и установленный claude')
+@unittest.skipUnless(os.environ.get('DEVKIT_LIVE_RECOVERY') == '1',
+                     'нужен DEVKIT_LIVE_RECOVERY=1')
 class LiveRecoveryTest(unittest.TestCase):
 
     def test_truncated_response_continues_in_same_session(self):
@@ -31,6 +32,12 @@ class LiveRecoveryTest(unittest.TestCase):
         self.run_client("credit")
 
     def run_client(self, scenario):
+        client = os.environ.get('DEVKIT_LIVE_CLAUDE') or shutil.which('claude')
+        self.assertTrue(client and os.access(client, os.X_OK),
+                        'Нужен установленный claude или DEVKIT_LIVE_CLAUDE')
+        work_root = Path(os.environ.get('DEVKIT_LIVE_WORK_ROOT') or
+                         Path(__file__).resolve().parents[1] / '.devkit')
+        work_root.mkdir(parents=True, exist_ok=True)
         scratch = Path(tempfile.mkdtemp(prefix='dk1129-live-'))
         self.addCleanup(shutil.rmtree, scratch, True)
         home_dir = scratch / 'home'
@@ -38,7 +45,7 @@ class LiveRecoveryTest(unittest.TestCase):
         work_dir = Path(
             tempfile.mkdtemp(
                 prefix='dk1129-live-',
-                dir=Path(__file__).resolve().parents[1] / '.devkit',
+                dir=work_root,
             ),
         )
         self.addCleanup(shutil.rmtree, work_dir, True)
@@ -181,7 +188,7 @@ class LiveRecoveryTest(unittest.TestCase):
         }
         p = subprocess.Popen(
             [
-                shutil.which('claude'),
+                client,
                 '--model',
                 'claude-sonnet-4-6',
                 'Respond only with a short marker',

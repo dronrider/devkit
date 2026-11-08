@@ -144,7 +144,9 @@ def socket_send(row):
         sock.close()
         return "unavailable"
     try:
-        sender = "uds:/tmp/devkit-turn-recover.sock"
+        # Клиент отбрасывает одинаковый текст от прежнего адреса даже с новым
+        # msg_id. Адрес уникален для доставки, в том числе после сброса счёта.
+        sender = "uds:/tmp/devkit-turn-recover-%s.sock" % uuid.uuid4().hex
         body = ('<cross-session-message from="%s" from-name="devkit" '
                 'from-mode="prompting">\n%s\n</cross-session-message>') % (sender, MESSAGE)
         frame = dict(msgV=1, msg_id=str(uuid.uuid4()), type="user", priority="next",

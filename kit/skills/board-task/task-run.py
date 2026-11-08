@@ -749,9 +749,21 @@ def parse_args(argv):
     return opts
 
 
+def recovery_state():
+    path = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl", "taskstate.py"))
+    spec = importlib.util.spec_from_file_location("devkit_taskstate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class Pipeline:
     def __init__(self, opts):
         self.id = opts["id"]
+        self.run_id = os.environ.get("DEVKIT_TASK_RUN_ID", "")
+        self.recovery_attempt = os.environ.get("DEVKIT_RECOVERY_ATTEMPT", "")
+        self.recovery_proved = False
+        self.recovery_print_pass = 0
         self.proj = opts["proj"]
         self.project = opts["project"]
         self.order = opts["order"]
@@ -842,12 +854,23 @@ class Pipeline:
         os.replace(pidfile + ".tmp", pidfile)
         self.lock = lock
         self.beat()
+        if self.run_id:
+            try:
+                recovery_state().acknowledge(os.path.expanduser("~"), self.proj,
+                                             self.id, self.run_id, os.getpid())
+            except (OSError, ValueError, ImportError) as error:
+                self.drop_lock()
+                die("состояние запуска не подтверждено: %s" % error, 2)
+
 
     def beat(self):
         """Отметка жизни замка. Оболочка касается её на каждом признаке жизни:
         отметке хода, вопросе человеку и подтверждённом ожидании. Живой pid
         без отметки держал бы замок вечно (DK-1454), поэтому признак жизни
         пишет тот, кто его видит."""
+        if (self.recovery_attempt and self.sid and not self.recovery_proved
+                and not self.duty() and (self.running(AGENT_SHELL) or self.running(AGENT_SUBAGENT))):
+            self.record_recovery_progress()
         if not self.lock:
             return
         path = os.path.join(self.lock, BEAT_NAME)
@@ -1516,6 +1539,16 @@ class Pipeline:
         except OSError:
             return False
 
+    def record_recovery_progress(self):
+        if not self.recovery_attempt or self.recovery_proved or self.duty():
+            return
+        try:
+            recovery_state().progress(os.path.expanduser("~"), self.proj,
+                self.id, self.run_id, self.recovery_attempt, os.getpid(), self.sid)
+            self.recovery_proved = True
+        except (OSError, ValueError, ImportError) as error:
+            self.say("подтверждение восстановления не записалось: %s" % error)
+
     def marks(self):
         """Новые отметки хода своей сессии, снятые с журнала и сложенные в
         очередь. Очередь нужна затем, что заглянуть в отметки приходится и перед
@@ -1525,6 +1558,7 @@ class Pipeline:
                                             self.turns_seen, self.own_mark)
         if lines:
             self.beat()
+            self.record_recovery_progress()
         for line in lines:
             got = self.fields(line, TURN_KEYS)
             self.pending.append((got.get("ход", ""), got.get("повод", "-"),
@@ -2396,6 +2430,14 @@ class Pipeline:
         пока клиент жив: печатный проход идёт часами без отметок хода в общем
         журнале, и без касаний beat сторонний подъём снял бы замок под
         работающим проходом (DK-1454)."""
+        if self.recovery_attempt:
+            if not self.client_session:
+                self.broken("ID печатного клиента восстановления неизвестен")
+            if self.recovery_print_pass:
+                self.renew_session()
+            self.recovery_print_pass += 1
+            self.sid = self.client_session
+            _, self.turns_seen = self.fresh(self.log_path(TURNS_ENV, TURNS_LOG), {}, self.own_mark)
         self.guard_material()
         cmd = self.head_cmd(order, live=False)
         self.say("проход поднят: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
@@ -2406,10 +2448,12 @@ class Pipeline:
             self.broken("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
         while True:
             try:
-                p.wait(timeout=BEAT_STEP)
+                p.wait(timeout=min(1, BEAT_STEP) if self.recovery_attempt else BEAT_STEP)
             except subprocess.TimeoutExpired:
                 self.beat()
                 continue
+            if self.recovery_attempt:
+                self.marks()
             break
         return p.returncode, time.time() - started
 

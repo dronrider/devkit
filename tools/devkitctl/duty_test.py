@@ -467,25 +467,21 @@ class IncidentDutyTest(unittest.TestCase):
         self.assertEqual(self.settled(), self.hook.DRAFT_MADE)
         self.assertIn("закрыт черновиком", " ".join(lines))
 
-    def test_resume_mark_raises_the_head(self):
+    def test_resume_mark_does_not_authorize_unverified_launch(self):
         self.task_file("- Возобновление: причина устранена, лимиты целы.")
         lines = self.duty_lines()
-        ran = self.runs()
-        self.assertEqual(len(ran), 1, self.call.calls)
-        self.assertEqual(ran[0][4], self.TASK)
-        order = ran[0][ran[0].index("--order") + 1]
-        self.assertIn("продолжай %s" % self.TASK, order)
-        self.assertEqual(self.settled(), self.hook.RESUMED)
-        self.assertIn("закрыт возобновлением", " ".join(lines))
+        self.assertEqual(self.runs(), [], self.call.calls)
+        self.assertFalse(self.settled())
+        self.assertIn("требуется явное продолжение", " ".join(lines))
 
-    def test_live_head_closes_incident(self):
+    def test_live_head_does_not_prove_resumption(self):
         lock = self.home / ".devkit" / ("task-%s.lock" % self.TASK)
         lock.mkdir(parents=True)
         (lock / "pid").write_text("%d\n" % os.getpid(), encoding="utf-8")
         lines = self.duty_lines()
         self.assertEqual(self.runs(), [], self.call.calls)
-        self.assertEqual(self.settled(), self.hook.RESUMED)
-        self.assertIn("снова поднят", " ".join(lines))
+        self.assertFalse(self.settled())
+        self.assertIn("без подтверждения", " ".join(lines))
 
     def test_ceiling_shouts_and_settles(self):
         for _ in range(duty.SPAWN_TRIES):
@@ -507,6 +503,43 @@ class IncidentDutyTest(unittest.TestCase):
         noted = [r for r in self.hook.read(home=self.home)
                  if r.get("id") == self.ident][0].get("notes") or []
         self.assertTrue(any("запуск дежурного" in ln for ln in noted), noted)
+
+    def test_dry_resume_mark_is_read_only(self):
+        self.task_file("- Возобновление: причина устранена, лимиты целы.")
+        before = self.hook.read(home=self.home)
+        duty.duty_root(self.proj, call=self.call, taskctl=self.bin,
+                       home=self.home, act=False)
+        self.assertEqual(self.runs(), [])
+        self.assertEqual(self.hook.read(home=self.home), before)
+
+    def test_dry_question_does_not_settle_incident(self):
+        ask = self.proj / ".devkit" / "chat" / ("task-%s.ask" % self.TASK)
+        ask.parent.mkdir(parents=True)
+        ask.write_text("вопрос человеку", encoding="utf-8")
+        before = self.hook.read(home=self.home)
+        duty.duty_root(self.proj, call=self.call, taskctl=self.bin,
+                       home=self.home, act=False)
+        self.assertEqual(self.runs(), [])
+        self.assertEqual(self.hook.read(home=self.home), before)
+
+    def test_dry_gone_process_does_not_launch_or_spend(self):
+        self.hook.settle(self.ident, self.hook.RESUMED, home=self.home)
+        self.ident = self.hook.report(
+            self.TASK, self.hook.PROC_GONE, "процесс исчез",
+            root=str(self.proj), home=self.home)
+        (self.proj / "docs" / "TASKS.md").write_text(
+            "# Доска\n\n## In progress\n| %s | пример | task | P2 | 30 | M | [x](x.md) |\n"
+            % self.TASK, encoding="utf-8")
+        before = self.hook.read(home=self.home)
+        def forbidden(argv, **kwargs):
+            self.call(argv, **kwargs)
+            raise OSError("dry-run attempted an external call")
+
+        duty.duty_root(self.proj, call=forbidden, taskctl=self.bin,
+                       home=self.home, act=False)
+        self.assertEqual(self.runs(), [])
+        self.assertEqual(self.hook.read(home=self.home), before)
+        self.assertFalse((self.home / ".devkit" / "recovery.jsonl").exists())
 
     def test_report_lists_open_incidents(self):
         words = " ".join(duty.incident_report(only_open=True, home=self.home))

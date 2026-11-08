@@ -6,6 +6,8 @@
 причинам и исходам.
 """
 import os
+import fcntl
+from unittest.mock import patch
 import tempfile
 import time
 import unittest
@@ -211,3 +213,68 @@ class IncidentsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecoveryResultTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        self.root = self.home / "project"
+        self.root.mkdir()
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop(incidents.LOG_ENV, None)
+        self.ident = incidents.report("RV-1", incidents.PROC_GONE, "исчез", root=str(self.root), home=self.home)
+        self.other = incidents.report("RV-2", incidents.PROC_GONE, "исчез", root=str(self.root), home=self.home)
+        self.path = Path(incidents.log_path(self.home))
+
+    def finish(self, **kw):
+        return incidents.finish_recovery(self.ident, str(self.root), "RV-1", "попытка RV-local", home=self.home, **kw)
+
+    def test_result_atomically_closes_only_exact_incident(self):
+        self.assertIsNotNone(self.finish(resumed=True))
+        data = {rec["id"]:rec for rec in incidents.read(self.home)}
+        self.assertEqual(data[self.ident]["outcome"], incidents.RESUMED)
+        self.assertFalse(data[self.other]["outcome"])
+        before = self.path.read_bytes()
+        self.assertIsNone(self.finish(resumed=True))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_busy_lock_has_deadline_and_preserves_journal(self):
+        before = self.path.read_bytes()
+        with open(str(self.path)+".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            start = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                self.finish(resumed=True, timeout=0.02)
+            self.assertLess(time.monotonic()-start, 0.5)  # стенной порог: проверяется срок отказа при занятом замке
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_strict_read_waits_for_complete_snapshot_with_deadline(self):
+        before = self.path.read_bytes()
+        with open(str(self.path)+".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(TimeoutError):
+                incidents.read_recovery(home=self.home, timeout=0.02)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_corrupt_ledger_is_not_rewritten(self):
+        self.path.write_text('broken\n')
+        with self.assertRaises(ValueError):
+            self.finish(resumed=True)
+        self.assertEqual(self.path.read_text(), 'broken\n')
+
+    def test_failed_atomic_replace_does_not_close_incident(self):
+        before = self.path.read_bytes()
+        with patch.object(incidents.os, "replace", side_effect=OSError("disk error")):
+            with self.assertRaises(OSError):
+                self.finish(resumed=True)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(list(self.path.parent.glob(".recovery-incident-*")), [])
+
+    def test_wrong_root_does_not_modify_incident(self):
+        before = self.path.read_bytes()
+        self.assertIsNone(incidents.finish_recovery(self.ident, "/different", "RV-1", "wrong", resumed=True, home=self.home))
+        self.assertEqual(self.path.read_bytes(), before)

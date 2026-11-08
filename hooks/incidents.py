@@ -27,6 +27,8 @@
 import fcntl
 import json
 import os
+import tempfile
+import time
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -131,7 +133,7 @@ def _stamp(now=None):
     return (now or datetime.now()).strftime(STAMP)
 
 
-def report(task, reason, why, run="", root="", logs=(), home=None, now=None):
+def report(task, reason, why, run="", root="", logs=(), home=None, now=None, identity=None):
     """Записать остановку и вернуть ID инцидента. Повтор той же остановки
     (та же задача, тот же код причины, тот же корень) дополняет последнюю её
     запись счётчиком и возвращает её ID, каким бы исходом она ни кончилась,
@@ -148,6 +150,8 @@ def report(task, reason, why, run="", root="", logs=(), home=None, now=None):
                 continue
             if str(rec.get("root") or "") != str(root or ""):
                 continue
+            if identity and (rec.get("identity") or {}).get("id") != identity.get("id"):
+                break
             if rec.get("outcome") == RESUMED_OUTCOME:
                 break
             rec["seen"] = int(rec.get("seen") or 1) + 1
@@ -160,6 +164,7 @@ def report(task, reason, why, run="", root="", logs=(), home=None, now=None):
             "id": ident, "task": task, "run": run, "when": when,
             "reason": reason, "why": why, "root": root, "logs": list(logs),
             "seen": 1, "notes": [], "outcome": "",
+            **({"identity": dict(identity)} if identity else {}),
         })
         return ident if _write(records, home) else ""
 
@@ -231,3 +236,89 @@ def summary(home=None):
         total = sum(rows[reason].values())
         out.append("%s: %d (%s)" % (reason, total, parts))
     return out
+
+
+def read_recovery(home=None, _locked=False, timeout=1):
+    path = log_path(home)
+    if not _locked:
+        fd = os.open(path + ".lock", os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "r") as lock:
+            deadline = time.monotonic() + max(0, timeout)
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("замок журнала инцидентов занят")
+                    time.sleep(min(0.01, max(0, deadline-time.monotonic())))
+            return read_recovery(home, _locked=True)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, encoding="utf-8") as stream:
+        raw = stream.read()
+    if raw.strip() and not raw.endswith("\n"):
+        raise ValueError("незавершён журнал инцидентов")
+    records, seen = [], set()
+    for row in raw.splitlines():
+        if not row.strip():
+            continue
+        rec = json.loads(row)
+        if (not isinstance(rec, dict) or not isinstance(rec.get("id"), str)
+                or not rec["id"] or rec["id"] in seen
+                or not isinstance(rec.get("task", ""), str)
+                or not isinstance(rec.get("root", ""), str)
+                or not isinstance(rec.get("notes", []), list)):
+            raise ValueError("повреждён журнал инцидентов")
+        seen.add(rec["id"])
+        records.append(rec)
+    return records
+
+
+def finish_recovery(ident, root, task, line, resumed=False, home=None, timeout=1):
+    """Сохранить результат восстановления под ограниченным замком.
+
+    В этом пути ошибка замка либо повреждение журнала запрещают запись.
+    Запись вместе с исходом заменяется атомарно и синхронизируется на диск.
+    """
+    path = log_path(home)
+    fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "r+") as lock:
+        deadline = time.monotonic() + max(0, timeout)
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("замок журнала инцидентов занят")
+                time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        records = read_recovery(home, _locked=True)
+        found = [rec for rec in records if rec["id"] == ident and rec.get("task") == task
+                 and rec.get("root") and os.path.realpath(rec["root"]) == os.path.realpath(root)]
+        if len(found) != 1 or found[0].get("outcome"):
+            return None
+        rec = found[0]
+        notes = list(rec.get("notes") or [])
+        notes.append("%s %s" % (_stamp(), line))
+        rec["notes"] = notes[-NOTES_CAP:]
+        if resumed:
+            rec["outcome"], rec["outcome_when"] = RESUMED, _stamp()
+        fd, tmp = tempfile.mkstemp(prefix=".recovery-incident-", dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                for item in records:
+                    stream.write(json.dumps(item, ensure_ascii=False, allow_nan=False) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp, path)
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+        return rec

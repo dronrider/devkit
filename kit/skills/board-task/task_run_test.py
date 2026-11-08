@@ -3297,3 +3297,69 @@ class TestStartupRecovery(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)
+
+
+class TestRecoveryOwnership(unittest.TestCase):
+    def setUp(self):
+        import taskstate
+        self.state_module = taskstate
+        self.stand = Stand(sect="архиве")
+        self.addCleanup(self.stand.drop)
+        self.path = taskstate.path(self.stand.root, self.stand.root, "DK-1")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.with_suffix(".json.lock").touch()
+        self.attempt = "RV-" + "3" * 32
+        self.data = {"version":1,"root":os.path.realpath(self.stand.root), "task":"DK-1", "stopped":False,
+                     "run":{"id":"owned-run", "harness":"glm-code-2", "model":"glm-5.3", "pid":0,"attempt":self.attempt}}
+        self.save()
+
+    def save(self):
+        self.path.write_text(json.dumps(self.data))
+
+    def test_native_run_is_acknowledged_before_board(self):
+        result = self.stand.run(extra={"DEVKIT_TASK_RUN_ID":"owned-run"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertGreater(json.loads(self.path.read_text())["run"]["pid"], 0)
+
+    def test_stopped_or_wrong_run_does_not_start_client(self):
+        for stopped, ident in ((True,"owned-run"), (False,"different-run")):
+            self.data["stopped"] = stopped
+            self.save()
+            result = self.stand.run(extra={"DEVKIT_TASK_RUN_ID":ident})
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(self.stand.orders(), [])
+            self.assertEqual(json.loads(self.path.read_text())["run"]["pid"], 0)
+
+    def test_new_tool_work_writes_correlated_proof(self):
+        self.data["run"]["pid"] = os.getpid()
+        self.save()
+        directory = os.path.join(self.stand.root, ".devkit", "agents")
+        os.makedirs(directory, exist_ok=True)
+        sid = "new-session"
+        with open(os.path.join(directory, sid+".json"), "w") as stream:
+            json.dump({"agents":{"tool":{"state":"running", "job":"shell"}}}, stream)
+        log = os.path.join(self.stand.root, ".devkit", "recovery.jsonl")
+        with unittest.mock.patch.dict(os.environ, {"HOME":self.stand.root,
+                "DEVKIT_TASK_RUN_ID":"owned-run", "DEVKIT_RECOVERY_ATTEMPT":self.attempt,
+                "DEVKIT_RECOVERY_LOG":log}), unittest.mock.patch.object(task_run, "AGENTS_DIR", directory):
+            pipe = task_run.Pipeline(task_run.parse_args(["DK-1","-C",self.stand.root,"--order","Работай","--","claude"]))
+            pipe.sid = sid
+            pipe.beat()
+            proof = os.path.join(log+".proofs", self.attempt+".json")
+            with open(proof) as stream:
+                data = json.load(stream)
+            self.assertEqual(data["run_id"], "owned-run")
+            self.assertEqual(data["pid"], os.getpid())
+            self.assertEqual(data["session"], sid)
+            self.assertTrue(pipe.recovery_proved)
+
+    def test_duty_head_does_not_write_recovery_proof(self):
+        with unittest.mock.patch.dict(os.environ, {"HOME":self.stand.root,
+                "DEVKIT_TASK_RUN_ID":"owned-run", "DEVKIT_RECOVERY_ATTEMPT":self.attempt}):
+            pipe = task_run.Pipeline(task_run.parse_args(["DK-1","-C",self.stand.root,"--order","Работай","--","claude"]))
+            pipe.sid = "new-session"
+            pipe.duty = lambda: True
+            pipe.running = lambda job: [{"state":"running"}]
+            pipe.beat()
+            self.assertFalse(pipe.recovery_proved)
+            self.assertFalse(os.path.exists(os.path.join(self.stand.root,".devkit","recovery.jsonl.proofs")))

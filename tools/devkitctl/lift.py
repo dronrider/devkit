@@ -484,7 +484,9 @@ def incident_rows(rows, root="", home=None, act=True):
             continue
         if r.get("_section") != "in-progress" or r.get("held_by"):
             continue
-        rec = hook.open_for(tid, home=userhome)
+        rec = next((item for item in reversed(hook.read(home=userhome))
+                    if item.get("task") == tid and not item.get("outcome")
+                    and os.path.realpath(str(item.get("root") or "")) == os.path.realpath(root)), None)
         pidfile = os.path.join(devhome, "task-%s.lock" % tid, "pid")
         try:
             with open(pidfile, encoding="utf-8") as fh:
@@ -500,8 +502,13 @@ def incident_rows(rows, root="", home=None, act=True):
                 lines.append("задача %s: %s, записался бы инцидент" % (tid, why))
                 halted.add(tid)
                 continue
+            import taskstate
+            try:
+                identity = taskstate.identity(userhome, root, tid, pid)
+            except (OSError, ValueError):
+                identity = None
             ident = hook.report(tid, hook.PROC_GONE, why, root=str(root),
-                                home=userhome)
+                                home=userhome, identity=identity)
             if not ident:
                 # Журнал не записался: молча гасить обнаружение нельзя, но и
                 # держать строку без записи некому, она идёт обычным порядком.

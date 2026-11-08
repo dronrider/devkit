@@ -69,22 +69,17 @@ SPAWN_TRIES = 3
 # отказа, а для границы DK-1115 нужна сама причина, без адреса сессии.
 SESSION_TAIL = re.compile(r",\s*сессия\s+\S+\s*$")
 
-# Правило возобновления для инцидентов конвейера (DK-1415). Едет в заказ
-# дежурного хвостом причины: остановка известна, и разбор обязан сказать, чем
-# кончился, а не только спросить. Замок задачи занят самим дежурным, и
-# возобновление ложится записью в файл задачи, а подъём делает тик. Явная
-# остановка человеком и исчерпанный бюджет дежурному не подчинены, и обходить
-# их он не вправе.
-RESUME_RULE = ("Возобновление: если причина понятна, живая работа цела и лимиты "
-               "проходов не исчерпаны, допиши в «Ход работы» файла задачи строку "
-               "«- Возобновление: <чем причина устранена>.» и заверши ход: замок "
-               "задачи занят твоим подъёмом, и конвейер поднимет сам тик командой "
-               "`taskctl run`. Исчерпанные лимиты и явную остановку человеком не "
-               "обходи без разрешения.")
+# Разбор неизвестной причины не даёт разрешения на новый рабочий запуск.
+RESUME_RULE = ("Возобновление: опиши, чем устранена причина. Запись "
+               "«- Возобновление: <причина>.» остаётся диагностикой и сама "
+               "не запускает конвейер. Автоматика восстанавливает только "
+               "доказанно исчезнувший процесс своим ограниченным путём. "
+               "Остальные случаи заверши вопросом человеку либо черновиком. "
+               "Исчерпанные лимиты и явную остановку человеком не обходи без разрешения.")
 
-# Начало записи возобновления в «Ходе работы» файла задачи. Её пишет сам
-# дежурный, а исполняет тик: вторая голова по живому замку не встанет.
 RESUME_MARK = "- Возобновление:"
+
+_RECOVERY_DEFAULT = object()
 
 _incidents = None
 
@@ -407,7 +402,8 @@ def remember(sig, home=None):
     write_state({sig}, home=home)
 
 
-def duty_root(root, call=None, taskctl=None, home=None, act=True):
+def duty_root(root, call=None, taskctl=None, home=None, act=True,
+              recovery_call=_RECOVERY_DEFAULT):
     """Поднимает дежурного по неразобранным записям исхода корня.
 
     Подпись отказа занимает зафиксированный результат разбора, а не запуск
@@ -420,6 +416,8 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
     сам подъём и запись памяти: так стенд смотрит решение захода, не трогая
     наружу.
     """
+    if recovery_call is _RECOVERY_DEFAULT:
+        recovery_call = call
     call = subprocess.run if call is None else call
     lines = []
     marks = task_marks(root)
@@ -525,6 +523,15 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
         if sig in known or sig in seen:
             continue
         seen.add(sig)
+        if not act:
+            if rec.get("reason") == hook.PROC_GONE:
+                import recovery
+                lines += recovery.resume(hook, rec, root, call=recovery_call,
+                                         taskctl=taskctl, home=home, act=False)
+            else:
+                lines.append("корень %s: задача %s ждёт дежурного по инциденту %s, «%s»"
+                             % (root, task, ident, sig))
+            continue
         if ask_flag(root, task):
             fresh.add(sig)
             _settle(hook, ident, hook.ASK_HUMAN, home)
@@ -539,30 +546,25 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
             lines.append("корень %s: по %s появился черновик %s, инцидент %s "
                          "закрыт черновиком" % (root, task, draft, ident))
             continue
+        if rec.get("reason") == hook.PROC_GONE:
+            # Первый этап автоматической починки (DK-1645): исчезнувший
+            # конвейер поднимается одной проверенной попыткой с бюджетом,
+            # машинным замком и доказательством хода. Диагностический
+            # дежурный по такой причине не поднимается: неизвестных причин
+            # это не касается, а его модельные вызовы в бюджет
+            # восстановления не входят.
+            import recovery
+            lines += recovery.resume(hook, rec, root, call=recovery_call,
+                                     taskctl=taskctl, home=home, act=act)
+            continue
         import lift
         devhome = (Path(home) / ".devkit") if home else Path(os.path.expanduser("~/.devkit"))
         if lift.head_up(task, str(devhome)):
-            fresh.add(sig)
-            _settle(hook, ident, hook.RESUMED, home)
-            lines.append("корень %s: конвейер по %s снова поднят, инцидент %s "
-                         "закрыт возобновлением" % (root, task, ident))
+            lines.append("корень %s: по %s есть живая голова, инцидент %s остаётся открытым без подтверждения рабочего хода" % (root, task, ident))
             continue
         line = resume_mark(root, task, since=_incident_when(rec))
         if line:
-            # Дежурный сказал возобновлять: замок занят его ходом, и подъём
-            # делает тик тем же заказом продолжения, каким поднимает брошенные
-            # строки. Отбитый подъём остаётся попыткой и повторится тиком.
-            code, words = lift.run_order(root, task, lift.ORDER % task,
-                                         call=call, taskctl=taskctl)
-            _note(hook, ident, "подъём по записи возобновления: код %d" % code, home)
-            if code == 0:
-                fresh.add(sig)
-                _settle(hook, ident, hook.RESUMED, home)
-                lines.append("корень %s: %s, инцидент %s закрыт возобновлением: %s"
-                             % (root, line, ident, words))
-            else:
-                lines.append("корень %s: %s, подъём по инциденту %s отбит кодом %d: %s"
-                             % (root, line, ident, code, words))
+            lines.append("корень %s: %s; запись не разрешает запуск для этой причины, требуется явное продолжение, инцидент %s остаётся открытым" % (root, line, ident))
             continue
         if not act:
             lines.append("корень %s: задача %s ждёт дежурного по инциденту %s, «%s»"

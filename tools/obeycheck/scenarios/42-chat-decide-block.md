@@ -1,7 +1,7 @@
 # вопрос человеку в разговоре блоком, заход автоматики
 
 конец: любой
-предмет: kit/skills/chat/SKILL.md; kit/skills/review/SKILL.md «Вход»; kit/skills/review/SKILL.md «Второй круг»
+предмет: kit/skills/chat/SKILL.md; kit/skills/review/SKILL.md «Вход и запись результата»; kit/skills/review/SKILL.md «Проверка исправлений»
 окружение: DEVKIT_HEADLESS=стенд
 
 ## Подготовка

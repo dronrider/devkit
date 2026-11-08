@@ -204,10 +204,14 @@ func (s *server) processedNativeConsent(tree, sid string) bool {
 		if context.Key == "" || len(context.NativeTools) == 0 || !sameGroomTree(tree, context.Tree) {
 			continue
 		}
-		if s.consentOtherWriter(context.Tree, sid, sid, context.Sources) {
+		nativeSources := context.ShownSources
+		if len(nativeSources) == 0 {
+			nativeSources = context.Sources
+		}
+		if s.consentOtherWriter(context.Tree, sid, sid, nativeSources) {
 			continue
 		}
-		tools, quiet := s.consentQuiet(context.Tree, sid, context.Sources, time.Time{})
+		tools, quiet := s.consentQuiet(context.Tree, sid, nativeSources, time.Time{})
 		if !quiet || len(tools) != len(context.NativeTools) {
 			continue
 		}

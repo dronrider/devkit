@@ -1184,6 +1184,11 @@ func (s *server) handleDraftPreparedConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	captures, err := s.capturePreparedFormConsent(found.Path, request)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "контекст согласия не сохранён: " + err.Error()})
+		return
+	}
 	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "prepared", "confirm")
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -1197,6 +1202,10 @@ func (s *server) handleDraftPreparedConfirm(w http.ResponseWriter, r *http.Reque
 	}
 	if err = json.Unmarshal([]byte(out), &result); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "результат подтверждения не прочитался"})
+		return
+	}
+	if err := finishPreparedFormConsent(captures, result.Key); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "разбор применён; прежний вопрос не снят: " + err.Error()})
 		return
 	}
 	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "подтверждённые задачи применены"}

@@ -22,6 +22,8 @@ func TestGroomConsentWaiting(t *testing.T) {
 	}
 }
 
+func TestGroomConsentForm(t *testing.T) { groomConsentWaiting(t, "form") }
+
 func groomConsentWaiting(t *testing.T, selection string) {
 	st := newScenarioStand(t)
 	kit, _ := filepath.Abs("../..")
@@ -133,7 +135,11 @@ esac`)
 	}
 	browser := func(mode string) {
 		t.Helper()
-		cmd := exec.Command(node, "testdata/groom_consent_browser.mjs", browserServer.URL, chrome, st.e.cfg.Token, scenarioPanelSID, mode, selection)
+		script := "testdata/groom_consent_browser.mjs"
+		if selection == "form" && mode == "consent" {
+			script = "testdata/groom_consent_form_browser.mjs"
+		}
+		cmd := exec.Command(node, script, browserServer.URL, chrome, st.e.cfg.Token, scenarioPanelSID, mode, selection)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("browser %s: %s %v", mode, out, err)
 		} else {
@@ -232,6 +238,17 @@ esac`)
 	if got := readFile(t, st.path); got != materialBefore+"\nНовая мысль\n" {
 		t.Fatal("stale changed material")
 	}
+	if selection == "form" {
+		staleRequest, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: snapshots, Decisions: decisions})
+		refused := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/drafts/prepared/confirm", string(staleRequest))
+		if refused.StatusCode == 200 {
+			t.Fatal("stale form confirmation applied")
+		}
+		refused.Body.Close()
+		if got := readFile(t, st.path); got != materialBefore+"\nНовая мысль\n" {
+			t.Fatal("stale form changed material")
+		}
+	}
 	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-4.md", materialBefore)
 	status(true)
 	// The legacy field name keeps the same displayed question and snapshots.
@@ -261,7 +278,7 @@ esac`)
 	if json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-5")), &remaining) != nil {
 		t.Fatal("remaining view")
 	}
-	if selection == "one-source" && (remaining.State.State != "active" || remaining.State.Proposals[0].Status != "") {
+	if selection != "all" && (remaining.State.State != "active" || remaining.State.Proposals[0].Status != "") {
 		t.Fatal("unchecked source was applied")
 	}
 }

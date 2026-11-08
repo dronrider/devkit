@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dronrider/devkit/internal/taskhead"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 // runDevkit раскладывает дерево devkit стенда: оболочка и профиль. Сама
@@ -361,5 +362,44 @@ func TestTaskGoal(t *testing.T) {
 	}
 	if got := taskGoal(root, "XR-нет"); got != "" {
 		t.Errorf("несуществующая задача отдала цель: %q", got)
+	}
+}
+
+func TestRunStoppedTaskRequiresExplicitContinuation(t *testing.T) {
+	root, home, dk := runDevkit(t)
+	profile := "[head]\nclient = [\"devkit-recovery-client-missing-on-purpose\"]\nbin = \"devkit-recovery-client-missing-on-purpose\"\n"
+	if err := os.WriteFile(taskhead.ProfilePath(dk, "claude-code"), []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := taskstate.SetStopped(home, root, "DK-7", true); err != nil {
+		t.Fatal(err)
+	}
+	_, code, err := cmdRun(root, "DK-7", runOpts{})
+	if err == nil || code != taskhead.CodeSetup || !strings.Contains(err.Error(), "остановлена пользователем") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	_, code, err = cmdRun(root, "DK-7", runOpts{continueStopped: true})
+	if err != nil || code != taskhead.CodeCalled {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	g, err := taskstate.Acquire(home, root, "DK-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if g.State.Stopped {
+		t.Fatal("явное продолжение не сняло остановку")
+	}
+}
+
+func TestRunRecoveryFlagsRequireKnownOriginalRun(t *testing.T) {
+	root, _, dk := runDevkit(t)
+	profile := "[head]\nclient = [\"devkit-recovery-client-missing-on-purpose\"]\nbin = \"devkit-recovery-client-missing-on-purpose\"\n"
+	if err := os.WriteFile(taskhead.ProfilePath(dk, "claude-code"), []byte(profile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, code, err := cmdRun(root, "DK-7", runOpts{recoveryAttempt: "RV-11111111111111111111111111111111", previousRun: "unknown"})
+	if err == nil || code != taskhead.CodeSetup || !strings.Contains(err.Error(), "исходный запуск") {
+		t.Fatalf("code=%d err=%v", code, err)
 	}
 }

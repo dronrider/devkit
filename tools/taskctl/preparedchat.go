@@ -31,7 +31,7 @@ func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []
 	text := "Подготовил заключение разбора и задачи. Согласуй весь результат."
 	var options []chat.Option
 	for _, s := range shown.Sources {
-		options = append(options, chat.Option{Label: "Подтвердить разбор " + s.Source})
+		options = append(options, chat.Option{Label: "Подтвердить разбор " + s.Source, Recommended: true})
 		text += fmt.Sprintf("\n\nЗаключение %s: #%s/draft/%s", s.Source, project, s.Source)
 		if s.Conclusion != "" {
 			text += "\n\n" + s.Conclusion
@@ -132,7 +132,16 @@ func cmdPreparedChatAsk(root, anchor string, also []string, d askDeps, env func(
 	if _, err = runAsk(root, AskParams{ID: anchor, Draft: true, Pack: []chat.Question{q}, Quiet: true}, d, env); err != nil {
 		return "", err
 	}
-	data, err := json.Marshal(q)
+	delivery := "text"
+	if AskPanel(env) {
+		delivery = "panel"
+	} else if headlessSign(env) == "" {
+		delivery = "dialog"
+	}
+	data, err := json.Marshal(struct {
+		chat.Question
+		Delivery string `json:"delivery"`
+	}{q, delivery})
 	if err != nil {
 		return "", err
 	}
@@ -205,57 +214,8 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 		if repeated, err := preparedChatRepeated(root, req); err == nil {
 			return repeated, nil
 		}
-		for _, source := range shown.Sources {
-			record, state, err := readPrepared(root, source.Source)
-			if err != nil {
-				return "", err
-			}
-			basis, err := preparedBasis(root, record, state)
-			if err != nil {
-				return "", err
-			}
-			matches, err := preparedBasisMatches(root, source.Source, basis, source.Basis)
-			if err != nil {
-				return "", err
-			}
-
-			compared := state
-			compared.Proposals = append([]draftproposal.Proposal(nil), state.Proposals...)
-			var cards []draftproposal.Proposal
-			for i, p := range compared.Proposals {
-				if p.Status == "" {
-					p.Text = ""
-					if matches && basis != source.Basis {
-						for _, old := range source.Proposals {
-							if old.ID == p.ID && old.BoardID == "" {
-								p.BoardID = ""
-								compared.Proposals[i].BoardID = ""
-							}
-						}
-					}
-					cards = append(cards, p)
-				}
-			}
-			if !matches || !reflect.DeepEqual(cards, source.Proposals) {
-				return "", fmt.Errorf("%s: показанные задачи изменились", source.Source)
-			}
-			if source.Conclusion != "" || state.Conclusion != "" {
-				conclusion, err := preparedConclusion(root, source.Source, compared)
-				if err != nil {
-					return "", err
-				}
-				if source.Conclusion != conclusion {
-					// Старое представление допустимо только после проверки тех же входов
-					// и нормализации номера по служебному переходу adopt.
-					legacy, err := preparedLegacyConclusion(root, source.Source, compared)
-					if err != nil {
-						return "", err
-					}
-					if source.Conclusion != legacy {
-						return "", fmt.Errorf("%s: показанное заключение изменилось", source.Source)
-					}
-				}
-			}
+		if err := checkPreparedChatShown(root, *shown); err != nil {
+			return "", err
 		}
 		data, err := json.Marshal(req)
 		if err != nil {
@@ -264,6 +224,102 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 		return cmdDraftPreparedConfirm(root, data, opts)
 	}
 	return preparedChatRepeated(root, req)
+}
+
+func checkPreparedChatShown(root string, shown chat.PreparedQuestion) error {
+	for _, source := range shown.Sources {
+		record, state, err := readPrepared(root, source.Source)
+		if err != nil {
+			return err
+		}
+		basis, err := preparedBasis(root, record, state)
+		if err != nil {
+			return err
+		}
+		matches, err := preparedBasisMatches(root, source.Source, basis, source.Basis)
+		if err != nil {
+			return err
+		}
+
+		compared := state
+		compared.Proposals = append([]draftproposal.Proposal(nil), state.Proposals...)
+		var cards []draftproposal.Proposal
+		for i, p := range compared.Proposals {
+			if p.Status == "" {
+				p.Text = ""
+				if matches && basis != source.Basis {
+					for _, old := range source.Proposals {
+						if old.ID == p.ID && old.BoardID == "" {
+							p.BoardID = ""
+							compared.Proposals[i].BoardID = ""
+						}
+					}
+				}
+				cards = append(cards, p)
+			}
+		}
+		if !matches || !reflect.DeepEqual(cards, source.Proposals) {
+			return fmt.Errorf("%s: показанные задачи изменились", source.Source)
+		}
+		if source.Conclusion != "" || state.Conclusion != "" {
+			conclusion, err := preparedConclusion(root, source.Source, compared)
+			if err != nil {
+				return err
+			}
+			if source.Conclusion != conclusion {
+				// Старое представление допустимо только после проверки тех же входов
+				// и нормализации номера по служебному переходу adopt.
+				legacy, err := preparedLegacyConclusion(root, source.Source, compared)
+				if err != nil {
+					return err
+				}
+				if source.Conclusion != legacy {
+					return fmt.Errorf("%s: показанное заключение изменилось", source.Source)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func cmdPreparedChatCheck(root, anchor string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	root = filepath.Clean(root)
+	ask, ok := chat.ReadAsk(chat.AskPath(stage.MainRoot(root), chat.TaskName(anchor)))
+	shown := shownPrepared(ask)
+	if !ok || ask.Task != anchor || shown == nil || shown.Anchor != anchor || shown.Tree != root || shown.Validate() != nil {
+		return "", fmt.Errorf("нет показанного вопроса согласования")
+	}
+	for _, source := range shown.Sources {
+		if err := draftmeta.GuardRecord(root, source.Source); err != nil {
+			return "", err
+		}
+	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	for _, source := range shown.Sources {
+		record, state, err := readPrepared(root, source.Source)
+		if err != nil {
+			return "", err
+		}
+		view, err := preparedViewOf(root, source.Source, record, state)
+		if err != nil {
+			return "", err
+		}
+		if !view.Ready || source.Revision == 0 || view.State.PackRevision != source.Revision {
+			return "", fmt.Errorf("%s: показанный разбор не готов или изменился", source.Source)
+		}
+	}
+	if err := checkPreparedChatShown(root, *shown); err != nil {
+		return "", err
+	}
+	return marshal(shown)
 }
 
 func cmdPreparedChatReplay(root, anchor string, input []byte) (string, error) {

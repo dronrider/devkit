@@ -595,6 +595,12 @@ func main() {
 				needArgs(pos, 1, 1, "draft prepared ask <ID> [--also <ID> ...]")
 				tree := root(*dir)
 				msg, err = cmdPreparedChatAsk(tree, pos[0], also, liveDeps(tree), os.Getenv)
+			} else if len(args) > 2 && args[2] == "check-ask" {
+				fs := flag.NewFlagSet("draft prepared check-ask", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				pos := frame.ParseArgs(fs, args[3:])
+				needArgs(pos, 1, 1, "draft prepared check-ask <ID>")
+				msg, err = cmdPreparedChatCheck(root(*dir), pos[0])
 			} else if len(args) > 2 && args[2] == "answer" {
 				fs := flag.NewFlagSet("draft prepared answer", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")

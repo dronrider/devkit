@@ -98,6 +98,7 @@ def reset(sess):
         return
     with locked(sess.session) as state:
         state.pop("nonce", None)
+        state["managed"] = False
         if sess.kind == "turn-done":
             state["tries"] = 0
 
@@ -105,6 +106,7 @@ def reset(sess):
 def schedule(sess):
     row = eligible(sess)
     if row is None:
+        reset(sess)
         return False
     with locked(sess.session) as state:
         if state.get("nonce"):
@@ -112,6 +114,7 @@ def schedule(sess):
                 return True
             state.pop("nonce", None)
             return False
+        state["managed"] = True
         if state.get("tries", 0) >= LIMIT:
             return False
         nonce = uuid.uuid4().hex
@@ -167,13 +170,24 @@ def tmux_send(row):
     target = row.get("tmux", "").rsplit(".", 1)[-1]
     if not target:
         return "unavailable"
-    # Непустой ввод человека не стирается и не дополняется.
+    # Проверка пустого ввода не атомарна с send-keys. У подключённого
+    # терминала клавиатура может дописать текст после capture-pane.
+    def detached():
+        result = subprocess.run(["tmux", "display-message", "-p", "-t", target,
+                                 "#{session_attached}"], capture_output=True,
+                                text=True, timeout=3)
+        return result.returncode == 0 and result.stdout.strip() == "0"
+
     try:
+        if not detached():
+            return "unavailable"
         check = subprocess.run(["tmux", "capture-pane", "-p", "-t", target],
                                capture_output=True, text=True, timeout=3)
         lines = [s.strip() for s in check.stdout.splitlines() if s.strip()]
         prompts = [s for s in lines if s.startswith((">", "\u276f"))]
         if check.returncode or not prompts or prompts[-1] not in (">", "\u276f"):
+            return "unavailable"
+        if not detached():
             return "unavailable"
         put = subprocess.run(["tmux", "send-keys", "-t", target, "-l", MESSAGE], timeout=3)
         if put.returncode:

@@ -2948,6 +2948,10 @@ class ResumeFailedTest(ResumeHelpers, Stand):
         self.assertEqual(self.resume(), [])
         self.assertEqual(self.ran(), [])
         self.assertEqual(self.keys(), [])
+        path.write_text('{"managed":false,"tries":0}')
+        self.resume()
+        self.assertEqual(len(self.ran()), 1)
+
 
     def test_idle_notice_keeps_the_failure(self):
         # Шаг 1 сценария: падение, а через минуту уведомление простоя. Раньше

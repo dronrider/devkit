@@ -69,6 +69,7 @@ class RecoveryTest(unittest.TestCase):
             with recovery.locked("abcd1234") as state:
                 state["tries"] = 3
             self.assertFalse(recovery.schedule(event()))
+            self.assertTrue(json.loads(recovery.state_path("abcd1234").read_text())["managed"])
             recovery.reset(event(kind=hookio.TURN_DONE))
             self.assertTrue(recovery.schedule(event()))
 
@@ -122,16 +123,40 @@ class RecoveryTest(unittest.TestCase):
 
     def test_user_typing_blocks_tmux_fallback(self):
         from subprocess import CompletedProcess
-        with mock.patch.object(recovery.subprocess, "run", return_value=CompletedProcess([], 0, "\u276f user is typing\n")) as call:
+        with mock.patch.object(recovery.subprocess, "run", side_effect=[
+                CompletedProcess([], 0, "0\n"),
+                CompletedProcess([], 0, "\u276f user is typing\n")]) as call:
             self.assertEqual(recovery.tmux_send(dict(self.row, tmux="chat:@1.%1")), "unavailable")
-            self.assertEqual(call.call_count, 1)
+            self.assertEqual(call.call_count, 2)
 
     def test_tmux_empty_prompt_sends_literal_then_enter(self):
         from subprocess import CompletedProcess
-        with mock.patch.object(recovery.subprocess, "run", return_value=CompletedProcess([], 0, "\u276f\nhelp hint\n")) as call:
+        with mock.patch.object(recovery.subprocess, "run", side_effect=[
+                CompletedProcess([], 0, "0\n"),
+                CompletedProcess([], 0, "\u276f\nhelp hint\n"),
+                CompletedProcess([], 0, "0\n"),
+                CompletedProcess([], 0), CompletedProcess([], 0)]) as call:
             self.assertEqual(recovery.tmux_send(dict(self.row, tmux="chat:@1.%1")), "tmux")
-            self.assertEqual(call.call_args_list[1].args[0], ["tmux", "send-keys", "-t", "%1", "-l", recovery.MESSAGE])
-            self.assertEqual(call.call_args_list[2].args[0][-1], "Enter")
+            self.assertEqual(call.call_args_list[3].args[0], ["tmux", "send-keys", "-t", "%1", "-l", recovery.MESSAGE])
+            self.assertEqual(call.call_args_list[4].args[0][-1], "Enter")
+
+    def test_attached_tmux_never_receives_keys(self):
+        from subprocess import CompletedProcess
+        with mock.patch.object(recovery.subprocess, "run", return_value=CompletedProcess([], 0, "1\n")) as call:
+            self.assertEqual(recovery.tmux_send(dict(self.row, tmux="chat:@1.%1")), "unavailable")
+            self.assertEqual(call.call_count, 1)
+            self.assertNotIn("send-keys", call.call_args.args[0])
+
+    def test_new_incident_releases_watch_ownership(self):
+        for kind in (hookio.PROMPT_SUBMIT, hookio.TURN_DONE):
+            with recovery.locked("abcd1234") as state:
+                state.update(managed=True, tries=3)
+            recovery.reset(event(kind=kind))
+            self.assertFalse(json.loads(recovery.state_path("abcd1234").read_text())["managed"])
+        with recovery.locked("abcd1234") as state:
+            state["managed"] = True
+        self.assertFalse(recovery.schedule(event(message="API Error: Unauthorized")))
+        self.assertFalse(json.loads(recovery.state_path("abcd1234").read_text())["managed"])
 
     def test_socket_frame_and_ack(self):
         path = str(Path(self.tmp.name) / "peer.sock")

@@ -1807,10 +1807,14 @@ def merge_queue(root, call=None, shipctl=None, home=None, taskctl=None):
 
     Пустая очередь, сломанный прод и занятый конвейер выходят нулём со
     строкой «очередь слияний пуста», и такой исход значимым не считается:
-    иначе журнал сторожка тонул бы в ней каждые пять минут. Машинный исход
-    --json отличает такой заход от отказа ворот по каждой задаче. Второй
-    одинаковый отказ без живого исполнителя уходит дежурному. Возврат тот же,
-    что у разлива поезда: строка отчёта и признак значимости."""
+    иначе журнал сторожка тонул бы в ней каждые пять минут. Очередь из одних
+    снятых строк пустой не считается: снятая работа стоит в составе, и тик
+    называет её и причину снятия в отчёте и журнале, а не эскалирует
+    дежурному, потому что у снятой уже есть исполнитель и поручение
+    (DK-1334). Машинный исход --json отличает такой заход от отказа ворот
+    по каждой задаче. Второй одинаковый отказ без живого исполнителя уходит
+    дежурному. Возврат тот же, что у разлива поезда: строка отчёта
+    и признак значимости."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("shipctl") if shipctl is None else shipctl
     name = os.path.basename(root.rstrip("/"))
@@ -1854,7 +1858,8 @@ def merge_queue(root, call=None, shipctl=None, home=None, taskctl=None):
                 entries.append("%s: %s" % (task, said))
         if entries:
             line += "; " + "; ".join(entries)
-        return line, bool(entries) or any(isinstance(i, dict) and (i.get("merged") or i.get("changed"))
+        return line, bool(entries) or any(isinstance(i, dict) and (i.get("merged") or i.get("changed")
+                                                                  or i.get("held"))
                                          for i in report["items"])
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:

@@ -1092,18 +1092,20 @@ class DrainFake(Fake):
     разливу поезда своё. Один ответ на оба путал бы источник строки в журнале:
     оба разлива идут одним тиком, и штатная тишина у них разная."""
 
-    def __init__(self, queue=QUIET_QUEUE, ship=QUIET_TRAIN, code=0):
+    def __init__(self, queue=QUIET_QUEUE, ship=QUIET_TRAIN, code=0, items=None):
         super().__init__(code=code)
-        self.queue, self.ship = queue, ship
+        self.queue, self.ship, self.items = queue, ship, items
 
     def __call__(self, argv, **kw):
         self.calls.append(list(argv))
         self.kwargs.append(dict(kw))
         out = self.queue if "queue" in argv else self.ship
         if "queue" in argv and "--json" in argv:
-            out = json.dumps({"line": out, "items": [] if watch.NO_QUEUE in out else
-                              [{"line": out, "merged": self.code == 0,
-                                "failed": self.code != 0}]})
+            items = self.items
+            if items is None:
+                items = [] if watch.NO_QUEUE in out else [{"line": out, "merged": self.code == 0,
+                                                           "failed": self.code != 0}]
+            out = json.dumps({"line": self.queue, "items": items})
         return subprocess.CompletedProcess(argv, self.code, out, None)
 
 
@@ -1178,6 +1180,19 @@ class DrainTest(Stand):
         self.assertIn("очередь слияний пуста", out)
         self.assertNotIn("очередь слияний пуста", self.journal())
         self.assertIn("целей под надзором", self.journal())
+
+    def test_standing_held_rows_reach_the_journal(self):
+        # Очередь из одних снятых строк не пуста: тик называет снятые строки
+        # и причины в отчёте и журнале, иначе стоящая работа маскируется
+        # строкой про пустую очередь (DK-1334).
+        held = ("очередь слияний: готовых веток нет, стоит снятая работа "
+                "снята DK-901 (ранг 30, 2 дн назад): жду смежника")
+        items = [{"id": "DK-901", "line": "снята DK-901 (ранг 30, 2 дн назад): жду смежника",
+                  "held": True}]
+        rc, out = self.sweep(call=DrainFake(queue=held, items=items))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("снята DK-901", out)
+        self.assertIn("снята DK-901", self.journal())
 
     def test_merged_branch_reaches_the_journal(self):
         rc, out = self.sweep(call=DrainFake(queue="DK-901 слита очередью: DK-901 слита в main fast-forward"))

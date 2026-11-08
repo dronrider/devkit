@@ -1,6 +1,7 @@
 # разбор нескольких результатов одной записи
 
 конец: любой
+окружение: DEVKIT_TMUX=task-OB-069
 предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «Первый раунд: сценарии»
 
 ## Подготовка
@@ -96,6 +97,8 @@ assert len(sources) == 1 and sources[0].get('source') == 'OB-069', 'источн
 assert sources[0].get('revision') == view['state']['pack_revision'], 'редакция всего разбора не совпала'
 options = shown[0].get('options', [])
 assert len(options) == len(sources), 'согласие должно относиться к целому черновику'
+assert all(o.get('recommended') is True for o in options), 'источники не отмечены рекомендацией'
+assert 'AskUserQuestion' not in pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text(), 'после canonical Ask задан второй вопрос оболочкой'
 assert [o.get('label') for o in options] == ['Подтвердить разбор ' + source['source'] for source in sources], 'вопрос содержит отдельное согласие на задачу'
 assert view.get('basis') and sources[0].get('basis') == view['basis'], 'показанный basis не совпал'
 assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у задачи нет ID или редакции'

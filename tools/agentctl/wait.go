@@ -283,6 +283,9 @@ func waitCheck(root string, m waitMark, now time.Time) (bool, string, error) {
 	switch m.Kind {
 	case waitHere, waitGone:
 		_, err := os.Stat(m.Target)
+		if err != nil && !os.IsNotExist(err) {
+			return false, "", err
+		}
 		here := err == nil
 		said := "путь " + m.Target + " есть"
 		if !here {

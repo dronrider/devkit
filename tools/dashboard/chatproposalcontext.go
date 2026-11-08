@@ -239,3 +239,45 @@ func (s *server) proposalContexts(sid string) []proposalDeliveryContext {
 	}
 	return out
 }
+
+type preparedConsentCapture struct {
+	ask handedAsk
+	key string
+}
+
+func (s *server) capturePreparedFormConsent(tree string, request draftproposal.ConfirmRequest) ([]preparedConsentCapture, error) {
+	var captures []preparedConsentCapture
+	for _, h := range askScan(tree, s.now(), nil) {
+		shown := preparedFromAsk(h.Ask)
+		sid := h.Ask.Session
+		if shown == nil || shown.Tree != tree || !chatKeyRe.MatchString(sid) || chat.CheckPreparedAnswer(*shown, tree, request) != nil {
+			continue
+		}
+		current, _ := s.groomConsent(tree, sid)
+		if current == nil || !reflect.DeepEqual(*current, *shown) {
+			continue
+		}
+		answer := proposalAnswer{Anchor: shown.Anchor, Tree: tree, Snapshots: request.Snapshots, Decisions: request.Decisions}
+		key, err := proposalContextKey(answer)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.rememberProposalContext(sid, *shown, answer); err != nil {
+			return nil, err
+		}
+		captures = append(captures, preparedConsentCapture{h, key})
+	}
+	return captures, nil
+}
+
+func finishPreparedFormConsent(captures []preparedConsentCapture, key string) error {
+	for _, capture := range captures {
+		if key == "" || capture.key != key {
+			continue
+		}
+		if _, err := chat.DropAskIf(capture.ask.Tree, capture.ask.Name, capture.ask.Ask); err != nil {
+			return err
+		}
+	}
+	return nil
+}

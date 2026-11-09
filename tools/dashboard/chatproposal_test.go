@@ -301,8 +301,10 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	if err := os.Remove(carrier); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(askPath); err != nil {
-		t.Fatal(err)
+	// Подтверждение применено, а выдача ответа упала: признак ожидания
+	// снялся самой командой ответа, повтору он уже не нужен.
+	if _, err := os.Stat(askPath); !os.IsNotExist(err) {
+		t.Fatal("признак жив после применённого подтверждения")
 	}
 	second := readFile(t, secondPath)
 	if err := os.WriteFile(secondPath, []byte(strings.Replace(second, "\n", "\nзамок: locked\n", 1)), 0600); err != nil {

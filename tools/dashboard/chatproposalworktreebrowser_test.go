@@ -162,7 +162,9 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			if err := os.Remove(chat.AskPath(st.e.proj, chat.TaskName("XR-4"))); err != nil {
+			// Применённый ответ снимает признак сам, к повтору сценария
+			// файла уже может не быть.
+			if err := os.Remove(chat.AskPath(st.e.proj, chat.TaskName("XR-4"))); err != nil && !os.IsNotExist(err) {
 				http.Error(w, err.Error(), 500)
 				return
 			}

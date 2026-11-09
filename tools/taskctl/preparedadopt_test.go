@@ -96,6 +96,12 @@ func testLegacyAskAdoptionReplay(t *testing.T, proposalKey string) {
 	if err != nil {
 		t.Fatalf("старый показанный вопрос после adopt: %v", err)
 	}
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); ok {
+		t.Fatal("ответ оставил показанный вопрос")
+	}
+	if err = os.WriteFile(chat.AskPath(root, chat.TaskName("XR-008")), ask, 0644); err != nil {
+		t.Fatal(err)
+	}
 	var first, second struct {
 		Key      string
 		Results  []draftproposal.Receipt
@@ -124,7 +130,7 @@ func testLegacyAskAdoptionReplay(t *testing.T, proposalKey string) {
 	}
 	after, err = os.ReadFile(chat.AskPath(root, chat.TaskName("XR-008")))
 	if err != nil || !bytes.Equal(ask, after) {
-		t.Fatal("ответ или повтор переписал показанный вопрос")
+		t.Fatal("повтор переписал показанный вопрос")
 	}
 }
 

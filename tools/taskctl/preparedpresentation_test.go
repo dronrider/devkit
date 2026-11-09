@@ -85,9 +85,18 @@ func TestConclusionSavedPrePatchAskAndReplay(t *testing.T) {
 				if err = json.Unmarshal([]byte(raw), &receipts[i]); err != nil {
 					t.Fatal(err)
 				}
+				if i == 0 {
+					if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); ok {
+						t.Fatal("согласие оставило сохранённый Ask")
+					}
+					if err = os.WriteFile(chat.AskPath(root, chat.TaskName("XR-008")), before, 0644); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
 				after, err := os.ReadFile(chat.AskPath(root, chat.TaskName("XR-008")))
 				if err != nil || !bytes.Equal(before, after) {
-					t.Fatal("представление переписало сохранённый Ask")
+					t.Fatal("повтор переписал сохранённый Ask")
 				}
 			}
 			if receipts[0].Repeated || !receipts[1].Repeated || receipts[0].Key != draftproposal.Digest(req) || receipts[0].Key != receipts[1].Key || !reflect.DeepEqual(receipts[0].Results, receipts[1].Results) || len(receipts[0].Results) != 1 {

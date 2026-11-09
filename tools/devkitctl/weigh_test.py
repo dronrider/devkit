@@ -211,6 +211,23 @@ class ThresholdsTest(unittest.TestCase):
         self.assertIn("порог 18 000 символов", f)
 
 
+class LiveTreeBudgetTest(unittest.TestCase):
+    """Живое дерево devkit под бюджетами весов (DK-1661).
+
+    Песочница тестов возит с собой kit/, но не RULES.core.md, поэтому волна
+    правок бьёт карман ядра мимо синтетических прогонов. Судится сам чекаут,
+    в котором лежит тест: обе проверки повторяют доктор в чекауте devkit, и
+    находка на живом дереве это красный main целиком.
+    """
+
+    def test_live_tree_within_budgets(self):
+        root = Path(__file__).resolve().parent.parent.parent
+        self.assertEqual(weigh.residency_findings(root, root), [],
+                         "карманы резидента живого дерева выше порогов")
+        self.assertEqual(weigh.skill_findings(root), [],
+                         "тела скиллов живого дерева выше порога")
+
+
 class KeychainTest(SandboxCase):
     """Связка ключей в слепке: без неё клиент под подменённым HOME отвечает «Not
     logged in», и замер не начинается вовсе. Гоняется на выдуманных HOME, чтобы

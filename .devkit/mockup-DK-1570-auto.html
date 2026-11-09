@@ -1,0 +1,340 @@
+<title>Переключатель автоматического выбора</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:oklch(0.98 0.004 85); --fg:oklch(0.25 0.012 85); --mut:oklch(0.52 0.014 85);
+  --line:oklch(0.89 0.007 85);
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+    --line:oklch(0.28 0.01 85);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+  --line:oklch(0.28 0.01 85);
+}
+body{background:var(--bg);color:var(--fg);font:400 14px/1.6 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:880px;margin:0 auto;padding-block:40px 56px}
+h1{font:600 26px/1.25 var(--sans);margin:6px 0 10px;text-wrap:balance}
+.eyebrow{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.lead{color:var(--mut);max-width:64ch;margin:0}
+section{margin-top:36px}
+h2{font:600 17px var(--sans);margin:0 0 4px}
+.snote{color:var(--mut);font-size:13px;margin:0 0 14px;max-width:70ch}
+.cap{color:var(--mut);font-size:12.5px;margin:10px 0 0;max-width:70ch}
+
+.dpanel{
+  --bg0:oklch(0.155 0.007 80); --bg1:oklch(0.19 0.008 80); --bg2:oklch(0.225 0.009 80);
+  --bg3:oklch(0.265 0.01 80); --line:oklch(0.29 0.01 80); --line2:oklch(0.36 0.012 80);
+  --tx:oklch(0.93 0.006 85); --tx2:oklch(0.72 0.012 85); --tx3:oklch(0.54 0.012 85);
+  --acc:oklch(0.8 0.13 80); --acc-ink:oklch(0.22 0.04 80);
+  --psans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --pmono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  background:var(--bg0);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  color-scheme:dark;
+}
+.chead{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;
+  background:var(--bg1);border-bottom:1px solid var(--line);
+  font:500 11px var(--pmono);letter-spacing:.05em;color:var(--tx3)}
+.cbody{padding:14px 16px}
+
+.strip{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btnrun{display:inline-flex;height:36px;border-radius:9px;overflow:hidden;background:var(--acc);
+  color:var(--acc-ink);border:0;font:600 13px var(--psans);cursor:pointer}
+.btnrun .wide{padding:0 15px;display:flex;align-items:center}
+.btnrun .narrow{padding:0 11px;display:flex;align-items:center;border-left:1px solid color-mix(in oklab,var(--acc-ink) 28%,transparent);font:600 11px var(--pmono)}
+
+.menu{margin-top:10px;width:min(360px,100%);background:var(--bg2);border:1px solid var(--line2);
+  border-radius:11px;box-shadow:0 16px 40px rgba(0,0,0,.5);padding:8px 10px}
+.mhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 4px}
+.mlabel{font:500 10px var(--pmono);letter-spacing:.07em;text-transform:uppercase;color:var(--tx3);margin:0}
+.mlabel.gap{margin-top:10px}
+
+/* Переключатель автоматического выбора: первая строка списка моделей. */
+.auto{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
+.autotx{font:500 11px var(--psans);color:var(--tx2)}
+.auto input{position:absolute;opacity:0;width:0;height:0}
+.sw{position:relative;width:26px;height:15px;border-radius:8px;background:var(--bg3);
+  border:1px solid var(--line2);transition:background .15s ease,border-color .15s ease}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:50%;
+  background:var(--tx2);transition:left .15s ease,background .15s ease}
+.auto input:checked + .sw{background:color-mix(in oklab,var(--acc) 32%,var(--bg3));border-color:color-mix(in oklab,var(--acc) 55%,var(--line2))}
+.auto input:checked + .sw::after{left:13px;background:var(--acc)}
+.auto input:focus-visible + .sw{outline:1px solid var(--acc);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){.sw,.sw::after{transition:none}}
+
+.hrow{display:flex;align-items:center;gap:7px;padding:4px 7px;margin:0 -7px;border-radius:7px}
+.hrow.pickable{cursor:pointer}
+.hrow.pickable:hover,.hrow.pickable.on{background:var(--bg3)}
+.hname{flex:0 0 118px;font:500 12.5px var(--psans);color:var(--tx)}
+.hchip{font:500 10px var(--psans);background:var(--bg3);color:var(--tx2);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.hmeters{flex:1;display:flex;gap:10px;align-items:center;min-width:0;padding-left:6px}
+.hmt{display:flex;flex:1;align-items:center;gap:5px;min-width:0;color:var(--tx3);font:400 10px var(--pmono);white-space:nowrap}
+.meter{flex:1;height:3px;border-radius:2px;background:var(--bg3);overflow:hidden;min-width:0}
+.meter span{display:block;height:100%;background:var(--tx2)}
+
+/* Включённый переключатель: строки и шкала гаснут, вердиктная пара видна. */
+.menu.is-auto .hrow.pickable{opacity:.45}
+.menu.is-auto .hrow.pickable{pointer-events:none}
+.menu.is-auto .hrow.verd{opacity:1;background:var(--bg3);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--acc) 45%,transparent)}
+.menu.is-auto .eff{pointer-events:none}
+.menu.is-auto .effmark,.menu.is-auto .effrail,.menu.is-auto .efffill,.menu.is-auto .effdot{opacity:.45}
+.menu.is-auto .effdot.verd{opacity:1}
+.menu.is-auto .effthumb{opacity:.9}
+
+.eff{--sel:2;--n:5;--step:25%;padding:0 4px;user-select:none;margin-top:2px}
+.effmarks{position:relative;height:15px}
+.effmark{position:absolute;left:calc(var(--i)*var(--step));transform:translateX(-50%);
+  border:0;background:none;padding:0 7px;line-height:15px;cursor:pointer;border-radius:5px;
+  font:500 10px var(--pmono);color:var(--tx3);white-space:nowrap}
+.effmark:hover{color:var(--tx2);background:var(--bg3)}
+.effmark.on{color:var(--tx);background:var(--bg3)}
+.efftrack{position:relative;height:13px;margin-top:1px;cursor:pointer}
+.effrail{position:absolute;left:0;right:0;top:4px;height:3px;border-radius:2px;background:var(--bg3)}
+.efffill{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--acc);opacity:.85;width:calc(var(--sel)*var(--step))}
+.effdot{position:absolute;top:5.5px;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*var(--step));box-sizing:border-box}
+.effdot.verd{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in oklab,var(--acc) 30%,transparent)}
+.effthumb{position:absolute;top:5.5px;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;
+  background:var(--acc);border:2px solid var(--bg0);box-shadow:0 0 0 1px var(--line2);
+  left:calc(var(--sel)*var(--step));box-sizing:border-box;transition:left .15s ease}
+@media (prefers-reduced-motion: reduce){.effthumb{transition:none}}
+
+/* Чат: своя кнопка подписки с миниатюрной полоской уровня. */
+.chatbtn{display:inline-flex;align-items:center;gap:9px;height:32px;padding:0 11px;border-radius:8px;
+  background:var(--bg2);border:1px solid var(--line2);color:var(--tx);font:500 12px var(--psans);cursor:pointer}
+.chatbtn .car{color:var(--tx3);font:500 10px var(--pmono)}
+.mbar{--sel:3;--n:5;--step:25%;flex:none;width:92px;height:13px;position:relative}
+.mrail{position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--bg3)}
+.mdot{position:absolute;top:6px;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*var(--step));box-sizing:border-box}
+.mthumb{position:absolute;top:6px;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;
+  background:var(--acc);border:1.5px solid var(--bg2);left:calc(var(--sel)*var(--step));box-sizing:border-box}
+
+.rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.rules li{position:relative;padding-left:20px;color:var(--fg);max-width:74ch}
+.rules li::before{content:"-";position:absolute;left:0;color:var(--mut)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">макет для согласования</p>
+  <h1>Переключатель «Автоматически»</h1>
+  <p class="lead">Первой строкой списка моделей стоит переключатель. Включён: ручной выбор погашен, видна пара из вердикта pick, модель и уровень. Выключен: выбор руками, как сейчас, а вердикт остаётся кольцом на шкале. В чате переключателя нет, там выбор только руками.</p>
+
+  <section>
+    <h2>Форма задачи: включён</h2>
+    <p class="snote">Открытие меню. Переключатель стоит в первой строке, он включён. Строки подписок и шкала погашены и не нажимаются, вердиктная пара подсвечена, кольцо и бегунок стоят на уровне вердикта.</p>
+    <div class="dpanel">
+      <div class="chead">шаг 1: запуск по вердикту</div>
+      <div class="cbody">
+        <div class="strip">
+          <button class="btnrun"><span class="wide">Выполнить</span><span class="narrow">v</span></button>
+        </div>
+        <div class="menu is-auto" data-verdict-model="deepseek-v4-pro" data-verdict-effort="high">
+          <div class="mhead">
+            <p class="mlabel">Модель</p>
+            <label class="auto"><span class="autotx">Автоматически</span><input type="checkbox" checked><span class="sw"></span></label>
+          </div>
+          <div class="hrow pickable verd" data-model="deepseek-v4-pro" data-levels='["low","high","max"]'>
+            <span class="hname">deepseek-v4-pro</span><span class="hchip">pro, opencode-go</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow pickable" data-model="glm-5.3" data-levels='["low","high","max"]'>
+            <span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:71%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:24%"></span></span></span></span>
+          </div>
+          <div class="hrow pickable" data-model="claude-sonnet-5-5" data-levels='["low","medium","high","xhigh"]'>
+            <span class="hname">claude-sonnet-5-5</span><span class="hchip">pro, claude-code</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:44%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:52%"></span></span></span></span>
+          </div>
+          <p class="mlabel gap">Глубина размышления</p>
+          <div class="eff"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Форма задачи: выключен</h2>
+    <p class="snote">Тот же переключатель снят. Строки и шкала живые, выбор руками, кольцо вердикта остаётся на месте и никуда не девается.</p>
+    <div class="dpanel">
+      <div class="chead">шаг 2: выбор руками</div>
+      <div class="cbody">
+        <div class="strip">
+          <button class="btnrun"><span class="wide">Выполнить</span><span class="narrow">v</span></button>
+        </div>
+        <div class="menu" data-verdict-model="deepseek-v4-pro" data-verdict-effort="high">
+          <div class="mhead">
+            <p class="mlabel">Модель</p>
+            <label class="auto"><span class="autotx">Автоматически</span><input type="checkbox"><span class="sw"></span></label>
+          </div>
+          <div class="hrow pickable verd" data-model="deepseek-v4-pro" data-levels='["low","high","max"]'>
+            <span class="hname">deepseek-v4-pro</span><span class="hchip">pro, opencode-go</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow pickable" data-model="glm-5.3" data-levels='["low","high","max"]'>
+            <span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:71%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:24%"></span></span></span></span>
+          </div>
+          <div class="hrow pickable" data-model="claude-sonnet-5-5" data-levels='["low","medium","high","xhigh"]'>
+            <span class="hname">claude-sonnet-5-5</span><span class="hchip">pro, claude-code</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:44%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:52%"></span></span></span></span>
+          </div>
+          <p class="mlabel gap">Глубина размышления</p>
+          <div class="eff"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Черновик: та же форма</h2>
+    <p class="snote">У разбора черновика переключатель тот же. Включён, пара из вердикта видна, выбор погашен.</p>
+    <div class="dpanel">
+      <div class="chead">разбор черновика</div>
+      <div class="cbody">
+        <div class="menu is-auto" data-verdict-model="glm-5.3" data-verdict-effort="high">
+          <div class="mhead">
+            <p class="mlabel">Модель</p>
+            <label class="auto"><span class="autotx">Автоматически</span><input type="checkbox" checked><span class="sw"></span></label>
+          </div>
+          <div class="hrow pickable" data-model="deepseek-v4-pro" data-levels='["low","high","max"]'>
+            <span class="hname">deepseek-v4-pro</span><span class="hchip">pro, opencode-go</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow pickable verd" data-model="glm-5.3" data-levels='["low","high","max"]'>
+            <span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:71%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:24%"></span></span></span></span>
+          </div>
+          <p class="mlabel gap">Глубина размышления</p>
+          <div class="eff"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Чат: переключателя нет</h2>
+    <p class="snote">Кнопка подписки в разговоре остаётся прежней: миниатюрная полоска уровня в кнопке, модель и глубина выбираются руками. Строки «Автоматически» здесь нет.</p>
+    <div class="dpanel">
+      <div class="chead">поле ввода разговора</div>
+      <div class="cbody">
+        <button class="chatbtn">деплой ждёт тебя
+          <span class="mbar" id="mbar"><span class="mrail"></span><span class="mdot" style="--i:0"></span><span class="mdot" style="--i:1"></span><span class="mdot" style="--i:2"></span><span class="mdot" style="--i:3"></span><span class="mdot" style="--i:4"></span><span class="mthumb"></span></span>
+          <span class="car">v</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Правила для согласования</h2>
+    <ul class="rules">
+      <li>Переключатель «Автоматически» стоит первой строкой списка моделей. Включён он по умолчанию у формы задачи и у разбора черновика.</li>
+      <li>Включён: строки подписок и шкала глубины погашены и не нажимаются, а вердиктная модель подсвечена, кольцо и бегунок стоят на уровне вердикта.</li>
+      <li>Выключен: выбор модели и глубины руками, как сейчас. Кольцо вердикта остаётся подсказкой и выбор не отменяет.</li>
+      <li>У чата переключателя нет: в разговоре подписку и глубину выбирают руками, уровень виден миниатюрной полоской в кнопке.</li>
+      <li>Пояснительных абзацев в меню нет: ни про семьи моделей, ни про то, что уровень поедет меткой.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function(){
+  var TIERS = ["low","medium","high","xhigh","max"];
+  function ring(levels, verdict){
+    if(!verdict) return "";
+    if(levels.indexOf(verdict) >= 0) return verdict;
+    var at = TIERS.indexOf(verdict);
+    if(at < 0) return "";
+    for(var k=at+1;k<TIERS.length;k++) if(levels.indexOf(TIERS[k])>=0) return TIERS[k];
+    return "";
+  }
+  function buildSlider(box, levels, verdict, getSel, setSel){
+    var marks=document.createElement("div"); marks.className="effmarks";
+    var track=document.createElement("div"); track.className="efftrack";
+    var dots=[], btns=[];
+    box.style.setProperty("--n", levels.length);
+    box.style.setProperty("--step", levels.length>1 ? (100/(levels.length-1))+"%" : "0%");
+    var vr = ring(levels, verdict);
+    levels.forEach(function(lv,i){
+      var b=document.createElement("button"); b.type="button"; b.className="effmark";
+      b.style.setProperty("--i", i); b.dataset.level=lv; b.textContent=lv;
+      b.addEventListener("click", function(ev){ ev.stopPropagation(); setSel(lv); });
+      marks.appendChild(b); btns.push(b);
+      var d=document.createElement("span"); d.className="effdot"; d.style.setProperty("--i", i);
+      if(lv===vr) d.classList.add("verd");
+      dots.push(d);
+    });
+    var rail=document.createElement("span"); rail.className="effrail";
+    var fill=document.createElement("span"); fill.className="efffill";
+    var thumb=document.createElement("span"); thumb.className="effthumb";
+    track.appendChild(rail); track.appendChild(fill);
+    dots.forEach(function(d){ track.appendChild(d); });
+    track.appendChild(thumb);
+    track.addEventListener("click", function(ev){
+      var r=track.getBoundingClientRect();
+      var k=Math.round((ev.clientX-r.left)/r.width*(levels.length-1));
+      k=Math.max(0, Math.min(levels.length-1, k));
+      setSel(levels[k]);
+    });
+    box.appendChild(marks); box.appendChild(track);
+    function paint(){
+      var lv=getSel() || vr || (levels.indexOf("high")>=0 ? "high" : levels[levels.length-1]);
+      var i=Math.max(0, levels.indexOf(lv));
+      box.style.setProperty("--sel", i);
+      btns.forEach(function(b){ b.classList.toggle("on", b.dataset.level===lv); });
+    }
+    return {paint:paint};
+  }
+  document.querySelectorAll(".menu").forEach(function(menu){
+    var verdictModel = menu.getAttribute("data-verdict-model");
+    var verdictEffort = menu.getAttribute("data-verdict-effort");
+    var toggle = menu.querySelector(".auto input");
+    var rows = Array.prototype.slice.call(menu.querySelectorAll(".hrow.pickable"));
+    var effBox = menu.querySelector(".eff");
+    var state = { model: verdictModel, effort: "", slider: null };
+    function rowByName(name){
+      return rows.filter(function(r){ return r.dataset.model===name; })[0] || null;
+    }
+    function levelsOf(row){
+      try { return JSON.parse(row.dataset.levels || "[]"); } catch(e){ return []; }
+    }
+    function show(model, effort){
+      state.model = model; state.effort = effort;
+      rows.forEach(function(r){ r.classList.toggle("on", r.dataset.model===model); });
+      var row = rowByName(model) || rows[0];
+      var levels = levelsOf(row);
+      effBox.innerHTML = "";
+      state.slider = buildSlider(effBox, levels, verdictEffort,
+        function(){ return state.effort; },
+        function(lv){ state.effort = (lv===state.effort) ? "" : lv; state.slider.paint(); });
+      state.slider.paint();
+    }
+    rows.forEach(function(r){
+      r.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        if(menu.classList.contains("is-auto")) return;
+        show(r.dataset.model, "");
+      });
+    });
+    if(toggle){
+      toggle.addEventListener("change", function(){
+        menu.classList.toggle("is-auto", toggle.checked);
+        if(toggle.checked){
+          show(verdictModel, "");
+        }
+      });
+    }
+    show(verdictModel, "");
+  });
+
+})();
+</script>

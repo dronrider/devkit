@@ -410,8 +410,9 @@ func decideLeave(doc, name string, p DecideParams) (string, error) {
 }
 
 // decideSetWho переписывает поле «решает» названной развилки. Строки нет,
-// значит она встаёт первой подстрокой: перечень, правленный руками, тоже
-// бывает без поля, и передача обязана оставить его читаемым.
+// значит она встаёт первой подстрокой после целого вопроса: перенос вопроса
+// отступом она не разрезает, а перечень, правленный руками, бывает и без
+// поля, и передача обязана оставить его читаемым.
 func decideSetWho(doc, name, who string) string {
 	lines := strings.Split(doc, "\n")
 	f, ok := taskform.FindFork(doc, name)
@@ -429,9 +430,13 @@ func decideSetWho(doc, name, who string) string {
 			break
 		}
 	}
-	out := append([]string{}, lines[:head+1]...)
+	end := head + 1
+	for end < len(lines) && taskform.ForkContinuation(lines[end]) {
+		end++
+	}
+	out := append([]string{}, lines[:end]...)
 	out = append(out, taskform.ForkWhoLine(who))
-	out = append(out, lines[head+1:]...)
+	out = append(out, lines[end:]...)
 	return strings.Join(out, "\n")
 }
 

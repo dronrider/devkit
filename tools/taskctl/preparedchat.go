@@ -221,9 +221,38 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 		if err != nil {
 			return "", err
 		}
-		return cmdDraftPreparedConfirm(root, data, opts)
+		out, err := cmdDraftPreparedConfirm(root, data, opts)
+		if err != nil {
+			return "", err
+		}
+		return dropAnswerAsk(root, anchor, ask, out)
 	}
 	return preparedChatRepeated(root, req)
+}
+
+type preparedChatAnswerResult struct {
+	confirmationResult
+	AskDropped bool   `json:"askDropped"`
+	AskNote    string `json:"askNote,omitempty"`
+}
+
+// dropAnswerAsk гасит признак ожидания после применённого подтверждения
+// тем же ask, что прочитан в начале ответа: заменённый тем временем вопрос
+// DropAskIf не трогает (DK-1469). Подтверждение главное, поэтому провал
+// снятия едет полем AskNote и не роняет команду.
+func dropAnswerAsk(root, anchor string, ask chat.Ask, out string) (string, error) {
+	var result preparedChatAnswerResult
+	if err := json.Unmarshal([]byte(out), &result.confirmationResult); err != nil {
+		return out, nil
+	}
+	dropped, err := chat.DropAskIf(stage.MainRoot(root), chat.TaskName(anchor), ask)
+	result.AskDropped = dropped
+	if err != nil {
+		result.AskNote = err.Error()
+	} else if !dropped {
+		result.AskNote = "признак изменён, вопрос оставлен"
+	}
+	return marshal(result)
 }
 
 func checkPreparedChatShown(root string, shown chat.PreparedQuestion) error {

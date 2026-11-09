@@ -141,12 +141,21 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := cmdPreparedChatAnswer(root, "XR-008", input, CommitOpts{})
-	if err != nil || !strings.Contains(out, `"repeated":false`) {
+	if err != nil || !strings.Contains(out, `"repeated":false`) || !strings.Contains(out, `"askDropped":true`) {
 		t.Fatalf("apply %s %v", out, err)
 	}
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); ok {
+		t.Fatal("признак ожидания жив после применённого подтверждения")
+	}
+	if err = chat.WriteAsk(root, chat.TaskName("XR-008"), ask); err != nil {
+		t.Fatal(err)
+	}
 	out, err = cmdPreparedChatAnswer(root, "XR-008", input, CommitOpts{})
-	if err != nil || !strings.Contains(out, `"repeated":true`) {
+	if err != nil || !strings.Contains(out, `"repeated":true`) || strings.Contains(out, `"askDropped"`) {
 		t.Fatalf("replay with ask %s %v", out, err)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); !ok {
+		t.Fatal("повтор снял признак живого вопроса")
 	}
 	if err = chat.DropAsk(root, chat.TaskName("XR-008")); err != nil {
 		t.Fatal(err)
@@ -161,6 +170,9 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	out, err = cmdPreparedChatAnswer(root, "XR-008", input, CommitOpts{})
 	if err != nil || !strings.Contains(out, `"repeated":true`) {
 		t.Fatalf("replay after new question %s %v", out, err)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); !ok {
+		t.Fatal("повтор снял чужой живой вопрос")
 	}
 	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {

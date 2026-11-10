@@ -1997,7 +1997,7 @@
     ],
     "fixture_code_unchanged": true
   },
-  "acceptance_status": "diagnostic completed; historical cause and repeatability remain unestablished",
+  "acceptance_status": "accepted by user against recorded DoD",
   "additional_evidence": {
     "source": "docs/tasks/DK-1675.md, раздел Проверка; commit 91eebc659",
     "case": "orders",
@@ -2031,5 +2031,12 @@
     "architecture_object_count": 6,
     "arch019_direct_evidence_object_count": 3,
     "root_cause_of_historical_miss_established": false
+  },
+  "acceptance_decision": {
+    "date": "2026-11-10",
+    "user_instruction": "Хорошо, закрывай",
+    "scope": "Recorded DoD; no claim of guaranteed review accuracy, statistical superiority or a diagnosed historical cause.",
+    "further_model_runs": 0,
+    "historical_miss_preserved_as_limitation": true
   }
 }

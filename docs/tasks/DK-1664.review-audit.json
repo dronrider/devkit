@@ -2,8 +2,8 @@
   "version": 1,
   "id": "DK-1664",
   "base_sha": "2131adbc3db3ded93bc3fead3a7ed3a75c2b0a00",
-  "head_sha": "0ed7e8bae6e238c9bf14dd04f9e63c1f4e44e901",
-  "code_hash": "70a72a68c9682eb84f748b2cc4fc932bf188e0edd3c6ebe80e51a1ac4663d3ee",
+  "head_sha": "f187861ca33e3c7e6dcb8f08118bfbc6b7080981",
+  "code_hash": "303837c5fbb9e3dc126b3eb4f05396e5b280edc210027f7790b14b193561adba",
   "task_hash": "77b11bd0ddc6593e08b0fe56a168e7c8e2b6b219993c417549d8927998e3f7bb",
   "sources": [
     {
@@ -38,851 +38,1413 @@
     }
   ],
   "architecture": {
-    "goal": "",
-    "decision": "",
-    "boundaries": "",
-    "alternative": "",
-    "justification": "",
-    "result": "pending",
-    "evidence": []
+    "goal": "Обычная волна правок правил перестаёт красить main и останавливать очередь слияний: планки веса ядра и тел скиллов растут вместе с промптами по решению человека, без срочной ужимки каждой волны.",
+    "decision": "Подняты две константы у владельца порогов: CORE_LIMIT 5 500 -> 6 000 и SKILL_BODY_LIMIT 18 000 -> 20 000 (tools/devkitctl/weigh.py:36,61), комментарии у констант переписаны на решение человека 2026-11-09; те же пороги продублированы в README devkitctl и таблице бюджета DK-100; добавлен юнит волны ночи 9.11 test_night_surge_fits_raised_thresholds; подкладки MeasureTest и DoctorResidencyTest подняты над новыми порогами (20 500 и 6 100).",
+    "boundaries": "Ответственность weigh.py прежняя: сбор карманов и логика порогов, сигнатуры не тронуты; LIMIT 6 500 токенов, BOARD_LIMIT 1 500 и PROJECT_LIMIT 6 000 не меняются; владельцы данных те же: значение политики в weigh.py, живой вес в RULES.core.md и телах скиллов меняется правками правил; вступает в силу с коммитом при следующем запуске doctor и тестов.",
+    "alternative": "Проще в границах изменения нечего: смена политики это правка чисел у единственного владельца порога и дока при нём. Отвергнутые пути названы постановкой и решением человека: вечная ужимка (отвергнута 2026-11-09), возврат тел под формулу 16 000 (DK-941: просадка послушания 3 из 5 против 5 из 5), поднятие одного порога из двух (волна 9.11 пробила оба кармана).",
+    "justification": "Числа заданы постановкой; запас проверен замером: 5 567 из 6 000 (7,2 процента) и 18 091 из 20 000 (9,5 процента), что сходится с заявленными 7-10; юнит красный на базовой версии и зелёный на ветке, живое дерево ветки в новых планках. Решение не доезжает до второго живого сторожа того же бюджета: rules_test.py:530 держит прежние 5 500, см. нарушение ARCH-003.",
+    "evidence": [
+      "юнит волны 9.11 красный на базе 2131adbc3 (CORE_LIMIT 5 500, находки ядра 5 567 и тела 18 091) и зелёный на ветке (ThresholdsTest, 11 тестов OK)",
+      "живое дерево ветки в новых планках: ядро 5 486 из 6 000, ядро доски 1 473 из 1 500, находки пусто",
+      "второй живой сторож того же бюджета rules_test.py:530 держит прежние 5 500, оформлено нарушением ARCH-003"
+    ],
+    "result": "violated"
   },
   "rules": [
     {
       "id": "common-architecture:ARCH-001",
       "source": "common-architecture",
       "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "weigh.py сохраняет одну ответственность: сбор карманов и логику порогов; дифф меняет значения двух констант и комментарии, обязанности не перетасованы",
+      "evidence": [
+        {
+          "object": "ответственность модуля weigh",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "изменены значения CORE_LIMIT и SKILL_BODY_LIMIT и комментарии при них; функции сбора и оценки не тронуты"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-002",
       "source": "common-architecture",
       "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "потребители порогов заходят через контракт weigh: doctor через residency_findings и skill_findings, тесты через evaluate_*; дифф не правил внутренних деталей, требующих правок других модулей. Отступление rules_test от контракта зафиксировано нарушением ARCH-003",
+      "evidence": [
+        {
+          "object": "потребители weigh",
+          "location": "tools/devkitctl/weigh.py:284,329,343,386,395; tools/devkitctl/parallel.py",
+          "observation": "сигнатуры и точки входа не изменились, значения доезжают параметрами с значениями по умолчанию"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-003",
       "source": "common-architecture",
       "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "общая логика одного владельца: бюджет ядра живёт второй раз литералом в rules_test.py:530, и после правки владельца копия осталась на старом значении. после поднятия CORE_LIMIT до 6 000 живой тест tools/devkitctl/rules_test.py:530 (CoreBudgetTest.test_core_budgets) судит то же ядро RULES.core.md прежними 5 500: политика одного бюджета получила два разошедшихся живых значения, волна правок ночи 9.11 (5 567) проходит weigh и doctor, но красит rules_test и вместе с ним main, то есть цель задачи для кармана ядра не достигнута; замечание 1 раздела «Ревью»",
+      "evidence": [
+        {
+          "object": "дубль порога ядра",
+          "location": "tools/devkitctl/weigh.py:36 против tools/devkitctl/rules_test.py:530",
+          "observation": "до правки значения совпадали (5 500 и 5 500), после правки 6 000 против 5 500; прецедент DK-613 (docs/tasks/archive/2026/DK-613.md) называл этот сторож воротами роста ядра, смена планки требует того же решения человека, оно теперь есть"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-004",
       "source": "common-architecture",
       "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых слоёв, интерфейсов и зависимостей нет: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "три файла devkitctl и один LLD, новых сущностей нет"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-005",
       "source": "common-architecture",
       "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "контракты evaluate_residency и evaluate_skill_body не изменились: входы, выходы и строго-больше-порога семантика прежние, сообщения собираются из тех же констант",
+      "evidence": [
+        {
+          "object": "контракт функций порогов",
+          "location": "tools/devkitctl/weigh.py:284-395; tools/devkitctl/weigh_test.py:115-159,219-228",
+          "observation": "дифф не трогает тела функций; тесты сверяют старую семантику границы (на пороге чисто, на порог+1 находка) на новых значениях"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-006",
       "source": "common-architecture",
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "инвариант «ядро в бюджете» защищён в двух местах: doctor через weigh при каждом запуске и CoreBudgetTest на живых файлах; расхождение значений между сторожами оформлено нарушением ARCH-003, сама структура защиты изменением не тронута",
+      "evidence": [
+        {
+          "object": "точки защиты инварианта",
+          "location": "tools/devkitctl/weigh.py:329; tools/devkitctl/rules_test.py:522-532",
+          "observation": "оба сторожа живы и гоняются (прогон этого ревью); значения разошлись, см. ARCH-003"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-007",
       "source": "common-architecture",
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "смена значения публичной политики учла не всех потребителей: доки (README, DK-100) и тесты weigh обновлены, а живой потребитель CoreBudgetTest оставлен на старом значении. после поднятия CORE_LIMIT до 6 000 живой тест tools/devkitctl/rules_test.py:530 (CoreBudgetTest.test_core_budgets) судит то же ядро RULES.core.md прежними 5 500: политика одного бюджета получила два разошедшихся живых значения, волна правок ночи 9.11 (5 567) проходит weigh и doctor, но красит rules_test и вместе с ним main, то есть цель задачи для кармана ядра не достигнута; замечание 1 раздела «Ревью»",
+      "evidence": [
+        {
+          "object": "потребители значения CORE_LIMIT",
+          "location": "tools/devkitctl/README.md:2529-2547; docs/lld/DK-100-context-tree.md:163-171,383-393; tools/devkitctl/rules_test.py:530",
+          "observation": "README и DK-100 переведены на 6 000 и 20 000, rules_test остался на 5 500"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-008",
       "source": "common-architecture",
       "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "источник истины бюджета ядра раздвоился: владелец weigh.py говорит 6 000, живая копия в rules_test.py говорит 5 500, способа обновления копии при смене политики нет. после поднятия CORE_LIMIT до 6 000 живой тест tools/devkitctl/rules_test.py:530 (CoreBudgetTest.test_core_budgets) судит то же ядро RULES.core.md прежними 5 500: политика одного бюджета получила два разошедшихся живых значения, волна правок ночи 9.11 (5 567) проходит weigh и doctor, но красит rules_test и вместе с ним main, то есть цель задачи для кармана ядра не достигнута; замечание 1 раздела «Ревью»",
+      "evidence": [
+        {
+          "object": "источник истины порога",
+          "location": "tools/devkitctl/weigh.py:36; tools/devkitctl/rules_test.py:530",
+          "observation": "число в rules_test обновлялось руками и при этой смене не поехало; весовой юнит владельца зелёный, копия держит старое"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-009",
       "source": "common-architecture",
       "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "дифф не заводит ресурсов, соединений и фоновой работы: вычисление порогов синхронно внутри вызова утилиты; дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "правка значений и комментариев, ресурсов нет"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-010",
       "source": "common-architecture",
       "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "конкурентных изменений нет: логика порогов чистая и синхронная, дифф не добавляет состояния",
+      "evidence": [
+        {
+          "object": "характер изменения",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "меняются константы модуля, читаемые в рамках одного вызова"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-011",
       "source": "common-architecture",
       "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "внешних данных и границы доверия нет: меряются собственные файлы репозитория, входы прежние",
+      "evidence": [
+        {
+          "object": "входы weigh",
+          "location": "tools/devkitctl/weigh.py:329,395",
+          "observation": "источники те же файлы дерева devkit, дифф входов не касается"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-012",
       "source": "common-architecture",
       "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "последовательностей действий с частичным отказом нет: сравнение числа с порогом атомарно",
+      "evidence": [
+        {
+          "object": "механика проверки",
+          "location": "tools/devkitctl/weigh.py:284-395",
+          "observation": "одиночные чистые вычисления без промежуточных состояний"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-013",
       "source": "common-architecture",
       "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "внешних вызовов и повторов дифф не касается: стендовая часть weigh (PROMPT, RUNS) не менялась",
+      "evidence": [
+        {
+          "object": "стендовая часть модуля",
+          "location": "tools/devkitctl/weigh.py:62-64",
+          "observation": "константы прогона не тронуты"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-014",
       "source": "common-architecture",
       "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "находки порогов отличимы от чистого результата и связаны с карманом: форма сообщений не менялась, текст собирается из констант, тесты сверяют его на новых значениях",
+      "evidence": [
+        {
+          "object": "форма находок",
+          "location": "tools/devkitctl/weigh_test.py:131-133,79; прогон юнита на базе",
+          "observation": "«порог 5 500 символов» на базе и «порог 20 000 символов» на ветке, структура сообщения та же"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-015",
       "source": "common-architecture",
       "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "запросов, полей и соединений нет: вычисление идёт по спискам и файлам, дифф логики доступа не трогал",
+      "evidence": [
+        {
+          "object": "механика weigh",
+          "location": "tools/devkitctl/weigh.py:284-395",
+          "observation": "обход прежний, менялись только константы"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-016",
       "source": "common-architecture",
       "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "БД и последовательностей запросов нет: источник это файлы дерева",
+      "evidence": [
+        {
+          "object": "источник данных",
+          "location": "tools/devkitctl/weigh.py:329,395",
+          "observation": "чтение файлов и обход каталогов, изменён только порог"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-017",
       "source": "common-architecture",
       "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "операций, требующих транзакции, нет: правка значения константы",
+      "evidence": [
+        {
+          "object": "состав изменения",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "нет последовательных записей"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-018",
       "source": "common-architecture",
       "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "обращений по элементам коллекции дифф не добавлял, N+1 не касается: обход карманов и скиллов прежний",
+      "evidence": [
+        {
+          "object": "обходы в weigh",
+          "location": "tools/devkitctl/weigh.py:329-395",
+          "observation": "циклы не менялись"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-019",
       "source": "common-architecture",
       "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "SQL, соединений и разграничения доступа к данным в диффе нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "python-константы, тесты и markdown"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-020",
       "source": "common-architecture",
       "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "механизм весов (DK-029) действующий, не legacy: потребители doctor и тесты живы, статус проверен этим ревью",
+      "evidence": [
+        {
+          "object": "статус механизма",
+          "location": "tools/devkitctl/parallel.py; прогон check-skills и weigh_test",
+          "observation": "весовой контроль гоняется в текущих воротах, deprecated-статуса нет"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-021",
       "source": "common-architecture",
       "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "правка не срочное исправление безопасности или совместимости, шла полным циклом доски с постановкой и решением человека",
+      "evidence": [
+        {
+          "object": "характер задачи",
+          "location": "docs/tasks/DK-1664.md",
+          "observation": "смена политики порогов решением человека 2026-11-09"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-022",
       "source": "common-architecture",
       "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "настройка не управляет заявленным поведением на всех путях: поднятая планка ядра не действует на путь rules_test, который краснеет раньше нового порога. после поднятия CORE_LIMIT до 6 000 живой тест tools/devkitctl/rules_test.py:530 (CoreBudgetTest.test_core_budgets) судит то же ядро RULES.core.md прежними 5 500: политика одного бюджета получила два разошедшихся живых значения, волна правок ночи 9.11 (5 567) проходит weigh и doctor, но красит rules_test и вместе с ним main, то есть цель задачи для кармана ядра не достигнута; замечание 1 раздела «Ревью»",
+      "evidence": [
+        {
+          "object": "пути действия планки ядра",
+          "location": "tools/devkitctl/weigh.py:36 (doctor, weigh_test) против tools/devkitctl/rules_test.py:530 (rules_test)",
+          "observation": "волна 5 567: weigh и doctor зелёные, rules_test красный; цель «волна перестаёт красить main» на этом пути не выполняется"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-023",
       "source": "common-architecture",
       "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "пороги внутренней политики, а не опция пользователя: выбора для пользователя не добавлено, значение назначено решением человека",
+      "evidence": [
+        {
+          "object": "характер констант",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "константы модуля без внешнего входа"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-024",
       "source": "common-architecture",
       "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых настроек и параметров окружения нет: меняются значения существующих констант политики",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "значения и комментарии, новых ключей нет"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-025",
       "source": "common-architecture",
       "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "у обеих констант определены имя, смысл, значение и момент применения: комментарии при константах и README раздел весов; применяются при каждом запуске doctor и тестов, значение зашито коммитом",
+      "evidence": [
+        {
+          "object": "описание констант",
+          "location": "tools/devkitctl/weigh.py:27-61; tools/devkitctl/README.md:2529-2560",
+          "observation": "комментарии переписаны на решение 2026-11-09, README называет оба порога и их происхождение"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-026",
       "source": "common-architecture",
       "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых источников, псевдонимов и способов переопределения нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "значения существующих констант"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-027",
       "source": "common-architecture",
       "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "ввода значений настроек нет: константы зашиты в код, неверное значение не вводится извне",
+      "evidence": [
+        {
+          "object": "вход порогов",
+          "location": "tools/devkitctl/weigh.py:284,386",
+          "observation": "параметры функций служат тестам, боевой вход это константа"
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-028",
       "source": "common-architecture",
       "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "пороги проверены глазами потребителя: юнит на границе обоих порогов (порог чисто, порог+1 находка), подкладки доктора 20 500 и 6 100 дают находки с новыми числами, живое дерево зелёное, волна 9.11 юнитом проходит",
+      "evidence": [
+        {
+          "object": "потребительский прогон",
+          "location": "tools/devkitctl/weigh_test.py:206-228,583-610,778-791; замер живого дерева",
+          "observation": "ThresholdsTest 11 тестов OK; ядро 5 486 из 6 000, находки тел пусто"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-001",
       "source": "common-style",
       "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "имена констант соответствуют назначению и сохранены: CORE_LIMIT и SKILL_BODY_LIMIT это те же пороги, что и раньше",
+      "evidence": [
+        {
+          "object": "имена констант",
+          "location": "tools/devkitctl/weigh.py:36,61",
+          "observation": "имена не менялись, смысл тот же"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-002",
       "source": "common-style",
       "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "имена не разошлись с поведением: константы и дальше те пороги, которыми судят evaluate_residency и evaluate_skill_body",
+      "evidence": [
+        {
+          "object": "соответствие имени и поведения",
+          "location": "tools/devkitctl/weigh.py:284,386",
+          "observation": "константы подставляются в сравнения как до правки"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-003",
       "source": "common-style",
       "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "один смысл называется одинаково в weigh.py, README и DK-100: «порог ядра 6 000» и «порог тела 20 000»; расходящееся число в rules_test оформлено нарушением ARCH-003",
+      "evidence": [
+        {
+          "object": "называние порогов",
+          "location": "tools/devkitctl/weigh.py:34-36; tools/devkitctl/README.md:2532,2548; docs/lld/DK-100-context-tree.md:166",
+          "observation": "все живые тексты владельца и доки согласованы по 6 000 и 20 000"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-004",
       "source": "common-style",
       "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "единицы названы: комментарий при карманах говорит «в символах», README пишет «20 000 символов», перевод в токены идёт через CHARS_PER_TOKEN в выводе",
+      "evidence": [
+        {
+          "object": "единицы измерения",
+          "location": "tools/devkitctl/weigh.py:27-36; tools/devkitctl/README.md:2548",
+          "observation": "символы против токенов различены в комментариях и доке"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-005",
       "source": "common-style",
       "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых имён дифф не вводит",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "изменены значения и комментарии, новых сущностей нет"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-006",
       "source": "common-style",
       "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "значение параметра реально влияет на результат: юнит красный на старых значениях и зелёный на новых, влияние прямое",
+      "evidence": [
+        {
+          "object": "влияние констант",
+          "location": "прогон юнита на базе 2131adbc3 против ветки",
+          "observation": "CORE_LIMIT 5 500 даёт находку ядра на 5 567, CORE_LIMIT 6 000 не даёт"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-007",
       "source": "common-style",
       "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "возвращаемые значения не менялись",
+      "evidence": [
+        {
+          "object": "контракты функций",
+          "location": "tools/devkitctl/weigh.py:284-395",
+          "observation": "сигнатуры прежние"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-008",
       "source": "common-style",
       "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "удалений параметров, полей и вычислений нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "только значения, комментарии и подкладки"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-009",
       "source": "common-style",
       "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "модуль выполняет одну связную операцию и после правки: вес и пороги; посторонних обязанностей не добавлено",
+      "evidence": [
+        {
+          "object": "связность модуля",
+          "location": "tools/devkitctl/weigh.py",
+          "observation": "дифф не добавляет тем в модуль"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-010",
       "source": "common-style",
       "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "предметные числа живут именованными константами; литералы подкладок (20 500, 6 100, 5567, 18091) это нарочитые входы тестов. Литерал 5 500 в rules_test покрыт нарушением ARCH-003",
+      "evidence": [
+        {
+          "object": "литералы с предметным смыслом",
+          "location": "tools/devkitctl/weigh.py:36,61; tools/devkitctl/weigh_test.py:219-228",
+          "observation": "пороги в константах, числа волны в юните прокомментированы постановкой"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-011",
       "source": "common-style",
       "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "структура выражений не менялась: правка значений и текстов",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "выражений и ветвлений в диффе нет"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-012",
       "source": "common-style",
       "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "идиомы языка не затронуты: константы и комментарии в прежнем стиле модуля",
+      "evidence": [
+        {
+          "object": "стиль кода",
+          "location": "tools/devkitctl/weigh.py:31-61",
+          "observation": "форматирование модуля не менялось"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-013",
       "source": "common-style",
       "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "нахождения сохраняют причину и контекст: в тексте находки есть карман, вес в символах и токенах, порог; форма не менялась",
+      "evidence": [
+        {
+          "object": "тексты находок",
+          "location": "прогон на базе 2131adbc3",
+          "observation": "«ядро ... 5 567 символов (2 272 токенов), порог 5 500 символов», форма та же на новых числах"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-014",
       "source": "common-style",
       "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "сообщение об ошибке объясняет суть и совет: «резать скилл надвое», «называет карман»; при новых порогах текст тот же",
+      "evidence": [
+        {
+          "object": "совет в находке",
+          "location": "tools/devkitctl/weigh_test.py:79,115-117",
+          "observation": "тесты сверяют полный текст находки с новыми числами"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-015",
       "source": "common-style",
       "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "комментарии объясняют неочевидное: решение человека 2026-11-09, отказ от ужимки каждой волны, история надбавки DK-941 и замер послушания; пересказа соседнего кода нет",
+      "evidence": [
+        {
+          "object": "комментарии констант",
+          "location": "tools/devkitctl/weigh.py:27-40,47-60; tools/devkitctl/weigh_test.py:203-218",
+          "observation": "комментарии переписаны с «почему», ссылок на решение и замер"
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-016",
       "source": "common-style",
       "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "описание поведения соответствует контракту: README называет оба порога, строгую семантику подтверждает юнит на границе",
+      "evidence": [
+        {
+          "object": "README против поведения",
+          "location": "tools/devkitctl/README.md:2529-2560; tools/devkitctl/weigh_test.py:115-120,206-213",
+          "observation": "числа README равны константам, граничный тест сверяет строгость сравнения"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-001",
       "source": "common-tests",
       "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "правка едет с тестами: ThresholdsTest переписан на новые планки, добавлен юнит волны 9.11, подкладки MeasureTest и DoctorResidencyTest подняты; прогон зелёный",
+      "evidence": [
+        {
+          "object": "тесты правки",
+          "location": "tools/devkitctl/weigh_test.py:201-228,583-610,778-791; прогон ThresholdsTest",
+          "observation": "11 тестов OK, diff содержит правку и тесты одним коммитом ce16698a3"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-002",
       "source": "common-tests",
-      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- \u003cкоманда теста\u003e` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "это смена политики, а не фикс бага, но новый юнит ведёт себя как регрессионный: на базовой версии все три утверждения красные, на ветке зелёные, что проверено прогоном этого ревью на выгрузке базы",
+      "evidence": [
+        {
+          "object": "краснота на старом коде",
+          "location": "выгрузка модулей базы 2131adbc3 во временный каталог",
+          "observation": "CORE_LIMIT 5 500 против ожидания 6 000; evaluate_residency(5 567) даёт находку против ожидания пусто; evaluate_skill_body(18 091) даёт находку против ожидания None"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-003",
       "source": "common-tests",
       "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "пирамида соблюдена: юнит на логику порогов, живое дерево проверено замером и обкаткой сценария из трёх шагов, новых слоёв между ними нет",
+      "evidence": [
+        {
+          "object": "уровни проверки",
+          "location": "tools/devkitctl/weigh_test.py:201-228; раздел «Проверка» docs/tasks/DK-1664.md",
+          "observation": "юнит, замер живого дерева и обкатка на свежем дереве d16f9e552 все зелёные"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-004",
       "source": "common-tests",
       "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "тип теста соответствует зависимостям: ThresholdsTest чистый юнит на списках в памяти, MeasureTest и DoctorResidencyTest песочницы с fake_home, их характер диффом не менялся",
+      "evidence": [
+        {
+          "object": "зависимости тестов",
+          "location": "tools/devkitctl/weigh_test.py:96-110,570-620,760-830",
+          "observation": "новый юнит без диска и сети, песочницы подняты лишь числами подкладок"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-005",
       "source": "common-tests",
       "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "юнит поставлен под конкретную смену: комментарий называет волну ночи 9.11, её числа и решение человека, правка кода без теста была бы заметна",
+      "evidence": [
+        {
+          "object": "привязка теста к правке",
+          "location": "tools/devkitctl/weigh_test.py:210-228",
+          "observation": "тест называется и комментируется волной 9.11, сверяет обе планки"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-006",
       "source": "common-tests",
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "мутации ловятся: «не та константа» пинят прямые утверждения CORE_LIMIT 6 000 и SKILL_BODY_LIMIT 20 000, сдвиг порога ловят граничные проверки (порог чисто, порог+1 находка) и подкладки доктора",
+      "evidence": [
+        {
+          "object": "устойчивость к мутациям",
+          "location": "tools/devkitctl/weigh_test.py:206-213,74-79,583-610",
+          "observation": "обе планки закреплены утверждениями с обеих сторон границы"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-007",
       "source": "common-tests",
       "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "времени, гонок и отмены в изменении нет: вычисление детерминированное",
+      "evidence": [
+        {
+          "object": "характер логики",
+          "location": "tools/devkitctl/weigh.py:284-395",
+          "observation": "чистые функции сравнения"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-008",
       "source": "common-tests",
       "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "исключений из unit-покрытия не запрашивалось, тонких слоёв в диффе нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "логика покрыта юнитами"
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-009",
       "source": "common-tests",
       "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "подмена дома в песочничьих тестах прежняя (fake_home), новый юнит файловой системы не трогает, записей вне песочниц дифф не добавляет",
+      "evidence": [
+        {
+          "object": "песочницы weigh_test",
+          "location": "tools/devkitctl/weigh_test.py:570-620,760-830",
+          "observation": "механизм fake_home не менялся, подкладки идут через прежние хелперы"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0fc945667d2dd2f2",
       "source": "project-architecture",
       "text": "# Архитектура devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок документа «Архитектура devkit», требования не несёт",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0a6d5f937b6744cf",
       "source": "project-architecture",
       "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок описывает связь документов, отдельного требования к правке нет; общий стандарт проверен своими строками",
+      "evidence": [
+        {
+          "object": "преамбула",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "описание, не требование"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-927d754447cbe51a",
       "source": "project-architecture",
       "text": "## Границы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Границы»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-bd4bce11068e7b08",
       "source": "project-architecture",
       "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "раскладка соблюдена: правки легли в существующие файлы на своих местах, новых файлов и каталогов нет, язык не менялся",
+      "evidence": [
+        {
+          "object": "место правок",
+          "location": "tools/devkitctl/weigh.py, weigh_test.py, README.md, docs/lld/DK-100-context-tree.md",
+          "observation": "все четыре файла существуют по раскладке README"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-76ff3ff8f504faa3",
       "source": "project-architecture",
       "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "дашборд не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "файлов tools/dashboard в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-1086535d7c6e2d47",
       "source": "project-architecture",
       "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "HTTP-маршруты не затронуты: сетевого кода в диффе нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "handler() и сервер не менялись"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-3795ec1243732caa",
       "source": "project-architecture",
       "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "строки доски правкой не трогаются: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "docs/TASKS.md вне кодового диффа"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-21a8892967ce47cf",
       "source": "project-architecture",
       "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "каркас internal не затронут: go-кода в диффе нет",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "internal/ в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-feefa59680bc01df",
       "source": "project-architecture",
       "text": "## Инварианты",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Инварианты»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-df103c9ebbc1dbc2",
       "source": "project-architecture",
-      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -\u003e runProc (`tools/dashboard/tasks.go`).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "API дашборда не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "writeJSON и сервер не менялись"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-b9d12cba420d16a2",
       "source": "project-architecture",
       "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "разметка хода в чате дашборда не затронута: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "фронтенда дашборда в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-746f66466c253955",
       "source": "project-architecture",
       "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "поверхность чата не менялась: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "фронтенда дашборда в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0dbd06239e17144d",
       "source": "project-architecture",
       "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "механизм подготовленных вопросов не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "taskctl draft не менялся"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-5de64d5a648b5902",
       "source": "project-architecture",
       "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "форма задач дашборда не затронута: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "статических файлов дашборда в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0bf4f9875e4b3d7e",
       "source": "project-architecture",
       "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блоки формы черновика не затронуты: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "фронтенда дашборда в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-476dd1b8dd952be1",
       "source": "project-architecture",
       "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "память процесса дашборда и замки не затронуты: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "go-кода в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-cb52f7a016c8a058",
       "source": "project-architecture",
       "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "подъём чатов обёрткой agentctl не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "tools/agentctl в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-71784a34afa7d0ad",
       "source": "project-architecture",
       "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "сеть дашборда не затронута: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "tools/dashboard в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-9c814a6998496b37",
       "source": "project-architecture",
       "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "подъём процессов дашборда не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "tools/dashboard в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-3fe8e64fa2671774",
       "source": "project-architecture",
       "text": "## Куда кладётся новое",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Куда кладётся новое»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-e81a11204b6858d1",
       "source": "project-architecture",
       "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "нового файла нет: правки легли в существующие файлы, место каждого определено раскладкой README",
+      "evidence": [
+        {
+          "object": "место правок",
+          "location": "tools/devkitctl/weigh.py, weigh_test.py, README.md, docs/lld/DK-100-context-tree.md",
+          "observation": "новых путей дифф не заводит"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-20ac10a7a0b37556",
       "source": "project-architecture",
-      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/\u003cдомен\u003e/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых доменов дашборда нет: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "tools/dashboard в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-ff0f6ffb10430dcc",
       "source": "project-architecture",
       "text": "## Восстановление исчезнувшего конвейера",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела восстановления конвейера",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-414cfee6ece27659",
       "source": "project-architecture",
       "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "восстановление конвейера не затронуто: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "taskhead и recovery не менялись"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-2896dde8774e1968",
       "source": "project-architecture",
       "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "recovery не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "recovery.py в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-architecture:block-2ec33a7fa97caf04",
       "source": "project-architecture",
       "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "подтверждение оболочки не затронуто: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "механизма запуска в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-style:block-8bfebc193cc45790",
       "source": "project-style",
       "text": "# Стиль devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок документа «Стиль devkit»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-style:block-2f21840e1463a01e",
       "source": "project-style",
       "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок описывает связь документов, требования не несёт; общий стиль проверен своими строками",
+      "evidence": [
+        {
+          "object": "преамбула",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "описание, не требование"
+        }
+      ]
     },
     {
       "id": "project-style:block-9c4dd47968139c01",
       "source": "project-style",
       "text": "## Ошибки и отказы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Ошибки и отказы»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-style:block-88e50c4f780c246c",
       "source": "project-style",
       "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "weigh и doctor как проверочные утилиты сохраняют построчные находки и коды выхода: дифф меняет только значения порогов, тесты доктора сверяют код 1 на превышении с новыми числами",
+      "evidence": [
+        {
+          "object": "выход проверочной утилиты",
+          "location": "tools/devkitctl/weigh_test.py:778-791; прогон ThresholdsTest",
+          "observation": "подкладки 20 500 и 6 100 дают находку и код 1, возврат к норме код 0"
+        }
+      ]
     },
     {
       "id": "project-style:block-2212761035e243fb",
       "source": "project-style",
       "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "рубежи hook-а не правились: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "hooks/ в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-style:block-41b95475184c2aef",
       "source": "project-style",
       "text": "## Раскладка тестов",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Раскладка тестов»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-style:block-519646d7d9f951be",
       "source": "project-style",
-      "text": "- Тест лежит рядом с модулем. Имя `\u003cмодуль\u003e_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новый юнит лежит в weigh_test.py рядом с weigh.py, имя по модулю",
+      "evidence": [
+        {
+          "object": "место теста",
+          "location": "tools/devkitctl/weigh_test.py:210-228",
+          "observation": "тест в файле модуля, отдельного файла не заводилось"
+        }
+      ]
     },
     {
       "id": "project-style:block-9573ef33db114342",
       "source": "project-style",
       "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новый юнит не создаёт файлов: входы это списки в памяти; подкладки существующих тестов идут в песочницах как раньше",
+      "evidence": [
+        {
+          "object": "синтетика тестов",
+          "location": "tools/devkitctl/weigh_test.py:210-228,583-610",
+          "observation": "боевое дерево тестом не трогается"
+        }
+      ]
     },
     {
       "id": "project-style:block-f4f0c16e8ec594dc",
       "source": "project-style",
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "это смена политики, а не фикс бага; тем не менее юнит проверен на старом коде: на выгрузке базы все три утверждения красные, на ветке зелёные",
+      "evidence": [
+        {
+          "object": "краснота на старом",
+          "location": "выгрузка базы 2131adbc3; прогон ThresholdsTest на ветке",
+          "observation": "волна 9.11 на базе даёт обе находки, на ветке пусто"
+        }
+      ]
     },
     {
       "id": "project-style:block-7af95a66ad4ad21b",
       "source": "project-style",
       "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "песочницы weigh_test с подменой дома не менялись, их характер тот же; новый юнит окружения не трогает",
+      "evidence": [
+        {
+          "object": "подмена окружения",
+          "location": "tools/devkitctl/weigh_test.py:570-620,760-830",
+          "observation": "fake_home прежний"
+        }
+      ]
     },
     {
       "id": "project-style:block-b03ef741121d44a0",
       "source": "project-style",
       "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "браузерный стенд не затронут: дифф задачи: константы и комментарии tools/devkitctl/weigh.py, пороги и подкладки tools/devkitctl/weigh_test.py, раздел весов tools/devkitctl/README.md, таблица бюджета docs/lld/DK-100-context-tree.md",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 2131adbc3..ce16698a3",
+          "observation": "браузерных тестов в диффе нет"
+        }
+      ]
     },
     {
       "id": "project-style:block-a969903cd6ddc137",
       "source": "project-style",
       "text": "## Имена",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "блок это заголовок раздела «Имена»",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок без требования"
+        }
+      ]
     },
     {
       "id": "project-style:block-c785ad31965daade",
       "source": "project-style",
       "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новых файлов нет, имя weigh_test.py соответствует модулю weigh.py",
+      "evidence": [
+        {
+          "object": "имена файлов",
+          "location": "tools/devkitctl/weigh_test.py",
+          "observation": "файл по модулю, префикс семьи не нужен: правок имён нет"
+        }
+      ]
     },
     {
       "id": "project-style:block-b3298c360a523f07",
       "source": "project-style",
       "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "рубеж символов прогнан по изменённым файлам: чисто",
+      "evidence": [
+        {
+          "object": "символы текстов",
+          "location": "hooks/check-symbols.py по четырём файлам кодовых коммитов",
+          "observation": "выход без находок"
+        }
+      ]
     }
   ]
 }

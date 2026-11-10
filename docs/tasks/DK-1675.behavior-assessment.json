@@ -1976,5 +1976,25 @@
       ],
       "candidate_architecture_result": "violated"
     }
-  ]
+  ],
+  "followup": {
+    "evidence": "DK-1675.policy-sol-evidence.json",
+    "model": "gpt-6.1-sol",
+    "repeats": 1,
+    "judge_model": null,
+    "targeted_fix_verified": true,
+    "expected_defects_detected": [
+      7,
+      8,
+      9
+    ],
+    "control_false_positives": 0,
+    "all_rules_explicit": 57,
+    "pending_rules": [
+      "common-architecture:ARCH-007",
+      "common-architecture:ARCH-022",
+      "common-tests:TEST-002"
+    ],
+    "fixture_code_unchanged": true
+  }
 }

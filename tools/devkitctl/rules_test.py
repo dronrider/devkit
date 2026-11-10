@@ -525,11 +525,48 @@ class CoreBudgetTest(unittest.TestCase):
         # а порядок ведения лежит в скилле work-plan и в определениях
         # исполнителей: прогон стенда 27-work-plan зеленеет как раз на них,
         # вклада отдельного абзаца в ядре он не показал.
+        # Планка поднята с 5 500 до 6 000 решением человека 2026-11-09:
+        # промпты растут со временем, и ночная волна правок не должна красить
+        # main. Владелец той же политики в weigh.py, согласие планок сверяет
+        # CoreBudgetWeighSyncTest.
         core = len(read(DEVKIT_SRC / "RULES.core.md"))
         board = len(read(DEVKIT_SRC / "RULES.board.core.md"))
-        self.assertLessEqual(core, 5500, "ядро правил длиннее бюджета 5500 символов: %d" % core)
+        self.assertLessEqual(core, 6000,
+                             "ядро правил длиннее бюджета 6000 символов: %d" % core)
         self.assertLessEqual(board, 1500,
                              "ядро правил доски длиннее бюджета 1500 символов: %d" % board)
+
+
+# regcheck:test-begin
+class CoreBudgetWeighSyncTest(unittest.TestCase):
+    """Сверка двух владельцев одной планки: бюджет ядра судят и weigh.py
+    (CORE_LIMIT), и test_core_budgets выше, и разъезд этих значений уже
+    красил main: волна правок ночи 9.11 проходила weigh, а rules_test судил
+    её отставшей планкой. Планка читается из среза, которым судит сам
+    test_core_budgets, поэтому тест красный ровно на расхождении значений
+    и зелёный на согласии, в какую бы сторону ни разъехались владельцы.
+    """
+
+    def test_core_limit_matches_weigh_owner(self):
+        # Импорт локальный, а не в общем списке наверху: класс уезжает на
+        # старый код целиком (regcheck --inline), и там верхней строки
+        # импорта ещё нет.
+        import inspect
+        import weigh
+        src = inspect.getsource(CoreBudgetTest.test_core_budgets)
+        judged = re.search(r"assertLessEqual\(\s*core,\s*([0-9]+)", src)
+        told = re.search(r"ядро правил длиннее бюджета ([0-9]+) символов", src)
+        self.assertTrue(judged and told,
+                        "в test_core_budgets не нашлась планка ядра: "
+                        "сверка отстала от кода, обнови отбор")
+        self.assertEqual(int(judged.group(1)), int(told.group(1)),
+                         "сообщение называет бюджет %s, а судит планкой %s"
+                         % (told.group(1), judged.group(1)))
+        self.assertEqual(int(judged.group(1)), weigh.CORE_LIMIT,
+                         "планка ядра %s разошлась с weigh.CORE_LIMIT %d: "
+                         "бюджет одного ядра живёт в двух значениях"
+                         % (judged.group(1), weigh.CORE_LIMIT))
+# regcheck:test-end
 
     def test_core_does_not_copy_the_full_text(self):
         # Ядро и полный текст никогда не лежат в контексте вместе, но

@@ -277,3 +277,24 @@ func write(t *testing.T, path, body string) {
 		t.Fatal(fmt.Errorf("%s: %w", path, err))
 	}
 }
+
+func TestRunRawPreservesBytesAndSeparatesDiagnostics(t *testing.T) {
+	bin := t.TempDir()
+	script := filepath.Join(bin, "git")
+	body := "#!/bin/sh\n[ \"$GIT_TERMINAL_PROMPT\" = 0 ] || exit 8\nprintf ' \\tvalue\\000 \\n'\nprintf 'diagnostic\\n' >&2\n"
+	if e := os.WriteFile(script, []byte(body), 0700); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, e := RunRaw("", []string{"cat-file", "blob", "unused"}, time.Second)
+	if e != nil || out != " \tvalue\x00 \n" {
+		t.Fatalf("raw output %q, %v", out, e)
+	}
+	if e := os.WriteFile(script, []byte(body+"exit 3\n"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	_, e = RunRaw("", []string{"cat-file", "blob", "unused"}, time.Second)
+	if e == nil || !strings.Contains(e.Error(), "diagnostic") {
+		t.Fatalf("lost error context: %v", e)
+	}
+}

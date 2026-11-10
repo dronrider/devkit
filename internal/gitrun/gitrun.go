@@ -111,6 +111,16 @@ func Run(root string, args []string, limit time.Duration) (string, error) {
 // обрыв больше часов. Обрыв по контексту убивает ту же группу процессов, что и
 // предел.
 func RunContext(ctx context.Context, root string, args []string, limit time.Duration) (string, error) {
+	return runContext(ctx, root, args, limit, false)
+}
+
+// RunRaw preserves stdout bytes and keeps diagnostics separate. Its deadline
+// applies to local-looking commands too: partial clones may fetch a blob.
+func RunRaw(root string, args []string, limit time.Duration) (string, error) {
+	return runContext(context.Background(), root, args, limit, true)
+}
+
+func runContext(ctx context.Context, root string, args []string, limit time.Duration, raw bool) (string, error) {
 	if len(args) == 0 {
 		return "", fmt.Errorf("git позван без команды")
 	}
@@ -139,10 +149,13 @@ func RunContext(ctx context.Context, root string, args []string, limit time.Dura
 	// может потомок, ушедший из группы своим форком. Секунда отсрочки закрывает
 	// трубы сама, иначе вечное ожидание переезжает с процесса на чтение вывода.
 	cmd.WaitDelay = time.Second
-	var buf bytes.Buffer
+	var buf, diagnostics bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if raw {
+		cmd.Stderr = &diagnostics
+	}
 
-	limited := limit > 0 && remoteCmds[args[0]]
+	limited := limit > 0 && (remoteCmds[args[0]] || raw)
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("git %s: %v", args[0], err)
 	}
@@ -151,9 +164,12 @@ func RunContext(ctx context.Context, root string, args []string, limit time.Dura
 	// Буфер читается только после Wait: до него в него льют горутины exec.Cmd,
 	// и чтение вперёд Wait это гонка, а не просто неполный вывод.
 	wait := func(err error) (string, error) {
-		out := strings.TrimSpace(buf.String())
+		out := buf.String()
+		if !raw {
+			out = strings.TrimSpace(out)
+		}
 		if err != nil {
-			return out, fmt.Errorf("git %s: %v (%s)", args[0], err, out)
+			return out, fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(out+diagnostics.String()))
 		}
 		return out, nil
 	}

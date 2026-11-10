@@ -1,0 +1,16 @@
+{
+  "claims": [
+    {
+      "name": "contact",
+      "source": "profile",
+      "field": "email",
+      "type": "string"
+    }
+  ],
+  "customer_products": {
+    "c1": [
+      "basic"
+    ]
+  },
+  "audit_enabled": true
+}

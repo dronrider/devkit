@@ -1997,7 +1997,7 @@
     ],
     "fixture_code_unchanged": true
   },
-  "acceptance_status": "incomplete: independently reported orders miss remains unresolved",
+  "acceptance_status": "diagnostic completed; historical cause and repeatability remain unestablished",
   "additional_evidence": {
     "source": "docs/tasks/DK-1675.md, раздел Проверка; commit 91eebc659",
     "case": "orders",
@@ -2015,5 +2015,21 @@
       "user_recollection": "Astra",
       "status": "not verified; stage label is not runtime proof"
     }
+  },
+  "orders_diagnostic": {
+    "evidence": "DK-1675.orders-sol-evidence.json",
+    "event_log": "DK-1675.orders-sol-events.jsonl.gz",
+    "requested_model": "gpt-6.1-sol",
+    "repeats": 1,
+    "expected_defects_detected": [
+      4,
+      5,
+      6
+    ],
+    "control_false_positives": 0,
+    "old_reported_miss_reproduced": false,
+    "architecture_object_count": 6,
+    "arch019_direct_evidence_object_count": 3,
+    "root_cause_of_historical_miss_established": false
   }
 }

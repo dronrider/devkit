@@ -1,0 +1,1980 @@
+{
+  "version": 1,
+  "date": "2026-11-10",
+  "method": "manual reading of saved reviews, rule rows, oracle and fixture sources; no new model runs; evaluator knew the expected answers",
+  "raw_evidence_sha256": "3469abf43026e303a05d76112a84271468d1a3759600a4608b3b887d70bb80f5",
+  "paired_runs": 8,
+  "excluded_unpaired_runs": [
+    "r10"
+  ],
+  "summary": {
+    "candidate_defects_detected": 12,
+    "baseline_defects_detected": 12,
+    "candidate_control_false_positives": 0,
+    "baseline_control_false_positives": 0,
+    "candidate_rows": 228,
+    "confirmed_inconsistent_rows": 1,
+    "superiority_established": false
+  },
+  "limitations": [
+    "One paired run per scenario; no estimate of repeatability or statistical superiority.",
+    "Explicit request for an architectural conclusion in both prompts; cannot measure spontaneous architecture priority.",
+    "Older rules plus newer taskctl were used in the baseline; r04 reports audit command incompatibility.",
+    "Snapshot pairs have identical tracked inputs; general standards and skill differ deliberately.",
+    "r07 has two audit snapshots with identical rule rows; counted once.",
+    "No inconsistency found means no conflict detected on reading, not proof that every statement is true.",
+    "Zero control false positives concerns the stated control property, not every additional remark."
+  ],
+  "issues": [
+    {
+      "run": "r05",
+      "rule": "common-architecture:ARCH-006",
+      "classification": "unsupported_violation",
+      "reason": "The audit declares the workers range violated while admitting that the allowed semantics of 0 and -3 are undefined. review.md F5 also avoids asserting those values are forbidden. Missing documentation is supported separately by ARCH-005/025; it does not prove a specific numeric invariant was violated.",
+      "required_correction": "Keep the unknown range pending if it blocks the conclusion; ask for its meaning. Record only established violations. Do not alter the historical run."
+    },
+    {
+      "run": "r04",
+      "classification": "baseline_tool_mismatch",
+      "reason": "Current audit parser requires stable rule IDs absent in the baseline. No machine audit could be produced. Findings remain comparable on identical code, but tool success cannot be credited as a pure skill effect."
+    }
+  ],
+  "pairs": [
+    {
+      "case": "contracts",
+      "candidate": "r01",
+      "baseline": "r02",
+      "same_tracked_input": true,
+      "inputs": [
+        {
+          "run": "r01",
+          "head": "37c95800ae2dbd9042d287eed4af6a290f179018",
+          "review_sha256": "3b5a0a7d4a1c0f4da620a187d90feda059be381116b7dfa284cbc73d0c5093e4",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "8ac4ada210fdfcc373b6a81d6bbbfdc2159e64c11db59f8d986cc9b65f913b7e"
+            },
+            {
+              "path": "check.py",
+              "sha256": "1b8d7bb7f7b55719040a1fe6de6d24bd64875eefbbc86549da4d693d55838e25"
+            },
+            {
+              "path": "customers.py",
+              "sha256": "61c2997e67528bed14a2dc536c9174762ea26fc7372cbb3be73278d4c9436b07"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "pricing.py",
+              "sha256": "4c4a579dc1ff6d2eb68fbca6c52978398d0c99fbdd985a7cb73139a278dbe280"
+            }
+          ]
+        },
+        {
+          "run": "r02",
+          "head": "37c95800ae2dbd9042d287eed4af6a290f179018",
+          "review_sha256": "10ea9c984c8178dfdfbd5490e359465327299fd6e3a10fe4a7d1ec5c416a1431",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "8ac4ada210fdfcc373b6a81d6bbbfdc2159e64c11db59f8d986cc9b65f913b7e"
+            },
+            {
+              "path": "check.py",
+              "sha256": "1b8d7bb7f7b55719040a1fe6de6d24bd64875eefbbc86549da4d693d55838e25"
+            },
+            {
+              "path": "customers.py",
+              "sha256": "61c2997e67528bed14a2dc536c9174762ea26fc7372cbb3be73278d4c9436b07"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "pricing.py",
+              "sha256": "4c4a579dc1ff6d2eb68fbca6c52978398d0c99fbdd985a7cb73139a278dbe280"
+            }
+          ]
+        }
+      ],
+      "candidate_rule_count": 57,
+      "candidate_row_assessments": [
+        {
+          "id": "common-architecture:ARCH-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-003",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-006",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-010",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-011",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-013",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-014",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-015",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-016",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-017",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-018",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-019",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-020",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-021",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-022",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-023",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-024",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-025",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-026",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-027",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-028",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-001",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-002",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-005",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-007",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-010",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-011",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-013",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-014",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-015",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-016",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-001",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-002",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-005",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-007",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-009",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-4a5373156a8d6d06",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-6b89b4e56cb1c6f0",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-0d5b8c503901360b",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-9bacec7e7eeba0ce",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        }
+      ],
+      "cases": [
+        {
+          "id": 1,
+          "symbol": "calculate_discount",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F1",
+          "baseline_reference": "замечание 2",
+          "control_symbol": "total_with_tax",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта проверяют rate=0.1 и сохраняют total_with_tax."
+        },
+        {
+          "id": 2,
+          "symbol": "_shipping_quote",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F2, F3",
+          "baseline_reference": "замечания 3, 4",
+          "control_symbol": "QueueTransport.send",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта сохраняют обязательный context SDK и отличают его от destination."
+        },
+        {
+          "id": 3,
+          "symbol": "customer_names",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F4",
+          "baseline_reference": "замечание 1",
+          "control_symbol": "active_customer_names",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта разрешают active в WHERE и id в ORDER BY без возврата в SELECT."
+        }
+      ],
+      "candidate_architecture_result": "violated"
+    },
+    {
+      "case": "orders",
+      "candidate": "r03",
+      "baseline": "r04",
+      "same_tracked_input": true,
+      "inputs": [
+        {
+          "run": "r03",
+          "head": "fabc7b6054d1a9b99ef4e34155c69b23e1dee405",
+          "review_sha256": "2e8dbd1f4f6b383d92d5835b946c2c75ab1d73ba26f1893cee39da9b440ffb7a",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "ee2e0fdf77547c0daf6e4a39182ae11f914576e8af2cae7ffb2d7f051c9de2ee"
+            },
+            {
+              "path": "check.py",
+              "sha256": "9e5d53d00fa001348c7872c290bae12edd392a9273619d2f26e3565c7740326d"
+            },
+            {
+              "path": "checkout.py",
+              "sha256": "56ee14b3fd99694ad7a588d9b25331ba18872688b7c966226cea46c6b3d675bd"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "operations.py",
+              "sha256": "4a6ffe18d9ae2a94a442db7ba1c291ca6497fb643a43519babe126ce644659b7"
+            }
+          ]
+        },
+        {
+          "run": "r04",
+          "head": "b25c92a70766a6bfb25f20bdbb5baccdf31a252a",
+          "review_sha256": "443394329f48584a4b8c2f972732e7c485f5d874b14e1157c4b255bd577c1a58",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "ee2e0fdf77547c0daf6e4a39182ae11f914576e8af2cae7ffb2d7f051c9de2ee"
+            },
+            {
+              "path": "check.py",
+              "sha256": "9e5d53d00fa001348c7872c290bae12edd392a9273619d2f26e3565c7740326d"
+            },
+            {
+              "path": "checkout.py",
+              "sha256": "56ee14b3fd99694ad7a588d9b25331ba18872688b7c966226cea46c6b3d675bd"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "operations.py",
+              "sha256": "4a6ffe18d9ae2a94a442db7ba1c291ca6497fb643a43519babe126ce644659b7"
+            }
+          ]
+        }
+      ],
+      "candidate_rule_count": 57,
+      "candidate_row_assessments": [
+        {
+          "id": "common-architecture:ARCH-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-003",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-007",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-010",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-011",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-013",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-014",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-015",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-016",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-017",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-018",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-019",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-020",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-021",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-022",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-023",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-024",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-025",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-026",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-027",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-028",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-001",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-003",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-005",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-006",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-008",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-010",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-011",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-013",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-014",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-015",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-016",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-001",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-002",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-007",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-008",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-009",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-4a5373156a8d6d06",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-6b89b4e56cb1c6f0",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-0d5b8c503901360b",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-9bacec7e7eeba0ce",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        }
+      ],
+      "cases": [
+        {
+          "id": 4,
+          "symbol": "reserve",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "R1",
+          "baseline_reference": "резервирование теряет конкурентное списание",
+          "control_symbol": "create_order",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта объясняют зависимость от lastrowid и подтверждают rollback."
+        },
+        {
+          "id": 5,
+          "symbol": "CustomerRepository.save_order",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "R3",
+          "baseline_reference": "правило скидки принадлежит хранилищу",
+          "control_symbol": "save_calculated_total",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта разрешают сохранение переданного total без повторного расчёта."
+        },
+        {
+          "id": 6,
+          "symbol": "order_total",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "R2",
+          "baseline_reference": "расчёт большого заказа",
+          "control_symbol": "load_prices",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта подтверждают пять пакетных SELECT вместо запроса на каждый SKU."
+        }
+      ],
+      "candidate_architecture_result": "violated"
+    },
+    {
+      "case": "policy",
+      "candidate": "r05",
+      "baseline": "r06",
+      "same_tracked_input": true,
+      "inputs": [
+        {
+          "run": "r05",
+          "head": "94115a308d2d0450db13bc5505df00057b6470ed",
+          "review_sha256": "a8414df2eea5373300021d6d2aa94e1490bda284f5aae940bbf35b41dcbeae78",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "3face0c95b581183ebe167e2240003f331a1e84ef96d4bc43a054eb93ebfce0e"
+            },
+            {
+              "path": "check.py",
+              "sha256": "686f21479e57979c9e5ba5f8d93ab5bef594f58900cf0056ccbd55c2c3921af5"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "exports.py",
+              "sha256": "71c3e7cdbe54457c9a07da3c85a4a6f5e77503c50c9b117857555418d51821f9"
+            },
+            {
+              "path": "settings.py",
+              "sha256": "4c10f06a125884e2071aa25b4b7a856da16261ca221a2865b44236eb68b74671"
+            },
+            {
+              "path": "tests/integration/test_schema.py",
+              "sha256": "25a38dd5d8178548481856f3549236b5f0e6451cde67accc7d0f78c5b65e74cf"
+            },
+            {
+              "path": "tests/unit/test_policy.py",
+              "sha256": "98f6eb1c47d065519be2287885e04ae4d6021aa809cc30b5a9af61cd7608502f"
+            }
+          ]
+        },
+        {
+          "run": "r06",
+          "head": "94115a308d2d0450db13bc5505df00057b6470ed",
+          "review_sha256": "1502956945179f9098653ede3b252218904b5775b0f380b4486588c350aff585",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "3face0c95b581183ebe167e2240003f331a1e84ef96d4bc43a054eb93ebfce0e"
+            },
+            {
+              "path": "check.py",
+              "sha256": "686f21479e57979c9e5ba5f8d93ab5bef594f58900cf0056ccbd55c2c3921af5"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "exports.py",
+              "sha256": "71c3e7cdbe54457c9a07da3c85a4a6f5e77503c50c9b117857555418d51821f9"
+            },
+            {
+              "path": "settings.py",
+              "sha256": "4c10f06a125884e2071aa25b4b7a856da16261ca221a2865b44236eb68b74671"
+            },
+            {
+              "path": "tests/integration/test_schema.py",
+              "sha256": "25a38dd5d8178548481856f3549236b5f0e6451cde67accc7d0f78c5b65e74cf"
+            },
+            {
+              "path": "tests/unit/test_policy.py",
+              "sha256": "98f6eb1c47d065519be2287885e04ae4d6021aa809cc30b5a9af61cd7608502f"
+            }
+          ]
+        }
+      ],
+      "candidate_rule_count": 57,
+      "candidate_row_assessments": [
+        {
+          "id": "common-architecture:ARCH-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-004",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "unsupported_violation"
+        },
+        {
+          "id": "common-architecture:ARCH-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-009",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-010",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-011",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-013",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-014",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-015",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-016",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-017",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-018",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-019",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-020",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-021",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-022",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-023",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-024",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-025",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-026",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-027",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-028",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-005",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-006",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-008",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-010",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-011",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-013",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-014",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-015",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-016",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-001",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-004",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-007",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-008",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-009",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-4a5373156a8d6d06",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-6b89b4e56cb1c6f0",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-0d5b8c503901360b",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-9bacec7e7eeba0ce",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        }
+      ],
+      "cases": [
+        {
+          "id": 7,
+          "symbol": "new_report",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F1",
+          "baseline_reference": "замечание 1",
+          "control_symbol": "legacy_export",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта требуют сохранить XML escape для действующего клиента."
+        },
+        {
+          "id": 8,
+          "symbol": "PolicyTest",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F3",
+          "baseline_reference": "замечание 3",
+          "control_symbol": "SchemaIntegrationTest",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта признают интеграционную группу правильной для реальной SQLite."
+        },
+        {
+          "id": 9,
+          "symbol": "workers",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "F2",
+          "baseline_reference": "замечание 2",
+          "control_symbol": "connection_url",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта разрешают env override секрета и локальное файловое умолчание."
+        }
+      ],
+      "candidate_architecture_result": "violated"
+    },
+    {
+      "case": "claims",
+      "candidate": "r07",
+      "baseline": "r08",
+      "same_tracked_input": true,
+      "inputs": [
+        {
+          "run": "r07",
+          "head": "b9346f8ff15bebd22d14ec522c9e4e689eb5129c",
+          "review_sha256": "c189e73c014993f501be9c5d41860ce829dccbbf6abe12d5d9f931fddbab6656",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "b286971a73ecd2b3ce1062b440684d9c91d40ecd62a5d5c81f604654c850f38a"
+            },
+            {
+              "path": "check.py",
+              "sha256": "33a5914508cba9f89879631c72b7353948717ff04c0e64b8c0cff77be222640b"
+            },
+            {
+              "path": "claims.py",
+              "sha256": "df20c8a518fd0658418429446e5b6e33c212d7a772d7463e69cad87355b96cc5"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "settings.json",
+              "sha256": "ae85e096ce40788cb0398acbde13d9f6af9cceca97f066f77ce9ce9a87e91baf"
+            },
+            {
+              "path": "storage.py",
+              "sha256": "d57ef5188f2050cc74c0815d00bddd9ed9853ef77063dcf2cff4fbaee22e66b4"
+            }
+          ]
+        },
+        {
+          "run": "r08",
+          "head": "b9346f8ff15bebd22d14ec522c9e4e689eb5129c",
+          "review_sha256": "49849810587296dbfbcbd361a025ff46c326a0ed192aee8dc2baaf56a4ce29cb",
+          "input_files": [
+            {
+              "path": ".gitignore",
+              "sha256": "5a44ef3625d6113560ee4f22417e7183ac373075580c5535cbd2466dbd412608"
+            },
+            {
+              "path": "AGENTS.md",
+              "sha256": "57ae7ee2d5ee541e788bff690b70601659b529fbbc11bd37c6521936e2f320a4"
+            },
+            {
+              "path": "README.md",
+              "sha256": "9cf8d9db574918e05ae055a09974fa7dae62f2d199f7e5d9fb0b35b05d326d33"
+            },
+            {
+              "path": "REQUEST.md",
+              "sha256": "b286971a73ecd2b3ce1062b440684d9c91d40ecd62a5d5c81f604654c850f38a"
+            },
+            {
+              "path": "check.py",
+              "sha256": "33a5914508cba9f89879631c72b7353948717ff04c0e64b8c0cff77be222640b"
+            },
+            {
+              "path": "claims.py",
+              "sha256": "df20c8a518fd0658418429446e5b6e33c212d7a772d7463e69cad87355b96cc5"
+            },
+            {
+              "path": "docs/ARCHITECTURE.md",
+              "sha256": "dad131b71f2c1f9da4b995a916debbbe1d0d3215dbb8773d16165b91233575fd"
+            },
+            {
+              "path": "docs/STYLEGUIDE.md",
+              "sha256": "655db60ef19f91db43a1e21579d14172c98ac1623a4c5d587ce6977e5ed8a7e3"
+            },
+            {
+              "path": "settings.json",
+              "sha256": "ae85e096ce40788cb0398acbde13d9f6af9cceca97f066f77ce9ce9a87e91baf"
+            },
+            {
+              "path": "storage.py",
+              "sha256": "d57ef5188f2050cc74c0815d00bddd9ed9853ef77063dcf2cff4fbaee22e66b4"
+            }
+          ]
+        }
+      ],
+      "candidate_rule_count": 57,
+      "candidate_row_assessments": [
+        {
+          "id": "common-architecture:ARCH-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-002",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-003",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-004",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-008",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-010",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-011",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-013",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-014",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-015",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-016",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-017",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-018",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-019",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-020",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-021",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-022",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-023",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-024",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-025",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-026",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-027",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-architecture:ARCH-028",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-002",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-003",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-004",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-005",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-006",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-008",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-009",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-010",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-011",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-012",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-013",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-014",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-015",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-style:STYLE-016",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-001",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-002",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-003",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-004",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-005",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-006",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-007",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-008",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "common-tests:TEST-009",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-4a5373156a8d6d06",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-architecture:block-6b89b4e56cb1c6f0",
+          "applicability": "applicable",
+          "result": "violated",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-0d5b8c503901360b",
+          "applicability": "not_applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        },
+        {
+          "id": "project-style:block-9bacec7e7eeba0ce",
+          "applicability": "applicable",
+          "result": "checked",
+          "assessment": "no_inconsistency_found"
+        }
+      ],
+      "cases": [
+        {
+          "id": 10,
+          "symbol": "ClaimService.issue",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "замечание 1",
+          "baseline_reference": "замечание 1",
+          "control_symbol": "SOURCE_KINDS",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта разрешают фиксированный реестр и подтверждают динамический лимит из БД."
+        },
+        {
+          "id": 11,
+          "symbol": "ClaimService.__init__",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "замечание 3",
+          "baseline_reference": "замечание 3",
+          "control_symbol": "audit_enabled",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта сохраняют audit_enabled и проверяют отключение отказавшего получателя."
+        },
+        {
+          "id": 12,
+          "symbol": "customer_products",
+          "candidate_detected": true,
+          "baseline_detected": true,
+          "candidate_reference": "замечание 2",
+          "baseline_reference": "замечание 2",
+          "control_symbol": "serialize_claims",
+          "candidate_control_false_positive": false,
+          "baseline_control_false_positive": false,
+          "control_assessment": "Оба отчёта отличают статическую сериализацию/реестр от изменяемых продуктов клиента."
+        }
+      ],
+      "candidate_architecture_result": "violated"
+    }
+  ]
+}

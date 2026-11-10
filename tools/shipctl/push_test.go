@@ -166,7 +166,8 @@ func TestPushCheckOnlyDoesNotPush(t *testing.T) {
 	localSHA := gitT(t, root, "rev-parse", "main")
 	// След ревью на HEAD: без него код диапазона отбивает ворот следа, и
 	// предмет этого теста (что --check-only не пушит) до проверки не доедет.
-	reviewNote(t, root, "Уровень 1 до "+short(localSHA)+": рутина")
+	completeReviewAudit(t, root, "external-review", false)
+	reviewNote(t, root, "Ярлык: external-review\nУровень 1 до "+short(localSHA)+": рутина")
 
 	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remoteSHA, LocalSHA: localSHA}); err != nil {
 		t.Fatalf("check-only с легитимным ID должен пройти: %v", err)
@@ -277,7 +278,8 @@ func TestPushGatePassesWithReviewNote(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
-	reviewNote(t, root, "Уровень 2 до a1b2c3d: неопределённость 1")
+	completeReviewAudit(t, root, "external-review", false)
+	reviewNote(t, root, "Ярлык: external-review\nУровень 2 до a1b2c3d: неопределённость 1")
 
 	if err := checkOnly(t, root); err != nil {
 		t.Fatalf("заметка ревью на HEAD должна пропускать код: %v", err)
@@ -306,6 +308,7 @@ func TestPushGatePassesWithTaskFileLevel(t *testing.T) {
 	gitT(t, root, "checkout", "-q", "-b", "xr-001-worktree")
 	codeCommit(t, root, "XR-001", "feature.txt")
 
+	completeReviewAudit(t, root, "XR-001", true)
 	if err := checkOnly(t, root); err != nil {
 		t.Fatalf("строка уровня в docs/tasks/XR-001.md должна пропускать код ветки: %v", err)
 	}
@@ -347,6 +350,7 @@ func TestPushGatePassesPureBoard(t *testing.T) {
 // неприменим, а ворот следа ревью работает: голый код отбит, код с заметкой
 // проходит.
 func TestPushGateOutsideBoard(t *testing.T) {
+	t.Setenv("DEVKIT_HOME", fakeDevkit(t, false))
 	root := t.TempDir()
 	gitT(t, root, "init", "-q", "-b", "main")
 	gitT(t, root, "config", "user.email", "test@test")
@@ -363,7 +367,8 @@ func TestPushGateOutsideBoard(t *testing.T) {
 	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head}); err == nil {
 		t.Fatal("код без следа ревью должен отбиваться и вне доски")
 	}
-	reviewNote(t, root, "Круг 1 до "+short(head)+": без замечаний")
+	completeReviewAudit(t, root, "outside", false)
+	reviewNote(t, root, "Ярлык: outside\nКруг 1 до "+short(head)+": без замечаний")
 	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head}); err != nil {
 		t.Fatalf("заметка ревью должна пропускать код вне доски: %v", err)
 	}

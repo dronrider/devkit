@@ -17,6 +17,7 @@ import (
 // отсутствует, и команда, красная в прогретом чекауте, слияние проходит.
 func TestMergeRunsTestsInFreshTree(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
+	write(t, root, ".git/info/exclude", "cache.pyc\n")
 	branchWithFix(t, root)
 	write(t, root, "cache.pyc", "артефакт прогона исполнителя\n")
 	rec := t.TempDir()

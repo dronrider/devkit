@@ -194,6 +194,7 @@ func TestMergeTrainDocsOnlyRaisesCheckRun(t *testing.T) {
 	// бескодовой.
 	gitT(t, root, "add", "docs")
 	gitT(t, root, "commit", "-qm", "docs: XR-001 правка LLD")
+	completeReviewAudit(t, root, "XR-001", true)
 
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)

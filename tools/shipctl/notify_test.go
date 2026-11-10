@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// writeNotifyStub кладёт в root/hooks/notify.py поддельный уведомитель:
+// writeNotifyStub кладёт в отдельный devkit/hooks/notify.py уведомитель:
 // вместо реальной отправки он пишет свои аргументы (без argv[0]) построчно в
 // hooks/calls.log и завершается exitCode. Так merge/ship/revert проверяются
 // без риска реального баннера и без зависимости от системного бэкенда.
@@ -36,8 +36,9 @@ func TestMain(m *testing.M) {
 // мимо стаба в живой notify.py.
 func writeNotifyStub(t *testing.T, root string) string {
 	t.Helper()
-	t.Setenv("DEVKIT_HOME", root)
-	dir := filepath.Join(root, "hooks")
+	devkit := fakeDevkit(t, false)
+	t.Setenv("DEVKIT_HOME", devkit)
+	dir := filepath.Join(devkit, "hooks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestRevertRedeployFailureNotifies(t *testing.T) {
 func TestMergeSurvivesMissingNotifier(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("DEVKIT_HOME", "")
+	t.Setenv("DEVKIT_HOME", fakeDevkit(t, false))
 	t.Setenv("DEVKIT_NOTIFY_OFF", "")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Deploy: "false"})

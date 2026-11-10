@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/reviewaudit"
 	"github.com/dronrider/devkit/internal/reviewnote"
 	"github.com/dronrider/devkit/internal/trace"
 )
@@ -234,10 +235,10 @@ func short(sha string) string {
 // reviewTraceGate требует след ревью у диапазона, в котором есть код. Правило
 // одно на все происхождения правки: код агента не уходит в origin и не
 // становится MR без ревью, а ревью идёт по скиллу review свежим контекстом, не
-// тем, который правку писал. След у ревью бывает двух видов, и вороту довольно
-// любого: git-заметка ревью ровно на HEAD (её пишет `taskctl review level` и
+// тем, который правку писал. Ворот требует актуальный полный отчёт и след
+// одного из двух видов: git-заметка ревью ровно на HEAD (её пишет `taskctl review level` и
 // `taskctl review clean` там, где доски нет) либо строка уровня в файле задачи
-// ветки доски. Заметка судится по HEAD, а не по любому предку: код, дописанный
+// ветки доски. Заметка судится по отправляемому SHA, а не по любому предку: код, дописанный
 // после ревью, ревью не проходил, и след предка про него ничего не говорит.
 //
 // Чистая доска без единого код-коммита проходит без следа: правило требует
@@ -255,17 +256,36 @@ func reviewTraceGate(root, remoteSHA, localSHA string) error {
 	if err != nil {
 		return err
 	}
-	noted, err := reviewnote.Has(root, "HEAD")
+	noted, err := reviewnote.Has(root, localSHA)
 	if err != nil {
 		return err
 	}
 	if noted {
-		return nil
+		note, err := reviewnote.Read(root, localSHA)
+		if err != nil {
+			return err
+		}
+		label := ""
+		for _, line := range strings.Split(note, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "Ярлык:") {
+				if label != "" {
+					return fmt.Errorf("в заметке ревью повторён ярлык отчёта")
+				}
+				label = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Ярлык:"))
+			}
+		}
+		if label == "" {
+			return fmt.Errorf("в заметке ревью нет ярлыка отчёта; выполните taskctl review audit <ярлык> --base <база> и повторите ревью")
+		}
+		return reviewAuditGate(root, label, false, localSHA)
 	}
 	seen := "заметки ревью на HEAD нет"
 	if id := branchTaskID(root); id != "" {
 		if trace.HasReviewLevel(readTaskDoc(root, id)) {
-			return nil
+			if head != localSHA {
+				return fmt.Errorf("отчёт задачи %s относится к текущей ветке; для пуша %s переключитесь на отправляемую ветку либо запишите её ревью git-заметкой", id, short(localSHA))
+			}
+			return reviewAuditGate(root, id, true, localSHA)
 		}
 		seen = fmt.Sprintf("заметки ревью на HEAD нет, строки уровня в docs/tasks/%s.md тоже", id)
 	}
@@ -277,6 +297,26 @@ func reviewTraceGate(root, remoteSHA, localSHA string) error {
   у ветки задачи доски: taskctl review level <ID> <0-3> "причина", строка встаёт в docs/tasks/<ID>.md.
 Обход остаётся за человеком, он описан в README shipctl.`,
 		short(remoteSHA), short(localSHA), seen, short(head), reviewnote.Ref)
+}
+
+// reviewAuditGate проверяет файлы выпускаемого коммита, не смешивая их
+// с незакоммиченной работой других сессий в общем дереве.
+func reviewAuditGate(root, id string, board bool, sha string) error {
+	if sha == "" {
+		var err error
+		sha, err = git(root, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+	}
+	path, err := reviewaudit.Path(root, id, board)
+	if err != nil {
+		return err
+	}
+	if err := reviewaudit.ValidateAt(root, path, id, sha); err != nil {
+		return fmt.Errorf("отчёт ревью %s не готов: %w", id, err)
+	}
+	return nil
 }
 
 // hasCodeCommit говорит, есть ли в диапазоне хоть один код-коммит, то есть
@@ -325,7 +365,7 @@ func taskIDFromBranch(root, branch string) string {
 		return ""
 	}
 	pref := b.prefixOr("DK")
-	m := regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(pref)+`-([0-9]+)($|-)`).
+	m := regexp.MustCompile(`(?i)^` + regexp.QuoteMeta(pref) + `-([0-9]+)($|-)`).
 		FindStringSubmatch(strings.TrimSpace(branch))
 	if m == nil {
 		return ""

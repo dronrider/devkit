@@ -49,8 +49,11 @@ func TestMergeNeedsRehearsal(t *testing.T) {
 func TestMergePassesAfterRehearsal(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
 	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
-	head := strings.TrimSpace(gitT(t, root, "rev-parse", "--short=12", "HEAD"))
 	doc := taskScenarioDoc("XR-003")
+	write(t, root, "docs/tasks/XR-003.md", doc)
+	gitT(t, root, "add", "docs/tasks/XR-003.md")
+	completeReviewAudit(t, root, "XR-003", true)
+	head := strings.TrimSpace(gitT(t, root, "rev-parse", "--short=12", "HEAD"))
 	write(t, root, "docs/tasks/XR-003.md", doc+rehearsalLine(doc, head))
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 запись обкатки")
@@ -61,6 +64,7 @@ func TestMergePassesAfterRehearsal(t *testing.T) {
 
 // TestMergeSkipsRehearsalForUserKind: у пользовательского вида часть шагов
 // держит человек, машинной отметки с него не спрашивают, и слияние проходит.
+
 func TestMergeSkipsRehearsalForUserKind(t *testing.T) {
 	root, _ := setup(t, "| XR-003 | Вторая мелочь [приёмка: user] | task | P3 | 8 (0+3+0+5+0) |  |\n", "")
 	write(t, root, "docs/tasks/XR-003.md", taskScenarioDoc("XR-003"))

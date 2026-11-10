@@ -28,6 +28,7 @@ func TestQueueResumesOnFreshRegcheckWithoutNewCommit(t *testing.T) {
 
 	type reportItem struct {
 		ID      string
+		Line    string
 		Failed  bool
 		Waiting bool
 		Merged  bool
@@ -117,6 +118,11 @@ func TestQueueResumesOnFreshRegcheckWithoutNewCommit(t *testing.T) {
 		t.Fatalf("до возобновления SHA ветки должен остаться %s, получен %s", head, got)
 	}
 
+	items = tick()
+	if len(items) != 1 || !items[0].Failed || !strings.Contains(items[0].Line, "отчёт ревью") {
+		t.Fatalf("ребейз на слитую XR-007 требует нового ревью: %+v", items)
+	}
+	completeReviewAudit(t, wt.Path, "XR-001", true)
 	items = tick()
 	if len(items) != 1 || items[0].ID != "XR-001" || !items[0].Merged {
 		t.Fatalf("зелёная запись должна вернуть ветку на следующем тике: %+v", items)

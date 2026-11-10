@@ -31,6 +31,7 @@ func TestQueueRetryResumesAfterCodeChange(t *testing.T) {
 	}
 	write(t, wt.Path, "code.txt", "fixed\n")
 	gitT(t, wt.Path, "commit", "-qam", "fix: XR-001 новая правка")
+	completeReviewAudit(t, wt.Path, "XR-001", true)
 
 	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: loadRedTest})
 	if len(items) != 1 || items[0].ID != "XR-001" || !strings.Contains(items[0].Line, "повтор 1 из 3") {

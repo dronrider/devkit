@@ -21,6 +21,7 @@ func TestTrainDocsOnlyGoesToCheck(t *testing.T) {
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs: XR-001 правка LLD")
 
+	completeReviewAudit(t, root, "XR-001", true)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +50,7 @@ func TestTrainDocsOnlyGoesToCheck(t *testing.T) {
 // коммитов задачи упирается в него и отвечает «кода нет». Задача остаётся в In
 // progress, ship её не повезёт и в Check не переведёт, поэтому merge говорит
 // про это отдельной строкой, а не молчит.
+
 func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
 	root, callLog := setup(t, rowInProg, "")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
@@ -60,6 +62,7 @@ func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "revert: XR-001 откат прошлой правки")
 
+	completeReviewAudit(t, root, "XR-001", true)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
@@ -79,11 +82,17 @@ func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
 // TestTrainEmptyBranchIsNotDocsOnly: у ветки без коммитов слитого диапазона
 // нет вовсе, и бескодовой такая задача не считается. Иначе забытая ветка
 // уезжала бы в Check как сделанная правка доки.
+
 func TestTrainEmptyBranchIsNotDocsOnly(t *testing.T) {
 	root, callLog := setup(t, rowInProg, "")
 	if _, err := cmdStart(root, StartParams{ID: "XR-001", Slug: "fix"}); err != nil {
 		t.Fatal(err)
 	}
+	wt, err := taskWorktree(root, "XR-001")
+	if err != nil || wt == nil {
+		t.Fatalf("task tree: %v", err)
+	}
+	writeReviewAudit(t, wt.Path, "XR-001", true, false)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +129,6 @@ func TestTrainScenarioGate(t *testing.T) {
 	}
 }
 
-
 // TestTrainDocsOnlyScenarioGate: бескодовая задача без сценария отбивается
 // воротом: выката нет, и подтвердить её по сценарию это единственный способ, а
 // не повтор проверки прода. Отказ называет того, кто задачу переводит (этот
@@ -141,7 +149,6 @@ func TestTrainDocsOnlyScenarioGate(t *testing.T) {
 	}
 }
 
-
 // TestTrainScenarioProseIsNotScenario: упоминание сценария в прозе («сценарий
 // проверки напишу после выката») разделом не считается, и ворот отбивается:
 // признак это заголовок.
@@ -157,7 +164,6 @@ func TestTrainScenarioProseIsNotScenario(t *testing.T) {
 	}
 }
 
-
 // TestTrainScenarioWarningReadsBranch: сценарий пишется в дереве задачи, и
 // читать его merge обязан там: в основном чекауте на main файла ещё нет.
 func TestTrainScenarioWarningReadsBranch(t *testing.T) {
@@ -166,6 +172,7 @@ func TestTrainScenarioWarningReadsBranch(t *testing.T) {
 	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-003 сценарий проверки")
+	completeReviewAudit(t, wt, "XR-003", true)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +203,8 @@ func TestTrainPipelineThreeTasks(t *testing.T) {
 	}
 	// Порядок слияния свой: XR-004 приехала раньше остальных.
 	for _, id := range []string{"XR-004", "XR-001", "XR-003"} {
+		gitT(t, wts[id], "rebase", "main")
+		completeReviewAudit(t, wts[id], id, true)
 		msg, err := cmdMerge(root, MergeParams{ID: id, Test: "true", Train: true})
 		if err != nil {
 			t.Fatalf("поездное слияние %s не прошло: %v", id, err)
@@ -244,6 +253,7 @@ func TestTrainNeighbourMentionIsNotOwnership(t *testing.T) {
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка, пробел DoD цели XR-002 снят")
 
+	completeReviewAudit(t, root, "XR-001", true)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatalf("упоминание соседки в subject отбило слияние: %v", err)
@@ -266,6 +276,7 @@ func TestTrainNeighbourMentionIsNotOwnership(t *testing.T) {
 // TestRevertSkipsNeighbourMention: цена той же ошибки на откате выше, чем на
 // слиянии. Коммит соседки, упомянувшей задачу в тексте subject, в состав отката
 // не берётся: revert вернул бы чужую правку.
+
 func TestRevertSkipsNeighbourMention(t *testing.T) {
 	root, _ := setup(t, "", rowInProg) // XR-001 уже в Check
 	write(t, root, "code.txt", "broken\n")

@@ -39,6 +39,7 @@ func standBranch(t *testing.T, root, skillText string) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка скилла")
+	completeReviewAudit(t, root, "XR-001", true)
 }
 
 // standMark дописывает в файл задачи отметку стенда с отпечатком предметов
@@ -50,6 +51,7 @@ func standMark(t *testing.T, root string, m taskform.StandMark, tail string) {
 	write(t, root, "docs/tasks/XR-001.md", doc)
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 отметка стенда")
+	completeReviewAudit(t, root, "XR-001", true)
 }
 
 // standPrint считает отпечаток предметов по дереву ветки: тот же, что стенд
@@ -98,6 +100,7 @@ func TestStandGateException(t *testing.T) {
 		fixtureRehearsal+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: стенд (правка формулировки, шаги не менялись)\n")
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 пометка стенда")
+	completeReviewAudit(t, root, "XR-001", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
 		t.Fatalf("пометка-исключение должна гасить ворота стенда: %v", err)
 	}
@@ -239,6 +242,7 @@ func TestStandGateOrphanSubject(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 скилл убран")
+	completeReviewAudit(t, root, "XR-001", true)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err == nil || !strings.Contains(err.Error(), "остался без предмета") {
 		t.Fatalf("осиротевший предмет сценария должен отбивать слияние: %v", err)
@@ -340,6 +344,7 @@ func TestStandGateRenamedFile(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 скилл переехал")
+	completeReviewAudit(t, root, "XR-001", true)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err == nil || !strings.Contains(err.Error(), renamed) ||
 		!strings.Contains(err.Error(), "--base пусто") {

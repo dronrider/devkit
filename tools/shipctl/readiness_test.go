@@ -57,6 +57,7 @@ func TestMergeTestsGateRustLayout(t *testing.T) {
 	write(t, root, "xr-core/tests/preset_signature.rs", "#[test]\nfn rejects() {}\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-003 правка с тестом в tests/")
+	completeReviewAudit(t, root, "XR-003", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err != nil {
 		t.Fatalf("ветка с тестом в tests/ должна сливаться: %v", err)
 	}
@@ -65,12 +66,14 @@ func TestMergeTestsGateRustLayout(t *testing.T) {
 // TestMergeTestsGateOverride: пометка-исключение в файле задачи гасит ворот
 // тестов. Так сливаются правки, к которым тест неприменим (правка конфигурации,
 // перенос константы), не снимая ворот для остальных задач.
+
 func TestMergeTestsGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: тесты (правка конфигурации, тест неприменим)\n")
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 пометка тестов")
 	branchCodeOnly(t, root, "xr-003-fix", "config.txt")
+	completeReviewAudit(t, root, "XR-003", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err != nil {
 		t.Fatalf("пометка-исключение должна гасить ворот тестов: %v", err)
 	}
@@ -78,6 +81,7 @@ func TestMergeTestsGateOverride(t *testing.T) {
 
 // TestMergeTestsGateDocsOnly: бескодовая ветка (только docs/) ворот тестов не
 // требует: кода нет, тест не нужен. Ворот снимается, а не падает.
+
 func TestMergeTestsGateDocsOnly(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel)
@@ -87,6 +91,7 @@ func TestMergeTestsGateDocsOnly(t *testing.T) {
 	write(t, root, "docs/lld/dk.md", "# LLD\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs: XR-003 правка LLD")
+	completeReviewAudit(t, root, "XR-003", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
 		t.Fatalf("бескодовая ветка не должна требовать тест: %v", err)
 	}
@@ -94,6 +99,7 @@ func TestMergeTestsGateDocsOnly(t *testing.T) {
 
 // TestMergeScenarioGateOverride: пометка-исключение гасит ворот сценария, когда
 // проверка неприменима (задача проверяется вместе с другой, разбор без выката).
+
 func TestMergeScenarioGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\n- Исключение: сценарий (проверяется вместе с XR-001)\n"+fixtureRehearsal+fixtureReviewLevel)

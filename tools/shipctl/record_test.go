@@ -18,6 +18,7 @@ func branchNoID(t *testing.T, root, id, branch, file string) {
 	write(t, root, strings.TrimSuffix(file, filepath.Ext(file))+"_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: правка без номера задачи")
+	completeReviewAudit(t, root, id, true)
 }
 
 // TestMergeRecordsCommits: слияние пишет коммиты диапазона в файл задачи, и

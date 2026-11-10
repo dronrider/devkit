@@ -122,6 +122,9 @@ func cmdNoteClean(root, id, note string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := checkReviewAudit(root, root, id); err != nil {
+		return "", err
+	}
 	round, err := reviewnote.NextRound(root, "HEAD")
 	if err != nil {
 		return "", err

@@ -53,6 +53,7 @@ func TestReviewCleanNewRoundCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	completeReviewAudit(t, root, "XR-005")
 	if out, err := run("review", "clean", "XR-005", "второй круг чист", "--new-round"); err != nil {
 		t.Fatalf("--new-round должен провести законный второй круг: %v\n%s", err, out)
 	} else if !strings.Contains(out, "вердикт без замечаний до") {

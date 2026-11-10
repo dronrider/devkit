@@ -286,6 +286,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               деревьев
 
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
+  review audit <ID> --base REF [--refresh]    создать отчёт покрытия правил;
+                                              refresh сохраняет прежний JSON
+                                              и сбрасывает выводы
+  review audit-check <ID>                    проверить полноту и актуальность;
+                                              обязателен перед clean и approve-mr
   review level <ID> <0-3> "причина"           записать уровень тщательности
                                               ревью первой строкой раздела:
                                               «Уровень 2 до a1b2c3d: причина»,
@@ -1101,9 +1106,21 @@ func main() {
 		return
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
+			fail(fmt.Errorf("жду: review audit|audit-check|level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
 		}
 		switch args[1] {
+		case "audit", "audit-check":
+			fs := flag.NewFlagSet("review "+args[1], flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			base := fs.String("base", "", "база всей проверяемой правки")
+			refresh := fs.Bool("refresh", false, "сохранить старый отчёт и сбросить выводы для нового снимка")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review audit <ID> --base <REF> | review audit <ID> --refresh | review audit-check <ID>")
+			r := noteRoot(*dir)
+			if r == "" {
+				r = root(*dir)
+			}
+			msg, err = cmdReviewAudit(r, *dir, pos[0], *base, *refresh, args[1] == "audit-check")
 		case "add":
 			fs := flag.NewFlagSet("review add", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -1141,7 +1158,7 @@ func main() {
 			if nroot := noteRoot(*dir); nroot != "" {
 				msg, err = cmdNoteClean(nroot, pos[0], note, c)
 			} else {
-				msg, err = cmdReviewClean(root(*dir), pos[0], note, *newRound, c)
+				msg, err = cmdReviewCleanFrom(root(*dir), *dir, pos[0], note, *newRound, c)
 			}
 		case "level":
 			fs := flag.NewFlagSet("review level", flag.ExitOnError)
@@ -1244,7 +1261,7 @@ func main() {
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 1, 1, "review approve-mr <ID> [--yes]")
-			msg, err = cmdReviewApproveMR(root(*dir), pos[0], *yes, c)
+			msg, err = cmdReviewApproveMRFrom(root(*dir), *dir, pos[0], *yes, c)
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

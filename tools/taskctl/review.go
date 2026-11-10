@@ -450,10 +450,14 @@ const cleanVerdictHeadFmt = "Вердикт: без замечаний до %s."
 // текстом путались местами (замечания 4 и 5 второго круга ревью), и приём
 // убран совсем. Такой случай не решается ни дублем, ни новым кругом молча:
 // команда отказывает и называет причину, а обходит его ревьювер явно, флагом
-// newRound (CLI: --new-round). Флаг не спасает вердикт, для которого
-// сравнение всё же прошло и показало тот же код: заявить новый круг на
-// доказанном дубле нельзя.
+// newRound (CLI: --new-round). Флаг разрешает повтор на том же коде, если
+// новый разбор нужен после изменения правил или постановки. Полный актуальный
+// отчёт остаётся обязательным для каждого круга.
 func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string, error) {
+	return cmdReviewCleanFrom(root, "", id, note, newRound, c)
+}
+
+func cmdReviewCleanFrom(root, start, id, note string, newRound bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -473,7 +477,7 @@ func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string,
 				var same, comparable bool
 				var cause string
 				if err := cliReadOutside(root, func() error {
-					same, comparable, cause = cleanVerdictSameCode(root, id, n)
+					same, comparable, cause = cleanVerdictSameCode(reviewCodeDir(root, start), id, n)
 					return nil
 				}); err != nil {
 					return "", err
@@ -484,19 +488,22 @@ func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string,
 					}
 					continue
 				}
-				if same {
-					return "", fmt.Errorf("чистый вердикт в ревью %s уже записан на этом коде: %s", id, n.Text)
+				if same && !newRound {
+					return "", fmt.Errorf("чистый вердикт в ревью %s уже записан на этом коде: %s; для повторной проверки заполните актуальный audit и используйте --new-round", id, n.Text)
 				}
 			}
 		}
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
+	if err := checkReviewAudit(root, start, id); err != nil {
+		return "", err
+	}
 	line := "- " + cleanVerdictHead
 	sha := ""
 	var headErr error
 	if err := cliReadOutside(root, func() error {
-		sha, headErr = headSha(root)
+		sha, headErr = headSha(reviewCodeDir(root, start))
 		return nil
 	}); err != nil {
 		return "", err
@@ -511,6 +518,7 @@ func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string,
 	if err != nil {
 		return "", err
 	}
+	paths = append(paths, filepath.Join("docs", "tasks", id+".review-audit.json"))
 	tail, err := c.apply(root, paths)
 	if err != nil {
 		return "", err
@@ -589,7 +597,10 @@ func sameCodeSince(root, id, base string) (bool, error) {
 		return false, fmt.Errorf("в %s не прочитать содержимое коммитов после %s (%v)", root, base, err)
 	}
 	for _, p := range strings.Fields(string(files)) {
-		if p != rel {
+		if p == "docs/TASKS.md" || p == "docs/TASKS-archive.md" || (strings.HasPrefix(p, "docs/tasks/") && strings.HasSuffix(p, ".md")) {
+			continue
+		}
+		if p != rel && p != path.Join("docs", "tasks", id+".review-audit.json") && p != path.Join("docs", "tasks", id+".review.md") {
 			return false, nil
 		}
 	}

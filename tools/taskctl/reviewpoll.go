@@ -535,19 +535,23 @@ func humanSpan(d time.Duration) string {
 }
 
 // approveScript собирает запрос апрува MR по трекеру из ссылки.
-func approveScript(t mrTarget) (string, error) {
+func approveScript(t mrTarget, sha string) (string, error) {
+	if len(sha) != 40 && len(sha) != 64 {
+		return "", fmt.Errorf("апрув требует полный SHA проверенного коммита")
+	}
+	for _, c := range sha {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+			return "", fmt.Errorf("неверный SHA апрува")
+		}
+	}
 	switch t.Kind {
 	case "gitlab":
-		return fmt.Sprintf(`curl -sS --request POST --header "PRIVATE-TOKEN: $%s" %s`, t.TokenEnv,
-			shQuote(fmt.Sprintf("%s/api/v4/projects/%s/merge_requests/%s/approve",
-				t.Host, url.PathEscape(t.Project), t.Number))), nil
+		return fmt.Sprintf(`curl --fail -sS --request POST --header "PRIVATE-TOKEN: $%s" --data-urlencode %s %s`, t.TokenEnv, shQuote("sha="+sha), shQuote(fmt.Sprintf("%s/api/v4/projects/%s/merge_requests/%s/approve", t.Host, url.PathEscape(t.Project), t.Number))), nil
 	case "github":
-		return fmt.Sprintf(`gh api %s -f event=APPROVE`,
-			shQuote(fmt.Sprintf("repos/%s/pulls/%s/reviews", t.Project, t.Number))), nil
+		return fmt.Sprintf(`gh api %s -f event=APPROVE -f %s`, shQuote(fmt.Sprintf("repos/%s/pulls/%s/reviews", t.Project, t.Number)), shQuote("commit_id="+sha)), nil
 	case "gitea":
-		return fmt.Sprintf(`curl -sS --request POST --header "Authorization: token $%s"`+
-			` --header 'Content-Type: application/json' %s --data '{"event":"APPROVED"}'`, t.TokenEnv,
-			shQuote(fmt.Sprintf("%s/api/v1/repos/%s/pulls/%s/reviews", t.Host, t.Project, t.Number))), nil
+		payload, _ := json.Marshal(map[string]string{"event": "APPROVED", "commit_id": sha})
+		return fmt.Sprintf(`curl --fail -sS --request POST --header "Authorization: token $%s" --header 'Content-Type: application/json' %s --data %s`, t.TokenEnv, shQuote(fmt.Sprintf("%s/api/v1/repos/%s/pulls/%s/reviews", t.Host, t.Project, t.Number)), shQuote(string(payload))), nil
 	}
 	return "", fmt.Errorf("трекер %q не знаю", t.Kind)
 }
@@ -558,6 +562,9 @@ func approveScript(t mrTarget) (string, error) {
 // слова человека, и словом тут служит флаг --yes: спрашивает человека сам
 // ревьювер последней репликой хода, а утилита сторожит, что вопрос был.
 func cmdReviewApproveMR(root, id string, yes bool, c CommitOpts) (string, error) {
+	return cmdReviewApproveMRFrom(root, "", id, yes, c)
+}
+func cmdReviewApproveMRFrom(root, start, id string, yes bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -577,18 +584,46 @@ func cmdReviewApproveMR(root, id string, yes bool, c CommitOpts) (string, error)
 	if conf.Publish == publishConfirm && !yes {
 		return "", fmt.Errorf("publish = confirm: апрув идёт после слова человека, спроси его последней репликой хода и позови команду с --yes")
 	}
+	if err := checkReviewAudit(root, start, id); err != nil {
+		return "", err
+	}
 	target, err := trackerFromMR(d.MR)
 	if err != nil {
 		return "", err
 	}
-	script, err := approveScript(target)
+	code := reviewCodeDir(root, start)
+	if len(d.Sha) < 7 {
+		return "", fmt.Errorf("в журнале нет SHA проверенной версии; обновите ревью до апрува")
+	}
+	reviewed, err := gitRun(code, "rev-parse", "--verify", d.Sha+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("проверенная версия MR не найдена в дереве кода: %w", err)
+	}
+	if _, err := gitRun(code, "merge-base", "--is-ancestor", strings.TrimSpace(reviewed), "HEAD"); err != nil {
+		return "", fmt.Errorf("версия MR не предок проверенного HEAD")
+	}
+	same, err := sameCodeSince(code, id, strings.TrimSpace(reviewed))
+	if err != nil || !same {
+		return "", fmt.Errorf("дерево кода не совпадает с проверенной версией MR %s", d.Sha)
+	}
+	remote, err := fetchMR(target)
+	if err != nil {
+		return "", err
+	}
+	if remote.headSha() != strings.TrimSpace(reviewed) {
+		return "", fmt.Errorf("вершина MR изменилась или неизвестна; обновите код и отчёт до апрува")
+	}
+	script, err := approveScript(target, strings.TrimSpace(reviewed))
 	if err != nil {
 		return "", err
 	}
 	if err := basis.check(); err != nil {
 		return "", err
 	}
-	if _, err := reviewSendOnce(basis.canonical, id, "approve-"+d.MR, d.Mark, script); err != nil {
+	if err := checkReviewAudit(root, start, id); err != nil {
+		return "", err
+	}
+	if _, err := reviewSendOnce(basis.canonical, id, "approve-"+d.MR+"-"+strings.TrimSpace(reviewed), d.Mark, script); err != nil {
 		return "", fmt.Errorf("апрув: %v", err)
 	}
 	d.Mark = reviewMarkApproved

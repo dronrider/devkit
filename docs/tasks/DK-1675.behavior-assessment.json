@@ -2000,7 +2000,6 @@
   "acceptance_status": "incomplete: independently reported orders miss remains unresolved",
   "additional_evidence": {
     "source": "docs/tasks/DK-1675.md, раздел Проверка; commit 91eebc659",
-    "reported_model": "glm-5.3",
     "case": "orders",
     "detected_defects": 2,
     "expected_defects": 3,
@@ -2009,6 +2008,12 @@
     "reported_error": "checked despite discount decision in repository",
     "raw_log_recorded_path": ".devkit/task-DK-1675.check-20261110.log",
     "raw_log_available_in_current_checkout": false,
-    "relationship_to_followup": "The authorized Sol run verified the policy numeric-range fix, not this separate orders miss."
+    "relationship_to_followup": "The authorized Sol run verified the policy numeric-range fix, not this separate orders miss.",
+    "model_attribution": {
+      "stage_label": "glm-5.3",
+      "actual_model": null,
+      "user_recollection": "Astra",
+      "status": "not verified; stage label is not runtime proof"
+    }
   }
 }

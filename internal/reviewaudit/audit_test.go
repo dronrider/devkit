@@ -80,7 +80,7 @@ func completed(t *testing.T, root, path string) Report {
 	save(t, path, r)
 	return r
 }
-func TestCompleteAndMetadataCommit(t *testing.T) {
+func TestReviewAuditIntegrationCompleteAndMetadataCommit(t *testing.T) {
 	root, path := fixture(t)
 	r := completed(t, root, path)
 	if len(r.Rules) != 6 || r.Sources[4].Status != "absent" {
@@ -98,7 +98,7 @@ func TestCompleteAndMetadataCommit(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestRejectsIncompleteAndForged(t *testing.T) {
+func TestReviewAuditIntegrationRejectsIncompleteAndForged(t *testing.T) {
 	cases := map[string]func(*Report){
 		"missing rule": func(r *Report) { r.Rules = r.Rules[1:] }, "duplicate": func(r *Report) { r.Rules[1] = r.Rules[0] }, "invented": func(r *Report) { r.Rules[0].ID = "other" }, "changed text": func(r *Report) { r.Rules[0].Text = "Разрешено всё" }, "forged source": func(r *Report) { r.Sources[0].Path = "/other" }, "missing source": func(r *Report) { r.Sources = r.Sources[1:] }, "pending": func(r *Report) { r.Rules[0].Result = "pending" }, "violated": func(r *Report) { r.Rules[0].Result = "violated" }, "unknown applicability": func(r *Report) { r.Rules[0].Applicability = "pending" }, "NA without reason": func(r *Report) { r.Rules[0].Applicability = "not_applicable"; r.Rules[0].Reason = " " }, "missing objects": func(r *Report) { r.Rules[0].Evidence = nil }, "incomplete object": func(r *Report) { r.Rules[0].Evidence[0].Location = "" }, "architecture pending": func(r *Report) { r.Architecture.Result = "pending" }, "architecture violated": func(r *Report) { r.Architecture.Result = "violated" }, "missing architecture": func(r *Report) { r.Architecture = Architecture{} }, "missing alternative": func(r *Report) { r.Architecture.Alternative = "" }, "wrong ID": func(r *Report) { r.ID = "XR-2" }}
 	for n, m := range cases {
@@ -113,7 +113,7 @@ func TestRejectsIncompleteAndForged(t *testing.T) {
 		})
 	}
 }
-func TestStaleInputs(t *testing.T) {
+func TestReviewAuditIntegrationStaleInputs(t *testing.T) {
 	for _, what := range []string{"code", "new code", "rule", "new rule", "task", "new project"} {
 		t.Run(what, func(t *testing.T) {
 			root, path := fixture(t)
@@ -140,7 +140,7 @@ func TestStaleInputs(t *testing.T) {
 		})
 	}
 }
-func TestRefreshAndMissingInputs(t *testing.T) {
+func TestReviewAuditIntegrationRefreshAndMissingInputs(t *testing.T) {
 	root, path := fixture(t)
 	if _, e := Create(root, path, "XR-1", "", false); e == nil {
 		t.Fatal("угадана база")
@@ -172,7 +172,7 @@ func TestRefreshAndMissingInputs(t *testing.T) {
 		t.Fatal("без источника")
 	}
 }
-func TestDirtySnapshotSurvivesCommit(t *testing.T) {
+func TestReviewAuditIntegrationDirtySnapshotSurvivesCommit(t *testing.T) {
 	root, path := fixture(t)
 	write(t, filepath.Join(root, "code.go"), "package improved\n")
 	completed(t, root, path)
@@ -185,7 +185,7 @@ func TestDirtySnapshotSurvivesCommit(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestNAAndPaths(t *testing.T) {
+func TestReviewAuditIntegrationNAAndPaths(t *testing.T) {
 	root, path := fixture(t)
 	r := completed(t, root, path)
 	r.Rules[0].Applicability = "not_applicable"
@@ -203,17 +203,7 @@ func TestNAAndPaths(t *testing.T) {
 		t.Fatal("выход из каталога")
 	}
 }
-func TestParserKeepsUntaggedProjectRules(t *testing.T) {
-	if _, e := parseRules("common", "- Правило без ID", true); e == nil {
-		t.Fatal("пропущено")
-	}
-	rr, e := parseRules("project", "# Слой\n\nПравило прозой.\n\n- Правило списком.\n  Продолжение.\n", false)
-	if e != nil || len(rr) != 3 {
-		t.Fatal(rr, e)
-	}
-}
-
-func TestTaskFenceDoesNotHideChangedRequirement(t *testing.T) {
+func TestReviewAuditIntegrationTaskFenceDoesNotHideChangedRequirement(t *testing.T) {
 	root, path := fixture(t)
 	task := taskPath(path)
 	write(t, task, "# Задача\n\n## DoD\n```markdown\n## Ревью\nrequired behavior\n```\n")
@@ -225,7 +215,7 @@ func TestTaskFenceDoesNotHideChangedRequirement(t *testing.T) {
 		t.Fatal("fenced heading hid requirement change")
 	}
 }
-func TestExtraSourcesAndInvalidManifest(t *testing.T) {
+func TestReviewAuditIntegrationExtraSourcesAndInvalidManifest(t *testing.T) {
 	for _, val := range []string{"../outside.md", "/tmp/rules.md", "docs/../other.md", "docs/ARCHITECTURE.md", "docs/extra.md, docs/extra.md", "docs/missing.md"} {
 		t.Run(val, func(t *testing.T) {
 			root, path := fixture(t)
@@ -253,7 +243,7 @@ func TestExtraSourcesAndInvalidManifest(t *testing.T) {
 		t.Fatal("extra source stale accepted")
 	}
 }
-func TestSourcePathsSurviveCheckoutRelocation(t *testing.T) {
+func TestReviewAuditIntegrationSourcePathsSurviveCheckoutRelocation(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	gitT(t, root, "add", ".")
@@ -265,7 +255,7 @@ func TestSourcePathsSurviveCheckoutRelocation(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestBaseMustRemainResolvedSHA(t *testing.T) {
+func TestReviewAuditIntegrationBaseMustRemainResolvedSHA(t *testing.T) {
 	root, path := fixture(t)
 	r := completed(t, root, path)
 	r.BaseSHA = "HEAD"
@@ -275,7 +265,7 @@ func TestBaseMustRemainResolvedSHA(t *testing.T) {
 	}
 }
 
-func TestCommonRuleFenceCannotTruncateInventory(t *testing.T) {
+func TestReviewAuditIntegrationCommonRuleFenceCannotTruncateInventory(t *testing.T) {
 	root, path := fixture(t)
 	dk := os.Getenv("DEVKIT_HOME")
 	write(t, filepath.Join(dk, "RULES.md"), "## Тесты обязательны\n\n- **TEST-001.** First.\n\n````markdown\n## Fake heading\n```\n~~~\n- **TEST-999.** Fake.\n````\n\n- **TEST-002.** Second.\n\n## Other\n")
@@ -301,19 +291,7 @@ func TestCommonRuleFenceCannotTruncateInventory(t *testing.T) {
 	}
 }
 
-func TestProjectHeadingsAndRepeatedBlocksAreInventoried(t *testing.T) {
-	rules, e := parseRules("project-style", "# Rules\n\n## Never log tokens\n\n- Keep atomic.\n\n## Other scope\n\n- Keep atomic.\n", false)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(rules) != 5 {
-		t.Fatalf("blocks skipped: %+v", rules)
-	}
-	if rules[2].ID == rules[4].ID {
-		t.Fatal("repeated block lost identity")
-	}
-}
-func TestOtherReviewArtifactsDoNotStaleReport(t *testing.T) {
+func TestReviewAuditIntegrationOtherReviewArtifactsDoNotStaleReport(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	write(t, filepath.Join(root, "docs/tasks/XR-2.review-audit.json"), "{}")
@@ -323,7 +301,7 @@ func TestOtherReviewArtifactsDoNotStaleReport(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestUnchangedSubmoduleDoesNotBlockReview(t *testing.T) {
+func TestReviewAuditIntegrationUnchangedSubmoduleDoesNotBlockReview(t *testing.T) {
 	root, path := fixture(t)
 	sub := t.TempDir()
 	write(t, filepath.Join(sub, "source.txt"), "dependency\n")
@@ -344,7 +322,7 @@ func TestUnchangedSubmoduleDoesNotBlockReview(t *testing.T) {
 	}
 }
 
-func TestSparseTrackedChangeInvalidatesReport(t *testing.T) {
+func TestReviewAuditIntegrationSparseTrackedChangeInvalidatesReport(t *testing.T) {
 	root, path := fixture(t)
 	write(t, filepath.Join(root, "hidden.txt"), "first\n")
 	gitT(t, root, "add", ".")
@@ -365,7 +343,7 @@ func TestSparseTrackedChangeInvalidatesReport(t *testing.T) {
 	}
 }
 
-func TestValidateAtUsesCommittedContentAndRules(t *testing.T) {
+func TestReviewAuditIntegrationValidateAtUsesCommittedContentAndRules(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	sha := gitT(t, root, "rev-parse", "HEAD")
@@ -391,7 +369,7 @@ func TestValidateAtUsesCommittedContentAndRules(t *testing.T) {
 		t.Fatal("stale common standards accepted")
 	}
 }
-func TestValidateAtUsesCommittedTask(t *testing.T) {
+func TestReviewAuditIntegrationValidateAtUsesCommittedTask(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	write(t, taskPath(path), "# Edited requirement\n")
@@ -405,7 +383,7 @@ func TestValidateAtUsesCommittedTask(t *testing.T) {
 	}
 }
 
-func TestSiblingTaskMetadataDoesNotInvalidateReviewedCode(t *testing.T) {
+func TestReviewAuditIntegrationSiblingTaskMetadataDoesNotInvalidateReviewedCode(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	write(t, filepath.Join(root, "docs/tasks/XR-2.md"), "# Other task\n\n## Ход работы\nIndependent update.\n")
@@ -425,7 +403,7 @@ func TestSiblingTaskMetadataDoesNotInvalidateReviewedCode(t *testing.T) {
 	}
 }
 
-func TestValidateAtRejectsChangedCommittedCodeOnly(t *testing.T) {
+func TestReviewAuditIntegrationValidateAtRejectsChangedCommittedCodeOnly(t *testing.T) {
 	root, path := fixture(t)
 	completed(t, root, path)
 	write(t, filepath.Join(root, "code.go"), "package changed\n")
@@ -433,18 +411,5 @@ func TestValidateAtRejectsChangedCommittedCodeOnly(t *testing.T) {
 	gitT(t, root, "commit", "-qm", "change only code")
 	if e := ValidateAt(root, path, "XR-1", "HEAD"); e == nil {
 		t.Fatal("changed committed code accepted")
-	}
-}
-
-func TestProjectListDoesNotSwallowIndependentParagraph(t *testing.T) {
-	rules, e := parseRules("project-style", "- First rule.\n\n  Indented explanation.\n\nIndependent requirement.\n\n1. Numbered rule.\n2. Another rule.\n+ Another bullet.\n", false)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(rules) != 5 {
-		t.Fatalf("independent requirements merged: %+v", rules)
-	}
-	if !strings.Contains(rules[0].Text, "Indented explanation") || strings.Contains(rules[0].Text, "Independent requirement") {
-		t.Fatalf("wrong list boundary: %+v", rules)
 	}
 }

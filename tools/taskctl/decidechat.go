@@ -297,6 +297,48 @@ func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) st
 	return strings.Join(out, "\n") + "\n\n" + chatBlock(p.ID, pack), nil
 }
 
+// decideDraftCarrier кладёт признак ожидания, когда панельная сессия заводит
+// человеческую развилку черновика (DK-1679). У вопроса записи без признака нет
+// адресата: панель не считает чат ждущим, ответ уезжает безадресной строкой во
+// вход задачи, дозор мёртвых окон откладывает его в файл записи, а сессия
+// стоит на вопросе. Признак назначает адресата самим вопросом, и ответ доезжает
+// той же сессии. Вопрос уже напечатан в ленте самой сессией, поэтому признак
+// пишется тихо, без уведомителя и парковки: черновик строки доски не занимает.
+// Живой признак не перезаписывается: вопрос согласования (DK-1469) держит
+// носитель сам, пока не снят ответом. Провал записи не роняет команду: развилка
+// уже легла в файл, а носитель это дорога ответа, не заводимое правило.
+func decideDraftCarrier(root string, p DecideParams, doc string, env func(string) string) string {
+	who := p.Who
+	if who == "" {
+		who = taskform.ForkHuman
+	}
+	if !AskPanel(env) || who != taskform.ForkHuman || p.Scenarios {
+		return ""
+	}
+	var forks []taskform.Fork
+	for _, f := range decideOpen(doc) {
+		if f.Mode == "" {
+			forks = append(forks, f)
+		}
+	}
+	if len(forks) == 0 {
+		return ""
+	}
+	main := taskMainRoot(root)
+	name := chat.TaskName(p.ID)
+	if _, ok := chat.ReadAsk(chat.AskPath(main, name)); ok {
+		return ""
+	}
+	sid, _ := askSession(AskParams{ID: p.ID, Draft: true}, "", env)
+	if sid == "" {
+		return ""
+	}
+	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, Questions: chatQuestions(forks)}); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s: вопрос лежит признаком ожидания: ответ из панели дойдёт этой сессии, заход кончается рубежом", p.ID)
+}
+
 // chatRecommended это ответ, закрывающий всю пачку рекомендациями.
 const chatRecommended = "по рекомендации"
 

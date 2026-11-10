@@ -209,6 +209,10 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	if err := decideWrite(path, orig, doc); err != nil {
 		return "", err
 	}
+	carrier := ""
+	if p.Ask != "" && kind == "черновик" {
+		carrier = decideDraftCarrier(root, p, doc, env)
+	}
 	// Ответ человека снимает признак ожидания того же захода, и снимает уже
 	// после записи ответа в файл: снятый раньше записи признак будил бы
 	// строку без ответа. Прежде признак снимали только панель и wake, а ответ
@@ -244,6 +248,9 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return head + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 	case p.Ask != "":
 		head += fmt.Sprintf("развилка «%s» заведена, %s", decideName(p.Ask), decideWho(p.Who))
+		if carrier != "" {
+			head += "\n" + carrier
+		}
 	case len(p.Opts) > 0:
 		head += note
 	case p.Leave:

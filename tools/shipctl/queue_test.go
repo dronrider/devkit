@@ -47,6 +47,7 @@ func queueBranch(t *testing.T, root, id, branch, file string) {
 	write(t, wt, strings.TrimSuffix(file, ".txt")+"_test.go", "package main\n")
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "fix: "+id+" правка")
+	completeReviewAudit(t, wt, id, true)
 }
 
 // TestQueueOrderFollowsRank: состав очереди производный от доски, и голова у

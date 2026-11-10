@@ -1243,6 +1243,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := trace.ReviewLevel(p.ID, taskDoc); err != nil {
 		return "", err
 	}
+	if err := reviewAuditGate(reviewRoot, p.ID, true, ""); err != nil {
+		return "", err
+	}
 	if err := trace.Stand(root, main, branch, p.ID, taskDoc); err != nil {
 		return "", err
 	}
@@ -1295,6 +1298,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			git(workDir, "rebase", "--abort")
 			return "", fmt.Errorf("%w: ребейз на %s не прошёл, разбирать руками:\n%s", errRebaseConflict, main, cmdoutFrame(workDir, "git-rebase", out))
 		}
+	}
+	if err := reviewAuditGate(workDir, p.ID, true, ""); err != nil {
+		return "", fmt.Errorf("после ребейза: %w", err)
 	}
 	// Тесты идут не в workDir, а в свежем дереве на ребейзнутом коммите и в
 	// собранном окружении: прогретый чекаут и живые HOME с PATH прячут
@@ -2079,13 +2085,16 @@ func ffCatchUp(root, workDir, wt, main, branch string) (string, int, error) {
 		if rebaseErr != nil {
 			git(workDir, "rebase", "--abort")
 		}
+		if rebaseErr == nil {
+			rebaseErr = reviewAuditGate(workDir, branchTaskID(workDir), true, "")
+		}
 		if wt == "" {
 			if _, err := git(root, "checkout", main); err != nil {
 				return "", catchUps, err
 			}
 		}
 		if rebaseErr != nil {
-			return "", catchUps, fmt.Errorf("повторный ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", rebaseOut))
+			return "", catchUps, fmt.Errorf("после повторного ребейза на %s: %w\n%s", main, rebaseErr, cmdoutFrame(workDir, "git-rebase", rebaseOut))
 		}
 	}
 }

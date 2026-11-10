@@ -166,6 +166,9 @@ func startTask(t *testing.T, root, id, file string) string {
 	write(t, wt, strings.ToLower(id)+"_test.go", "package main\n")
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "fix: "+id+" правка")
+	if _, err := os.Stat(filepath.Join(wt, "docs/tasks/"+id+".md")); err == nil {
+		completeReviewAudit(t, wt, id, true)
+	}
 	return wt
 }
 

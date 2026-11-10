@@ -33,6 +33,7 @@ func TestMergeKeepsWindowAlive(t *testing.T) {
 	write(t, tree, "fix_test.go", "package main\n")
 	gitT(t, tree, "add", ".")
 	gitT(t, tree, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, tree, "XR-001", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +169,7 @@ func TestTrainDocsOnlySyncsWindowTree(t *testing.T) {
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs: XR-001 правка LLD")
 
+	completeReviewAudit(t, root, "XR-001", true)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true})
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +187,7 @@ func TestTrainDocsOnlySyncsWindowTree(t *testing.T) {
 // Check и двигает доску только в cmdShip, а не в cmdMerge, поэтому подтяжка
 // копии обязана сработать именно там -- иначе копия осталась бы на коммите
 // fast-forward, а main уехал бы вперёд выкатом и переводом поезда в Check.
+
 func TestShipSyncsWindowTree(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")

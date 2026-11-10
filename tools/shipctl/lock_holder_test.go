@@ -91,8 +91,6 @@ func TestLockFileNamesLiveHolder(t *testing.T) {
 	}
 }
 
-
-
 // trackLock кладёт файл замка под git: так выглядит проект, где .devkit не
 // попал в .gitignore (старая раскладка до DK-278, фикстуры тестов).
 func trackLock(t *testing.T, root string) {
@@ -145,6 +143,7 @@ func TestMergeSurvivesTrackedLock(t *testing.T) {
 	write(t, root, lockPath, "мусор прошлого запуска\n")
 	gitT(t, root, "add", "-A")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
 		t.Fatalf("merge не должен отбиваться собственным замком: %v", err)

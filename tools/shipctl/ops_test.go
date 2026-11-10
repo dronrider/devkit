@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dronrider/devkit/internal/reviewaudit"
 	"github.com/dronrider/devkit/internal/trace"
 )
 
@@ -65,7 +67,7 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	// (DK-1125): в боевом проекте его прячет devkitctl тем же списком записей,
 	// что cmdout, а фикстуры заводят .gitignore руками и без строки словили бы
 	// его в "git add .", ломая последующий checkout внутри merge.
-	write(t, root, ".gitignore", ".devkit/cmdout/\n.devkit/test-runs.log\n")
+	write(t, root, ".gitignore", ".devkit/cmdout/\n.devkit/test-runs.log\n.devkit/ship.lock*\n.devkit/log\n.devkit/deploy.local\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed")
 
@@ -116,6 +118,9 @@ func writeAgentctlFake(t *testing.T, bin, tier string) {
 func fakeDevkit(t *testing.T, deny bool) string {
 	t.Helper()
 	dir := t.TempDir()
+	write(t, dir, "RULES.architecture.md", "# Architecture\n\n- **ARCH-001.** Keep the data boundary explicit.\n")
+	write(t, dir, "RULES.style.md", "# Style\n\n- **STYLE-001.** Name values by purpose.\n")
+	write(t, dir, "RULES.md", "# Rules\n\n## Тесты обязательны\n\n- **TEST-001.** Exercise changed behavior.\n")
 	write(t, dir, "kit/skills/board-task/task-run.py", "import sys\n")
 	perms := "import sys\n"
 	if deny {
@@ -166,6 +171,66 @@ func branchWithFix(t *testing.T, root string) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
+}
+
+// completeReviewAudit явно готовит отчёт для сценария, который проверяет
+// последующие этапы конвейера. Тесты отказов создают/портят отчёт сами;
+// gitT не меняет состояние ревью за спиной теста.
+func completeReviewAudit(t *testing.T, root, id string, board bool) string {
+	t.Helper()
+	return writeReviewAudit(t, root, id, board, board)
+}
+
+func writeReviewAudit(t *testing.T, root, id string, board, commit bool) string {
+	t.Helper()
+	path, err := reviewaudit.Path(root, id, board)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, exists := os.Stat(path)
+	if _, err := reviewaudit.Create(root, path, id, "main", exists == nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report reviewaudit.Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	report.Architecture = reviewaudit.Architecture{
+		Goal: "Verify the fixture change", Decision: "Change the fixture file",
+		Boundaries: "Local fixture, no external data", Alternative: "Keep old fixture",
+		Justification: "The test needs the changed behavior", Result: "checked",
+		Evidence: []string{"Fixture content is local and has no runtime dependencies"},
+	}
+	for i := range report.Rules {
+		report.Rules[i].Applicability = "applicable"
+		report.Rules[i].Result = "checked"
+		report.Rules[i].Reason = "Explicit synthetic review of the pipeline fixture"
+		report.Rules[i].Evidence = []reviewaudit.Evidence{{Object: "fixture change", Location: "code.txt", Observation: "Fixture behavior inspected for this gate test"}}
+	}
+	data, err = json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if commit {
+		gitT(t, root, "add", path)
+		backups, err := filepath.Glob(path + ".previous-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, backup := range backups {
+			gitT(t, root, "add", backup)
+		}
+		gitT(t, root, "commit", "--amend", "--no-edit", "-q")
+	}
+	return path
 }
 
 func TestMergeHappyPath(t *testing.T) {
@@ -740,6 +805,9 @@ func branchFor(t *testing.T, root, id, branch, file string) {
 	write(t, root, strings.ToLower(id)+"_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: "+id+" правка")
+	if _, err := os.Stat(filepath.Join(root, "docs/tasks/"+id+".md")); err == nil {
+		completeReviewAudit(t, root, id, true)
+	}
 }
 
 // taskWithScenario пишет минимальный файл задачи со сценарием проверки и
@@ -1319,6 +1387,7 @@ func branchSewnWithMain(t *testing.T, root string) {
 	write(t, root, "code.txt", "сшито руками\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "merge: XR-001 сшивка с main")
+	completeReviewAudit(t, root, "XR-001", true)
 }
 
 // TestMergeSewnBranchKeepsHistory: ветка, вобравшая main слиянием, сливается

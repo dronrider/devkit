@@ -258,6 +258,7 @@ func TestMergeForeignFailsOwnRedNotCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'compA   0.1s FAIL\ncompB   0.1s ok\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -286,6 +287,7 @@ func TestMergeForeignFailsForeignRedCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'compA   0.1s ok\ncompB   0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -322,6 +324,7 @@ func TestMergeForeignFailsUnresolvedComponentCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'compA   0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -353,6 +356,7 @@ func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'compA (compA) 0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -383,6 +387,7 @@ func TestMergeForeignFailsWholeRepoRootAloneNotCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'doctor (.) 0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -414,6 +419,7 @@ func TestMergeForeignFailsWholeRepoRootBesideForeignCounted(t *testing.T) {
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'doctor (.) 0.1s FAIL\ncompB (compB) 0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -442,6 +448,7 @@ func TestMergeForeignFailsOwnRedFromPartialLayoutFallsBackToRootNotCounted(t *te
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	completeReviewAudit(t, root, "XR-001", true)
 	test := `printf 'compA (compA) 0.1s FAIL\n'; exit 1`
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
 		t.Fatal("красный компонент должен держать слияние")
@@ -490,6 +497,7 @@ func TestJournalSurvivesRevertAndRemerge(t *testing.T) {
 	write(t, root, "second_test.go", "package main\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "fix: XR-001 второй круг")
+	completeReviewAudit(t, root, "XR-001", true)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
 		t.Fatal(err)
 	}

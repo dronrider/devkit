@@ -34,6 +34,7 @@ func componentWorktree(t *testing.T, root, branch string, files map[string]strin
 	}
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "fix: правка "+branch)
+	completeReviewAudit(t, wt, branchTaskID(wt), true)
 	return wt
 }
 

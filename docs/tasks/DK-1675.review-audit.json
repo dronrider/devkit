@@ -1,0 +1,1452 @@
+{
+  "version": 1,
+  "id": "DK-1675",
+  "base_sha": "086cb6dc4abd8ea977f98c4bb1da1a43188079e5",
+  "head_sha": "9f6dcdc5b0c7dbf9208d0c906917b467f092d7f7",
+  "code_hash": "0e3ea71a955161faa402d97c70f36c688c20269e990dc12fbd42a357a4dc861e",
+  "task_hash": "5c41b13975117b44e2a015ace53669f4ae046a80f3a9f9c1da8873a6aa46cb3c",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "3fe00f6389de0fe3de5a998ca47d977329f24ff0101c05c9a7b7a9e3ecfa05cb"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "Не принимать ревью с пропущенной оценкой замысла или отдельного правила; доказать качество процедуры слепыми примерами с дефектами и допустимыми решениями.",
+    "decision": "Скилл требует архитектурный разбор до реализации. Общий reviewaudit создаёт JSON из реальных источников и снимка кода, затем проверяет полноту и свежесть перед clean, approve, push и merge. Качество выводов проверяется отдельно поведенческими сценариями.",
+    "boundaries": "Ревьювер пишет выводы и evidence, Create пишет поля снимка, источники и перечень правил. taskctl владеет командами и записью вердикта; shipctl проверяет выпускаемый commit через ValidateAt. JSON хранится у задачи или под хешем ярлыка; refresh сохраняет прежний отчёт и сбрасывает выводы. Общие стандарты берутся из подключённого devkit, проектные из проверяемого дерева.",
+    "alternative": "Можно ограничиться чеклистом в промпте и одним следом level. Такой вариант не обнаруживает пропущенные строки и устаревшие выводы на путях без доски. Отдельный сервис отчётов добавил бы сеть и владельца состояния без нужного пользовательского результата.",
+    "justification": "Один локальный пакет позволяет всем воротам применять одинаковый инвариант без внешних зависимостей. Проверка содержания допускает коммит служебного отчёта после ревью; отдельный task_hash сохраняет контроль требований. Проверка named commit изолирует выпуск от посторонней незавершённой работы. Хеши и обязательные поля не доказывают содержательную истинность, поэтому поведенческий DoD остаётся обязательным и пока не завершён.",
+    "result": "checked",
+    "evidence": [
+      "Прочитан предмет diff от 086cb6dc4 и новые untracked файлы; internal/reviewaudit/audit.go разделяет inventory, snapshot и validateSnapshot.",
+      "internal/reviewaudit/committed.go использует временный локальный clone конкретного SHA, не меняя индекс вызывающего.",
+      "tools/taskctl/review.go, reviewnotes.go и reviewpoll.go проверяют отчёт до вердикта/апрува; tools/shipctl/ops.go повторяет проверку после ребейза и catch-up.",
+      "tools/obeycheck/testdata/review_cases содержит четыре проекта, 12 намеренных дефектов и 12 контролей. Полная слепая сравнительная приёмка ещё pending; checked здесь относится к оценке устройства, не к завершению DoD.",
+      "Прочитаны результаты восьми мутаций с зелёными baseline, а также итоговые строки полных internal/shipctl логов. Полный behavioral результат ещё требуется для завершения приёмки."
+    ]
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Снимок и полнота принадлежат reviewaudit; CLI выбирает корни и печатает результат, shipctl применяет проверку к выпускаемому SHA.",
+      "evidence": [
+        {
+          "object": "reviewaudit, taskctl, shipctl",
+          "location": "internal/reviewaudit/audit.go; tools/taskctl/reviewaudit.go; tools/shipctl/push.go",
+          "observation": "Снимок и полнота принадлежат reviewaudit; CLI выбирает корни и печатает результат, shipctl применяет проверку к выпускаемому SHA."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Оба потребителя вызывают экспортированные операции; структуры JSON скрыты от логики ворот, формат разбирает общий пакет.",
+      "evidence": [
+        {
+          "object": "Create, Path, Validate, ValidateAt",
+          "location": "internal/reviewaudit/audit.go; internal/reviewaudit/committed.go",
+          "observation": "Оба потребителя вызывают экспортированные операции; структуры JSON скрыты от логики ворот, формат разбирает общий пакет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "clean, notes, approve и ship используют один validateSnapshot; новый разбор конфигурации использует существующий kvconf, Markdown использует taskform.FenceMask, git использует gitrun.",
+      "evidence": [
+        {
+          "object": "Перечень правил и проверка свежести",
+          "location": "internal/reviewaudit/audit.go: inventory, validateSnapshot",
+          "observation": "clean, notes, approve и ship используют один validateSnapshot; новый разбор конфигурации использует существующий kvconf, Markdown использует taskform.FenceMask, git использует gitrun."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Пакет нужен двум утилитам с одинаковым инвариантом. Отдельный сервис и новая внешняя зависимость не добавлены; локальный клон нужен для проверки конкретного коммита при грязном дереве.",
+      "evidence": [
+        {
+          "object": "Общий пакет reviewaudit",
+          "location": "internal/reviewaudit/audit.go; internal/reviewaudit/committed.go",
+          "observation": "Пакет нужен двум утилитам с одинаковым инвариантом. Отдельный сервис и новая внешняя зависимость не добавлены; локальный клон нужен для проверки конкретного коммита при грязном дереве."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Первое создание требует base, повтор без refresh даёт ошибку; refresh сохраняет предыдущий файл и снимает выводы. Validate требует закоммиченный код, ValidateAt проверяет явно заданный commit.",
+      "evidence": [
+        {
+          "object": "Создание, обновление и проверка отчёта",
+          "location": "kit/skills/review/audit.md; internal/reviewaudit/audit.go",
+          "observation": "Первое создание требует base, повтор без refresh даёт ошибку; refresh сохраняет предыдущий файл и снимает выводы. Validate требует закоммиченный код, ValidateAt проверяет явно заданный commit."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверка стоит до записи вердикта или внешнего действия; merge проверяется также после обоих путей ребейза. Исключения автономного пуша сохранены и названы в документации.",
+      "evidence": [
+        {
+          "object": "Запись clean, git-note, approve, push и merge",
+          "location": "tools/taskctl/review.go; reviewnotes.go; reviewpoll.go; tools/shipctl/push.go; ops.go",
+          "observation": "Проверка стоит до записи вердикта или внешнего действия; merge проверяется также после обоих путей ребейза. Исключения автономного пуша сохранены и названы в документации."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Команды level и числовые уровни сохранены. Старый след без JSON теперь требует audit; README описывает переход, версия и неизвестные поля проверяются при чтении.",
+      "evidence": [
+        {
+          "object": "Старые уровни и отчёт version=1",
+          "location": "tools/taskctl/main.go; tools/taskctl/README.md; internal/reviewaudit/audit.go",
+          "observation": "Команды level и числовые уровни сохранены. Старый след без JSON теперь требует audit; README описывает переход, версия и неизвестные поля проверяются при чтении."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Истина о коде берётся из git и файлов, общие правила из подключённого devkit, проектные из проекта. Автор выводов ревьювер; хеши заново сверяются, служебные секции задачи исключены, DoD остаётся в task_hash.",
+      "evidence": [
+        {
+          "object": "Код, постановка, стандарты и свидетельства",
+          "location": "internal/reviewaudit/audit.go: snapshot, inventory, taskContent",
+          "observation": "Истина о коде берётся из git и файлов, общие правила из подключённого devkit, проектные из проекта. Автор выводов ревьювер; хеши заново сверяются, служебные секции задачи исключены, DoD остаётся в task_hash."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Дескрипторы закрываются, временный файл и клон удаляются через defer. RunRaw использует общий механизм WaitDelay и остановки группы; новых фоновых работников нет.",
+      "evidence": [
+        {
+          "object": "Файлы отчёта, временный клон и процессы git",
+          "location": "internal/reviewaudit/audit.go: readReport, Create; internal/reviewaudit/committed.go; internal/gitrun/gitrun.go",
+          "observation": "Дескрипторы закрываются, временный файл и клон удаляются через defer. RunRaw использует общий механизм WaitDelay и остановки группы; новых фоновых работников нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "JSON заменяется rename после полной записи. Перед отправкой повторно проверяются basis и audit; запрос содержит проверенный SHA, поэтому новый коммит MR не получает апрув старого снимка. Создание одного отчёта предполагает одного ревьювера; общая запись не используется как распределённый замок.",
+      "evidence": [
+        {
+          "object": "Атомарная запись JSON и привязка внешнего апрува",
+          "location": "internal/reviewaudit/audit.go: Create; tools/taskctl/reviewpoll.go: cmdReviewApproveMRFrom",
+          "observation": "JSON заменяется rename после полной записи. Перед отправкой повторно проверяются basis и audit; запрос содержит проверенный SHA, поэтому новый коммит MR не получает апрув старого снимка. Создание одного отчёта предполагает одного ревьювера; общая запись не используется как распределённый замок."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Неизвестные поля и хвост JSON отклоняются; ID доски ограничен, ярлык без доски хешируется. rule_sources проверяет выход за корень и symlink; SHA состоит из hex и имеет полную длину. Старый publish confirm остаётся до отправки.",
+      "evidence": [
+        {
+          "object": "JSON, ID, rule_sources и MR SHA",
+          "location": "internal/reviewaudit/audit.go: readReport, Path, inventory; tools/taskctl/reviewpoll.go: approveScript",
+          "observation": "Неизвестные поля и хвост JSON отклоняются; ID доски ограничен, ярлык без доски хешируется. rule_sources проверяет выход за корень и symlink; SHA состоит из hex и имеет полную длину. Старый publish confirm остаётся до отправки."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибка записи не заменяет старый JSON. После изменившего код ребейза merge требует повторного ревью до тестов и main. curl --fail и ошибка reviewSendOnce не записывают approved.",
+      "evidence": [
+        {
+          "object": "Refresh, ребейз, HTTP отказ",
+          "location": "internal/reviewaudit/audit.go: Create; tools/shipctl/ops.go; tools/taskctl/reviewpoll.go",
+          "observation": "Ошибка записи не заменяет старый JSON. После изменившего код ребейза merge требует повторного ревью до тестов и main. curl --fail и ошибка reviewSendOnce не записывают approved."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Raw git ограничен существующим Timeout даже для cat-file с возможным fetch. Апрув использует существующий механизм send-once, ключ дополнен SHA; новый безусловный повтор POST не введён.",
+      "evidence": [
+        {
+          "object": "Вызовы git и апрув",
+          "location": "internal/gitrun/gitrun.go: RunRaw; tools/taskctl/reviewpoll.go: reviewSendOnce",
+          "observation": "Raw git ограничен существующим Timeout даже для cat-file с возможным fetch. Апрув использует существующий механизм send-once, ключ дополнен SHA; новый безусловный повтор POST не введён."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сообщения различают недоступный источник, незавершённое правило и устаревший код, содержат ID и команду refresh. В отчёте пути и хеши, значения токенов туда не записываются.",
+      "evidence": [
+        {
+          "object": "Ошибки аудита и апрува",
+          "location": "internal/reviewaudit/audit.go: Validate, inventory; tools/shipctl/push.go: reviewAuditGate",
+          "observation": "Сообщения различают недоступный источник, незавершённое правило и устаревший код, содержат ID и команду refresh. В отчёте пути и хеши, значения токенов туда не записываются."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "customer_names намеренно выбирает avatar_blob и id, потребляет лишь name. Контроль active_customer_names выбирает только name, ORDER BY id не требует возврата id. CustomerLimits выбирает только limit_value; это данные слепого сценария, production audit БД не использует.",
+      "evidence": [
+        {
+          "object": "SQL в contracts и claims",
+          "location": "tools/obeycheck/testdata/review_cases/contracts/customers.py; tools/obeycheck/testdata/review_cases/claims/storage.py",
+          "observation": "customer_names намеренно выбирает avatar_blob и id, потребляет лишь name. Контроль active_customer_names выбирает только name, ORDER BY id не требует возврата id. CustomerLimits выбирает только limit_value; это данные слепого сценария, production audit БД не использует."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "reserve содержит отдельные SELECT и UPDATE с гонкой. Контроль create_order зависит от lastrowid и выполняет пакет items внутри транзакции. Намеренный дефект отделён от допустимой последовательности oracle и описанием сценария.",
+      "evidence": [
+        {
+          "object": "Последовательности SQL в orders",
+          "location": "tools/obeycheck/testdata/review_cases/orders/checkout.py; tools/obeycheck/testdata/review_cases/orders/operations.py",
+          "observation": "reserve содержит отдельные SELECT и UPDATE с гонкой. Контроль create_order зависит от lastrowid и выполняет пакет items внутри транзакции. Намеренный дефект отделён от допустимой последовательности oracle и описанием сценария."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "reserve намеренно не защищает read-modify-write; контроль начинает BEGIN IMMEDIATE, коммитит вместе order/items и откатывает при исключении. Это содержательная пара для проверки ревьювера.",
+      "evidence": [
+        {
+          "object": "Атомарность reserve и create_order",
+          "location": "tools/obeycheck/testdata/review_cases/orders/checkout.py: reserve; tools/obeycheck/testdata/review_cases/orders/operations.py: create_order",
+          "observation": "reserve намеренно не защищает read-modify-write; контроль начинает BEGIN IMMEDIATE, коммитит вместе order/items и откатывает при исключении. Это содержательная пара для проверки ревьювера."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Цикл order_total делает SELECT для каждого SKU. Контроль load_prices убирает дубли и читает порциями 200; пустой список не строит пустой IN. Обе стороны явно включены в сценарий orders.",
+      "evidence": [
+        {
+          "object": "order_total и load_prices",
+          "location": "tools/obeycheck/testdata/review_cases/orders/checkout.py; tools/obeycheck/testdata/review_cases/orders/operations.py",
+          "observation": "Цикл order_total делает SELECT для каждого SKU. Контроль load_prices убирает дубли и читает порциями 200; пустой список не строит пустой IN. Обе стороны явно включены в сценарий orders."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Скидка platinum намеренно вычисляется внутри репозитория; контроль сохраняет готовое total. Общий reviewaudit хранит только собственный отчёт и не содержит SQL или бизнес-решений этих примеров.",
+      "evidence": [
+        {
+          "object": "CustomerRepository и сохранение рассчитанного итога",
+          "location": "tools/obeycheck/testdata/review_cases/orders/checkout.py: save_order; tools/obeycheck/testdata/review_cases/orders/operations.py: save_calculated_total",
+          "observation": "Скидка platinum намеренно вычисляется внутри репозитория; контроль сохраняет готовое total. Общий reviewaudit хранит только собственный отчёт и не содержит SQL или бизнес-решений этих примеров."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Legacy явно помечен deprecated; new_report намеренно расширяет этот путь при наличии export_v2. Это дефект сценария, не новый production маршрут devkit.",
+      "evidence": [
+        {
+          "object": "Legacy XML и новый CSV отчёт",
+          "location": "tools/obeycheck/testdata/review_cases/policy/exports.py; tools/obeycheck/testdata/review_cases/policy/REQUEST.md",
+          "observation": "Legacy явно помечен deprecated; new_report намеренно расширяет этот путь при наличии export_v2. Это дефект сценария, не новый production маршрут devkit."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "escape для действующего XML клиента является контрольным допустимым исправлением; отдельная ветка csv_mode является намеренной лишней функциональностью старого пути. Оба случая сохранены для различения оснований.",
+      "evidence": [
+        {
+          "object": "Совместимость XML клиента",
+          "location": "tools/obeycheck/testdata/review_cases/policy/exports.py: legacy_export",
+          "observation": "escape для действующего XML клиента является контрольным допустимым исправлением; отдельная ветка csv_mode является намеренной лишней функциональностью старого пути. Оба случая сохранены для различения оснований."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "rule_sources читается каждым inventory, base разрешается в SHA, refresh сохраняет старую базу при отсутствии новой. В claims настройка поля намеренно заменена email; контроль SOURCE_KINDS является ограничением реализации. TestReviewAuditIntegrationExtraSourcesAndInvalidManifest проверяет нестандартный источник.",
+      "evidence": [
+        {
+          "object": "rule_sources, base, refresh; claims field",
+          "location": "internal/reviewaudit/audit.go: inventory, Create; tools/obeycheck/testdata/review_cases/claims/claims.py",
+          "observation": "rule_sources читается каждым inventory, base разрешается в SHA, refresh сохраняет старую базу при отсутствии новой. В claims настройка поля намеренно заменена email; контроль SOURCE_KINDS является ограничением реализации. TestReviewAuditIntegrationExtraSourcesAndInvalidManifest проверяет нестандартный источник."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "base задаёт предмет ревью, refresh разрешает потерю прежних выводов с резервной копией, rule_sources добавляет проектные стандарты. Переключателя отключения обязательного аудита нет. Требуемый type в claims намеренно повторяет SOURCE_KINDS; audit_enabled имеет отдельный аварийный сценарий.",
+      "evidence": [
+        {
+          "object": "Новые опции и производный type",
+          "location": "tools/taskctl/main.go: review audit; internal/reviewaudit/audit.go: inventory; tools/obeycheck/testdata/review_cases/claims/claims.py",
+          "observation": "base задаёт предмет ревью, refresh разрешает потерю прежних выводов с резервной копией, rule_sources добавляет проектные стандарты. Переключателя отключения обязательного аудита нет. Требуемый type в claims намеренно повторяет SOURCE_KINDS; audit_enabled имеет отдельный аварийный сценарий."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Выводы меняет ревьювер в отдельном JSON, конфигурация содержит лишь список источников. customer_products в стартовом конфиге является намеренным дефектом; динамический лимит читается из CustomerLimits при каждом issue.",
+      "evidence": [
+        {
+          "object": "Данные отчёта и customer_products",
+          "location": "internal/reviewaudit/audit.go: Report, Create; tools/obeycheck/testdata/review_cases/claims/claims.py",
+          "observation": "Выводы меняет ревьювер в отдельном JSON, конфигурация содержит лишь список источников. customer_products в стартовом конфиге является намеренным дефектом; динамический лимит читается из CustomerLimits при каждом issue."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Список относительных путей через запятую описан с примером; отсутствие списка означает только канонические источники. Общие и проектные источники дополняются, не перекрываются. base обязателен при первом создании, refresh по умолчанию выключен.",
+      "evidence": [
+        {
+          "object": "rule_sources, --base и --refresh",
+          "location": "kit/skills/review/audit.md; tools/taskctl/main.go; internal/reviewaudit/audit.go",
+          "observation": "Список относительных путей через запятую описан с примером; отсутствие списка означает только канонические источники. Общие и проектные источники дополняются, не перекрываются. base обязателен при первом создании, refresh по умолчанию выключен."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "rule_sources размещён в существующем review.conf; новый слой файлов и env aliases не введён. Дополнительные пути нужны для требований по ссылкам из AGENTS, фиксированный набор общих источников сохраняется.",
+      "evidence": [
+        {
+          "object": "Подключение дополнительного стандарта",
+          "location": "internal/reviewaudit/audit.go: inventory; tools/taskctl/README.md",
+          "observation": "rule_sources размещён в существующем review.conf; новый слой файлов и env aliases не введён. Дополнительные пути нужны для требований по ссылкам из AGENTS, фиксированный набор общих источников сохраняется."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибка называет rule_sources при повторе ключа, абсолютном пути, выходе из проекта или повторении источника. Отсутствующий объявленный файл возвращает ошибку чтения; молчаливого пропуска нет.",
+      "evidence": [
+        {
+          "object": "Неверные пути, повторы и неподдержанные значения",
+          "location": "internal/reviewaudit/audit.go: inventory, Path, Create; internal/reviewaudit/audit_test.go: TestReviewAuditIntegrationExtraSourcesAndInvalidManifest",
+          "observation": "Ошибка называет rule_sources при повторе ключа, абсолютном пути, выходе из проекта или повторении источника. Отсутствующий объявленный файл возвращает ошибку чтения; молчаливого пропуска нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "README даёт минимальную команду и путь JSON. CLI тест проходит создание, отказ pending и clean с заполненным отчётом; дополнительный источник добавляется одной опцией и проверяется на повторы/выход за корень.",
+      "evidence": [
+        {
+          "object": "Пользовательский путь audit -> заполнение -> check -> clean",
+          "location": "tools/taskctl/README.md; tools/taskctl/reviewaudit_test.go: TestReviewAuditCLIWorkflow; internal/reviewaudit/audit_test.go: TestReviewAuditIntegrationExtraSourcesAndInvalidManifest",
+          "observation": "README даёт минимальную команду и путь JSON. CLI тест проходит создание, отказ pending и clean с заполненным отчётом; дополнительный источник добавляется одной опцией и проверяется на повторы/выход за корень."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "reviewaudit обозначает предмет, Create создаёт снимок, Validate проверяет рабочее дерево, ValidateAt проверяет коммит. Файлы потребителя названы reviewaudit, функции cmdReviewAudit/checkReviewAudit сохраняют семейство review.",
+      "evidence": [
+        {
+          "object": "Имена нового пакета и операций",
+          "location": "internal/reviewaudit/audit.go; internal/reviewaudit/committed.go; tools/taskctl/reviewaudit.go",
+          "observation": "reviewaudit обозначает предмет, Create создаёт снимок, Validate проверяет рабочее дерево, ValidateAt проверяет коммит. Файлы потребителя названы reviewaudit, функции cmdReviewAudit/checkReviewAudit сохраняют семейство review."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Validate не записывает вердикт; ValidateAt создаёт только временный клон и удаляет его. Существенное отличие проверки named commit явно отражено в комментарии и README.",
+      "evidence": [
+        {
+          "object": "Validate и ValidateAt",
+          "location": "internal/reviewaudit/audit.go: Validate; internal/reviewaudit/committed.go: ValidateAt",
+          "observation": "Validate не записывает вердикт; ValidateAt создаёт только временный клон и удаляет его. Существенное отличие проверки named commit явно отражено в комментарии и README."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Поля applicability/result/reason/evidence совпадают между форматом, скиллом и валидатором. Для базового коммита всюду используется base_sha; head_sha остаётся сведением снимка, проверка опирается на содержание.",
+      "evidence": [
+        {
+          "object": "Архитектура, правила, свидетельства",
+          "location": "kit/skills/review/audit.md; internal/reviewaudit/audit.go: Report, Rule, Evidence",
+          "observation": "Поля applicability/result/reason/evidence совпадают между форматом, скиллом и валидатором. Для базового коммита всюду используется base_sha; head_sha остаётся сведением снимка, проверка опирается на содержание."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "BaseSHA/HeadSHA не смешаны с CodeHash/TaskHash. Таймаут имеет time.Duration из существующего gitrun.Timeout; новых неявных единиц измерения нет.",
+      "evidence": [
+        {
+          "object": "SHA, хеши и таймаут",
+          "location": "internal/reviewaudit/audit.go: Report; internal/gitrun/gitrun.go: RunRaw",
+          "observation": "BaseSHA/HeadSHA не смешаны с CodeHash/TaskHash. Таймаут имеет time.Duration из существующего gitrun.Timeout; новых неявных единиц измерения нет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Публичные имена отражают сущности отчёта; короткие r/e/b ограничены небольшими участками чтения и сериализации. root/path/id используются последовательно в публичных операциях.",
+      "evidence": [
+        {
+          "object": "Экспортированные типы и локальные имена",
+          "location": "internal/reviewaudit/audit.go: Source, Evidence, Architecture, Report",
+          "observation": "Публичные имена отражают сущности отчёта; короткие r/e/b ограничены небольшими участками чтения и сериализации. root/path/id используются последовательно в публичных операциях."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "base участвует в ancestry, refresh в резервной копии, id в пути и проверке, sha в checkout и payload. start в новых From-функциях выбирает дерево кода отдельно от доски; удалённых молча аргументов нет.",
+      "evidence": [
+        {
+          "object": "Аргументы новых контрактов",
+          "location": "internal/reviewaudit/audit.go: Create, Validate; internal/reviewaudit/committed.go: ValidateAt; tools/taskctl/reviewpoll.go: approveScript",
+          "observation": "base участвует в ancestry, refresh в резервной копии, id в пути и проверке, sha в checkout и payload. start в новых From-функциях выбирает дерево кода отдельно от доски; удалённых молча аргументов нет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Строка Create выводится CLI с путём архива, ошибки Validate возвращаются до мутации; Raw stdout нужен для NUL имён и blob bytes. approveScript возвращает скрипт и ошибку, обе используются.",
+      "evidence": [
+        {
+          "object": "Результаты Create, Validate, RunRaw и approveScript",
+          "location": "tools/taskctl/reviewaudit.go; tools/shipctl/push.go; internal/gitrun/gitrun.go",
+          "observation": "Строка Create выводится CLI с путём архива, ошибки Validate возвращаются до мутации; Raw stdout нужен для NUL имён и blob bytes. approveScript возвращает скрипт и ошибку, обе используются."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "RunContext сохраняет прежний trim и объединённую диагностику, Raw выделен отдельно. Все изменённые вызовы approveScript передают SHA; тесты обновлены под pinning, ошибки не удалены из контракта.",
+      "evidence": [
+        {
+          "object": "Совместимость RunContext и сигнатуры approveScript",
+          "location": "internal/gitrun/gitrun.go; tools/taskctl/reviewpoll.go; tools/taskctl/reviewpoll_test.go",
+          "observation": "RunContext сохраняет прежний trim и объединённую диагностику, Raw выделен отдельно. Все изменённые вызовы approveScript передают SHA; тесты обновлены под pinning, ошибки не удалены из контракта."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Создание снимка, сбор источников, Markdown-разбор и оценка структуры имеют разные функции; CLI-публикация не смешана с проверкой JSON. Большой codeSnapshot остаётся связной операцией учёта разных git entries.",
+      "evidence": [
+        {
+          "object": "Разделение snapshot, inventory, parseRules и validateSnapshot",
+          "location": "internal/reviewaudit/audit.go",
+          "observation": "Создание снимка, сбор источников, Markdown-разбор и оценка структуры имеют разные функции; CLI-публикация не смешана с проверкой JSON. Большой codeSnapshot остаётся связной операцией учёта разных git entries."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "board выбирает две схемы пути; refresh соответствует явному CLI ключу, raw соответствует RunRaw. Булевы аргументы ограничены этими контрактами, версия JSON 1 проверяется при чтении.",
+      "evidence": [
+        {
+          "object": "Флаги board, refresh и raw",
+          "location": "internal/reviewaudit/audit.go: Path, Create; internal/gitrun/gitrun.go: runContext",
+          "observation": "board выбирает две схемы пути; refresh соответствует явному CLI ключу, raw соответствует RunRaw. Булевы аргументы ограничены этими контрактами, версия JSON 1 проверяется при чтении."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сначала проверяются версия, снимок, источники, строки правил и архитектура. Апрув выполняется после local/remote SHA и повторной проверки; ошибка HTTP возвращается до MarkApproved.",
+      "evidence": [
+        {
+          "object": "Порядок отказов и успешного пути",
+          "location": "internal/reviewaudit/audit.go: validateSnapshot; tools/taskctl/reviewpoll.go: cmdReviewApproveMRFrom",
+          "observation": "Сначала проверяются версия, снимок, источники, строки правил и архитектура. Апрув выполняется после local/remote SHA и повторной проверки; ошибка HTTP возвращается до MarkApproved."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go использует ошибки и defer, JSON structs и обычные table tests. Python collector использует pathlib/json стандартной библиотеки; стороннего стиля или зависимости не вводится.",
+      "evidence": [
+        {
+          "object": "Формат Go и Python",
+          "location": "internal/reviewaudit/*.go; tools/taskctl/reviewaudit*.go; tools/obeycheck/testdata/review_cases/collect_review.py",
+          "observation": "Go использует ошибки и defer, JSON structs и обычные table tests. Python collector использует pathlib/json стандартной библиотеки; стороннего стиля или зависимости не вводится."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки чтения источника, git, JSON и HTTP возвращаются; контекст добавляется через fmt.Errorf. Отсутствие необязательного проектного файла явно отмечается absent, это предусмотренный исход.",
+      "evidence": [
+        {
+          "object": "Причина ошибок snapshot и внешних операций",
+          "location": "internal/reviewaudit/audit.go; internal/reviewaudit/committed.go; tools/taskctl/reviewpoll.go",
+          "observation": "Ошибки чтения источника, git, JSON и HTTP возвращаются; контекст добавляется через fmt.Errorf. Отсутствие необязательного проектного файла явно отмечается absent, это предусмотренный исход."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Недостающий JSON сопровождается командой audit --base, устаревший снимок командой --refresh, незаконченная строка указывает ID. Неизвестный вход не превращается в пустой успешный отчёт.",
+      "evidence": [
+        {
+          "object": "Исправление неполного отчёта",
+          "location": "internal/reviewaudit/audit.go: Create, Validate, validateSnapshot; tools/shipctl/push.go: reviewAuditGate",
+          "observation": "Недостающий JSON сопровождается командой audit --base, устаревший снимок командой --refresh, незаконченная строка указывает ID. Неизвестный вход не превращается в пустой успешный отчёт."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарии объясняют сохранение байтов и возможный fetch, необходимость учитывать sparse entries, отдельный clone для scoped commit. Старый комментарий про достаточность одного level заменён в push.go.",
+      "evidence": [
+        {
+          "object": "Комментарии RunRaw, sparse и ValidateAt",
+          "location": "internal/gitrun/gitrun.go; internal/reviewaudit/audit.go; internal/reviewaudit/committed.go",
+          "observation": "Комментарии объясняют сохранение байтов и возможный fetch, необходимость учитывать sparse entries, отдельный clone для scoped commit. Старый комментарий про достаточность одного level заменён в push.go."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Документация описывает источники, явную базу, заполнение, refresh/backup, чистый committed код и named commit. Ограничение машинной проверки полнотой отделено от истинности наблюдений и поведенческого качества.",
+      "evidence": [
+        {
+          "object": "Публичный порядок работы и ограничения",
+          "location": "kit/skills/review/audit.md; tools/taskctl/README.md; internal/README.md",
+          "observation": "Документация описывает источники, явную базу, заполнение, refresh/backup, чистый committed код и named commit. Ограничение машинной проверки полнотой отделено от истинности наблюдений и поведенческого качества."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Добавлены тесты shared validation, CLI board/notes/corporate roots, MR SHA/HTTP отказа, push/merge и Raw bytes. Предоставленные полные логи internal и shipctl прочитаны, завершаются ok; taskctl полный прогон сообщён автором.",
+      "evidence": [
+        {
+          "object": "Тесты пакета и всех ворот",
+          "location": "internal/reviewaudit/audit_test.go; tools/taskctl/reviewaudit_test.go; tools/shipctl/reviewaudit_test.go; internal/gitrun/gitrun_test.go; tools/obeycheck/testdata/review_cases/collect_review_test.py",
+          "observation": "Добавлены тесты shared validation, CLI board/notes/corporate roots, MR SHA/HTTP отказа, push/merge и Raw bytes. Предоставленные полные логи internal и shipctl прочитаны, завершаются ok; taskctl полный прогон сообщён автором."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Подтверждены восемь мутаций с зелёными исходными прогонами: пять проверок общего валидатора, два ворот пуша и общий вход clean на доске и без неё.",
+      "evidence": [
+        {
+          "object": "Общий валидатор и связи clean/push",
+          "location": "/tmp/dk1675-mutations/results.json; /tmp/dk1675-gate-mutations/results-before-fixture.json; /tmp/dk1675-gate-mutations/results.json",
+          "observation": "Прочитаны результаты. Shared baseline=0, пять мутаций=1; push baseline=0, board_identity_removed/ship_gate_removed=1. Повтор clean после исправления fixture имеет baseline=0 и clean_gate_removed=1 с отказами board и notes. Первоначальный красный clean baseline не используется как доказательство."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "applicable",
+      "result": "pending",
+      "reason": "Локальные уровни тестов пройдены. Полное сравнительное поведенческое испытание не завершено; дальнейшие модельные прогоны остановлены после сообщения пользователя о чрезмерной стоимости. Девять завершённых запусков сохранены без общего судейского зачёта.",
+      "evidence": [
+        {
+          "object": "Пирамида проверок и слепые сценарии",
+          "location": "internal/reviewaudit/audit_test.go; tools/taskctl/reviewaudit_test.go; tools/shipctl/reviewaudit_test.go; tools/obeycheck/testdata/review_cases/README.md",
+          "observation": "Парсер проверяется без git, lifecycle и CLI используют временные репозитории, ship проверяет реальный путь до main. 12 дефектов и 12 контролей подготовлены; полный независимый поведенческий результат ещё не получен."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Независимый ревьювер проверил разделение чистых parser unit и Git integration; обе группы отдельно прошли.",
+      "evidence": [
+        {
+          "object": "Группы parser unit и Git integration",
+          "location": "internal/reviewaudit/audit_unit_test.go; internal/reviewaudit/audit_test.go; internal/README.md",
+          "observation": "Три TestReviewAuditUnit не вызывают fixture/git; остальные TestReviewAuditIntegration используют временные Git репозитории. Тела и ожидания сохранены. Отдельные прогоны: 4,8 с и 10,2 с, успешно."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Мутации отчёта должны возвращать ошибку, complete должен проходить. Merge-тест отдельно проверяет marker и неизменность main; push-тесты проверяют missing/stale/complete и чужой task ID, а не только ненулевой exit.",
+      "evidence": [
+        {
+          "object": "Ожидания отказов и контрпримеры",
+          "location": "internal/reviewaudit/audit_test.go: TestReviewAuditIntegrationRejectsIncompleteAndForged, TestReviewAuditIntegrationStaleInputs; tools/shipctl/reviewaudit_test.go",
+          "observation": "Мутации отчёта должны возвращать ошибку, complete должен проходить. Merge-тест отдельно проверяет marker и неизменность main; push-тесты проверяют missing/stale/complete и чужой task ID, а не только ненулевой exit."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Подтверждены восемь мутаций с зелёными исходными прогонами: пять проверок общего валидатора, два ворот пуша и общий вход clean на доске и без неё.",
+      "evidence": [
+        {
+          "object": "Общий валидатор и связи clean/push",
+          "location": "/tmp/dk1675-mutations/results.json; /tmp/dk1675-gate-mutations/results-before-fixture.json; /tmp/dk1675-gate-mutations/results.json",
+          "observation": "Прочитаны результаты. Shared baseline=0, пять мутаций=1; push baseline=0, board_identity_removed/ship_gate_removed=1. Повтор clean после исправления fixture имеет baseline=0 и clean_gate_removed=1 с отказами board и notes. Первоначальный красный clean baseline не используется как доказательство."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Смена SHA, кода, правил и task requirements задаётся явными файловыми/git действиями; проверки новых ворот не зависят от случайного sleep. HTTP conflict задаётся ответом тестового сервера.",
+      "evidence": [
+        {
+          "object": "Версии MR и code freshness",
+          "location": "tools/taskctl/reviewaudit_test.go; internal/reviewaudit/audit_test.go",
+          "observation": "Смена SHA, кода, правил и task requirements задаётся явными файловыми/git действиями; проверки новых ворот не зависят от случайного sleep. HTTP conflict задаётся ответом тестового сервера."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Исключение из unit-покрытия не запрошено. Логика и стык проверяются; тонкого UI в изменении нет.",
+      "evidence": [
+        {
+          "object": "Новые слои reviewaudit и CLI",
+          "location": "internal/reviewaudit/audit.go; tools/taskctl/reviewaudit_test.go",
+          "observation": "Исключение из unit-покрытия не запрошено. Логика и стык проверяются; тонкого UI в изменении нет."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый пакет вызывает runsguard.Guard(m); fixture меняет HOME и DEVKIT_HOME на t.TempDir и отключает глобальный git config. Существующие taskctl/shipctl сохраняют TestMain и изолированные setup.",
+      "evidence": [
+        {
+          "object": "Защита боевого каталога runs",
+          "location": "internal/reviewaudit/audit_test.go: TestMain, fixture",
+          "observation": "Новый пакет вызывает runsguard.Guard(m); fixture меняет HOME и DEVKIT_HOME на t.TempDir и отключает глобальный git config. Существующие taskctl/shipctl сохраняют TestMain и изолированные setup."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Архитектура devkit; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "# Архитектура devkit",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "Это название раздела Архитектура devkit; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сбор включает обязательные common-architecture и project-architecture. В данном отчёте сохранены все ARCH и все проектные блоки; отсутствующие документы не приравниваются к отсутствию ограничений.",
+      "evidence": [
+        {
+          "object": "Общие и проектные архитектурные стандарты",
+          "location": "docs/ARCHITECTURE.md; internal/reviewaudit/audit.go: inventory",
+          "observation": "Сбор включает обязательные common-architecture и project-architecture. В данном отчёте сохранены все ARCH и все проектные блоки; отсутствующие документы не приравниваются к отсутствию ограничений."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Границы; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Границы",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "Это название раздела Границы; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общая Go-логика лежит в internal, команды в существующих tools, скилл в kit/skills; Python collector вызывается путём как часть стенда, новая PATH-команда на Python не вводится.",
+      "evidence": [
+        {
+          "object": "Go-пакет, CLI и Python testdata",
+          "location": "README.md: Раскладка; internal/reviewaudit; tools/taskctl/reviewaudit.go; tools/obeycheck/testdata/review_cases/collect_review.py",
+          "observation": "Общая Go-логика лежит в internal, команды в существующих tools, скилл в kit/skills; Python collector вызывается путём как часть стенда, новая PATH-команда на Python не вводится."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Ни dashboard, ни его доменные импорты не меняются. Новая библиотека имеет потребителей taskctl и shipctl, переселения dashboard-семей нет.",
+      "evidence": [
+        {
+          "object": "Доменные пакеты дашборда",
+          "location": "tools/dashboard; diff 086cb6dc4",
+          "observation": "Ни dashboard, ни его доменные импорты не меняются. Новая библиотека имеет потребителей taskctl и shipctl, переселения dashboard-семей нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новые входы являются CLI командами; HTTP сервер и клиент дашборда не изменены. MR approval отправляет внешний HTTP запрос и не является dashboard handler.",
+      "evidence": [
+        {
+          "object": "HTTP handler и расчёты сервера",
+          "location": "tools/taskctl/reviewaudit.go; tools/shipctl/push.go",
+          "observation": "Новые входы являются CLI командами; HTTP сервер и клиент дашборда не изменены. MR approval отправляет внешний HTTP запрос и не является dashboard handler."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Изменение clean остаётся внутри taskctl; нового writer доски в dashboard не появилось, отдельная БД не добавлена.",
+      "evidence": [
+        {
+          "object": "Запись строк доски дашбордом",
+          "location": "tools/taskctl/review.go",
+          "observation": "Изменение clean остаётся внутри taskctl; нового writer доски в dashboard не появилось, отдельная БД не добавлена."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые вызовы git идут через gitrun.Run/RunRaw; taskctl и shipctl импортируют один reviewaudit. Локальной копии парсера или валидатора у потребителей нет.",
+      "evidence": [
+        {
+          "object": "Общий gitrun и reviewaudit",
+          "location": "internal/gitrun/gitrun.go; internal/reviewaudit/audit.go; tools/shipctl/push.go",
+          "observation": "Новые вызовы git идут через gitrun.Run/RunRaw; taskctl и shipctl импортируют один reviewaudit. Локальной копии парсера или валидатора у потребителей нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Инварианты; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Инварианты",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "Это название раздела Инварианты; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новых ответов API, разбора транскриптов и dashboard вызовов taskctl нет; изменения reviewaudit не вызывают эти операции.",
+      "evidence": [
+        {
+          "object": "writeJSON, parseReplies и taskctlDo",
+          "location": "tools/dashboard/server.go, sessions.go, tasks.go",
+          "observation": "Новых ответов API, разбора транскриптов и dashboard вызовов taskctl нет; изменения reviewaudit не вызывают эти операции."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Рендер и сворачивание текстовых tool_use не затронуты; JSON отчёта читается CLI, не лентой чата.",
+      "evidence": [
+        {
+          "object": "Карточки tool_use",
+          "location": "tools/dashboard/sessions.go",
+          "observation": "Рендер и сворачивание текстовых tool_use не затронуты; JSON отчёта читается CLI, не лентой чата."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "У новой функции только CLI и файл JSON; кнопок, шапок и сообщений чата изменение не добавляет.",
+      "evidence": [
+        {
+          "object": "Чат цели и формы пользователя",
+          "location": "tools/dashboard/static",
+          "observation": "У новой функции только CLI и файл JSON; кнопок, шапок и сообщений чата изменение не добавляет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Апрув MR использует существующее publish confirm; это не согласие на груминг и не PreparedQuestion. Код check-ask не меняется.",
+      "evidence": [
+        {
+          "object": "PreparedQuestion и согласие на груминг",
+          "location": "tools/taskctl/reviewpoll.go",
+          "observation": "Апрув MR использует существующее publish confirm; это не согласие на груминг и не PreparedQuestion. Код check-ask не меняется."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новых форм или действий разбора нет; taskform импортирован только ради FenceMask при чтении Markdown.",
+      "evidence": [
+        {
+          "object": "taskForm и подготовленные задачи",
+          "location": "tools/dashboard/static/app.js",
+          "observation": "Новых форм или действий разбора нет; taskform импортирован только ради FenceMask при чтении Markdown."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Из taskform используется маска Markdown; формы, thought writer и HasGroomResult не затронуты.",
+      "evidence": [
+        {
+          "object": "formContentBlock и запись мысли",
+          "location": "internal/reviewaudit/audit.go: taskContent",
+          "observation": "Из taskform используется маска Markdown; формы, thought writer и HasGroomResult не затронуты."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новые функции выполняются синхронно в CLI; общего dashboard cache и goroutine не добавлено.",
+      "evidence": [
+        {
+          "object": "Память процесса dashboard и memo",
+          "location": "internal/reviewaudit/audit.go",
+          "observation": "Новые функции выполняются синхронно в CLI; общего dashboard cache и goroutine не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-cb52f7a016c8a058",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Изменены инструкции ревьюверов, а не механизм запуска чатов. Пути клиентов, subscriptions и plist остаются прежними.",
+      "evidence": [
+        {
+          "object": "agentctl exec и plist чатов",
+          "location": "kit/agents/review-low.md; kit/agents/review-medium.md; kit/agents/review-high.md; kit/agents/review-xhigh.md",
+          "observation": "Изменены инструкции ревьюверов, а не механизм запуска чатов. Пути клиентов, subscriptions и plist остаются прежними."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Сеть MR остаётся в явной команде approve-mr; чтение доски не расширено сетевым вызовом. ValidateAt делает локальный shared clone, dashboard catchup не меняется.",
+      "evidence": [
+        {
+          "object": "Сеть dashboard",
+          "location": "tools/taskctl/reviewpoll.go; internal/reviewaudit/committed.go",
+          "observation": "Сеть MR остаётся в явной команде approve-mr; чтение доски не расширено сетевым вызовом. ValidateAt делает локальный shared clone, dashboard catchup не меняется."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Подъёма процесса в дереве dashboard не добавлено; новый git RunRaw наследует установленный cmd.Dir=root общего runner.",
+      "evidence": [
+        {
+          "object": "Рабочий каталог дочерних процессов",
+          "location": "internal/gitrun/gitrun.go",
+          "observation": "Подъёма процесса в дереве dashboard не добавлено; новый git RunRaw наследует установленный cmd.Dir=root общего runner."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Куда кладётся новое; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Куда кладётся новое",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "Это название раздела Куда кладётся новое; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые файлы находятся в internal/reviewaudit, семействах reviewaudit потребителей, kit/skills/review и obeycheck/testdata. Общий пакет добавлен в каталог internal/README, правила языков соблюдены.",
+      "evidence": [
+        {
+          "object": "Размещение новых файлов",
+          "location": "README.md: Раскладка; internal/README.md",
+          "observation": "Новые файлы находятся в internal/reviewaudit, семействах reviewaudit потребителей, kit/skills/review и obeycheck/testdata. Общий пакет добавлен в каталог internal/README, правила языков соблюдены."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новый домен является общим пакетом CLI, не доменом dashboard, поэтому каталог tools/dashboard для него не нужен.",
+      "evidence": [
+        {
+          "object": "Новый домен dashboard",
+          "location": "internal/reviewaudit",
+          "observation": "Новый домен является общим пакетом CLI, не доменом dashboard, поэтому каталог tools/dashboard для него не нужен."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Восстановление исчезнувшего конвейера; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Восстановление исчезнувшего конвейера",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "Это название раздела Восстановление исчезнувшего конвейера; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Используется только обнаружение devkit через taskhead.Devkit. Raise, PID, состояние остановки и замки запуска не меняются.",
+      "evidence": [
+        {
+          "object": "taskhead.Raise и запуск владельца",
+          "location": "internal/reviewaudit/audit.go: inventory",
+          "observation": "Используется только обнаружение devkit через taskhead.Devkit. Raise, PID, состояние остановки и замки запуска не меняются."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Изменены проверки до/после git rebase; автоматическое восстановление сессий, journal квоты и выбор модели не затронуты.",
+      "evidence": [
+        {
+          "object": "recovery.py и квота восстановления",
+          "location": "tools/shipctl/ops.go",
+          "observation": "Изменены проверки до/после git rebase; автоматическое восстановление сессий, journal квоты и выбор модели не затронуты."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Записывается вердикт ревью, который не является квитанцией запуска. Код закрытия инцидента и проверки PID остаётся прежним.",
+      "evidence": [
+        {
+          "object": "Подтверждение восстановления и инцидент",
+          "location": "tools/taskctl/review.go",
+          "observation": "Записывается вердикт ревью, который не является квитанцией запуска. Код закрытия инцидента и проверки PID остаётся прежним."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Стиль devkit; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "# Стиль devkit",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "Это название раздела Стиль devkit; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общий список STYLE и проектные блоки сохранены в отчёте; project-style включён независимо от common-style и сверяется с содержимым файла.",
+      "evidence": [
+        {
+          "object": "Оба уровня правил стиля",
+          "location": "docs/STYLEGUIDE.md; RULES.style.md; internal/reviewaudit/audit.go: inventory",
+          "observation": "Общий список STYLE и проектные блоки сохранены в отчёте; project-style включён независимо от common-style и сверяется с содержимым файла."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Ошибки и отказы; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Ошибки и отказы",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "Это название раздела Ошибки и отказы; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Не добавлена самостоятельная проверочная утилита по образцу describe.py. audit-check является подкомандой существующего taskctl и сохраняет его контракт msg/error и fail; JSON полноты не является потоком находок doctor.",
+      "evidence": [
+        {
+          "object": "audit-check как операция taskctl",
+          "location": "tools/taskctl/reviewaudit.go; tools/taskctl/main.go",
+          "observation": "Не добавлена самостоятельная проверочная утилита по образцу describe.py. audit-check является подкомандой существующего taskctl и сохраняет его контракт msg/error и fail; JSON полноты не является потоком находок doctor."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новых hook-рубежей нет. audit-check использует существующий CLI fail; формат отказа git hook не изменён.",
+      "evidence": [
+        {
+          "object": "stderr git hooks",
+          "location": "tools/taskctl/main.go",
+          "observation": "Новых hook-рубежей нет. audit-check использует существующий CLI fail; формат отказа git hook не изменён."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Раскладка тестов; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Раскладка тестов",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "Это название раздела Раскладка тестов; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Каждый тест лежит рядом со своим модулем с _test.go или _test.py. Дефектный policy/tests/unit/test_policy.py является входом слепого сценария, не случайно добавленным тестом devkit.",
+      "evidence": [
+        {
+          "object": "Размещение тестовых файлов",
+          "location": "internal/reviewaudit/audit_test.go; tools/taskctl/reviewaudit_test.go; tools/shipctl/reviewaudit_test.go; tools/obeycheck/testdata/review_cases/collect_review_test.py",
+          "observation": "Каждый тест лежит рядом со своим модулем с _test.go или _test.py. Дефектный policy/tests/unit/test_policy.py является входом слепого сценария, не случайно добавленным тестом devkit."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go setup использует t.TempDir, collector создаёт временный проект. Живой devkit не используется как изменяемый тестовый репозиторий; ValidateAt также работает в временном clone.",
+      "evidence": [
+        {
+          "object": "Временные репозитории и collector fixture",
+          "location": "internal/reviewaudit/audit_test.go: fixture; tools/shipctl/reviewaudit_test.go; tools/obeycheck/testdata/review_cases/collect_review_test.py",
+          "observation": "Go setup использует t.TempDir, collector создаёт временный проект. Живой devkit не используется как изменяемый тестовый репозиторий; ValidateAt также работает в временном clone."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Подтверждены восемь мутаций с зелёными исходными прогонами: пять проверок общего валидатора, два ворот пуша и общий вход clean на доске и без неё.",
+      "evidence": [
+        {
+          "object": "Общий валидатор и связи clean/push",
+          "location": "/tmp/dk1675-mutations/results.json; /tmp/dk1675-gate-mutations/results-before-fixture.json; /tmp/dk1675-gate-mutations/results.json",
+          "observation": "Прочитаны результаты. Shared baseline=0, пять мутаций=1; push baseline=0, board_identity_removed/ship_gate_removed=1. Повтор clean после исправления fixture имеет baseline=0 и clean_gate_removed=1 с отказами board и notes. Первоначальный красный clean baseline не используется как доказательство."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый fixture задаёт HOME, DEVKIT_HOME, GIT_CONFIG_NOSYSTEM и GIT_CONFIG_GLOBAL. Старые ship fixtures получили необходимые standards, шаблоны и report, не привязку к рабочему дереву автора; full internal/shipctl логи зелёные.",
+      "evidence": [
+        {
+          "object": "Изоляция окружения тестов",
+          "location": "internal/reviewaudit/audit_test.go: fixture; tools/taskctl/reviewaudit_test.go; tools/shipctl/ops_test.go: completeReviewAudit",
+          "observation": "Новый fixture задаёт HOME, DEVKIT_HOME, GIT_CONFIG_NOSYSTEM и GIT_CONFIG_GLOBAL. Старые ship fixtures получили необходимые standards, шаблоны и report, не привязку к рабочему дереву автора; full internal/shipctl логи зелёные."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Сценарии файловые/CLI, браузер dashboard не запускается. Ограничение live browser для этого изменения не востребовано.",
+      "evidence": [
+        {
+          "object": "Браузер живого стенда",
+          "location": "tools/obeycheck/scenarios/81-review-contracts.md",
+          "observation": "Сценарии файловые/CLI, браузер dashboard не запускается. Ограничение live browser для этого изменения не востребовано."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Это название раздела Имена; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками.",
+      "evidence": [
+        {
+          "object": "## Имена",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "Это название раздела Имена; самостоятельного предписания в заголовке нет. Содержательные пункты раздела разобраны отдельными строками."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имена отражают домен review и общий пакет audit; HTTP handlers и шаги rehearsal не добавляются, их соглашения сохраняются.",
+      "evidence": [
+        {
+          "object": "Семейство файлов и функций reviewaudit",
+          "location": "tools/taskctl/reviewaudit.go; tools/shipctl/reviewaudit_test.go; internal/reviewaudit/audit.go",
+          "observation": "Имена отражают домен review и общий пакет audit; HTTP handlers и шаги rehearsal не добавляются, их соглашения сохраняются."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Прочитаны новые инструкции и пользовательские примеры. Команды/поля сохранены буквально, заголовки на русском, формат стрелок и символов соответствует ядру; машинные поля данного отчёта не переписывались.",
+      "evidence": [
+        {
+          "object": "Русская проза и источники правил",
+          "location": "kit/skills/review/audit.md; tools/taskctl/README.md; tools/obeycheck/testdata/review_cases/README.md",
+          "observation": "Прочитаны новые инструкции и пользовательские примеры. Команды/поля сохранены буквально, заголовки на русском, формат стрелок и символов соответствует ядру; машинные поля данного отчёта не переписывались."
+        }
+      ]
+    }
+  ]
+}

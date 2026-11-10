@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -245,16 +246,19 @@ type preparedConsentCapture struct {
 	key string
 }
 
+// capturePreparedFormConsent находит живые вопросы согласования, которые
+// подтверждение с формы закрывает. Вопрос узнаётся по показанному снимку, той
+// же сверкой, какой отвечает чат (CheckPreparedAnswer), а не по открытой
+// нативной модалке: сессия груминга спрашивает taskctl из хода, и окно
+// нативного инструмента у неё пусто. Прежние ворота согласия промахивались на
+// каждом таком вопросе, признак переживал подтверждение, и чат груминга стоял
+// «ждёт человека» после применённого разбора (живой случай DK-1672, DK-1679).
 func (s *server) capturePreparedFormConsent(tree string, request draftproposal.ConfirmRequest) ([]preparedConsentCapture, error) {
 	var captures []preparedConsentCapture
 	for _, h := range askScan(tree, s.now(), nil) {
 		shown := preparedFromAsk(h.Ask)
 		sid := h.Ask.Session
 		if shown == nil || shown.Tree != tree || !chatKeyRe.MatchString(sid) || chat.CheckPreparedAnswer(*shown, tree, request) != nil {
-			continue
-		}
-		current, _ := s.groomConsent(tree, sid)
-		if current == nil || !reflect.DeepEqual(*current, *shown) {
 			continue
 		}
 		answer := proposalAnswer{Anchor: shown.Anchor, Tree: tree, Snapshots: request.Snapshots, Decisions: request.Decisions}
@@ -280,4 +284,59 @@ func finishPreparedFormConsent(captures []preparedConsentCapture, key string) er
 		}
 	}
 	return nil
+}
+
+// deliverPreparedFormReceipt довозит исход подтверждения с формы сессии,
+// которая спрашивала согласие (DK-1679). Форма отвечает мимо чата, и без этой
+// дороги спрашивавший узнавал о решении никогда: признак снят, чат молчит, а
+// дозор мёртвых окон откладывал бы реплику в файл записи. Квитанция идёт той
+// же строкой и той же дорогой, что и ответ в чате: клавишами в живое окно
+// спрашивавшего либо носителю без терминала, и лишь без адреса ложится
+// безадресной строкой для сессии, которая продолжит запись.
+func (s *server) deliverPreparedFormReceipt(p *Project, captures []preparedConsentCapture, key string, results []draftproposal.Receipt, repeated bool, request draftproposal.ConfirmRequest) {
+	wire, anchor := "", ""
+	var undelivered []string
+	for _, capture := range captures {
+		if key == "" || capture.key != key || capture.ask.Ask.Session == "" {
+			continue
+		}
+		if wire == "" {
+			anchor = capture.ask.Ask.Task
+			payload, err := json.Marshal(struct {
+				Text     string                  `json:"text"`
+				Key      string                  `json:"key"`
+				Results  []draftproposal.Receipt `json:"results"`
+				Repeated bool                    `json:"repeated"`
+				Proposal proposalAnswer          `json:"proposal"`
+			}{"", key, results, repeated, proposalAnswer{Anchor: anchor, Tree: p.Path, Snapshots: request.Snapshots, Decisions: request.Decisions}})
+			if err != nil {
+				s.logf("квитанция подтверждения с формы не собралась: %v", err)
+				return
+			}
+			wire = "Ответ панели обработан taskctl: " + string(payload)
+		}
+		sid := capture.ask.Ask.Session
+		if s.processedNativeConsent(p.Path, sid) {
+			// Нативная модалка вопроса ещё открыта, и клавиши ушли бы в неё,
+			// а не в разговор: у формы тот же барьер, что и у ответа в чате.
+			peer, live := s.peers()[sid]
+			if live && peerSay(peer.Sock, wire) == nil {
+				continue
+			}
+			if _, _, err := putChat(stage.MainRoot(p.Path), chat.TaskName(anchor), wire, chat.Line(s.now(), sid, wire)); err != nil {
+				s.logf("исход подтверждения с формы не записан в разговор %s: %v", sid, err)
+			}
+			continue
+		}
+		if s.deliverToCarrier(p, sid, anchor, wire) {
+			continue
+		}
+		undelivered = append(undelivered, sid)
+	}
+	if len(undelivered) == 0 {
+		return
+	}
+	if _, _, err := putChat(stage.MainRoot(p.Path), chat.TaskName(anchor), wire, chat.TaskLine(s.now(), wire)); err != nil {
+		s.logf("исход подтверждения с формы не доставлен (%s): %v", strings.Join(undelivered, ", "), err)
+	}
 }

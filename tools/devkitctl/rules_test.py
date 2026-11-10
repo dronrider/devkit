@@ -536,38 +536,6 @@ class CoreBudgetTest(unittest.TestCase):
         self.assertLessEqual(board, 1500,
                              "ядро правил доски длиннее бюджета 1500 символов: %d" % board)
 
-
-# regcheck:test-begin
-class CoreBudgetWeighSyncTest(unittest.TestCase):
-    """Сверка двух владельцев одной планки: бюджет ядра судят и weigh.py
-    (CORE_LIMIT), и test_core_budgets выше, и разъезд этих значений уже
-    красил main: волна правок ночи 9.11 проходила weigh, а rules_test судил
-    её отставшей планкой. Планка читается из среза, которым судит сам
-    test_core_budgets, поэтому тест красный ровно на расхождении значений
-    и зелёный на согласии, в какую бы сторону ни разъехались владельцы.
-    """
-
-    def test_core_limit_matches_weigh_owner(self):
-        # Импорт локальный, а не в общем списке наверху: класс уезжает на
-        # старый код целиком (regcheck --inline), и там верхней строки
-        # импорта ещё нет.
-        import inspect
-        import weigh
-        src = inspect.getsource(CoreBudgetTest.test_core_budgets)
-        judged = re.search(r"assertLessEqual\(\s*core,\s*([0-9]+)", src)
-        told = re.search(r"ядро правил длиннее бюджета ([0-9]+) символов", src)
-        self.assertTrue(judged and told,
-                        "в test_core_budgets не нашлась планка ядра: "
-                        "сверка отстала от кода, обнови отбор")
-        self.assertEqual(int(judged.group(1)), int(told.group(1)),
-                         "сообщение называет бюджет %s, а судит планкой %s"
-                         % (told.group(1), judged.group(1)))
-        self.assertEqual(int(judged.group(1)), weigh.CORE_LIMIT,
-                         "планка ядра %s разошлась с weigh.CORE_LIMIT %d: "
-                         "бюджет одного ядра живёт в двух значениях"
-                         % (judged.group(1), weigh.CORE_LIMIT))
-# regcheck:test-end
-
     def test_core_does_not_copy_the_full_text(self):
         # Ядро и полный текст никогда не лежат в контексте вместе, но
         # переписанный под одну строку пункт легко подменить копипастой из
@@ -610,6 +578,81 @@ class CoreBudgetWeighSyncTest(unittest.TestCase):
             self.assertEqual("@.devkit/devkit/RULES.board.core.md\n" in thin, board, thin)
             self.assertNotIn("RULES.board.md\n", thin,
                              "в тонкий файл уехал полный текст правил доски")
+
+
+# regcheck:test-begin
+class CoreBudgetWeighSyncTest(unittest.TestCase):
+    """Сверка владельцев бюджетных планок: ядро и карман доски судят и
+    weigh.py (CORE_LIMIT, BOARD_LIMIT), и test_core_budgets выше, и разъезд
+    значений уже красил main: волна правок ночи 9.11 проходила weigh,
+    а rules_test судил её отставшей планкой. Планки читаются из среза,
+    которым судит сам test_core_budgets, поэтому сверка красная ровно
+    на расхождении значений и зелёная на согласии, в какую бы сторону ни
+    разъехались владельцы. Рядом сторож состава: вставка этого класса
+    между методами CoreBudgetTest однажды молча перевезла сторожи бюджета
+    сюда, и выборочный прогон по имени класса их потерял.
+    """
+
+    def test_core_limit_matches_weigh_owner(self):
+        # Импорт локальный, а не в общем списке наверху: класс уезжает на
+        # старый код целиком (regcheck --inline), и там верхней строки
+        # импорта ещё нет.
+        import inspect
+        import weigh
+        src = inspect.getsource(CoreBudgetTest.test_core_budgets)
+        judged = re.search(r"assertLessEqual\(\s*core,\s*([0-9]+)", src)
+        told = re.search(r"ядро правил длиннее бюджета ([0-9]+) символов", src)
+        self.assertTrue(judged and told,
+                        "в test_core_budgets не нашлась планка ядра: "
+                        "сверка отстала от кода, обнови отбор")
+        self.assertEqual(int(judged.group(1)), int(told.group(1)),
+                         "сообщение называет бюджет %s, а судит планкой %s"
+                         % (told.group(1), judged.group(1)))
+        self.assertEqual(int(judged.group(1)), weigh.CORE_LIMIT,
+                         "планка ядра %s разошлась с weigh.CORE_LIMIT %d: "
+                         "бюджет одного ядра живёт в двух значениях"
+                         % (judged.group(1), weigh.CORE_LIMIT))
+
+    def test_board_limit_matches_weigh_owner(self):
+        # Сегодня значения согласованы (1500 = 1500), красноты на базе это
+        # не даёт: сторож на будущее, чтобы поднятие BOARD_LIMIT в weigh.py
+        # не повторило на доске историю ядра ночи 9.11.
+        import inspect
+        import weigh
+        src = inspect.getsource(CoreBudgetTest.test_core_budgets)
+        judged = re.search(r"assertLessEqual\(\s*board,\s*([0-9]+)", src)
+        told = re.search(r"ядро правил доски длиннее бюджета ([0-9]+) символов", src)
+        self.assertTrue(judged and told,
+                        "в test_core_budgets не нашлась планка доски: "
+                        "сверка отстала от кода, обнови отбор")
+        self.assertEqual(int(judged.group(1)), int(told.group(1)),
+                         "сообщение называет бюджет доски %s, а судит планкой %s"
+                         % (told.group(1), judged.group(1)))
+        self.assertEqual(int(judged.group(1)), weigh.BOARD_LIMIT,
+                         "планка доски %s разошлась с weigh.BOARD_LIMIT %d: "
+                         "бюджет одного кармана живёт в двух значениях"
+                         % (judged.group(1), weigh.BOARD_LIMIT))
+
+    def test_budget_guards_live_in_core_budget_class(self):
+        # Комментарий и пустые строки не закрывают тело класса: def
+        # с отступом 4 после вставленного класса становится его методом,
+        # полный discover при этом зелёный, а выборочный прогон по имени
+        # CoreBudgetTest молча теряет сторожа. Инвариант: сторожи бюджета
+        # лежат методами CoreBudgetTest, чужие классы вставляются ниже
+        # последнего его метода.
+        guards = (
+            "test_core_files_are_cut",
+            "test_core_budgets",
+            "test_core_does_not_copy_the_full_text",
+            "test_thin_file_is_built_for_the_cut_core",
+        )
+        drifted = [name for name in guards if not hasattr(CoreBudgetTest, name)]
+        self.assertEqual(
+            drifted, [],
+            "сторожи бюджета уехали из CoreBudgetTest в соседний класс: %s; "
+            "вставляй классы ниже последнего метода CoreBudgetTest"
+            % ", ".join(drifted))
+# regcheck:test-end
 
 
 class LayoutTest(unittest.TestCase):

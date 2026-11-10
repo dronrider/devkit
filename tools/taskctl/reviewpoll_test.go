@@ -363,7 +363,8 @@ func TestApproveMRConfirmNeedsWord(t *testing.T) {
 	if err := d.save(); err != nil {
 		t.Fatal(err)
 	}
-	calls := stubPoll(t, mrOpen, threadQuiet)
+	sha := prepareApprovalAudit(t, root)
+	calls := stubPoll(t, `{"state":"opened","sha":"`+sha+`"}`, threadQuiet)
 	if _, err := cmdReviewApproveMR(root, "XR-005", false, CommitOpts{}); err == nil {
 		t.Fatal("confirm поставил апрув без слова человека")
 	}
@@ -373,7 +374,7 @@ func TestApproveMRConfirmNeedsWord(t *testing.T) {
 	if _, err := cmdReviewApproveMR(root, "XR-005", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*calls) != 1 || !strings.Contains((*calls)[0], "/approve") {
+	if len(*calls) != 2 || !strings.Contains((*calls)[1], "/approve") {
 		t.Fatalf("апрув ушёл не так: %v", *calls)
 	}
 	if got := draftOf(t, root).Mark; got != "апрув поставлен" {
@@ -391,11 +392,12 @@ func TestApproveMRAutoGoesAlone(t *testing.T) {
 	if err := d.save(); err != nil {
 		t.Fatal(err)
 	}
-	calls := stubPoll(t, mrOpen, threadQuiet)
+	sha := prepareApprovalAudit(t, root)
+	calls := stubPoll(t, `{"state":"opened","sha":"`+sha+`"}`, threadQuiet)
 	if _, err := cmdReviewApproveMR(root, "XR-005", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*calls) != 1 {
+	if len(*calls) != 2 {
 		t.Fatalf("зовов трекера %d: %v", len(*calls), *calls)
 	}
 }

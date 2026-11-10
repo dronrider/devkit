@@ -88,6 +88,7 @@ func TestNoteLevelRewrites(t *testing.T) {
 // правок на новом коммите счёт идёт дальше, а не с единицы.
 func TestNoteCleanCountsRounds(t *testing.T) {
 	root := noteRepo(t)
+	completeReviewAudit(t, root, "MR-42")
 	msg, err := cmdNoteClean(root, "MR-42", "путь от симптома пройден", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +101,7 @@ func TestNoteCleanCountsRounds(t *testing.T) {
 		t.Fatalf("заметка начинается не со строки круга:\n%s", note)
 	}
 	noteCommitFile(t, root, "code.txt", "второй\n", "fix: правки по замечаниям")
+	completeReviewAudit(t, root, "MR-42")
 	msg, err = cmdNoteClean(root, "MR-42", "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)

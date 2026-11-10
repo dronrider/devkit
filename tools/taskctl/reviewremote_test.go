@@ -293,10 +293,14 @@ func TestReviewApproveDoesNotOverwriteConcurrentMarkOrResend(t *testing.T) {
 	if _, err := cmdReviewDraft(root, "XR-005", "одно замечание", reviewDraftParams{}, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	sha := prepareApprovalAudit(t, root)
 	old := runPublish
 	t.Cleanup(func() { runPublish = old })
 	calls := 0
-	runPublish = func(string) ([]byte, error) {
+	runPublish = func(script string) ([]byte, error) {
+		if !strings.Contains(script, "/approve") {
+			return []byte(`{"sha":"` + sha + `"}`), nil
+		}
 		calls++
 		lock, err := drafttx.Acquire(root)
 		if err != nil {

@@ -11,6 +11,7 @@ TestBoardGate гоняет калитку без shipctl в PATH: рубеж о�
 (DK-602) собирает shipctl и кладёт его в PATH: калитка судит по коммитам,
 и код с легитимным ID задачи проходит вместе с доской в одном диапазоне.
 """
+import json
 import os
 import subprocess
 import tempfile
@@ -210,19 +211,36 @@ class TestBoardGateWithShipctl(unittest.TestCase):
     """DK-602: с shipctl в PATH калитка судит диапазон по коммитам, а не
     целиком (shipctl push --check-only, tools/shipctl/push.go). Код-коммит
     с ID задачи не из Backlog проходит вместе с доской в одном диапазоне,
-    голый код без ID и код с ID из Backlog отбиваются, как и раньше."""
+    а после DK-1675 ещё и с полным актуальным аудитом ревью за ярлыком в
+    заметке. Голый код без ID и код с ID из Backlog отбиваются, как и раньше."""
 
     @classmethod
     def setUpClass(cls):
         cls.bindir = tempfile.mkdtemp()
-        r = subprocess.run(
-            ["go", "build", "-o", os.path.join(cls.bindir, "shipctl"), "."],
-            cwd=os.path.join(REPO_ROOT, "tools", "shipctl"),
-            env=dict(os.environ, GOWORK="off"),
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            raise unittest.SkipTest("shipctl не собрался: %s" % r.stderr)
+        for tool in ("shipctl", "taskctl"):
+            r = subprocess.run(
+                ["go", "build", "-o", os.path.join(cls.bindir, tool), "."],
+                cwd=os.path.join(REPO_ROOT, "tools", tool),
+                env=dict(os.environ, GOWORK="off"),
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                raise unittest.SkipTest("%s не собрался: %s" % (tool, r.stderr))
+        # Дерево общих правил для снимка аудита (DK-1675): живой чекаут devkit
+        # брал бы RULES с машины, а ворот сверяет их снимок с зафиксированным
+        # в отчёте моментом ревью. Состав тот же, что у fakeDevkit у тестов
+        # shipctl: три правила с ID и оболочка конвейера как маркер дома.
+        cls.standards = tempfile.mkdtemp()
+        for name, text in {
+            "RULES.architecture.md": "# Architecture\n\n- **ARCH-001.** Keep the data boundary explicit.\n",
+            "RULES.style.md": "# Style\n\n- **STYLE-001.** Name values by purpose.\n",
+            "RULES.md": "# Rules\n\n## Тесты обязательны\n\n- **TEST-001.** Exercise changed behavior.\n",
+            os.path.join("kit", "skills", "board-task", "task-run.py"): "import sys\n",
+        }.items():
+            full = os.path.join(cls.standards, name)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as f:
+                f.write(text)
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -274,14 +292,87 @@ class TestBoardGateWithShipctl(unittest.TestCase):
 
     def note(self, line):
         """След ревью git-заметкой на HEAD: так его пишет taskctl review level
-        в репозитории без доски, и по нему ворот пропускает код."""
+        в репозитории без доски, строка «Ярлык: ...» под следом называет отчёт
+        аудита, и по ним обоим ворот пропускает код."""
         self.git("notes", "--ref=review", "add", "-f", "-m", line, "HEAD")
+
+    def audit(self, label, base):
+        """Полный актуальный аудит ревью (DK-1675): снимок правил и кода
+        пишет taskctl review audit, выводы по правилам фикстура закрывает
+        сама, как их закрывает ревьювер. Доска на время вызова прячется:
+        у репозитория с доской taskctl кладёт отчёт в docs/tasks/, а ворот
+        по заметке ревью читает .devkit/review-audits/."""
+        board = os.path.join(self.repo, "docs", "TASKS.md")
+        with open(board) as f:
+            saved = f.read()
+        os.remove(board)
+        try:
+            r = subprocess.run(
+                [os.path.join(self.bindir, "taskctl"), "review", "audit", label,
+                 "--base", base, "-C", self.repo],
+                env=dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null",
+                         GIT_CONFIG_SYSTEM="/dev/null",
+                         DEVKIT_HOME=self.standards,
+                         PATH=self.bindir + os.pathsep + os.environ.get("PATH", "")),
+                capture_output=True, text=True)
+        finally:
+            with open(board, "w") as f:
+                f.write(saved)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        audit_dir = os.path.join(self.repo, ".devkit", "review-audits")
+        reports = [n for n in os.listdir(audit_dir) if n.endswith(".json")]
+        self.assertEqual(len(reports), 1, reports)
+        path = os.path.join(audit_dir, reports[0])
+        with open(path) as f:
+            report = json.load(f)
+        report["architecture"] = {
+            "goal": "проверить правку кода",
+            "decision": "правка проходит калитку пуша",
+            "boundaries": "синтетический репозиторий, внешних данных нет",
+            "alternative": "оставить прежнее поведение",
+            "justification": "фикстуре нужно изменённое поведение",
+            "result": "checked",
+            "evidence": ["правка локальна и не выходит за рамки фикстуры"],
+        }
+        for rule in report["rules"]:
+            rule["applicability"] = "applicable"
+            rule["result"] = "checked"
+            rule["reason"] = "правило разобрано по фикстурной правке"
+            rule["evidence"] = [{"object": "правка фикстуры",
+                                 "location": "tools/app.txt",
+                                 "observation": "поведение просмотрено для ворот пуша"}]
+        with open(path, "w") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+            f.write("\n")
 
     def test_mixed_range_with_legit_id_passes(self):
         self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
+        self.audit("external-review", self.base)
+        self.note("Уровень 1 до %s: рутина\nЯрлык: external-review" % head[:7])
+        self.assertEqual(self.push(head, self.base, CLAUDECODE="1", DEVKIT_HOME=self.standards).returncode, 0)
+
+    def test_note_without_audit_label_is_refused(self):
+        """DK-1675: строка уровня без ярлыка отчёта код не пускает, ворот
+        требует полный актуальный аудит, а не только уровень тщательности."""
+        self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
         self.note("Уровень 1 до %s: рутина" % head[:7])
-        self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 0)
+        r = self.push(head, self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+
+    def test_stale_audit_is_refused(self):
+        """Код, дописанный после аудита, отчётом не покрыт: снимок не
+        сходится, и ворот отбивает пуш до обновления отчёта."""
+        self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
+        self.audit("external-review", self.base)
+        head = self.commit("feat: DK-001 ещё правка", {"tools/app.txt": "правка 2\n"})
+        self.note("Уровень 1 до %s: рутина\nЯрлык: external-review" % head[:7])
+        r = self.push(head, self.base, CLAUDECODE="1", DEVKIT_HOME=self.standards)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
 
     def test_code_without_review_trace_is_refused(self):
         """Код с легитимным ID задачи, но без следа ревью, калитка не пускает:

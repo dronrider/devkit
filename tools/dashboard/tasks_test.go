@@ -69,6 +69,48 @@ func buildTaskctl(t *testing.T) string {
 	return realTaskctlPath
 }
 
+var (
+	dashboardOnce     sync.Once
+	dashboardPath     string
+	dashboardErr      error
+	dashboardBuildDir string
+)
+
+// buildDashboard собирает бинарь самого пакета один раз на прогон (DK-1691):
+// браузерные стенды поднимают настоящий сервер отдельным процессом, и сборка
+// внутри каждого теста повторяла одну и ту же работу по несколько секунд.
+// Готовый бинарь принимает DASHBOARD_ACCEPT_BIN, как taskctl свой путь.
+func buildDashboard(t *testing.T) string {
+	t.Helper()
+	if bin := os.Getenv("DASHBOARD_ACCEPT_BIN"); bin != "" {
+		if !filepath.IsAbs(bin) {
+			t.Fatal("DASHBOARD_ACCEPT_BIN должен быть абсолютным путём")
+		}
+		if _, err := os.Stat(bin); err != nil {
+			t.Fatal(err)
+		}
+		return bin
+	}
+	dashboardOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "dashboard-self")
+		if err != nil {
+			dashboardErr = err
+			return
+		}
+		dashboardBuildDir = dir
+		dashboardPath = filepath.Join(dir, "dashboard")
+		cmd := exec.Command("go", "build", "-o", dashboardPath, ".")
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			dashboardErr = fmt.Errorf("go build dashboard: %v\n%s", err, out)
+		}
+	})
+	if dashboardErr != nil {
+		t.Fatal(dashboardErr)
+	}
+	return dashboardPath
+}
+
 // TestMain снимает с прогона ID живой сессии и убирает за собой собранный
 // бинарь. ID тут не мелочь: стенды зовут настоящий taskctl, тот отмечает
 // работу сессии строкой в реестре (touchWork -> sessions.Touch), и берётся ID
@@ -114,6 +156,9 @@ func TestMain(m *testing.M) {
 	os.RemoveAll(spare)
 	if realTaskctlBuildDir != "" {
 		os.RemoveAll(realTaskctlBuildDir)
+	}
+	if dashboardBuildDir != "" {
+		os.RemoveAll(dashboardBuildDir)
 	}
 	os.Exit(code)
 }
@@ -1636,6 +1681,32 @@ func findChrome() string {
 		return found[len(found)-1]
 	}
 	return ""
+}
+
+// needPlaywright проверяет, что node видит модуль playwright, и когда окружение
+// его не несёт, дополняет NODE_PATH глобальными каталогами модулей машины.
+// Отдельный прогон пакета стартует без NODE_PATH, и без этой доводки браузерный
+// шаг молча превращался бы в пропуск, а пропуск неотличим от зелёного прогона.
+func needPlaywright(t *testing.T, node string) bool {
+	t.Helper()
+	if _, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err == nil {
+		return true
+	}
+	current := os.Getenv("NODE_PATH")
+	for _, dir := range []string{"/opt/homebrew/lib/node_modules", "/usr/local/lib/node_modules"} {
+		if _, err := os.Stat(filepath.Join(dir, "playwright")); err != nil {
+			continue
+		}
+		joined := dir
+		if current != "" {
+			joined += string(os.PathListSeparator) + current
+		}
+		t.Setenv("NODE_PATH", joined)
+		if _, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // chromeStand собирает страницу замера: настоящий index.html со своими стилями,

@@ -36,9 +36,9 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
-			t.Fatalf("playwright: %s %v", out, err)
+			t.Fatal("playwright недоступен; задать NODE_PATH")
 		}
 		t.Skip("нет playwright")
 	}
@@ -98,15 +98,7 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 	other := filepath.Join(filepath.Dir(st.e.proj), "other")
 	mkProject(t, other)
 	putDoc(t, other, "docs/tasks/XR-4.md", "# XR-4: другая задача\n")
-	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "dashboard")
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("dashboard build: %s %v", out, err)
-		}
-	}
+	bin := buildDashboard(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

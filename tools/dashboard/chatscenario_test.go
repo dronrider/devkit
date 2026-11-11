@@ -27,16 +27,9 @@ type scenarioStand struct {
 func newScenarioStand(t *testing.T) *scenarioStand {
 	t.Helper()
 	e, c := chatEnv(t)
-	bin := os.Getenv("TASKCTL_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "taskctl")
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Dir = "../taskctl"
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("сборка taskctl: %v\n%s", err, out)
-		}
-	}
+	// Настоящий taskctl собирается один на прогон (DK-1691): стендов с ним
+	// много, и сборка в каждом повторяла одну и ту же работу.
+	bin := buildTaskctl(t)
 	old := taskctlBin
 	taskctlBin = bin
 	t.Cleanup(func() { taskctlBin = old })

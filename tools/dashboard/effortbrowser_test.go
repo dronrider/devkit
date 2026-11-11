@@ -40,11 +40,11 @@ func effortMenuBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_EFFORT_REQUIRE_BROWSER") == "1" {
-			t.Fatalf("обязательный playwright недоступен: %s", out)
+			t.Fatal("обязательный playwright недоступен; задать NODE_PATH")
 		}
-		t.Skipf("playwright недоступен; задать NODE_PATH: %s", out)
+		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
 	e, _ := chatEnv(t)
 	probe := exec.Command(node, "testdata/effort_browser.mjs", e.srv.URL, chrome, e.cfg.Token)

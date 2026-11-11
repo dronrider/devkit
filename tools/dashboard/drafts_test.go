@@ -1985,21 +1985,13 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
-			t.Fatalf("playwright: %v %s", err, out)
+			t.Fatal("playwright недоступен; задать NODE_PATH")
 		}
 		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
-	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "dashboard")
-		build := exec.Command("go", "build", "-o", bin, ".")
-		build.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build: %v %s", err, out)
-		}
-	}
+	bin := buildDashboard(t)
 	e, _, _ := tasksEnv(t)
 	kit, err := filepath.Abs("../..")
 	if err != nil {

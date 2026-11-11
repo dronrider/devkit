@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,70 @@ func TestReleaseKeepsHandedLock(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("владелец не снял свой замок")
 	}
+}
+
+func TestHoldForDelegateRefusesBusyTask(t *testing.T) {
+	// Внешний исполнитель поднимается через agentctl run, когда задача уже
+	// держит живую голову: отказ занятого замка, второго исполнителя в то же
+	// дерево не встаёт.
+	home := t.TempDir()
+	path := LockPath(home, "DK-1")
+	owner := liveProc(t)
+	if err := Take(path, owner); err != nil {
+		t.Fatal(err)
+	}
+	freshBeat(t, path)
+	hold, err := HoldForDelegate(home, "DK-1", "")
+	if _, ok := err.(*BusyError); !ok {
+		t.Fatalf("жду отказ занятого замка, а пришло %v (hold %v)", err, hold)
+	}
+	if Owner(path) != owner {
+		t.Fatalf("владелец %d, жду %d: отказ не тронул замок", Owner(path), owner)
+	}
+}
+
+func TestHoldForDelegateKeepsHeadLock(t *testing.T) {
+	// Токен LockFromEnv называет живую голову: run идёт внутри неё, своего
+	// замка не берёт и по выходу чужой не снимает.
+	home := t.TempDir()
+	path := LockPath(home, "DK-1")
+	owner := liveProc(t)
+	if err := Take(path, owner); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := HoldForDelegate(home, "DK-1", strconv.Itoa(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hold != nil {
+		t.Fatal("делегирование из живой головы взяло второй замок")
+	}
+	hold.Release()
+	if Owner(path) != owner {
+		t.Fatal("выход делегата снял замок головы")
+	}
+}
+
+func TestHoldForDelegateTakesAndReleases(t *testing.T) {
+	home := t.TempDir()
+	path := LockPath(home, "DK-1")
+	hold, err := HoldForDelegate(home, "DK-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Owner(path) != os.Getpid() {
+		t.Fatalf("владелец %d, жду свой pid", Owner(path))
+	}
+	if beatAge(path) >= lockStale {
+		t.Fatal("замок делегата без признака жизни")
+	}
+	hold.Release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("выход делегата не снял замок")
+	}
+	// Нил это делегирование из живой головы, и Release молчит.
+	var empty *DelegateHold
+	empty.Release()
 }
 
 func TestWaitHandoff(t *testing.T) {

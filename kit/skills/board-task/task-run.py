@@ -2272,7 +2272,7 @@ class Pipeline:
             self.shout("run_stop", "%s: %s конвейер без реестра" % (self.project, self.id),
                        "реестр чатов не назвал сессию окна %s, проходы дальше первого "
                        "не заказываются" % self.sess)
-        idle, holds, n, mine = 0, 0, 1, True
+        idle, holds, rides, n, mine = 0, 0, 0, 1, True
         while True:
             begun = time.time()
             word = self.wait_turn(n)
@@ -2348,6 +2348,11 @@ class Pipeline:
                                              % (n, code), code or 1, pane=True)
                     self.stop(1, after, "живая голова вышла на проходе %d, задача не "
                               "закрыта; диагностика %s" % (n, path), kind=EXIT_REASON)
+                # Заказ или собственный ход головы подняли следующий проход, и
+                # журнал зовёт его концом тем же номером, каким объявлен заказ.
+                # Потолка проходов такое продолжение не ест: короткий проход и
+                # поднятый им идут одной ценой, как шло до разделения номеров.
+                n, rides = n + 1, rides + 1
                 continue
             # То же самое с фоновой командой оболочки. Голова запускает её и
             # уходит ждать конца. Ход при этом короток, строка стоит, а
@@ -2369,6 +2374,7 @@ class Pipeline:
                                              % (n, code), code or 1, pane=True)
                     self.stop(1, after, "живая голова вышла на проходе %d, задача не "
                               "закрыта; диагностика %s" % (n, path), kind=EXIT_REASON)
+                n, rides = n + 1, rides + 1
                 continue
             # Ход кончился ожиданием машинного события. Оболочка ждёт за
             # сессию и проход этот не считает ни воронкой, ни расходом потолка:
@@ -2413,7 +2419,10 @@ class Pipeline:
             elif mine:
                 idle = 0
             sect = after
-            if n - holds >= self.passes:
+            # rides это проходы, поднятые концом живой работы: короткий проход
+            # при субагенте или фоновой команде и поднятое им продолжение идут
+            # одной ценой потолка, как шло до разделения их номеров в журнале.
+            if n - holds - rides >= self.passes:
                 self.stop(1, after, "проходы исчерпаны (%d), задача не закрыта" % self.passes,
                           kind=PASSES_REASON)
             time.sleep(self.pause())
@@ -2552,10 +2561,17 @@ class Pipeline:
     def secs(self, name, default):
         """Срок в секундах с подменой из окружения. Подмена нужна стенду.
         Самопроверка не должна ждать по три минуты там, где проверяется не срок,
-        а поведение."""
+        а поведение. Мусорное значение не молчит: опечатка в сроке обязана
+        отличаться от задуманной паузы, как отличает её guardian у своих
+        интервалов (DK-1691)."""
+        raw = os.environ.get(name, "")
+        if raw == "":
+            return default
         try:
-            return max(0, int(os.environ.get(name, "")))
+            return max(0, int(raw))
         except ValueError:
+            self.log("настройка %s не число (%s), срок остаётся умолчанием %d с"
+                     % (name, raw, default), 0)
             return default
 
     def pause(self):

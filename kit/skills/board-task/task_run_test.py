@@ -1606,6 +1606,12 @@ class TestLiveHead(unittest.TestCase):
                         s.journal())
         self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
         self.assertEqual(s.lines("простой"), [], s.lines("простой"))
+        # Ревью DK-1694: заказ назван проходом 2, и конец того же прохода
+        # журнал зовёт номером 2, а не повторяет номер кончившегося первого.
+        ends = [l for l in s.journal() if "конец прохода живой головы" in l]
+        self.assertTrue(ends, s.journal())
+        self.assertIn("проход 2 из", ends[-1], s.journal())
+        self.assertEqual(len([l for l in ends if "проход 1 из" in l]), 1, s.journal())
 
     def test_work_end_stray_reply_still_gets_one_order(self):
         # Тот же конец команды, но голова ответила уведомлению репликой без
@@ -2633,6 +2639,25 @@ class TestJournal(unittest.TestCase):
         got, seen = self.read({})
         self.assertEqual(len(got), 1, got)
         self.assertEqual(self.read(seen)[0], [], "своя отметка прочиталась второй раз")
+
+    def test_garbage_secs_names_the_variable(self):
+        # Ревью DK-1694: опечатка в сроке обязана отличаться от задуманной
+        # паузы. Guardian у своих интервалов мусор отклоняет с именем
+        # переменной (DK-1691), и срок task-run называет себя в журнал тем же
+        # порядком, оставаясь на умолчании. Пустое значение это незаданный
+        # срок, и строки в журнале у него нет.
+        self.pipe.log = unittest.mock.Mock()
+        os.environ["DEVKIT_TEST_DEAD_SECONDS"] = "минута"
+        self.addCleanup(os.environ.pop, "DEVKIT_TEST_DEAD_SECONDS", None)
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS", 30), 30)
+        said = " ".join(str(c) for c in self.pipe.log.call_args_list)
+        self.assertIn("DEVKIT_TEST_DEAD_SECONDS", said)
+        self.assertIn("30", said)
+        os.environ["DEVKIT_TEST_DEAD_SECONDS"] = "5"
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS", 30), 5)
+        self.pipe.log.assert_called_once()
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS_UNSET", 30), 30)
+        self.pipe.log.assert_called_once()
 
     def test_trimmed_journal_gives_nothing_new(self):
         # Рез журнала это перезапись файла последними строками. Читатель со

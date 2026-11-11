@@ -13,6 +13,7 @@ TestBoardGate гоняет калитку без shipctl в PATH: рубеж о�
 """
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -217,6 +218,7 @@ class TestBoardGateWithShipctl(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.bindir = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, cls.bindir, ignore_errors=True)
         for tool in ("shipctl", "taskctl"):
             r = subprocess.run(
                 ["go", "build", "-o", os.path.join(cls.bindir, tool), "."],
@@ -231,6 +233,7 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         # в отчёте моментом ревью. Состав тот же, что у fakeDevkit у тестов
         # shipctl: три правила с ID и оболочка конвейера как маркер дома.
         cls.standards = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, cls.standards, ignore_errors=True)
         for name, text in {
             "RULES.architecture.md": "# Architecture\n\n- **ARCH-001.** Keep the data boundary explicit.\n",
             "RULES.style.md": "# Style\n\n- **STYLE-001.** Name values by purpose.\n",

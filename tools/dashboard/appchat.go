@@ -229,20 +229,26 @@ func appEffort(effort string) string {
 	}
 }
 
-// appTurn отправляет реплику в нить и открывает ход. Конец хода приходит
-// уведомлением turn/completed, и ручка отвечает сразу: реплика у клиента.
+// appTurn отправляет реплику в нить и открывает ход. Занятость ставится до
+// запроса: конец хода приходит уведомлением того же потока, вплотную за
+// ответом и даже раньше него, и занятость, открытая после ответа, опаздывает
+// за собственным погашением и висит вечно. Ручка отвечает сразу: реплика у
+// клиента.
 func (s *server) appTurn(c *appChat, text string) error {
+	c.mu.Lock()
+	c.busy, c.turnAt = true, s.now()
+	c.mu.Unlock()
 	_, err := c.proc.call("turn/start", map[string]any{
 		"threadId": c.thread,
 		"input":    []map[string]string{{"type": "text", "text": text}},
 		"effort":   appEffort(c.effort),
 	})
 	if err != nil {
+		c.mu.Lock()
+		c.busy = false
+		c.mu.Unlock()
 		return err
 	}
-	c.mu.Lock()
-	c.busy, c.turnAt = true, s.now()
-	c.mu.Unlock()
 	return nil
 }
 

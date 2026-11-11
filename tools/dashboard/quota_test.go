@@ -281,6 +281,12 @@ func TestQuotaNeedsLogin(t *testing.T) {
 // стоит завести новую, она появится на экране без правки дашборда. Имена
 // берутся из профилей репозитория, поэтому новый профиль попадает под проверку
 // сам; список рядом держит рубеж и там, где профили не под рукой.
+//
+// Исключение одно: слова протоколов. Это язык профилей, а не находка подписок:
+// родное семейство дашборд узнаёт по слову и гасит его в раскладке, чужой
+// протокол приезжает словом раскладки agentctl. Экрану (static/) слова по
+// прежнему запрещены: там дорога чата выбирается по наличию поля protocol, а не
+// по его значению, и литерал означал бы ветвление по чужому имени.
 func TestQuotaNoHarnessNamesInCode(t *testing.T) {
 	names := map[string]bool{"claude-code": true, "glm-code": true}
 	if entries, err := os.ReadDir(filepath.FromSlash("../../kit/harness")); err == nil {
@@ -290,6 +296,7 @@ func TestQuotaNoHarnessNamesInCode(t *testing.T) {
 			}
 		}
 	}
+	protocolWords := map[string]bool{"claude-code": true}
 	for _, dir := range []string{".", "static"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -305,6 +312,9 @@ func TestQuotaNoHarnessNamesInCode(t *testing.T) {
 				t.Fatal(err)
 			}
 			for name := range names {
+				if dir == "." && protocolWords[name] {
+					continue
+				}
 				if strings.Contains(string(data), name) {
 					t.Errorf("%s называет харнес %q: подписки берутся из каталога снимков", path, name)
 				}

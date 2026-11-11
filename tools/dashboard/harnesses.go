@@ -54,6 +54,22 @@ type Harness struct {
 	// devkit (DK-1286). Сессия, поднятая на такой подписке, не пишет журнал и идёт
 	// мимо сторожей, поэтому подъём отказывает ей до запуска клиента.
 	HooksGap string `json:"hooks_gap,omitempty"`
+	// Protocol это протокол клиента подписки: пустое значение и claude-code
+	// значит семейство claude-code с дорогой чата через tmux, чужой протокол
+	// идёт своей дорогой адаптера. Называет его раскладка agentctl,
+	// имён протоколов дашборд не сочиняет.
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// protocolClaude это протокол семейства claude-code. Пустое поле Protocol
+// значит то же семейство: подписки, раскладываемые до появления ключа, читаются
+// без переучивания.
+const protocolClaude = "claude-code"
+
+// foreign отвечает, чужой ли это протокол: у такой подписки другая дорога чата
+// (сервер приложения вместо tmux), и спрос с неё как с claude-code несправедлив.
+func (h *Harness) foreign() bool {
+	return h != nil && h.Protocol != "" && h.Protocol != protocolClaude
 }
 
 // HarnessModel это ступень лестницы: ярус и модель, в которую он развёрнут.
@@ -95,6 +111,7 @@ type agentctlHarnesses struct {
 		Env     []string `json:"env"`
 		// HooksGap приезжает готовой фразой с командой лечения.
 		HooksGap string `json:"hooks_gap"`
+		Protocol string `json:"protocol"`
 		Models   []struct {
 			Tier  string `json:"tier"`
 			Model string `json:"model"`
@@ -163,7 +180,13 @@ func readHarnesses() HarnessView {
 		if !h.Enabled || h.Bin == "" {
 			continue
 		}
-		hh := Harness{Name: h.Name, Default: h.Default, Auto: autoAdmitted(h.Auto, h.Default), Bin: h.Bin, Home: h.Home, Env: h.Env, HooksGap: h.HooksGap}
+		hh := Harness{Name: h.Name, Default: h.Default, Auto: autoAdmitted(h.Auto, h.Default), Bin: h.Bin, Home: h.Home, Env: h.Env, HooksGap: h.HooksGap, Protocol: h.Protocol}
+		// Семейство claude-code это протокол по умолчанию, и его слово гасится
+		// тут: ненулевое поле протокола в дашборде значит чужую дорогу чата, и
+		// экрану довольно одного признака.
+		if hh.Protocol == protocolClaude {
+			hh.Protocol = ""
+		}
 		for _, m := range h.Models {
 			if m.Model != "" {
 				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})
@@ -186,9 +209,12 @@ func readHarnesses() HarnessView {
 }
 
 // hooksGapNote это отказ подъёма на подписке без хуков devkit; пусто, когда
-// подписка не названа или обвязка на месте.
+// подписка не названа или обвязка на месте. Подписка чужого протокола не
+// судится вовсе: настроек хуков формата claude-code у её клиента нет, и находка
+// (если её прислал устаревший agentctl, ключа protocol ещё не знавший) здесь
+// гасится, чтобы чужая дорога чата не завернулась до запуска.
 func hooksGapNote(h *Harness) string {
-	if h == nil {
+	if h == nil || h.foreign() {
 		return ""
 	}
 	return h.HooksGap

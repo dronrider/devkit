@@ -128,8 +128,10 @@ func TestProfileCodex(t *testing.T) {
 	if got := p.section("rules").Str("file"); got != "" {
 		t.Fatalf("[rules] file = %q, у embed-харнеса тонкого файла нет", got)
 	}
-	if !p.section("hooks").Empty() {
-		t.Fatalf("[hooks] непуст, а протокол хуков Claude Code Codex не приписан")
+	// Секция [hooks] у Codex называет чужой протокол: настроек хуков формата
+	// claude-code у клиента нет, но по ключу дашборд узнаёт дорогу чата.
+	if got := p.section("hooks").Str("protocol"); got != "codex" {
+		t.Fatalf("[hooks] protocol = %q, жду codex", got)
 	}
 	if !p.section("quota").Empty() {
 		t.Fatalf("[quota] непуста, а съёмщика остатка у профиля нет")

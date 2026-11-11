@@ -144,3 +144,74 @@ func TestHarnessJSONHooksGap(t *testing.T) {
 		t.Fatalf("хуки легли, а находка осталась: %q", got["secondcli"])
 	}
 }
+
+// foreignProfile это харнес чужого протокола: ключ config в [hooks] назван, а
+// настроек формата claude-code у клиента нет, и разрыва хуков у него не бывает.
+const foreignProfile = `[delegate]
+mode = "cli"
+command = ["/bin/sh", "-c", "exit 0"]
+
+[hooks]
+protocol = "codex"
+config = "{home}/settings.json"
+
+[quota]
+`
+
+// TestExecNoHooksGapForForeignProtocol: харнес чужого протокола проходит без
+// хуков даже с названным файлом настроек, и машинный вид несёт его протокол.
+func TestExecNoHooksGapForForeignProtocol(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeProfile(t, kit, "codexcli", foreignProfile)
+	writeMachine(t, kit, `enabled = ["homecli", "codexcli"]
+default = "homecli"
+
+[homecli]
+mini = "cheap"
+base = "cheap"
+pro = "strong"
+max = "strong"
+
+[codexcli]
+home = "~/.codex-fake"
+env = ["CODEX_HOME={home}"]
+`)
+	if err := os.MkdirAll(filepath.Join(kit, ".codex-fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Настроек в каталоге подписки нет вовсе, а подъём всё равно идёт: у чужого
+	// протокола обвязка не раскладывается, и спрашивать с него нечего.
+	if code, out := execOut(t, kit, "codexcli", []string{"/bin/sh", "-c", "exit 0"}); code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	raw, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Harnesses []struct {
+			Name     string `json:"name"`
+			HooksGap string `json:"hooks_gap"`
+			Protocol string `json:"protocol"`
+		} `json:"harnesses"`
+	}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range v.Harnesses {
+		switch h.Name {
+		case "codexcli":
+			if h.Protocol != "codex" {
+				t.Fatalf("протокол codexcli в машинном виде %q, жду codex", h.Protocol)
+			}
+			if h.HooksGap != "" {
+				t.Fatalf("у чужого протокола нашлась обвязка: %q", h.HooksGap)
+			}
+		case "homecli":
+			if h.Protocol != "" {
+				t.Fatalf("у профиля без ключа protocol машинный вид печатает %q, жду пусто", h.Protocol)
+			}
+		}
+	}
+}

@@ -133,6 +133,9 @@ esac`)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !needPlaywright(t, node) {
+		t.Fatal("playwright недоступен; задать NODE_PATH")
+	}
 	browser := func(mode string) {
 		t.Helper()
 		script := "testdata/groom_consent_browser.mjs"

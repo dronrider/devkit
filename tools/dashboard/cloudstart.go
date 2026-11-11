@@ -33,6 +33,58 @@ func startReserved(root, tree, id, sess string, command func(string) string) err
 	return startReservedContext(context.Background(), root, tree, id, sess, command)
 }
 
+// Рабочие интервалы guardian: тик ожидания подтверждения и пауза удержания
+// резерва после перехода в unknown. Прод работает на умолчаниях одна секунда
+// и одна минута, а тесты панели подменяют оба значения окружением
+// DEVKIT_CLOUDSTART_TICK и DEVKIT_CLOUDSTART_HOLD, проверяя те же переходы
+// состояний без ожидания реального времени.
+func guardianScript(tick, hold string) string {
+	return `d=$1; tmux=$2; sess=$3; shift 3
+printf 'guardian=%s\n' "$$" >>"$d/owner"
+printf 'starting\n' >"$d/state"
+"$tmux" "$@" >"$d/out" 2>&1
+rc=$?
+printf '%s' "$rc" >"$d/status.tmp"
+/bin/mv "$d/status.tmp" "$d/status"
+if [ "$rc" -eq 0 ]; then
+printf 'terminal-created; awaiting-ack\n' >"$d/state"
+n=0
+while [ ! -f "$d/ack" ]; do
+  if ! "$tmux" has-session -t "=$sess" >/dev/null 2>&1; then
+    # A failed probe is not evidence that the client died. Only a successful
+    # enumeration without the session, or a missing tmux server, releases it.
+    if "$tmux" list-sessions -F '#{session_name}' >"$d/sessions" 2>"$d/probe-error"; then
+      /usr/bin/grep -Fx -- "$sess" "$d/sessions" >/dev/null || break
+    else
+      case "$(/bin/cat "$d/probe-error")" in
+        *"no server running"*) break;;
+      esac
+    fi
+  fi
+  n=$((n+1))
+  if [ "$n" -ge 30 ]; then
+    printf 'unknown; reservation retained; owner in %s/owner; inspect tmux and probe-error before intervention\n' "$d" >"$d/state"
+    /bin/sleep ` + hold + `
+  else
+    /bin/sleep ` + tick + `
+  fi
+done
+fi
+if [ -f "$d/ack" ]; then printf 'acknowledged\n' >"$d/state";
+elif [ "$rc" -ne 0 ]; then printf 'launch-failed\n' >"$d/state";
+else printf 'session-absent\n' >"$d/state"; fi
+n=0
+while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep ` + tick + `; n=$((n+1)); done
+/bin/rm -rf "$d"`
+}
+
+func cloudStartInterval(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
 func startReservedContext(ctx context.Context, root, tree, id, sess string, command func(string) string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,43 +136,7 @@ func startReservedContext(ctx context.Context, root, tree, id, sess string, comm
 		}
 		return err
 	}
-	script := `d=$1; tmux=$2; sess=$3; shift 3
-printf 'guardian=%s\n' "$$" >>"$d/owner"
-printf 'starting\n' >"$d/state"
-"$tmux" "$@" >"$d/out" 2>&1
-rc=$?
-printf '%s' "$rc" >"$d/status.tmp"
-/bin/mv "$d/status.tmp" "$d/status"
-if [ "$rc" -eq 0 ]; then
-printf 'terminal-created; awaiting-ack\n' >"$d/state"
-n=0
-while [ ! -f "$d/ack" ]; do
-  if ! "$tmux" has-session -t "=$sess" >/dev/null 2>&1; then
-    # A failed probe is not evidence that the client died. Only a successful
-    # enumeration without the session, or a missing tmux server, releases it.
-    if "$tmux" list-sessions -F '#{session_name}' >"$d/sessions" 2>"$d/probe-error"; then
-      /usr/bin/grep -Fx -- "$sess" "$d/sessions" >/dev/null || break
-    else
-      case "$(/bin/cat "$d/probe-error")" in
-        *"no server running"*) break;;
-      esac
-    fi
-  fi
-  n=$((n+1))
-  if [ "$n" -ge 30 ]; then
-    printf 'unknown; reservation retained; owner in %s/owner; inspect tmux and probe-error before intervention\n' "$d" >"$d/state"
-    /bin/sleep 60
-  else
-    /bin/sleep 1
-  fi
-done
-fi
-if [ -f "$d/ack" ]; then printf 'acknowledged\n' >"$d/state";
-elif [ "$rc" -ne 0 ]; then printf 'launch-failed\n' >"$d/state";
-else printf 'session-absent\n' >"$d/state"; fi
-n=0
-while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done
-/bin/rm -rf "$d"`
+	script := guardianScript(cloudStartInterval("DEVKIT_CLOUDSTART_TICK", "1"), cloudStartInterval("DEVKIT_CLOUDSTART_HOLD", "60"))
 	args := []string{"-c", script, "cloud-start", dir, tmux, sess, "new-session", "-d", "-s", sess, "-c", tree, command(filepath.Join(dir, "ack"))}
 	cmd := exec.Command("/bin/sh", args...)
 	cmd.Dir = tree

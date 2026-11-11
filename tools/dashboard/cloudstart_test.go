@@ -355,6 +355,17 @@ func TestCloudStartFailedLaunchReleasesReservation(t *testing.T) {
 }
 
 func TestCloudStartMissingTmuxParksWithOwner(t *testing.T) {
+	// Переходы состояний guardian проверяются на управляемых интервалах
+	// (DK-1691): тик сжат до 50 миллисекунд, пауза удержания до двух секунд,
+	// поэтому весь сценарий идёт секунды, а не полторы минуты ожидания
+	// реального времени. Порог unknown отсчитывается итерациями цикла, а не
+	// временем, и под общей нагрузкой итерация обходится дороже из-за запусков
+	// проб, поэтому ожидания состояний взяты с запасом. Пауза удержания
+	// остаётся впятеро длиннее окна проверки частоты проб. Рабочие интервалы
+	// отдельно защищены проверкой рендера скрипта и соседними стендами на
+	// умолчальных тиках.
+	t.Setenv("DEVKIT_CLOUDSTART_TICK", "0.05")
+	t.Setenv("DEVKIT_CLOUDSTART_HOLD", "2")
 	root := t.TempDir()
 	putDoc(t, root, "docs/tasks/XR-1.md", "# XR-1: задача\n")
 	bin := t.TempDir()
@@ -367,7 +378,7 @@ func TestCloudStartMissingTmuxParksWithOwner(t *testing.T) {
 	dir := filepath.Dir(ack)
 	defer func() {
 		os.WriteFile(ack, []byte("cleanup"), 0600)
-		deadline := time.Now().Add(65 * time.Second)
+		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(dir); os.IsNotExist(err) {
 				return
@@ -379,7 +390,7 @@ func TestCloudStartMissingTmuxParksWithOwner(t *testing.T) {
 	if err := os.Remove(filepath.Join(bin, "tmux")); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(34 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
 		state, _ := os.ReadFile(filepath.Join(dir, "state"))
 		if strings.HasPrefix(string(state), "unknown;") {
@@ -394,7 +405,7 @@ func TestCloudStartMissingTmuxParksWithOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(1200 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 	after, err := os.Stat(filepath.Join(dir, "probe-error"))
 	if err != nil || !before.ModTime().Equal(after.ModTime()) {
 		t.Fatal("unknown continued frequent probing")

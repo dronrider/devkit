@@ -30,9 +30,9 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
-			t.Fatalf("playwright: %v %s", err, out)
+			t.Fatal("playwright недоступен; задать NODE_PATH")
 		}
 		t.Skip("нет playwright")
 	}
@@ -90,15 +90,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = publish("both"); err != nil {
 		t.Fatal(err)
 	}
-	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "dashboard")
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build: %s %v", out, err)
-		}
-	}
+	bin := buildDashboard(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -72,6 +72,12 @@ for raw in sys.stdin:
         text = ""
         for part in params.get("input") or []:
             text = text + " " + str(part.get("text", ""))
+        if mode() == "early":
+            note("item/completed", {"item": {"type": "agentMessage",
+                "text": "ответ на реплику:" + text}})
+            note("turn/completed", {"turn": {"status": "completed"}})
+            emit({"id": mid, "result": {}})
+            continue
         emit({"id": mid, "result": {}})
         if mode() == "die":
             sys.stderr.write("токен кончился\n")
@@ -238,6 +244,18 @@ func TestAppChatStartTurnFeed(t *testing.T) {
 	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start модель-codex") {
 		t.Fatalf("клиент поднялся не выбранной моделью: %s", log)
 	}
+}
+
+// Конец хода может прийти вплотную к ответу на turn/start и даже раньше него:
+// поток не обещает порядок между ответами и уведомлениями, и занятость,
+// открытая после ответа, опаздывает за собственным погашением и висит «ход
+// идёт» вечно. Режим early и ловит этот порядок строк.
+func TestAppChatTurnEndBeforeReply(t *testing.T) {
+	e, c := appEnv(t)
+	appMode(t, e, "early")
+	sid := appStartChat(t, e, c, "быстрый ход")
+	appWaitFeed(t, e, sid, "ответ на реплику")
+	appWaitBusy(t, e, c, sid, false)
 }
 
 // Реплика в живой разговор, стоп прерыванием и продолжение резюмом нити: одна

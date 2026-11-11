@@ -1,0 +1,132 @@
+{
+  "task": "DK-1689",
+  "requested_model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "model_runs": 2,
+  "repeats_per_variant": 1,
+  "judge_model": null,
+  "subagents_enabled": false,
+  "only_project_input_difference": [
+    "REQUEST.md"
+  ],
+  "same_rules": true,
+  "code_changed_by_reviewers": false,
+  "definite_defects_detected_in_both": [
+    "public field locale cannot be selected",
+    "unused counter loading breaks profile-only report"
+  ],
+  "controls_accepted_in_both": [
+    "fixed allowed source kinds",
+    "protocol schema_version=1",
+    "private data boundary",
+    "arbitrary counter keys and fresh values"
+  ],
+  "type_assessment": "Both considered type explicitly, but reached different conclusions. The design variant inferred a consumer-contract rationale. This is not evidence that mandatory type metadata is required. No blanket behavioral pass is assigned to this design point.",
+  "limits": [
+    "One pair, no baseline-versus-candidate comparison.",
+    "No statistical or causal claim of improvement.",
+    "Sandbox denied git-note writes; reviewers reported this and did not record clean verdicts."
+  ],
+  "runs": [
+    {
+      "scenario": "85-review-projection-goal",
+      "evidence": "DK-1689.projection-1.evidence.json",
+      "event_log": "DK-1689.projection-1.events.jsonl.gz",
+      "input_files": {
+        ".gitignore": "2b0a7406f3f68b6eff7fadf01240932ff422e07c88e8db6de568c792340a2445",
+        "AGENTS.md": "fad9b6533d606733dafe678ea1393d79e738ca581355e9d40485fffd7e21ddde",
+        "README.md": "0bb685b2571159cb92c043bb520bc0b0768c611774abd0304ce5887906a608e4",
+        "REQUEST.md": "2486ca51029d857df886c89739a6849cc2a9ba3dc2b28ee4ecc5abaf9902c87c",
+        "check.py": "0d71adb3cb68edc4bf4a1950fbae4c764999fb2f5e16d752e30225dbc88f9739",
+        "docs/ARCHITECTURE.md": "4456b91e30865e92367b3e86e133cf92e2d815cf6646d58b416156c2e4bc1e02",
+        "docs/STYLEGUIDE.md": "1c62677a7dc79cdc31bbf3c30aa620b4c752b0bdfcd07eb03d594b9c54394ada",
+        "exporter.py": "08cc166b5ec45043fe8ba8335702bc2f04137e974a3b93e91cdf8f241cf22405"
+      },
+      "pack_files": {
+        "RULES.architecture.md": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c",
+        "RULES.core.md": "6336a37008dd280ebec063543ce003bc995216fe201ce10fe6b50220366a19a7",
+        "RULES.md": "b4bb1a222ae1a577539f18b2e470e8375061a88fc923cf7e9cc0fc5a892abf92",
+        "RULES.style.md": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0",
+        "kit/skills/board-task/task-run.py": "4805e7b93ecf92e572c8138b88f4e7ae19b3f40da14622cd12798d0463b46868",
+        "kit/skills/review/SKILL.md": "5d1a34be5b08b84484983e7e4573c760193d5f2afb2246af090a6949b0991243",
+        "kit/skills/review/audit.md": "18a76d10954e00c4cfd3cde73cc319e1374c6605baa0450645d77e0fa2d2ddfe",
+        "kit/skills/review/examples.md": "86d322b8d7ac6e1fa60c5c9e8e0c9488bce4e012a4b623e50c1e344e2526b7a2",
+        "kit/skills/review/foreign.md": "e494b329e7533e0d28faca20146ab5bed33376ecb0a81f82af6aad077f96b28a",
+        "kit/skills/review/threads.md": "e6cca327d27d1c1ffa929d5164a8375d05779f82d6fa80617173d79a02fe19f5"
+      },
+      "assessment": {
+        "method": "manual reading of final review, audit, fixture and oracle; no model judge",
+        "public_field_scope_defect_detected": true,
+        "unused_load_defect_detected": true,
+        "control_false_positives": [],
+        "all_rule_rows": 57,
+        "type_result": "violated",
+        "type_reason": "R3: обязательный type не даёт независимого выбора: source=profile_name допускает только string, counter только integer. Отсутствие type отклоняет описание; поле не конвертирует и не проверяет фактический результат. Остальные name/source/key имеют пользовательские сценарии.",
+        "type_interpretation": "blocking redundancy finding",
+        "type_grounding": "Derived-only input and lack of actual value validation are demonstrated.",
+        "additional_findings": [
+          "non-string names collide after JSON serialization",
+          "author happy-path check misses validation mutations"
+        ],
+        "publication_note": "Signed credential-bearing runtime URL queries are redacted; original runtime stderr is not published."
+      },
+      "usage": {
+        "input_tokens": 652181,
+        "cached_input_tokens": 618112,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 16295,
+        "reasoning_output_tokens": 1295
+      }
+    },
+    {
+      "scenario": "86-review-projection-design",
+      "evidence": "DK-1689.projection-2.evidence.json",
+      "event_log": "DK-1689.projection-2.events.jsonl.gz",
+      "input_files": {
+        ".gitignore": "2b0a7406f3f68b6eff7fadf01240932ff422e07c88e8db6de568c792340a2445",
+        "AGENTS.md": "fad9b6533d606733dafe678ea1393d79e738ca581355e9d40485fffd7e21ddde",
+        "README.md": "0bb685b2571159cb92c043bb520bc0b0768c611774abd0304ce5887906a608e4",
+        "REQUEST.md": "c66f94c1a13f62c3622086705b903182264fb3be78f24acdc8c34064b6c545a9",
+        "check.py": "0d71adb3cb68edc4bf4a1950fbae4c764999fb2f5e16d752e30225dbc88f9739",
+        "docs/ARCHITECTURE.md": "4456b91e30865e92367b3e86e133cf92e2d815cf6646d58b416156c2e4bc1e02",
+        "docs/STYLEGUIDE.md": "1c62677a7dc79cdc31bbf3c30aa620b4c752b0bdfcd07eb03d594b9c54394ada",
+        "exporter.py": "08cc166b5ec45043fe8ba8335702bc2f04137e974a3b93e91cdf8f241cf22405"
+      },
+      "pack_files": {
+        "RULES.architecture.md": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c",
+        "RULES.core.md": "6336a37008dd280ebec063543ce003bc995216fe201ce10fe6b50220366a19a7",
+        "RULES.md": "b4bb1a222ae1a577539f18b2e470e8375061a88fc923cf7e9cc0fc5a892abf92",
+        "RULES.style.md": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0",
+        "kit/skills/board-task/task-run.py": "4805e7b93ecf92e572c8138b88f4e7ae19b3f40da14622cd12798d0463b46868",
+        "kit/skills/review/SKILL.md": "5d1a34be5b08b84484983e7e4573c760193d5f2afb2246af090a6949b0991243",
+        "kit/skills/review/audit.md": "18a76d10954e00c4cfd3cde73cc319e1374c6605baa0450645d77e0fa2d2ddfe",
+        "kit/skills/review/examples.md": "86d322b8d7ac6e1fa60c5c9e8e0c9488bce4e012a4b623e50c1e344e2526b7a2",
+        "kit/skills/review/foreign.md": "e494b329e7533e0d28faca20146ab5bed33376ecb0a81f82af6aad077f96b28a",
+        "kit/skills/review/threads.md": "e6cca327d27d1c1ffa929d5164a8375d05779f82d6fa80617173d79a02fe19f5"
+      },
+      "assessment": {
+        "method": "manual reading of final review, audit, fixture and oracle; no model judge",
+        "public_field_scope_defect_detected": true,
+        "unused_load_defect_detected": true,
+        "control_false_positives": [],
+        "all_rule_rows": 57,
+        "type_result": "checked",
+        "type_reason": "name нужен для имён получателя, source для выбора данных, key для произвольного счётчика. type ограничен внешним контрактом и проверяет согласованность, а не предлагает свободную конвертацию.",
+        "type_interpretation": "retained as consumer-contract consistency assertion",
+        "type_grounding": "Reviewer argues expected consumer types justify the declaration; a separate requirement for mandatory type metadata is not established. This remains a design judgement, not a proven serialization defect.",
+        "additional_findings": [
+          "non-string names collide after JSON serialization",
+          "author happy-path check misses validation mutations"
+        ],
+        "publication_note": "Signed credential-bearing runtime URL queries are redacted; original runtime stderr is not published."
+      },
+      "usage": {
+        "input_tokens": 643575,
+        "cached_input_tokens": 604928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 14777,
+        "reasoning_output_tokens": 1190
+      }
+    }
+  ]
+}

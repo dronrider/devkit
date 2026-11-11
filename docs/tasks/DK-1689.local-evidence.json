@@ -1,0 +1,42 @@
+{
+  "task": "DK-1689",
+  "model_runs": 0,
+  "fixture_witness_tests": 7,
+  "scenario_preparations": [
+    {
+      "scenario": "85-review-projection-goal",
+      "files": {
+        "AGENTS.md": "fad9b6533d606733dafe678ea1393d79e738ca581355e9d40485fffd7e21ddde",
+        "README.md": "0bb685b2571159cb92c043bb520bc0b0768c611774abd0304ce5887906a608e4",
+        "REQUEST.md": "2486ca51029d857df886c89739a6849cc2a9ba3dc2b28ee4ecc5abaf9902c87c",
+        "check.py": "0d71adb3cb68edc4bf4a1950fbae4c764999fb2f5e16d752e30225dbc88f9739",
+        "docs/ARCHITECTURE.md": "4456b91e30865e92367b3e86e133cf92e2d815cf6646d58b416156c2e4bc1e02",
+        "docs/STYLEGUIDE.md": "1c62677a7dc79cdc31bbf3c30aa620b4c752b0bdfcd07eb03d594b9c54394ada",
+        "exporter.py": "08cc166b5ec45043fe8ba8335702bc2f04137e974a3b93e91cdf8f241cf22405"
+      },
+      "author_example": "checks passed",
+      "expected_answers_copied": false,
+      "path": "/var/folders/3r/8h4kwcy55fn_c2q8bq6j1ycc0000gn/T/dk1689-preparation-bcor6oi4"
+    },
+    {
+      "scenario": "86-review-projection-design",
+      "files": {
+        "AGENTS.md": "fad9b6533d606733dafe678ea1393d79e738ca581355e9d40485fffd7e21ddde",
+        "README.md": "0bb685b2571159cb92c043bb520bc0b0768c611774abd0304ce5887906a608e4",
+        "REQUEST.md": "c66f94c1a13f62c3622086705b903182264fb3be78f24acdc8c34064b6c545a9",
+        "check.py": "0d71adb3cb68edc4bf4a1950fbae4c764999fb2f5e16d752e30225dbc88f9739",
+        "docs/ARCHITECTURE.md": "4456b91e30865e92367b3e86e133cf92e2d815cf6646d58b416156c2e4bc1e02",
+        "docs/STYLEGUIDE.md": "1c62677a7dc79cdc31bbf3c30aa620b4c752b0bdfcd07eb03d594b9c54394ada",
+        "exporter.py": "08cc166b5ec45043fe8ba8335702bc2f04137e974a3b93e91cdf8f241cf22405"
+      },
+      "author_example": "checks passed",
+      "expected_answers_copied": false,
+      "path": "/var/folders/3r/8h4kwcy55fn_c2q8bq6j1ycc0000gn/T/dk1689-preparation-12iuf6d8"
+    }
+  ],
+  "only_input_difference": [
+    "REQUEST.md"
+  ],
+  "behavioral_effect_verified": false,
+  "review_body_chars": 17020
+}

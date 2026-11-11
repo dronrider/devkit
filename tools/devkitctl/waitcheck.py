@@ -404,7 +404,7 @@ def task_work(cmd_run, task, tree):
                                        verify=VERIFY_WORDS)
     if rc != 0:
         return rc, out
-    # Отчёт снимается до обкатки: после отметки мерька свежести пускает
+    # Отчёт снимается до обкатки: после отметки мерка свежести пускает
     # коммиты одних файлов доски, а json отчёта к ним не относится.
     rc, out = selfcheck.audit_report(cmd_run, tree, task, DEVKIT)
     if rc != 0:

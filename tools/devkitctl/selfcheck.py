@@ -294,7 +294,7 @@ def audit_report(cmd_run, tree, task, standards):
     data["architecture"].update({
         "goal": "провести синтетическую задачу стенда от строки до слияния",
         "decision": "штатные команды утилит devkit на временном проекте",
-        "boundaries": "правка ограничена файлом задачи, производство не трогается",
+        "boundaries": "синтетическая правка это файл работы и файл задачи стенда, производство не трогается",
         "alternative": "заглушки утилит отклонены: стенд проверяет живую связку",
         "justification": "иначе ворота слияния целиком на машине не проверить",
         "result": "checked",
@@ -311,8 +311,10 @@ def audit_report(cmd_run, tree, task, standards):
         }]
     report.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
                       encoding="utf-8")
-    cmd_run(["git", "-C", str(tree), "add", "--",
-             "docs/tasks/%s.review-audit.json" % task], str(tree), env)
+    rc, out = cmd_run(["git", "-C", str(tree), "add", "--",
+                       "docs/tasks/%s.review-audit.json" % task], str(tree), env)
+    if rc != 0:
+        return rc, out
     return cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",
                     "docs(tasks): %s отчёт аудита ревью" % task], str(tree), env)
 

@@ -379,13 +379,15 @@ def step(said, rc, out):
     return {"said": said, "rc": rc, "out": out}
 
 
-def task_work(cmd_run, task, tree):
+def task_work(cmd_run, task, tree, devkit):
     """Работа задачи в её дереве: файл, коммит, сценарий, обкатка, ревью.
 
     Слияние пускает ветку только со сценарием в файле задачи, строкой уровня и
     полным отчётом аудита ревью (DK-1675), а ворота перевода в Check спрашивают
     отметку обкатки. Стенд проходит их тем же порядком, каким их проходит
-    человек: отчёт снимается штатной утилитой, выводы за стендом.
+    человек: отчёт снимается штатной утилитой, выводы за стендом. devkit это
+    чекаут правил круга: отчёт и ворота слияния обязаны читать один и тот же,
+    иначе инвентарь правил у них разъедется.
     """
     runner = lambda args, cwd=None: cmd_run(args, cwd)
     work = Path(tree) / "src" / (task.lower() + ".txt")
@@ -406,7 +408,9 @@ def task_work(cmd_run, task, tree):
         return rc, out
     # Отчёт снимается до обкатки: после отметки мерка свежести пускает
     # коммиты одних файлов доски, а json отчёта к ним не относится.
-    rc, out = selfcheck.audit_report(cmd_run, tree, task, DEVKIT)
+    # Источник правил тот же, что у круга: слияние сверяет отчёт своим
+    # DEVKIT_HOME, и чекаут обязан совпасть.
+    rc, out = selfcheck.audit_report(cmd_run, tree, task, devkit)
     if rc != 0:
         return rc, out
     rc, out = selfcheck.rehearse_scenario(runner, tree, task)
@@ -425,7 +429,7 @@ def arm_row(cmd_run, proj):
                     "-m", "docs(tasks): %s взвод строки" % ARMED])
 
 
-def event_wait(cmd_run, proj, home, mode_file, heads_log):
+def event_wait(cmd_run, proj, home, mode_file, heads_log, devkit):
     """Ожидание второе: `shipctl merge` и `taskctl close` поднимают ждущих.
 
     Строка PARKED стоит в Blocked с машинным разрядом «закрытие: <ID>»,
@@ -460,7 +464,7 @@ def event_wait(cmd_run, proj, home, mode_file, heads_log):
     if rc != 0:
         return step("ветка предпосылки не завелась", rc, out)
     tree = selfcheck.task_tree(proj, DEP)
-    rc, out = task_work(cmd_run, DEP, tree)
+    rc, out = task_work(cmd_run, DEP, tree, devkit)
     if rc != 0:
         return step("работа предпосылки не доехала до ворот слияния", rc, out)
     rc, merge_out = cmd_run(["shipctl", "-C", str(proj), "merge", DEP])
@@ -614,7 +618,7 @@ def circle(cmd_run, proj, home, devkit, mode_file, client, heads_log, log):
         ("живое ожидание против воронки",
          lambda: funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log)),
         ("close и merge поднимают ждущих",
-         lambda: event_wait(cmd_run, proj, home, mode_file, heads_log)),
+         lambda: event_wait(cmd_run, proj, home, mode_file, heads_log, devkit)),
         ("тик добирает пропущенное",
          lambda: tick_wait(cmd_run, proj, home, mode_file, heads_log)),
     )

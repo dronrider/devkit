@@ -238,6 +238,9 @@ type chatEntry struct {
 	Tree        string `json:"tree,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Harness     string `json:"harness,omitempty"`
+	// Protocol это протокол клиента дороги app-server: поле стоит только у
+	// чужого протокола, по нему экран выбирает свою дорогу реплики и ленты.
+	Protocol string `json:"protocol,omitempty"`
 	// Живая сессия из реестра клиента: сокет канала, pid, слово про то, где она
 	// идёт, и её состояние (idle значит «ждёт ввода»). Пусто значит, что
 	// процесса у диалога нет вовсе.
@@ -811,6 +814,17 @@ type chatStore struct {
 	// список стоит её по этому моменту: без него разговор, в который человек
 	// сейчас пишет, тонул бы под сегодняшними (DK-1547).
 	DraftAt int64 `json:"draftAt,omitempty"`
+	// Protocol это протокол клиента дороги app-server (appchat.go): пусто у
+	// разговоров tmux-дороги. Ненулевое слово называет и саму дорогу реплики, и
+	// каталог ленты.
+	Protocol string `json:"protocol,omitempty"`
+	// Thread это нить клиента чужого протокола: её продолжает следующий подъём
+	// процесса, и разговор не начинается с чистого листа после перезапуска
+	// демона.
+	Thread string `json:"thread,omitempty"`
+	// CxEffort это уровень глубины клиента чужого протокола: у него нет
+	// окружения сессии, и выбор меню модели живёт записью разговора.
+	CxEffort string `json:"cxEffort,omitempty"`
 	// ProposalContexts stores delivery addresses and shown source IDs, while
 	// decisions and results remain in the source records.
 	SelectionContexts []selectionDeliveryContext `json:"selectionContexts,omitempty"`
@@ -1523,6 +1537,12 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 		}
 		if blanks := s.chatBlankList(proj); len(blanks) > 0 {
 			list = append(list, blanks...)
+		}
+		// Разговоры чужого протокола ходят в список из своего каталога лент:
+		// обход транскриптов их не находит, а строки обязаны быть рядом с
+		// остальными разговорами того же проекта.
+		if rows := s.appListRows(proj); len(rows) > 0 {
+			list = append(list, rows...)
 		}
 		// Список строками записей (LLD DK-1422, решение 6): назначение журнала
 		// собирает разговоры записи в одну её строку, а носители отрезков
@@ -2424,6 +2444,12 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 			model, harness)})
 		return
 	}
+	// Подписка чужого протокола не знает терминальной механики, и её дорога
+	// своя: без tmux, без ожидания родившейся сессии, лентой файла.
+	if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
+		s.appStart(w, found, id, blank, text, model, harness, body.Effort)
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -3037,6 +3063,18 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
+	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
+	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.
+	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		if body.Drop || body.Kill {
+			s.appDrop(sid, "снятие под перезапуск")
+			writeJSON(w, http.StatusOK, map[string]any{"way": "gone",
+				"message": "процесс клиента снят: следующая реплика поднимет разговор заново"})
+			return
+		}
+		s.appStop(w, sid)
+		return
+	}
 	if !s.recoveryChatStopped(w, found, sid, "stop") {
 		return
 	}
@@ -3339,6 +3377,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Proposal != nil {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
+		return
+	}
+	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
+	// нет, реплика уходит процессу app-server, а лента живёт файлом.
+	if stored.Protocol != "" {
+		s.appSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
 	if !s.recoveryChatStopped(w, found, sid, "continue") {
@@ -4185,6 +4229,25 @@ func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, s
 // плана приезжает заказом, как у любого подъёма. Effort едет парой окружения,
 // когда человек взвёл ползунок глубины в меню модели (DK-1570).
 func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
+	// Разговор чужого протокола поднимается на месте: процесс app-server
+	// продолжает нить из записи, лента остаётся тем же адресом, и терминальная
+	// механика его не касается.
+	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		s.appSay(w, found, sid, text, claim, effort)
+		return
+	} else if st.Blank {
+		model, harness := s.chatChoice(sid, "")
+		if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
+			// Незачатая запись, выбранная подпиской чужого протокола, зачинается
+			// этим самым разговором: адрес записи и становится адресом ленты.
+			st.Protocol, st.Blank, st.Lifted = h.Protocol, false, s.now().Unix()
+			if err := s.chatStoreWrite(sid, st); err != nil {
+				s.logf("настройки разговора %s не записались: %v", sid, err)
+			}
+			s.appSay(w, found, sid, text, claim, effort)
+			return
+		}
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -4332,6 +4395,13 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 		s.logf("чат %s возвращён из архива", sid)
 		return archDone{message: "разговор вернулся в список"}, nil
 	}
+	// Разговор чужого протокола окна в tmux не держит: уборка снимает его
+	// процесс, а лента и нить клиента остаются лежать до возврата из архива.
+	if st.Protocol != "" {
+		s.appDrop(sid, "уборка в архив")
+		s.logf("чат %s убран в архив, процесс клиента снят", sid)
+		return archDone{message: "разговор убран в архив, процесс клиента снят: лента сохранится"}, nil
+	}
 	// Имя окна собирает та же свёртка, что у списка и стопа (chatWinOf). Одной
 	// записью журнала ручка отвечала «убран в архив» на 29 живых чатов
 	// подряд, а их процессы жили дальше невидимыми: записи были вырезаны
@@ -4412,6 +4482,35 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
 			"модель %s не ступень подписки %s: список моделей устарел, обновите экран",
 			model, harness)})
+		return
+	}
+	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
+	// новая нить заводится следующим ходом, а лента остаётся: это и есть
+	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
+	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		wasModel, wasHarness := st.Model, st.Harness
+		st.Model, st.Harness = model, harness
+		if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
+			st.Protocol = h.Protocol
+		} else {
+			st.Protocol, st.Thread = "", ""
+		}
+		if wasModel != model || wasHarness != harness {
+			st.Thread = ""
+			s.appDrop(sid, "смена модели")
+		}
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
+			return
+		}
+		if wasModel != "" && (wasModel != model || wasHarness != harness) {
+			s.saidMark(saidSessionKey(sid), fmt.Sprintf("модель изменена: %s -> %s",
+				chatModelName(wasModel, wasHarness), chatModelName(model, harness)))
+		}
+		s.logf("модель чата %s в %s теперь %s", sid, found.Name, chatModelName(model, harness))
+		writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model, "harness": harness,
+			"message": "модель разговора теперь " + chatModelName(model, harness) +
+				": она возьмётся следующим ходом, лента сохранится"})
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")
@@ -4674,6 +4773,12 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("sid")
 	if !sessionIDRe.MatchString(sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return
+	}
+	// Состояние разговора чужого протокола это состояние его процесса: реестра
+	// транскриптов у дороги нет, и возраст хода считает сервер.
+	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		s.appStatus(w, sid)
 		return
 	}
 	now := s.now()

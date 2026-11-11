@@ -1341,6 +1341,10 @@ type harnessJSON struct {
 	// devkit; пусто, когда обвязка на месте. Поднимать на таком харнесе нечего,
 	// и потребитель (дашборд) отказывает подъёму до запуска клиента.
 	HooksGap string `json:"hooks_gap,omitempty"`
+	// Protocol это протокол клиента из ключа protocol секции [hooks] профиля.
+	// Пустое значение значит семейство claude-code, иные значения это чужие
+	// протоколы со своей дорогой чата (у codex это app-server).
+	Protocol string `json:"protocol,omitempty"`
 	// Auto это допуск к автоматическим назначениям: ключ auto машинного
 	// конфига, а без него подписка по умолчанию. Ручной выбор подписки и
 	// модели признак не ограничивает, по нему отбираются только подъёмы без
@@ -1436,6 +1440,9 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
 		h.HooksGap = hooksGap(l, name)
+		if p := l.Profiles[name]; p != nil {
+			h.Protocol = p.section("hooks").Str("protocol")
+		}
 		for _, tier := range tierNames {
 			if m := l.Setup[name].mapOf(tier); m != "" {
 				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})

@@ -244,8 +244,12 @@ class CodexProfileTest(unittest.TestCase):
         self.assertEqual(self.prof.str_of("skills", "format"), "claude-code")
 
     def test_machine_axes_are_empty(self):
-        for name in ("hooks", "quota"):
-            self.assertFalse(self.prof.table(name), "секция [%s] непуста, а механики у Codex нет" % name)
+        # Секция [hooks] у Codex называет чужой протокол и пуста сверх него:
+        # настроек хуков формата claude-code у клиента нет, и по ключу дашборд
+        # узнаёт дорогу чата. Квота остаётся пустой: съёмщика остатка нет.
+        self.assertEqual(self.prof.str_of("hooks", "protocol"), "codex",
+                         "протокол чата Codex профилем не назван")
+        self.assertFalse(self.prof.table("quota"), "секция [quota] непуста, а механики у Codex нет")
         self.assertIsNone(self.prof.table("head"),
                           "интерактивной головы без хука конца хода профилю не положено")
 

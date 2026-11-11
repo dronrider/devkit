@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Контур делегирования собирается синтетический: живого клиента чужого
@@ -115,6 +118,18 @@ command = ["/bin/sh", "-c", "kill -TERM $$"]
 [quota]
 `
 
+// lockProfile печатает замок задачи из подпроцесса: внешний исполнитель
+// обязан застать задачу занятой тем же замком, каким её поднимает голова
+// (DK-1692).
+const lockProfile = `[delegate]
+mode = "cli"
+command = ["/bin/sh", "-c", "d=\"$HOME/.devkit/task-T-001.lock\"; if [ -f \"$d/pid\" ]; then echo lock=$(cat \"$d/pid\"); else echo lock=none; fi"]
+
+[hooks]
+
+[quota]
+`
+
 const nativeProfile = `[delegate]
 mode = "native"
 
@@ -198,6 +213,89 @@ func TestRunCLI(t *testing.T) {
 	}
 	if strings.Contains(string(prompt), "name: exec-low") {
 		t.Fatalf("frontmatter определения в промпт не едет:\n%s", prompt)
+	}
+}
+
+// TestRunHoldsTaskHeadLock: внешний исполнитель занимает задачу замком головы
+// на время своей работы (DK-1692). Подпроцесс застают занятый замок с живым
+// владельцем, тик и дашборд по нему видят отказ, а не второго исполнителя в
+// том же дереве.
+func TestRunHoldsTaskHeadLock(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "lockcli", lockProfile)
+	writeMachine(t, kit, "enabled = [\"lockcli\"]\ndefault = \"lockcli\"\n\n[lockcli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	code, out := runOut(t, root, "T-001", roleExec, work)
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	if !strings.Contains(out, "lock=") || strings.Contains(out, "lock=none") {
+		t.Fatalf("подпроцесс не застал замок задачи занятым:\n%s", out)
+	}
+	// После выхода исполнителя замок снят: следующий подъём головы не ждёт
+	// мёртвого владельца.
+	if _, err := os.Stat(taskhead.LockPath(kit, "T-001")); !os.IsNotExist(err) {
+		t.Fatalf("замок задачи не снят по выходу исполнителя: %v", err)
+	}
+}
+
+// TestRunRefusesBusyTask: замок задачи уже занят живой головой, и внешний
+// исполнитель отказывается кодом занятости, называя владельца. Второй
+// исполнитель в то же дерево не поднимается (DK-1692).
+func TestRunRefusesBusyTask(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "lockcli", lockProfile)
+	writeMachine(t, kit, "enabled = [\"lockcli\"]\ndefault = \"lockcli\"\n\n[lockcli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	if err := taskhead.Take(taskhead.LockPath(kit, "T-001"), os.Getpid()); err != nil {
+		t.Fatalf("замок головы в стенде не взялся: %v", err)
+	}
+	t.Cleanup(func() { taskhead.Release(taskhead.LockPath(kit, "T-001"), os.Getpid()) })
+	t.Setenv(taskhead.LockFromEnv, "")
+	for _, dir := range []string{root, work} {
+		path := filepath.Join(dir, "docs", "tasks", "T-001.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# T-001\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errw bytes.Buffer
+	code, err := cmdRun(root, "T-001", roleExec, "", work, &out, &errw)
+	if err != nil {
+		t.Fatalf("run T-001: %v", err)
+	}
+	if code != taskhead.CodeBusy {
+		t.Fatalf("код возврата %d, жду %d (занято): %s%s", code, taskhead.CodeBusy, out.String(), errw.String())
+	}
+	if !strings.Contains(errw.String(), "второй исполнитель") || !strings.Contains(errw.String(), "pid") {
+		t.Fatalf("отказ не назвал владельца и продолжение:\n%s", errw.String())
+	}
+}
+
+// TestRunInsideLivingHeadKeepsItsLock: run из живой головы узнаёт владельца
+// замка по токену и замок сам не берёт и не отбивает. Штатное делегирование
+// не конфликтует с собственной головой (DK-1692).
+func TestRunInsideLivingHeadKeepsItsLock(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "lockcli", lockProfile)
+	writeMachine(t, kit, "enabled = [\"lockcli\"]\ndefault = \"lockcli\"\n\n[lockcli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	if err := taskhead.Take(taskhead.LockPath(kit, "T-001"), os.Getpid()); err != nil {
+		t.Fatalf("замок головы в стенде не взялся: %v", err)
+	}
+	t.Cleanup(func() { taskhead.Release(taskhead.LockPath(kit, "T-001"), os.Getpid()) })
+	t.Setenv(taskhead.LockFromEnv, strconv.Itoa(os.Getpid()))
+	code, out := runOut(t, root, "T-001", roleExec, work)
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	if owner := taskhead.Owner(taskhead.LockPath(kit, "T-001")); owner != os.Getpid() {
+		t.Fatalf("замок головы перехвачен run: владелец %d, жду %d", owner, os.Getpid())
 	}
 }
 

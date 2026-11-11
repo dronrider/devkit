@@ -81,6 +81,23 @@ class WaitcheckTest(SandboxCase):
         self.assertEqual(waitcheck.locks(self.where / "home"), [],
                          "за стендом остался замок головы")
 
+    def test_audit_and_merge_share_rules_source(self):
+        # Отчёт аудита ревью и ворота слияния обязаны читать один чекаут
+        # правил: инвентарь снимается у источника аудита, а слияние сверяет
+        # отчёт по своему DEVKIT_HOME. Дописываю в копию стенда правило с
+        # устойчивым ID, которого нет у чекаута, откуда запущен сам тест:
+        # разошедшиеся источники обязаны уронить слияние на изменённом
+        # источнике.
+        rules = self.box.dk / "RULES.style.md"
+        was = rules.read_text(encoding="utf-8")
+        rules.write_text(was + "\n- **STYLE-990.** Синтетическое правило различения"
+                         " источников аудита и слияния.\n", encoding="utf-8")
+        try:
+            rc, out = self.stand("stand-shared-rules")
+        finally:
+            rules.write_text(was, encoding="utf-8")
+        self.assertEqual(rc, 0, "стенд не прошёл на едином источнике правил:\n%s" % out)
+
     def test_head_without_a_wait_mark_fails_the_stand(self):
         # Откат первого звена: голова кончает ход, не отметив ожидания. Воронка
         # оболочки снимает её на третьем проходе, как снимала до DK-899, и

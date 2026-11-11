@@ -41,13 +41,14 @@ class SelfcheckTest(SandboxCase):
         import selfcheck
         lines = []
 
-        def cmd_run(args, cwd=None):
+        def cmd_run(args, cwd=None, env=None):
             if sabotage:
                 sabotage(args, cwd)
-            return testenv.run(args, cwd=cwd, path=path or self.path,
+            return testenv.run(args, cwd=cwd, env=env, path=path or self.path,
                                home=self.box.home)
 
-        rc = selfcheck.main(cmd_run=cmd_run, where=where, log=lines.append)
+        rc = selfcheck.main(cmd_run=cmd_run, where=where, log=lines.append,
+                            standards=self.box.dk)
         return rc, "\n".join(lines)
 
     def test_live_circle_passes_and_cleans_up(self):
@@ -61,8 +62,9 @@ class SelfcheckTest(SandboxCase):
         # реальной машине после установки одна и есть.
         self.assertIn("доктор:", out, "шаг доктора не назван в отчёте")
         for step in ("подключение", "строка на доске", "вердикт pick",
-                     "ветка задачи", "сценарий задачи", "обкатка сценария",
-                     "уровень ревью", "слияние с выкатом", "отметка smoke",
+                     "ветка задачи", "сценарий задачи", "отчёт аудита ревью",
+                     "обкатка сценария", "уровень ревью",
+                     "слияние с выкатом", "отметка smoke",
                      "разбор долга", "закрытие задачи"):
             self.assertIn("%s: ок" % step, out, "шаг «%s» не назван в отчёте" % step)
         self.assertIn("связка жива", out, "отчёт не назвал итог")

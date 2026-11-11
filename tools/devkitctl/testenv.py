@@ -408,7 +408,11 @@ class Sandbox:
         # каталога рядом сборка потребителя (shipctl с DK-266) в Sandbox падает.
         for d in ("tools", "kit", "hooks", "internal"):
             shutil.copytree(str(DEVKIT_SRC / d), str(self.dk / d))
-        for f in ("RULES.md", "RULES.board.md"):
+        # Архитектура и стиль едут в копию наравне с остальными правилами:
+        # отчёт аудита ревью снимает инвентарь правил с чекаута, названного
+        # DEVKIT_HOME, а в тестах это копия стенда, а не машина.
+        for f in ("RULES.md", "RULES.board.md", "RULES.architecture.md",
+                  "RULES.style.md"):
             shutil.copy(str(DEVKIT_SRC / f), str(self.dk / f))
         self.dkctl = self.dk / "tools" / "devkitctl" / "devkitctl.py"
         # Копия под git, и это не украшение: доктор сверяет коммит, зашитый в

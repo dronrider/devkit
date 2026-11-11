@@ -29,6 +29,7 @@ origin круг падал бы на первом же переводе доск
 посвящена отдельная строка в конце отчёта).
 """
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -36,6 +37,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+DEVKIT = HERE.parent.parent
 
 PREFIX = "SC"
 TASK = "SC-001"
@@ -242,6 +246,77 @@ def rehearse_scenario(cmd_run, tree, task):
                     "docs(tasks): %s обкатка сценария" % task])
 
 
+def audit_report(cmd_run, tree, task, standards):
+    """Отчёт аудита ревью синтетической задачи: снимок утилитой, выводы стендом.
+
+    Ворота слияния требуют у ветки задачи не только строку уровня, но и полный
+    отчёт аудита ревью (DK-1675): строка говорит, что ревью шло по скиллу,
+    отчёт покрывает код и правила. Снимок делает штатная taskctl review audit
+    с базой в точке ответвления ветки, пересчёт хешей остаётся утилите, и
+    стенд их не дублирует. Выводы заполняются только у фиксированной
+    синтетической задачи стенда: правила помечаются проверенными самим
+    прогоном. Отчёт уезжает коммитом в ветку, потому что ворота читают его из
+    закоммиченного дерева, а не из рабочего каталога. standards это чекаут
+    общих правил, с него снимается инвентарь правил: окружение стенда чекаут
+    само по себе не знает, и у ворота слияния та же зависимость.
+    """
+    tree = Path(tree)
+    env = {"DEVKIT_HOME": str(standards)}
+
+    def call(args):
+        return cmd_run(args, str(tree), env)
+
+    rc, out = call(["git", "branch", "--show-current"])
+    if rc != 0:
+        return rc, out
+    head_branch = out.strip().split("\n")[-1].strip()
+    rc, out = call(["git", "for-each-ref", "--format=%(refname:short)",
+                    "refs/heads"])
+    if rc != 0:
+        return rc, out
+    others = [ln.strip() for ln in out.split("\n")
+              if ln.strip() and ln.strip() != head_branch]
+    if not others:
+        return 1, "в дереве задачи нет ствола, база аудита не берётся"
+    rc, out = call(["git", "merge-base", "HEAD"] + others)
+    if rc != 0:
+        return rc, out
+    base = out.strip().split("\n")[-1].strip()
+    rc, out = call(["taskctl", "-C", str(tree), "review", "audit", task,
+                    "--base", base])
+    if rc != 0:
+        return rc, out
+    report = tree / "docs" / "tasks" / ("%s.review-audit.json" % task)
+    try:
+        data = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return 1, "отчёт аудита не читается (%s): %s" % (report, e)
+    data["architecture"].update({
+        "goal": "провести синтетическую задачу стенда от строки до слияния",
+        "decision": "штатные команды утилит devkit на временном проекте",
+        "boundaries": "правка ограничена файлом задачи, производство не трогается",
+        "alternative": "заглушки утилит отклонены: стенд проверяет живую связку",
+        "justification": "иначе ворота слияния целиком на машине не проверить",
+        "result": "checked",
+        "evidence": ["docs/tasks/%s.md" % task, "docs/TASKS.md"],
+    })
+    for rule in data["rules"]:
+        rule["applicability"] = "applicable"
+        rule["result"] = "checked"
+        rule["reason"] = "синтетическая задача стенда, правило проверено самим прогоном"
+        rule["evidence"] = [{
+            "object": "временный проект стенда",
+            "location": "docs/tasks/%s.md" % task,
+            "observation": "правило прошло кругом стенда без нарушений",
+        }]
+    report.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8")
+    cmd_run(["git", "-C", str(tree), "add", "--",
+             "docs/tasks/%s.review-audit.json" % task], str(tree), env)
+    return cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",
+                    "docs(tasks): %s отчёт аудита ревью" % task], str(tree), env)
+
+
 def stamp_result(proj, task):
     """Факт прогона в раздел «Проверка» основного дерева после слияния."""
     if not (Path(proj) / ".devkit" / "selfcheck-deployed").exists():
@@ -259,19 +334,22 @@ def stamp_result(proj, task):
     return True
 
 
-def circle(cmd_run, proj, log):
+def circle(cmd_run, proj, log, standards=None):
     """Круг шагов от временного проекта до закрытой задачи.
 
     cmd_run это прогонщик команд (у тестов subprocess с подставным PATH, у
     командной строки просто run), proj каталог временного проекта, log печатает
-    строку отчёта. Отдаёт список шагов; провал шага останавливает круг: дальше
-    шаги стояли бы на сломанном и говорили бы «не прошёл» о непрогнанном.
+    строку отчёта, standards чекаут общих правил для отчёта аудита ревью (по
+    умолчанию тот, из которого запущен сам selfcheck). Отдаёт список шагов;
+    провал шага останавливает круг: дальше шаги стояли бы на сломанном и
+    говорили бы «не прошёл» о непрогнанном.
     """
+    standards = standards or DEVKIT
     steps = []
 
-    def go(name, args, cwd=None):
+    def go(name, args, cwd=None, env=None):
         try:
-            rc, out = cmd_run(args, cwd)
+            rc, out = cmd_run(args, cwd, env)
         except FileNotFoundError:
             rc, out = 127, "%s: нет такой команды в PATH" % args[0]
         steps.append({"name": name, "rc": rc, "out": out})
@@ -319,6 +397,15 @@ def circle(cmd_run, proj, log):
     log("  сценарий задачи: %s" % ("ок" if rc == 0 else "не прошёл"))
     if rc != 0:
         return steps
+    # Отчёт стоит до обкатки: мерька свежести отметки пускает после себя
+    # коммиты одних файлов доски, а json отчёта к ним не относится. Записи
+    # уровня и отметки лежат в разделах «Ревью» и «Проверка», отчёт их не
+    # хеширует, и позже правки постановки отчёт не старят.
+    rc, out = audit_report(cmd_run, task_tree(proj, TASK), TASK, standards)
+    steps.append({"name": "отчёт аудита ревью", "rc": rc, "out": out})
+    log("  отчёт аудита ревью: %s" % ("ок" if rc == 0 else "не прошёл"))
+    if rc != 0:
+        return steps
     rc, out = rehearse_scenario(cmd_run, task_tree(proj, TASK), TASK)
     steps.append({"name": "обкатка сценария", "rc": rc, "out": out})
     log("  обкатка сценария: %s" % ("ок" if rc == 0 else "не прошёл"))
@@ -334,7 +421,10 @@ def circle(cmd_run, proj, log):
                             "синтетическая задача круга самопроверки, критичности нет",
                             "-m", "docs(tasks): %s уровень ревью проставлен кругом" % TASK]) != 0:
         return steps
-    if go("слияние с выкатом", ["shipctl", "-C", str(proj), "merge", TASK]) != 0:
+    # Слияние проверяет отчёт в дереве задачи, и его воротам нужен тот же
+    # чекаут общих правил: без него инвентарь правил отчёта не собирается.
+    if go("слияние с выкатом", ["shipctl", "-C", str(proj), "merge", TASK],
+          env={"DEVKIT_HOME": str(standards)}) != 0:
         return steps
     if not stamp_result(proj, TASK):
         # Слияние ответило «ок», а следа выката нет: выкат не сработал, и
@@ -361,11 +451,12 @@ def circle(cmd_run, proj, log):
     return steps
 
 
-def main(argv=None, cmd_run=None, where=None, log=print):
+def main(argv=None, cmd_run=None, where=None, log=print, standards=None):
     """Прогон круга с отчётом по шагам. Отдаёт код: 0 связка жива, 1 нет.
 
-    cmd_run и where вынесены параметрами для тестов: круг в тестах гоняется по
-    подставному PATH с собранными бинарями, а не по PATH машины.
+    cmd_run, where и standards вынесены параметрами для тестов: круг в тестах
+    гоняется по подставному PATH с собранными бинарями и по копии devkit, а не
+    по PATH и дереву машины.
     """
     cmd_run = cmd_run or run
     if where is None:
@@ -381,10 +472,11 @@ def main(argv=None, cmd_run=None, where=None, log=print):
         # Боевой прогон работает с подменённым домом: утилиты devkit пишут в
         # ~/.devkit без ведома вызвавшего, и круг обязан оставить машину
         # нетронутой. Тесты приносят свой прогонщик со стендовым домом.
-        cmd_run = lambda args, cwd=None: run(args, cwd=cwd, home=home)
+        cmd_run = lambda args, cwd=None, env=None: run(args, cwd=cwd, env=env,
+                                                       home=home)
     log("самопроверка связки devkit: временный проект в %s" % proj)
     try:
-        steps = circle(cmd_run, proj, log)
+        steps = circle(cmd_run, proj, log, standards)
         # Уборка судится двумя слепками: ветки репозитория проекта до и после
         # круга (слияние обязано унести ветку задачи с собой) и пустота места
         # после сноса собственных каталогов круга.

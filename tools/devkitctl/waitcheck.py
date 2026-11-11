@@ -380,11 +380,12 @@ def step(said, rc, out):
 
 
 def task_work(cmd_run, task, tree):
-    """Работа задачи в её дереве: файл, коммит, сценарий, обкатка, уровень ревью.
+    """Работа задачи в её дереве: файл, коммит, сценарий, обкатка, ревью.
 
-    Слияние пускает ветку только со сценарием в файле задачи и записью ревью, а
-    ворота перевода в Check спрашивают отметку обкатки. Стенд проходит их тем
-    же порядком, каким их проходит человек.
+    Слияние пускает ветку только со сценарием в файле задачи, строкой уровня и
+    полным отчётом аудита ревью (DK-1675), а ворота перевода в Check спрашивают
+    отметку обкатки. Стенд проходит их тем же порядком, каким их проходит
+    человек: отчёт снимается штатной утилитой, выводы за стендом.
     """
     runner = lambda args, cwd=None: cmd_run(args, cwd)
     work = Path(tree) / "src" / (task.lower() + ".txt")
@@ -401,6 +402,11 @@ def task_work(cmd_run, task, tree):
         return rc, out
     rc, out = selfcheck.write_scenario(runner, tree, task, about=SCENARIO_WORDS % task,
                                        verify=VERIFY_WORDS)
+    if rc != 0:
+        return rc, out
+    # Отчёт снимается до обкатки: после отметки мерька свежести пускает
+    # коммиты одних файлов доски, а json отчёта к ним не относится.
+    rc, out = selfcheck.audit_report(cmd_run, tree, task, DEVKIT)
     if rc != 0:
         return rc, out
     rc, out = selfcheck.rehearse_scenario(runner, tree, task)

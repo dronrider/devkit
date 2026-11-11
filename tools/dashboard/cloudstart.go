@@ -58,6 +58,7 @@ while [ ! -f "$d/ack" ]; do
     else
       case "$(/bin/cat "$d/probe-error")" in
         *"no server running"*) break;;
+        *"No such file"*|*"no such file"*) n=30;;
       esac
     fi
   fi
@@ -78,15 +79,26 @@ while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep ` + tick + `; n=$((n+
 /bin/rm -rf "$d"`
 }
 
-func cloudStartInterval(name, def string) string {
+func cloudStartInterval(name, def string) (string, error) {
 	if v := os.Getenv(name); v != "" {
-		return v
+		if _, err := strconv.ParseFloat(v, 64); err != nil {
+			return "", fmt.Errorf("%s: %q не число секунд: %w", name, v, err)
+		}
+		return v, nil
 	}
-	return def
+	return def, nil
 }
 
 func startReservedContext(ctx context.Context, root, tree, id, sess string, command func(string) string) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	tick, err := cloudStartInterval("DEVKIT_CLOUDSTART_TICK", "1")
+	if err != nil {
+		return err
+	}
+	hold, err := cloudStartInterval("DEVKIT_CLOUDSTART_HOLD", "60")
+	if err != nil {
 		return err
 	}
 	roots := []string{root, tree, stage.MainRoot(tree)}
@@ -136,7 +148,7 @@ func startReservedContext(ctx context.Context, root, tree, id, sess string, comm
 		}
 		return err
 	}
-	script := guardianScript(cloudStartInterval("DEVKIT_CLOUDSTART_TICK", "1"), cloudStartInterval("DEVKIT_CLOUDSTART_HOLD", "60"))
+	script := guardianScript(tick, hold)
 	args := []string{"-c", script, "cloud-start", dir, tmux, sess, "new-session", "-d", "-s", sess, "-c", tree, command(filepath.Join(dir, "ack"))}
 	cmd := exec.Command("/bin/sh", args...)
 	cmd.Dir = tree

@@ -190,6 +190,12 @@ type server struct {
 	// ленту, и общий watchMu тут не годится, его берёт снимок панели.
 	deathMu sync.Mutex
 
+	// Живые разговоры дороги app-server (appchat.go): ID -> процесс с нитью
+	// клиента. Свой замок, а не общий s.mu: подъём процесса стоит секунды и
+	// подпроцесс, и держать за ним сканы корней нельзя.
+	appMu    sync.Mutex
+	appChats map[string]*appChat
+
 	// Вопросы помощника пароля askpass (askpass.go, DK-772): ID запроса ->
 	// ожидание. Пароль живёт тут, в памяти, и в ответе помощнику; в журнал,
 	// транскрипт и ленту он не едет. Свой замок: длинный опрос помощника не
@@ -229,7 +235,8 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{},
 		archive: map[string]archiveEntry{}, deaf: map[string]deafEntry{},
-		flights:     map[string]*boardFlight{},
+		appChats: map[string]*appChat{},
+		flights: map[string]*boardFlight{},
 		lagSaid:     map[string]bool{},
 		slowSaid:    map[string]bool{},
 		catchup:     map[string]string{},

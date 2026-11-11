@@ -216,7 +216,10 @@ type sessionInfo struct {
 	// Live это свежесть транскрипта: разговор, писавший недавно, идёт прямо
 	// сейчас. Мера мягкая и годится только на слово состояния в списке;
 	// кончившийся разговор считает жёстко chatReply, и путать их нельзя.
-	Live   bool `json:"live,omitempty"`
+	Live bool `json:"live,omitempty"`
+	// Protocol это протокол клиента дороги app-server: стоит только у чужого
+	// протокола, и экран по нему ветвит реплику и ленту.
+	Protocol string `json:"protocol,omitempty"`
 	path   string
 	suffix string
 	stamp  string
@@ -3026,6 +3029,12 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("sid")
 	if !sessionIDRe.MatchString(sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return
+	}
+	// Лента разговора чужого протокола живёт файлом на стороне дашборда:
+	// транскриптов у дороги нет, и адрес ленты тот же, что адрес разговора.
+	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		s.appFeedServe(w, r, sid)
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)

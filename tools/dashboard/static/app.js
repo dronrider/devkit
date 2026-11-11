@@ -12774,7 +12774,16 @@ async function chatRaise(project, st, text, pick, onTmux) {
   // и продолжения работы.
   const liftWay = String(r.body.way || "");
   if (liftWay === "start" || liftWay === "new" || liftWay === "resume" ||
-      liftWay === "fresh") chatEffortSpend(project, st.task || st.addr);
+      liftWay === "fresh" || liftWay === "appserver") chatEffortSpend(project, st.task || st.addr);
+  // Разговор чужого протокола называет свой адрес сразу: процесс у него не
+  // терминальный, реестра ждать нечего, и панель переезжает на ленту тем же
+  // ходом, каким переезжала на родившуюся сессию.
+  if (liftWay === "appserver" && r.body.session) {
+    chatLiftDrop(project, st.addr);
+    echoMove(project, st.addr, r.body.session);
+    switchChat(r.body.session);
+    return true;
+  }
   // Имя tmux уезжает вызвавшему сразу: он кладёт его в персист реплики, и
   // дорога к родившемуся диалогу переживает закрытие вкладки.
   if (onTmux) onTmux(r.body.tmux);
@@ -14815,6 +14824,12 @@ function chatPanel(project, st) {
           } else if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else echo.sent(m);
+          // Дорога сервера приложения отвечает словами сразу, а ответ клиента
+          // приходит в ленту ходом: слово уходит в панель, чтобы отправка не
+          // читалась молчанием до первого хода.
+          if (r.body.way === "appserver" && r.body.message) {
+            sayResult(r.body.message, false);
+          }
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
           // Подъём тратит и ручную глубину: она уехала с этим подъёмом.

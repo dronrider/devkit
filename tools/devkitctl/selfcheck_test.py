@@ -172,5 +172,35 @@ class SelfcheckTest(SandboxCase):
                       "лишняя ветка не названа в отчёте: %s" % out)
 
 
+class RunDropsPipelineTail(unittest.TestCase):
+    """run снимает хвост конвейера вызывающей сессии со стендовых команд."""
+
+    def test_pipeline_tail_dropped(self):
+        # Иностранный DEVKIT_TASK_RUN_ID из живой сессии ломал стендовому
+        # task-run подтверждение запуска: запись восстановления не находилась,
+        # и воронка снимала голову кодом 2 (DK-1694). Хвост снимается с
+        # окружения команды целиком, стенд заводит собственные записи.
+        import os
+        import sys
+        names = ("DEVKIT_TASK", "DEVKIT_RUN_DEPTH", "DEVKIT_TASK_LOCK_FROM",
+                 "DEVKIT_TASK_HEAD_SESSION", "DEVKIT_TASK_HEAD_SESSION_ARGS",
+                 "DEVKIT_TASK_RUN_ID", "DEVKIT_TASK_RUN_MODEL",
+                 "DEVKIT_RECOVERY_ATTEMPT")
+        for name in names:
+            os.environ[name] = "foreign"
+        try:
+            rc, out = selfcheck.run(
+                [sys.executable, "-c",
+                 "import os; print(','.join(n for n in %r if n in os.environ))"
+                 % (names,)])
+        finally:
+            for name in names:
+                del os.environ[name]
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "", "хвост конвейера доехал до команды стенда")
+        self.assertEqual(sorted(names), sorted(selfcheck.PIPE_ENV_DROP),
+                         "список хвоста разъехался с константой стенда")
+
+
 if __name__ == "__main__":
     unittest.main()

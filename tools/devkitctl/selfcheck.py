@@ -54,6 +54,20 @@ GIT_ENV = {
     "GIT_COMMITTER_NAME": "selfcheck",
     "GIT_COMMITTER_EMAIL": "selfcheck@devkit.local",
 }
+# Хвост окружения конвейера задачи (DK-1694): круг зовут и из живой сессии,
+# окружение родителя несёт её запись запуска, голову и замок. Синтетический
+# круг заводит собственные, а чужой DEVKIT_TASK_RUN_ID заставлял стендовый
+# task-run искать чужую запись восстановления и снимать голову кодом 2.
+PIPE_ENV_DROP = (
+    "DEVKIT_TASK",
+    "DEVKIT_RUN_DEPTH",
+    "DEVKIT_TASK_LOCK_FROM",
+    "DEVKIT_TASK_HEAD_SESSION",
+    "DEVKIT_TASK_HEAD_SESSION_ARGS",
+    "DEVKIT_TASK_RUN_ID",
+    "DEVKIT_TASK_RUN_MODEL",
+    "DEVKIT_RECOVERY_ATTEMPT",
+)
 SCENARIO_HEADER = "## Сценарий проверки"
 VERIFY_HEADER = "## Проверка"
 TIMEOUT = 900
@@ -99,6 +113,8 @@ def run(args, cwd=None, env=None, timeout=TIMEOUT, home=None):
     родителя: так круг зовётся из тестов со своим стендовым домом.
     """
     e = dict(os.environ)
+    for name in PIPE_ENV_DROP:
+        e.pop(name, None)
     e.update(GIT_ENV)
     if home is not None:
         e["HOME"] = str(home)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,22 +19,155 @@ import (
 )
 
 func TestGroomConsentWaiting(t *testing.T) {
+	t.Parallel()
+	sh := consentProcessEnv(t)
 	for _, selection := range []string{"all", "one-source"} {
-		t.Run(selection, func(t *testing.T) { groomConsentWaiting(t, selection) })
+		t.Run(selection, func(t *testing.T) {
+			t.Parallel()
+			groomConsentWaiting(t, selection, sh)
+		})
 	}
 }
 
-func TestGroomConsentForm(t *testing.T) { groomConsentWaiting(t, "form") }
+func TestGroomConsentForm(t *testing.T) {
+	t.Parallel()
+	groomConsentWaiting(t, "form", consentProcessEnv(t))
+}
 
-func groomConsentWaiting(t *testing.T, selection string) {
-	st := newScenarioStand(t)
-	kit, _ := filepath.Abs("../..")
-	t.Setenv("DEVKIT_HOME", kit)
+// Согласование проверяется тремя проходами (all, one-source и form), и каждый
+// гоняет свой Chrome трижды, поэтому проходы идут параллельно. Стенд у каждого
+// свой, а общее для процесса ставится один раз consentProcessEnv: переменные
+// уходят в порождаемые процессы явно (standSpawnEnv), потому что t.Setenv в
+// параллельном проходе запрещён. Параллельные тести пакета возобновляются
+// после всех последовательных, и вслед за согласованием в процессе никого не
+// остаётся, поэтому общий набор переменных на откат не ставится.
+type consentShared struct {
+	bin     string // каталог общих исполняемых фикстур в PATH
+	keys    string // общий журнал send-keys подставного tmux
+	kit     string // чекаут devkit для DEVKIT_HOME
+	taskctl string // собранный бинарь taskctl, закреплённый на процессе
+}
+
+var (
+	consentOnce sync.Once
+	consentEnv  *consentShared
+	consentErr  error
+)
+
+func consentProcessEnv(t *testing.T) *consentShared {
+	t.Helper()
+	consentOnce.Do(func() {
+		consentEnv, consentErr = buildConsentEnv(t)
+	})
+	if consentErr != nil {
+		t.Fatal(consentErr)
+	}
+	return consentEnv
+}
+
+func buildConsentEnv(t *testing.T) (*consentShared, error) {
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp("", "dashboard-consent")
+	if err != nil {
+		return nil, err
+	}
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return nil, err
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		return nil, err
+	}
+	sh := &consentShared{bin: bin, keys: filepath.Join(dir, "tmux.keys"), kit: kit}
+	// Фикстуры PATH те же, что стенд ставит себе: у параллельных проходов один
+	// каталог на процесс, и заполняет его первый подошедший, до всякого стенда.
+	writeScript(t, bin, "taskctl", fmt.Sprintf("echo '%s'", chatBoardJSON))
+	writeAgentctlFake(t, bin, harnessJSONFixture)
+	writeClientFakes(t, bin, "клиент-1")
+	writeScript(t, bin, "tmux", `case "$1" in
+ls|list-sessions) printf 'task-XR-4\t1\t1794141800\n';;
+send-keys) printf '%s\n' "$*" >> `+shQuote(sh.keys)+`;;
+has-session) exit 0;;
+esac`)
+	// Браузер стенда обязателен: без Chrome и playwright проход падает целиком,
+	// и проверка стоит до стендов, чтобы не поднимать их зря.
+	if findChrome() == "" {
+		return nil, errors.New("Chrome is required for consent symptom")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return nil, err
+	}
+	playwrightPath, ok := playwrightResolve(node)
+	if !ok {
+		return nil, errors.New("playwright недоступен; задать NODE_PATH")
+	}
+	// Настоящий taskctl собирается один на прогон (DK-1691) и закрепляется на
+	// процессе: сервера стендов зовут его по абсолютному пути, и восстанавливать
+	// прежнее значение за согласованием некому.
+	sh.taskctl = buildTaskctl(t)
+	taskctlBin = sh.taskctl
+	// Общие швы процесса теми же значениями ставит последовательный newTestEnv,
+	// но откат тут не нужен: когда согласование сошло, тестов в процессе не осталось.
+	loginPause = 0
+	clientHomeFn = func(string) string { return home }
+	if os.Getenv("DEVKIT_TEST_CLOUD_REAL") == "" {
+		startReservedFn = func(root, tree, id, sess string, command func(string) string) error {
+			_, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", tree, command(""))
+			return err
+		}
+	}
+	for _, kv := range [][2]string{
+		{"HOME", home},
+		{"DEVKIT_HOME", kit},
+		{"DEVKIT_TMUX", ""},
+		{"CLAUDE_CODE_SESSION_ID", ""},
+		{"DEVKIT_HEADLESS", "1"},
+		{"PATH", bin + string(os.PathListSeparator) + os.Getenv("PATH")},
+	} {
+		if err := os.Setenv(kv[0], kv[1]); err != nil {
+			return nil, err
+		}
+	}
+	if playwrightPath != "" {
+		if err := os.Setenv("NODE_PATH", playwrightPath); err != nil {
+			return nil, err
+		}
+	}
+	return sh, nil
+}
+
+// consentStand поднимает стенд прохода согласования на общих швах: дом,
+// проект и сервер у прохода свои, а фикстуры PATH, бинарь taskctl и переменные
+// процесса уже поставлены consentProcessEnv.
+func consentStand(t *testing.T, sh *consentShared) *scenarioStand {
+	t.Helper()
+	home := t.TempDir()
+	root := filepath.Join(home, "projects")
+	proj := filepath.Join(root, "demo")
+	mkProject(t, proj)
+	e := newTestEnvAt(t, home, proj, sh.bin)
+	putDoc(t, e.proj, "docs/tasks/XR-4.md", "# XR-4: тест\n")
+	return finishScenarioStand(t, e, e.loggedClient(t), sh.taskctl)
+}
+
+func groomConsentWaiting(t *testing.T, selection string, sh *consentShared) {
+	st := consentStand(t, sh)
 	putDoc(t, st.e.proj, "docs/TASKS-archive.md", "# Архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|---|---|---|---|---|---|\n")
 	cli := func(input string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command(st.bin, append([]string{"-C", st.e.proj}, args...)...)
-		cmd.Env = append(os.Environ(), "CLAUDE_CODE_SESSION_ID="+scenarioPanelSID, "DEVKIT_TMUX=task-XR-4")
+		cmd.Env = standSpawnEnv(
+			"HOME="+st.e.home,
+			"DEVKIT_HOME="+sh.kit,
+			"CLAUDE_CODE_SESSION_ID="+scenarioPanelSID,
+			"DEVKIT_TMUX=task-XR-4",
+			"DEVKIT_HEADLESS=1",
+		)
 		cmd.Stdin = strings.NewReader(input)
 		raw, err := cmd.CombinedOutput()
 		if err != nil {
@@ -78,12 +213,6 @@ func groomConsentWaiting(t *testing.T, selection string) {
 	transcript := writeSession(t, st.e.home, st.e.proj, "", scenarioPanelSID, plainTalk+native, now)
 	writeBinds(t, st.e.home, fmt.Sprintf("2026-11-08T12:00:00 сессия %s задача XR-4 проект demo дерево %s транскрипт %s источник заказ повод startup tmux task-XR-4\n", scenarioPanelSID, st.e.proj, transcript))
 	writePeerAged(t, st.e.home, scenarioPanelSID, "task-XR-4", "waiting", now.UnixMilli())
-	keys := filepath.Join(t.TempDir(), "keys")
-	writeScript(t, st.e.bin, "tmux", `case "$1" in
-ls|list-sessions) printf 'task-XR-4\t1\t1794141800\n';;
-send-keys) printf '%s\n' "$*" >> `+shQuote(keys)+`;;
-has-session) exit 0;;
-esac`)
 	initialMaterial := readFile(t, st.path)
 	initialAsk, _ := chat.ReadAsk(chat.AskPath(st.e.proj, chat.TaskName("XR-4")))
 	mux := http.NewServeMux()
@@ -125,24 +254,13 @@ esac`)
 	mux.Handle("/", st.e.s.handler())
 	browserServer := httptest.NewServer(mux)
 	t.Cleanup(browserServer.Close)
-	chrome := findChrome()
-	if chrome == "" {
-		t.Fatal("Chrome is required for consent symptom")
-	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !needPlaywright(t, node) {
-		t.Fatal("playwright недоступен; задать NODE_PATH")
-	}
 	browser := func(mode string) {
 		t.Helper()
 		script := "testdata/groom_consent_browser.mjs"
 		if selection == "form" && mode == "consent" {
 			script = "testdata/groom_consent_form_browser.mjs"
 		}
-		cmd := exec.Command(node, script, browserServer.URL, chrome, st.e.cfg.Token, scenarioPanelSID, mode, selection)
+		cmd := exec.Command("node", script, browserServer.URL, findChrome(), st.e.cfg.Token, scenarioPanelSID, mode, selection)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("browser %s: %s %v", mode, out, err)
 		} else {
@@ -271,7 +389,7 @@ esac`)
 	if readFile(t, transcript) != plainTalk+native {
 		t.Fatal("native transcript was rewritten")
 	}
-	if data, err := os.ReadFile(keys); err == nil && len(data) > 0 {
+	if data, err := os.ReadFile(sh.keys); err == nil && len(data) > 0 {
 		t.Fatalf("literal keys sent into native modal: %s", data)
 	}
 	status(true)

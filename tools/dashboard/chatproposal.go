@@ -396,7 +396,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 		if err := draftmeta.GuardRecord(one.tree, one.id); err != nil {
 			continue
 		}
-		out, _, err := taskctlDo(one.tree, "draft", "prepared", one.id)
+		out, _, err := s.taskctlDo(one.tree, "draft", "prepared", one.id)
 		if err != nil {
 			continue
 		}

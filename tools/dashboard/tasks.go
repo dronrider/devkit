@@ -541,8 +541,23 @@ func parseBoardRows(raw json.RawMessage) (map[string]boardRow, error) {
 // утилиты это 400 с её же словами: рубежи живут в ней, и переписывать их
 // дашборд не берётся. Ненайденный бинарь и сорванный срок это 502, там
 // сломан не ввод, а окружение.
+//
+// Вызов без сервера наследует окружение процесса. Сервер же проходит через
+// свой метод: дом дашборда едет подпроцессу окружением, как у чтения доски
+// (DK-910), и стендам с несколькими досками в одном процессе достаётся дом
+// каждой своей.
 func taskctlDo(dir string, args ...string) (string, int, error) {
 	return taskctlDoIn(dir, "", args...)
+}
+
+// taskctlDo метода сервера ставит утилите дом дашборда из конфига. Пустой дом
+// оставляет окружение как есть.
+func (s *server) taskctlDo(dir string, args ...string) (string, int, error) {
+	return s.taskctlDoIn(dir, "", args...)
+}
+
+func (s *server) taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
+	return taskctlDoEnv(procHomeEnv(s.cfg.Home), stdin, dir, args...)
 }
 
 // taskctlWrite это taskctlDo для команд, которые доску меняют. Память ответа по
@@ -550,7 +565,7 @@ func taskctlDo(dir string, args ...string) (string, int, error) {
 // пока её заметит отпечаток файла, незачем. Сброс идёт и после отказа утилиты:
 // половина команд успевает тронуть доску до того, как ответить ненулевым кодом.
 func (s *server) taskctlWrite(dir string, args ...string) (string, int, error) {
-	out, code, err := taskctlDo(dir, args...)
+	out, code, err := s.taskctlDo(dir, args...)
 	s.forgetBoard(dir)
 	return out, code, err
 }
@@ -558,7 +573,7 @@ func (s *server) taskctlWrite(dir string, args ...string) (string, int, error) {
 // taskctlWriteIn это taskctlWrite с текстом на входе подпроцесса: так уезжает
 // запись накопителя.
 func (s *server) taskctlWriteIn(dir, stdin string, args ...string) (string, int, error) {
-	out, code, err := taskctlDoIn(dir, stdin, args...)
+	out, code, err := s.taskctlDoIn(dir, stdin, args...)
 	s.forgetBoard(dir)
 	return out, code, err
 }
@@ -566,11 +581,17 @@ func (s *server) taskctlWriteIn(dir, stdin string, args ...string) (string, int,
 // taskctlDoIn это taskctlDo с текстом на входе подпроцесса: так уезжает текст
 // черновика (разбор аргументов и страж подкоманд его бы не пропустили).
 func taskctlDoIn(dir, stdin string, args ...string) (string, int, error) {
+	return taskctlDoEnv(nil, stdin, dir, args...)
+}
+
+// taskctlDoEnv это тот же запуск с названным окружением: пустое наследуется
+// как есть.
+func taskctlDoEnv(env []string, stdin, dir string, args ...string) (string, int, error) {
 	bin := taskctlPath()
 	if bin == "" {
 		return "", http.StatusBadGateway, errors.New(taskctlMissing())
 	}
-	out, err := runProcIn(stdin, bin, append(args, "-C", dir)...)
+	out, err := runProcEnv(env, stdin, bin, append(args, "-C", dir)...)
 	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
@@ -1278,7 +1299,7 @@ func (s *server) handleTaskFilePost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "file", id)
+	out, code, err := s.taskctlDo(found.Path, "file", id)
 	if err != nil {
 		s.logf("заведение файла %s в %s не удалось: %v", id, found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

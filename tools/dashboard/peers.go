@@ -398,6 +398,16 @@ func homeEnvAt(home string, silent bool) []string {
 	return append(out, noFocusEnv)
 }
 
+// procHomeEnv собирает окружение подпроцесса под домом дашборда: утилиты доски
+// читают реестр и журнал из ~/.devkit того же дома, что и сам дашборд (DK-910).
+// Пустой дом оставляет окружение процесса как есть.
+func procHomeEnv(home string) []string {
+	if home == "" {
+		return nil
+	}
+	return homeEnvAt(home, false)
+}
+
 // runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что
 // поднимает клиента харнеса: под чужим домом он не найдёт ни своих хуков, ни
 // своего логина. Каталог служебный: подпроцесс сам поднимает клиента, и

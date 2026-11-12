@@ -1689,8 +1689,23 @@ func findChrome() string {
 // шаг молча превращался бы в пропуск, а пропуск неотличим от зелёного прогона.
 func needPlaywright(t *testing.T, node string) bool {
 	t.Helper()
-	if _, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err == nil {
-		return true
+	path, ok := playwrightResolve(node)
+	if !ok {
+		return false
+	}
+	if path != "" {
+		t.Setenv("NODE_PATH", path)
+	}
+	return true
+}
+
+// playwrightResolve проверяет, видит ли node библиотеку playwright, и называет
+// NODE_PATH, которым её видно: пустая строка значит, что хватает и без него.
+// Проба чистая, переменных процесса не трогает: параллельный стенд ставит их
+// сам, последовательному хватает t.Setenv в needPlaywright.
+func playwrightResolve(node string) (string, bool) {
+	if playwrightResolvesWith(node, "") {
+		return "", true
 	}
 	current := os.Getenv("NODE_PATH")
 	for _, dir := range []string{"/opt/homebrew/lib/node_modules", "/usr/local/lib/node_modules"} {
@@ -1701,12 +1716,20 @@ func needPlaywright(t *testing.T, node string) bool {
 		if current != "" {
 			joined += string(os.PathListSeparator) + current
 		}
-		t.Setenv("NODE_PATH", joined)
-		if _, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err == nil {
-			return true
+		if playwrightResolvesWith(node, joined) {
+			return joined, true
 		}
 	}
-	return false
+	return "", false
+}
+
+func playwrightResolvesWith(node, nodePath string) bool {
+	cmd := exec.Command(node, "-e", "require.resolve('playwright')")
+	if nodePath != "" {
+		cmd.Env = standSpawnEnv("NODE_PATH=" + nodePath)
+	}
+	_, err := cmd.CombinedOutput()
+	return err == nil
 }
 
 // chromeStand собирает страницу замера: настоящий index.html со своими стилями,

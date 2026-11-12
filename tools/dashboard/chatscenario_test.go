@@ -24,6 +24,24 @@ type scenarioStand struct {
 	bin  string
 }
 
+// standSpawnEnv собирает окружение порождаемых процессов стенда: наследуется
+// процесс, а названные ключи заменяются. Параллельным проходам согласования
+// нельзя менять переменные самого процесса (t.Setenv там запрещён), и своё
+// окружение каждый проход везёт только со своими процессами.
+func standSpawnEnv(extra ...string) []string {
+	own := map[string]bool{}
+	for _, kv := range extra {
+		own[strings.SplitN(kv, "=", 2)[0]] = true
+	}
+	out := make([]string, 0, len(extra)+8)
+	for _, kv := range os.Environ() {
+		if !own[strings.SplitN(kv, "=", 2)[0]] {
+			out = append(out, kv)
+		}
+	}
+	return append(out, extra...)
+}
+
 func newScenarioStand(t *testing.T) *scenarioStand {
 	t.Helper()
 	e, c := chatEnv(t)
@@ -42,6 +60,15 @@ func newScenarioStand(t *testing.T) *scenarioStand {
 	// (DK-1569), и существующие стенды ниже проверяют запасную безадресную
 	// дорогу, а подъём заказывают своей фикстурой с журналом вызовов.
 	writeScript(t, e.bin, "tmux", "case \"$1\" in new-session) exit 1;; esac\nexit 0")
+	return finishScenarioStand(t, e, c, bin)
+}
+
+// finishScenarioStand достраивает стенд от готового окружения: документы
+// проекта, публикация вопроса и живая запись реестра. Общих для процесса швов
+// тут нет: последовательный стенд подменил носитель до этого места, а
+// параллельным проходам фикстура tmux досталась общей на процесс.
+func finishScenarioStand(t *testing.T, e *testEnv, c *http.Client, bin string) *scenarioStand {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Join(e.proj, "hooks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +101,9 @@ func newScenarioStand(t *testing.T) *scenarioStand {
 
 func (st *scenarioStand) run(t *testing.T, args ...string) string {
 	t.Helper()
-	out, err := exec.Command(st.bin, append([]string{"-C", st.e.proj, "decide", "XR-4"}, args...)...).CombinedOutput()
+	cmd := exec.Command(st.bin, append([]string{"-C", st.e.proj, "decide", "XR-4"}, args...)...)
+	cmd.Env = standSpawnEnv("DEVKIT_HOME=")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("taskctl %v: %v\n%s", args, err, out)
 	}

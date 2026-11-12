@@ -99,7 +99,7 @@ func (s *server) handleChain(w http.ResponseWriter, r *http.Request) {
 	// Предпросмотр доску не трогает, и памяти ответа он не сбрасывает: гоняется
 	// он на каждое движение в диалоге, а лишний сброс стоил бы подпроцесса
 	// taskctl всему экрану.
-	out, code, err := taskctlDo(found.Path, args...)
+	out, code, err := s.taskctlDo(found.Path, args...)
 	if !body.DryRun {
 		s.forgetBoard(found.Path)
 	}

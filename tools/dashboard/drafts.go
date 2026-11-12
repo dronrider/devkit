@@ -143,7 +143,7 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 	if history {
 		args = append(args, "--history")
 	}
-	out, code, err := taskctlDo(found.Path, args...)
+	out, code, err := s.taskctlDo(found.Path, args...)
 	if err != nil {
 		s.logf("накопитель черновиков %s: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -975,7 +975,7 @@ func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "types", "--json")
+	out, code, err := s.taskctlDo(found.Path, "draft", "types", "--json")
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -1000,7 +1000,7 @@ func (s *server) handleDraftsPrepared(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "prepared", "adopt")
+	out, code, err := s.taskctlDo(found.Path, "draft", "prepared", "adopt")
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -1034,7 +1034,7 @@ func (s *server) handleDraftPrepared(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "prepared", id)
+	out, code, err := s.taskctlDo(found.Path, "draft", "prepared", id)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -1236,7 +1236,7 @@ func (s *server) handleDraftPreparedTask(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ключ задачи"})
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "prepared", id)
+	out, code, err := s.taskctlDo(found.Path, "draft", "prepared", id)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return

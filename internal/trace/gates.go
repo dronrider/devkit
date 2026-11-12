@@ -186,6 +186,31 @@ func checkRegcheck(root, logRoot, main, branch, taskType, doc string, requireLog
 	return &RegcheckPending{Head: head, Base: base, LogPath: logPath, Since: since}
 }
 
+// LastGreenRegcheck даёт время последнего зелёного прогона regcheck в журнале
+// запусков. Отбор очереди слияний сравнивает его с доработками ветки (DK-1650),
+// а ворот слияния остаётся на своей границе времени жизни ветки.
+func LastGreenRegcheck(path string) (time.Time, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var last time.Time
+	for _, ln := range strings.Split(string(data), "\n") {
+		f := strings.Split(ln, "\t")
+		if len(f) < 4 || f[1] != "regcheck" || f[3] != "0" {
+			continue
+		}
+		ts, err := time.ParseInLocation("2006-01-02T15:04:05", f[0], time.Local)
+		if err != nil {
+			continue
+		}
+		if ts.After(last) {
+			last = ts
+		}
+	}
+	return last, !last.IsZero()
+}
+
 // RegcheckPending сохраняет входы проверки для диагностики очереди.
 type RegcheckPending struct {
 	Head    string
@@ -201,24 +226,8 @@ func (e *RegcheckPending) Error() string {
 
 // regcheckLogged ищет в журнале успешный запуск regcheck не старше since.
 func regcheckLogged(path string, since time.Time) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		f := strings.Split(ln, "\t")
-		if len(f) < 4 || f[1] != "regcheck" || f[3] != "0" {
-			continue
-		}
-		ts, err := time.ParseInLocation("2006-01-02T15:04:05", f[0], time.Local)
-		if err != nil {
-			continue
-		}
-		if !ts.Before(since) {
-			return true
-		}
-	}
-	return false
+	last, ok := LastGreenRegcheck(path)
+	return ok && !last.Before(since)
 }
 
 // ReviewLevel требует строку уровня в разделе «Ревью» («Уровень 2 до
@@ -267,13 +276,21 @@ func OpenReviewNotes(root, id string) ([]string, error) {
 		}
 		return nil, err
 	}
+	return ReviewNotesOpen(string(data)), nil
+}
+
+// ReviewNotesOpen разбирает открытые замечания ревью из готового текста файла
+// задачи. Отбор очереди слияний читает файл и из дерева задачи, и из ветки
+// (DK-1650), поэтому корень тут не всегда доступен, а врата слияния остаются
+// на OpenReviewNotes с чтением диска.
+func ReviewNotesOpen(doc string) []string {
 	var open []string
-	for _, item := range reviewItems(string(data), taskform.Review) {
+	for _, item := range reviewItems(doc, taskform.Review) {
 		if reviewOutcome(item) == "" {
 			open = append(open, strings.TrimSpace(item))
 		}
 	}
-	return open, nil
+	return open
 }
 
 // reviewItems собирает элементы списка раздела: маркерная строка вместе со

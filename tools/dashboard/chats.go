@@ -4484,16 +4484,31 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			model, harness)})
 		return
 	}
+	// Смена модели не меняет клиента разговора: история привязана к своему
+	// клиенту, у чужого протокола это лента app-server, у семейства claude-code
+	// транскрипты, и перенос разговора между клиентами отложен (раздел
+	// «Границы»). Отказ виден человеку до продолжения, а исходный разговор
+	// остаётся цел и достижим прежним клиентом. Незачатая запись исключение:
+	// клиента у неё ещё нет, и выбор подписки свободен до первой реплики.
+	if cur := s.chatStoreRead(sid); !cur.Blank {
+		h := s.chatHarnessOf(model, harness)
+		if (cur.Protocol != "" && (h == nil || !h.foreign() || h.Protocol != cur.Protocol)) ||
+			(cur.Protocol == "" && h != nil && h.foreign()) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+				"модель %s принадлежит другому клиенту: перенос разговора между клиентами отложен, "+
+					"разговор сохранится за прежним клиентом; заведите новый разговор",
+				chatModelName(model, harness))})
+			return
+		}
+	}
 	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
 	// новая нить заводится следующим ходом, а лента остаётся: это и есть
 	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		wasModel, wasHarness := st.Model, st.Harness
 		st.Model, st.Harness = model, harness
-		if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
+		if h := s.chatHarnessOf(model, harness); h != nil {
 			st.Protocol = h.Protocol
-		} else {
-			st.Protocol, st.Thread = "", ""
 		}
 		if wasModel != model || wasHarness != harness {
 			st.Thread = ""

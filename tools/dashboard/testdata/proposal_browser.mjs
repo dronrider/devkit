@@ -4,6 +4,11 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const [base, executablePath, token, sid] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+await context.addInitScript(() => {
+  for (const [key, ms] of Object.entries({ ask: 250, groom: 250, pulse: 250 }))
+    localStorage.setItem("devkit.poll." + key, String(ms));
+});
+
 try {
   assert.equal((await context.request.post(base+'/api/login',{data:{token}})).status(),200);
   const initial = await (await context.request.get(base+'/__proposal')).json();

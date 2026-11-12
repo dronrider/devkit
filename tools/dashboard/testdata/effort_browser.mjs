@@ -5,6 +5,11 @@ const { chromium } = createRequire(import.meta.url)("playwright");
 const [base, executablePath, token, boardNow, boardNext, flipMark] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext();
+await context.addInitScript(() => {
+  for (const [key, ms] of Object.entries({ ask: 250, groom: 250, pulse: 250 }))
+    localStorage.setItem("devkit.poll." + key, String(ms));
+});
+
 const proof = process.env.DASHBOARD_EFFORT_PROOF_DIR;
 if (proof) fs.mkdirSync(proof, { recursive: true });
 const results = [];

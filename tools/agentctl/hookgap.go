@@ -19,6 +19,18 @@ const hooksMarker = "session-task.py --hook"
 // без переучивания.
 const protocolClaude = "claude-code"
 
+// foreignProtocol отвечает, чужой ли протокол у профиля: ключ protocol секции
+// [hooks] непуст и не из семейства claude-code. Такому клиенту обвязка devkit
+// не раскладывается, поднимается он штатным входом из своего каталога, и пустые
+// пары окружения в машинном слое для него штатны.
+func foreignProtocol(p *profile) bool {
+	if p == nil {
+		return false
+	}
+	proto := p.section("hooks").Str("protocol")
+	return proto != "" && proto != protocolClaude
+}
+
 // hooksGap отвечает, подключена ли обвязка devkit в настройках харнеса. Пустой
 // ответ значит «судить нечего или всё на месте»; непустой это находка словами
 // для человека.
@@ -38,7 +50,7 @@ func hooksGap(l *layers, name string) string {
 	if p == nil {
 		return ""
 	}
-	if proto := p.section("hooks").Str("protocol"); proto != "" && proto != protocolClaude {
+	if foreignProtocol(p) {
 		return ""
 	}
 	path := p.section("hooks").Str("config")

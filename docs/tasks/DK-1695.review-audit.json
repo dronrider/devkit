@@ -2,9 +2,9 @@
  "version": 1,
  "id": "DK-1695",
  "base_sha": "cc40570da2ac11cfe51cbe3c832ee267d938519b",
- "head_sha": "f199010d1e632558d82784c84c1c2da745e751e8",
- "code_hash": "7e2e831c5e6232ba3b3838f458d318f6e6fe693b77249a5c3c368267c773f5ff",
- "task_hash": "627403cec0a0baa2c0a3ebbfef94f6058e11df65eed0a53ac77d31de5c8f07c4",
+ "head_sha": "f6b1ce4c3125f4447c564914512f44a84a5baa29",
+ "code_hash": "5d85e00e7b1808248128e0df502cf6d1573ac65a31d8bf69ed46ca21c4c5202a",
+ "task_hash": "c5f467dd16c3fa94dc0efbf4ed3f9442516cd2cfe03a7b29c8f1d860e22b17e8",
  "sources": [
   {
    "name": "common-architecture",
@@ -28,7 +28,7 @@
    "name": "project-architecture",
    "path": "project:docs/ARCHITECTURE.md",
    "status": "present",
-   "hash": "26654cbb34b78dc257ccb2ebdf06558daa2ee00ae1fdc7238488ba85cc15cfaf"
+   "hash": "3ecafb65a37d24fc8cc9b32fc13f6df5bc10a78afb1080fbc66624983faa11ac"
   },
   {
    "name": "project-style",
@@ -39,18 +39,18 @@
  ],
  "architecture": {
   "goal": "Пользователь выбирает профиль Codex в дашборде и работает в его чате по действующей подписке ChatGPT; прежние профили и разговоры продолжают работать без изменений поведения (DoD 1-4 задачи DK-1695).",
-  "decision": "Протокол клиента называет профиль харнеса ключом protocol секции [hooks]; agentctl harness --json отдаёт его полем и гасит hooks_gap у чужого протокола. Дашборд ветвит дорогу чата по слову протокола в записи разговора: родное семейство идёт прежней tmux-дорогой без изменений, чужой протокол поднимает процесс app-server обёрткой agentctl exec с обменом JSONL (appserver.go), разговор ведёт appchat.go с лентой-файлом и реестром живых процессов, ручки say/stop/status/model/list/archive/session ветвятся в существующих хендлерах.",
-  "boundaries": "Имена протоколов принадлежат профилям kit/harness и раскладке agentctl, дашборд их не сочиняет (проверено сторожем имён с исключением слов протоколов). Источник истины разговора чужого протокола это JSONL-файл ленты и запись chatStore (модель, нить, глубина); нить клиента переживает перезапуск через thread/resume. Процессом владеет реестр appChats под своим замком appMu: подъём, смерть (вахтёрная горутина пишет обрыв в ленту), снятие под смену модели, архив и стоп. Отказы подъёма называют хвост stderr клиента.",
-  "alternative": "Проще было бы тянуть codex через tmux-клиента, но у app-server нет терминальной механики, и дорога заведомо не работает; отдельный демон-адаптер добавил бы вторую точку доставки и доставки обновлений. Процесс в дереве дашборда через ту же обёртку agentctl exec (инвариант DK-1271: пары окружения подписки кладёт обвязка) закрывает задачу без новых сущностей доставки. Сужение против прежней постановки (перенос истории Claude -> Codex) согласовано пользователем 2026-11-11 и записано в задаче.",
-  "justification": "Контракт app-server проверен прямым прогоном клиента в DK-1624, решение ссылается на него. Ветвление по полю protocol аддитивно: старые записи без поля читаются прежней дорогой, старые профили без ключа остаются родным семейством (проверено тестами TestHarnessProtocol и TestExecNoHooksGapForForeignProtocol). Инвариант новой дороги записан в docs/ARCHITECTURE.md рядом с инвариантом DK-1271. Гашение hooks_gap у чужого протокола оправдано: настроек хуков формата claude-code у клиента нет, находка от устаревшего agentctl гасится на месте.",
+  "decision": "Протокол клиента называет профиль харнеса ключом protocol секции [hooks]; agentctl harness --json отдаёт его полем и гасит hooks_gap у чужого протокола. Дашборд ветвит дорогу чата по слову протокола в записи разговора: родное семейство идёт прежней tmux-дорогой, чужой протокол поднимает процесс app-server обёрткой agentctl exec с обменом JSONL, разговор ведёт appchat.go с лентой-файлом и реестром живых процессов. Доработка по ревью: кросс-протокольная смена модели отказывает 409 до продолжения (перенос между клиентами отложен границей задачи), exec пускает харнес чужого протокола без пар окружения, семейству claude-code отказ сохранён.",
+  "boundaries": "Имена протоколов принадлежат профилям kit/harness и раскладке agentctl, дашборд их не сочиняет. Источник истины разговора чужого протокола это JSONL-файл ленты и запись chatStore (модель, нить, глубина); нить переживает перезапуск через thread/resume, глубина пишется в запись каждым изменением. Процессом владеет реестр appChats под замком appMu. Отказы подъёма называют хвост stderr клиента; пустые пары окружения для чужого протокола штатны, для claude-семейства это отказ.",
+  "alternative": "Проще было бы тянуть codex через tmux-клиента, но у app-server нет терминальной механики; отдельный демон-адаптер добавил бы вторую точку доставки. Отказ 409 вместо переноса истории согласован с границей задачи (перенос отложен пользователем 2026-11-11).",
+  "justification": "Ветвление по полю protocol аддитивно, старые записи без поля идут прежней дорогой (TestHarnessProtocol, TestChatModelKeepsPair). Отказ кросс-протокольной смены закрывает потерю ленты из замечания 1 прошлого круга: поля записи не тронуты, процесс жив, лента достижима прежним клиентом. Пуск exec без пар ограничен чужим протоколом по ключу protocol профиля (foreignProtocol), опечатка в имени по-прежнему отказ (TestExecUnknownHarness), claude-семейство без пар отказывает как раньше (TestExecRefusesHarnessWithoutEnv).",
+  "result": "checked",
   "evidence": [
-   "- раскладка протокола (kit/harness/codex.toml [hooks], tools/agentctl/harness.go (harnessJSON.Protocol), tools/agentctl/hookgap.go): ключ protocol в профиле, поле protocol в машинном виде, чужой протокол выходит из hooksGap без суждения; проверено TestExecNoHooksGapForForeignProtocol (прогон зелёный) и devkitctl harness_test.py CodexProfileTest (прогон зелёный)",
-   "- дорога чата чужого протокола (tools/dashboard/appserver.go, appchat.go, ветвления в chats.go/sessions.go/server.go): процесс поднимается agentctl exec в каталоге разговора, лента файлом с блокировкой chat.Lock, занятость до запроса, смерть пишет обрыв; тесты TestAppChat* зелёные, регрессия гонки занятости подтверждена regcheck --base 37b1491ea (красный на базе до фикса, зелёный на ветке)",
-   "- сохранность прежних дорог (tools/dashboard/chats.go (ветвления по st.Protocol), static/app.js (ветвление по way-слову)): все новые ветки стоят за условием st.Protocol != \"\" или way == \"appserver\"; записи старых разговоров без поля идут прежней tmux-дорогой, фронтенд не называет слов протоколов (grep static/ пуст)",
-   "- прогоны (devkitctl test tools/agentctl (182с, ок), devkitctl test tools/dashboard -run TestApp|TestHarness|TestQuota (11.6с, ок)): пакет agentctl целиком зелёный, новая область дашборда зелёная; полный прогон пакета дашборда и питонья суита см. в замечаниях ревью",
-   "доставка до пользователя: путь README «Первый запуск Codex» воспроизведён на собранном из ветки agentctl и упирается в отказ exec без пар окружения (замечание 6, блокирует); сценарий шаг 7 на том же отказе"
-  ],
-  "result": "violated"
+   "замечание 1 прошлого круга закрыто: chats.go handleChatModel отказывает 409 словами «перенос разговора между клиентами отложен... заведите новый разговор» в обе стороны; тест TestChatModelForeignRefused зелёный на f6b1ce4c3, мой прогон regcheck --base f199010d1: красный на старом коде, зелёный на ветке",
+   "замечание 6 прошлого круга закрыто в exec и доке: tools/agentctl/exec.go пускает foreignProtocol без пар, README agentctl и раздел архитектуры docs/ARCHITECTURE.md переписаны; TestExecForeignProtocolWithoutEnv зелёный, мой regcheck --base f199010d1 красный на старом",
+   "неблокирующие 4 и 5 закрыты: appFeedStream берёт записи и смещение из одного ReadFile, нумерация потока сходится с appFeedParse (проверено чтением: ключ новой записи равен индексу её строки); effort под замком c.mu и пишется в запись каждым изменением; тесты TestAppFeedStreamKeysFollowFile и TestAppChatEffortSurvivesDeath зелёные, по effort мой regcheck красный на f199010d1",
+   "прогоны: devkitctl test tools/agentctl целиком зелёный (199.9с), devkitctl test tools/dashboard -run 'TestChatModel|TestAppChat|TestAppFeed' зелёный (9.8с)",
+   "граница доставки: автономный стенд шага 7 сценария не изолирован от настоящего дома машины (runProcHome и appServerStart ставят подпроцессам HOME от uid), стендовая подписка codex дашборду недостижима; шаг падает на выборке модели, проверено прогоном собранных из ветки бинарей; блокирующее замечание живёт в разделе «Ревью» файла задачи"
+  ]
  },
  "rules": [
   {
@@ -447,28 +447,23 @@
    "source": "common-architecture",
    "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
    "applicability": "applicable",
-   "result": "violated",
-   "reason": "Минимальный рабочий пример в README не работает: предписанная шагом 1 раскладка (enabled + пустая [codex], «home и env не нужны») оставляет харнес без пар окружения, и agentctl exec отказывает до запуска клиента. Проверено собранным из ветки agentctl на точной раскладке README (код 1, отказ «вписать env»); doctor пар не дописывает. Замечание 6 ревью, блокирует.",
+   "result": "checked",
+   "reason": "Минимальный рабочий пример первого запуска исполняется после доработки: предписанная README раскладка (enabled + пустая [codex]) больше не упирается в отказ exec, чужой протокол поднимается без пар окружения, отказ остался долей claude-семейства и назван словами. Неверный ввод (опечатка имени, чужая ступень) отказывает с подсказкой. Проверено тестом TestExecForeignProtocolWithoutEnv и моим regcheck; шаги README живым прогоном на этой машине не гонялись, живой прогон назначен сценарием проверки.",
    "evidence": [
     {
      "object": "пример потребителя",
-     "location": "tools/dashboard/README.md раздел «Первый запуск Codex», шаг 1 и шаг 4",
-     "observation": "шаг 1 требует пустую секцию [codex] без env, шаг 4 идёт agentctl exec (appchat.go appSpawn)"
+     "location": "tools/dashboard/README.md «Первый запуск Codex» шаг 1, tools/agentctl/exec.go cmdExec",
+     "observation": "пустая секция [codex] без env теперь штатна: len(pairs) == 0 && !foreignProtocol(p) не отказывает чужому протоколу"
     },
     {
-     "object": "граница запуска",
-     "location": "tools/agentctl/exec.go (отказ при пустых pairs), tools/agentctl/run.go harnessPairs",
-     "observation": "exec отказывает для харнеса не-default без env-пар до запуска клиента"
+     "object": "отказ семейства claude",
+     "location": "tools/agentctl/exec_test.go TestExecRefusesHarnessWithoutEnv",
+     "observation": "отказ без пар сохранён, тест зелёный в полном прогоне agentctl"
     },
     {
-     "object": "воспроизведение",
-     "location": "стенд: собранный из ветки agentctl, HOME с раскладкой README",
-     "observation": "код выхода 1, текст «харнес codex не поднять ... вписать env в секцию [codex]»"
-    },
-    {
-     "object": "путь доктора",
-     "location": "tools/devkitctl/devkitctl.py alt_sub_harnesses/check_sub_catalog",
-     "observation": "болванка конфига раскладывается только подпискам с ключом home; писателя env-пар машинного слоя нет"
+     "object": "речь отказа в панели",
+     "location": "tools/dashboard/static/app.js modelSwitch, chats.go handleChatModel",
+     "observation": "отказ 409 показывается карточкой со словами ответа (sayResult), не молча"
     }
    ]
   },
@@ -718,12 +713,17 @@
    "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
    "applicability": "applicable",
    "result": "checked",
-   "reason": "Правка едет с тестами: appchat_test.go (10 тестов на подменном клиенте), дополнения harness_test.go/hookgap_test.go/harnesses_test.go/quota_test.go и питоньей harness_test.py. Все новые ветки покрыты.",
+   "reason": "Правка едет с тестами: доработка добавила TestChatModelForeignRefused (chatpair_test.go), TestExecForeignProtocolWithoutEnv (exec_test.go), TestAppChatEffortSurvivesDeath и TestAppFeedStreamKeysFollowFile (appchat_test.go); прежний набор тестов этапов A и B сохранён. Прогоны: agentctl целиком зелёный (199.9с), dashboard прицельно TestChatModel|TestAppChat|TestAppFeed зелёный (9.8с).",
    "evidence": [
     {
      "object": "состав тестов",
      "location": "tools/dashboard/appchat_test.go и дополнения",
      "observation": "прогон devkitctl test tools/dashboard -run TestApp|TestHarness|TestQuota зелёный, agentctl пакет целиком зелёный"
+    },
+    {
+     "object": "новые тесты доработки",
+     "location": "tools/dashboard/chatpair_test.go, tools/agentctl/exec_test.go, tools/dashboard/appchat_test.go",
+     "observation": "четыре теста на закрытые замечания, все зелёные в моих прогонах"
     }
    ]
   },
@@ -733,12 +733,17 @@
    "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
    "applicability": "applicable",
    "result": "checked",
-   "reason": "Регрессия гонки занятости (фикс bbb2e77c0) закрыта тестом TestAppChatTurnEndBeforeReply; краснота на старом коде подтверждена моим прогоном regcheck --base 37b1491ea: красный на базе, зелёный на ветке.",
+   "reason": "Краснота баг-тестов на старом коде подтверждена моими прогонами regcheck --base f199010d1: TestChatModelForeignRefused (замечание 1), TestExecForeignProtocolWithoutEnv (замечание 6) и TestAppChatEffortSurvivesDeath (замечание 5) краснеют на f199010d1 и проходят на f6b1ce4c3. TestAppFeedStreamKeysFollowFile regcheck не гонялся: окно самой гонки недетерминировано, тест фиксирует сквозную нумерацию ключей, исполнителем это названо честно.",
    "evidence": [
     {
      "object": "regcheck",
      "location": "tools/dashboard, база 37b1491ea",
      "observation": "«тест краснеет на 37b1491ea и проходит на текущем коде, регрессия закрыта»"
+    },
+    {
+     "object": "перепровер regcheck",
+     "location": "regcheck -C tools/dashboard и -C tools/agentctl, база f199010d1",
+     "observation": "три теста красные на старом коде и зелёные на текущем (мой прогон, вывод утилиты)"
     }
    ]
   },
@@ -1034,17 +1039,27 @@
    ]
   },
   {
-   "id": "project-architecture:block-cb52f7a016c8a058",
+   "id": "project-architecture:block-3b1e41ceae5295a7",
    "source": "project-architecture",
-   "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.",
+   "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
    "applicability": "applicable",
    "result": "checked",
-   "reason": "Инвариант DK-1271 соблюдён дословно: appServerStart поднимает клиента только через agentctl exec --harness <имя>; пары окружения подписки кладёт обёртка, чат мимо обвязки не идёт.",
+   "reason": "Инвариант соблюдён: все чаты, включая подписку по умолчанию, поднимаются обёрткой agentctl exec; новый абзац про чужой протокол без пар подтверждён кодом и тестом (exec пускает foreignProtocol с пустыми парами, клиент ходит штатным входом из своего каталога), пустой машинный слой claude-семейства по-прежнему отказывает с подсказкой доктора.",
    "evidence": [
     {
-     "object": "подъём через обёртку",
-     "location": "appserver.go appServerStart",
-     "observation": "единственный путь запуска клиента в новой дороге"
+     "object": "харнес чужого протокола без пар",
+     "location": "tools/agentctl/exec.go, exec_test.go TestExecForeignProtocolWithoutEnv",
+     "observation": "тест с профилем codextest (protocol = codex) и пустой машинной секцией проходит, DEVKIT_HARNESS проставлен"
+    },
+    {
+     "object": "мой перепровер",
+     "location": "regcheck --base f199010d1 -C tools/agentctl -run TestExecForeignProtocolWithoutEnv",
+     "observation": "красный на старом коде, зелёный на ветке"
+    },
+    {
+     "object": "живой прогон",
+     "location": "сценарий проверки, шаги 1-6",
+     "observation": "не гонялся на этой машине, назначен сценарием; стенд шага 7 упирается в неизолированность дома (замечание в разделе «Ревью»)"
     }
    ]
   },

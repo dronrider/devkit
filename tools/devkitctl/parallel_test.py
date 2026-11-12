@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest import mock
 
 import parallel
+import selfcheck
 
 
 class Stand(unittest.TestCase):
@@ -233,6 +234,28 @@ class ComponentEnvTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0,
                          "ротация board-task красна при живом хвосте головы:\n%s"
                          % "\n".join(out.splitlines()[-40:]))
+
+
+class RunnerDropsPipelineTail(unittest.TestCase):
+    """Список хвоста конвейера у раннера сверяется со selfcheck (DK-1694).
+
+    Хвост живёт в трёх копиях, а ComponentEnvTest проверяет свои восемь имён
+    по собственному списку раннера: девятое имя, добавленное в selfcheck
+    и забытое в parallel, уезжало бы в компоненты официального прогона
+    незамеченным. Эталон здесь список selfcheck, тот же, что у песочницы
+    сюит в testenv_test.
+    """
+
+    def test_pipeline_tail_dropped(self):
+        for name in selfcheck.PIPE_ENV_DROP:
+            os.environ[name] = "foreign"
+        try:
+            e = parallel.command_env([sys.executable, "-m", "unittest"])
+        finally:
+            for name in selfcheck.PIPE_ENV_DROP:
+                del os.environ[name]
+        leaked = [n for n in selfcheck.PIPE_ENV_DROP if n in e]
+        self.assertEqual(leaked, [], "раннер пропустил хвост конвейера")
 
 
 class BudgetTest(unittest.TestCase):

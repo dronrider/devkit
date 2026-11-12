@@ -29,6 +29,9 @@ try {
   page.on("pageerror", (error) => console.error("pageerror", String(error)));
   page.on("requestfailed", (request) => console.error("requestfailed", request.url(), request.failure()?.errorText));
   for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+    // Фокус называет сочетание целиком, и вьюпорты без назначенных сочетаний
+    // страницу не грузят: загрузка и две выдержки тут дороже самих проверок.
+    if (focus && ![8, 24].some((count) => ["run", "chat"].some((kind) => ["top", "bottom"].some((side) => focus === `${viewport.width}/${count}/${kind}/${side}`)))) continue;
     await page.setViewportSize(viewport);
     await page.goto(base + "/#demo");
     await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 }).catch(async (error) => { throw new Error(String(error) + " " + await page.locator("body").innerText() + " scripts=" + await page.locator("script").evaluateAll((nodes) => nodes.map((n) => n.outerHTML).join("|"))); });

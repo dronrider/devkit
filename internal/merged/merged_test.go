@@ -231,6 +231,25 @@ func TestBoardOnly(t *testing.T) {
 	}
 }
 
+// TestBoardRel: путь файлов доски узнаётся и поодиночке, а не только списком
+// коммита. Отбор очереди слияний вычитает такие пути из отпечатка кодового
+// диффа задачи (DK-1650), чтобы записи этапов и аудиты готовность не гасили.
+func TestBoardRel(t *testing.T) {
+	cases := map[string]bool{
+		"docs/TASKS.md":         true,
+		"docs/TASKS-archive.md": true,
+		"docs/tasks/DK-1.md":    true,
+		"docs/tasks/":           true,
+		"docs/lld/DK-1.md":      false,
+		"tools/x.go":            false,
+	}
+	for path, want := range cases {
+		if got := BoardRel(path); got != want {
+			t.Errorf("BoardRel(%q) = %v, ждали %v", path, got, want)
+		}
+	}
+}
+
 // TestBoardOnlyAtCorpNested: в корп-контуре боковые директории лежат
 // подкаталогами репозитория, и доска проекта узнаётся от корня доски с
 // привязкой tracker.local (DK-796). Стенд без привязки за доску не сходит.

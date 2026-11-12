@@ -244,12 +244,34 @@ def with_priority(argv):
     return ["nice", "-n", str(NICE_LEVEL - current)] + argv
 
 
+# Служебный хвост конвейера задачи (DK-1694): официальный прогон обязан быть
+# одинаков из любого шелла, а из живой сессии исполнителя в os.environ
+# приезжают её запись запуска, голова и замок. Сюита board-task строит
+# Pipeline прямо в процессе и читает DEVKIT_TASK_HEAD_SESSION и
+# DEVKIT_TASK_HEAD_SESSION_ARGS из окружения: чужой UUID сессии ронял
+# TestRotateHandoff. Стенды снимают тот же хвост своими копиями списка в
+# selfcheck и testenv, намеренные настройки запуска сюда не входят.
+PIPE_ENV_DROP = (
+    "DEVKIT_TASK",
+    "DEVKIT_RUN_DEPTH",
+    "DEVKIT_TASK_LOCK_FROM",
+    "DEVKIT_TASK_HEAD_SESSION",
+    "DEVKIT_TASK_HEAD_SESSION_ARGS",
+    "DEVKIT_TASK_RUN_ID",
+    "DEVKIT_TASK_RUN_MODEL",
+    "DEVKIT_RECOVERY_ATTEMPT",
+)
+
+
 def command_env(argv):
-    """Окружение подпроцесса компонента, None оставляет окружение раннера.
+    """Окружение подпроцесса компонента без служебного хвоста конвейера.
 
     Go-компоненты идут с GOWORK=off: чужой go.work выше по дереву (находка
     DK-115) уводит go test из модуля утилиты, поэтому глушить workspace
-    обязан сам раннер, а не только обёртка снаружи.
+    обязан сам раннер, а не только обёртка снаружи. Остальные компоненты
+    получают копию окружения раннера, из которой снят PIPE_ENV_DROP: значения
+    настоящей головы при этом живут только у самой головы, а стенды, которым
+    имя нужно, ставят его себе сами.
 
     Доля бюджета уезжает го-компоненту флагом `-p`, а переменной GOMAXPROCS
     раннер её не ставит, хотя постановка DK-1123 звала и её. Замер
@@ -265,9 +287,10 @@ def command_env(argv):
     прогона с ней и без неё один. Гонка живёт черновиком DK-1136, и с её
     починкой переменную можно вернуть.
     """
-    if argv[0] != "go":
-        return None
-    return dict(os.environ, GOWORK="off")
+    e = {k: v for k, v in os.environ.items() if k not in PIPE_ENV_DROP}
+    if argv[0] == "go":
+        e["GOWORK"] = "off"
+    return e
 
 
 def queue_order(comps):

@@ -140,10 +140,12 @@ class ComponentsTest(unittest.TestCase):
         # Чужой go.work выше по дереву (находка DK-115) уводит go test из
         # модуля утилиты, поэтому глушить workspace обязан сам раннер: env
         # у go-компонента обязана нести GOWORK=off, у остальных компонентов
-        # окружение остаётся родительским.
+        # окружение собирается той же функцией (DK-1694), а не остаётся
+        # родительским целиком.
         env = parallel.command_env(["go", "test", "./..."])
         self.assertEqual(env["GOWORK"], "off")
-        self.assertIsNone(parallel.command_env(["/usr/bin/python3", "-m", "unittest"]))
+        self.assertIsInstance(
+            parallel.command_env(["/usr/bin/python3", "-m", "unittest"]), dict)
 
     def test_with_priority_wraps_the_command_in_nice(self):
         # DK-1124: дерево процессов прогона обязано идти пониженным
@@ -160,6 +162,77 @@ class ComponentsTest(unittest.TestCase):
                           "go", "test", "./..."])
         self.assertEqual(wrapped[0], "nice",
                          "приоритет обязан быть виден в самой команде")
+
+
+class ComponentEnvTest(unittest.TestCase):
+    """Служебный хвост конвейера не едет в компоненты (DK-1694).
+
+    Официальный прогон обязан быть одинаков из любого шелла, а компоненты
+    зовут и из живой сессии задачи. Доказанный провал: официальный запуск из
+    такого шелла красил сюиту board-task, Pipeline читал чужой UUID сессии из
+    DEVKIT_TASK_HEAD_SESSION и TestRotateHandoff падал тремя тестами.
+    """
+
+    POISON = {
+        "DEVKIT_TASK": "DK-1",
+        "DEVKIT_RUN_DEPTH": "2",
+        "DEVKIT_TASK_LOCK_FROM": "замок делегата",
+        "DEVKIT_TASK_HEAD_SESSION": "5a750327-a8b5-4d2f-9aab-46cf862d2c47",
+        "DEVKIT_TASK_HEAD_SESSION_ARGS": "clara,-p,вводная головы",
+        "DEVKIT_TASK_RUN_ID": "run-42",
+        "DEVKIT_TASK_RUN_MODEL": "glm-5.3",
+        "DEVKIT_RECOVERY_ATTEMPT": "1",
+    }
+    # Намеренная настройка запуска: в выкидывание не входит и обязана дойти
+    # до компонента, иначе чистка хвоста съела бы чужие ручки прогонов.
+    KNOB = "DEVKIT_WRITE_GOLDEN"
+
+    def setUp(self):
+        self.saved = {k: os.environ.get(k)
+                      for k in list(self.POISON) + [self.KNOB, "LANG"]}
+        os.environ.update(self.POISON)
+        os.environ[self.KNOB] = "1"
+        os.environ.setdefault("LANG", "en_US.UTF-8")
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for name, was in self.saved.items():
+            if was is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = was
+
+    def test_tail_leaves_every_component(self):
+        # Хвост снимается у всякого компонента, не только у го: питоньи сюиты
+        # строят свои объекты в процессе и читают окружение напрямую. PATH,
+        # HOME и TMPDIR остаются, без них компоненту нечем работать.
+        for argv in (["go", "test", "./..."],
+                     [sys.executable, "-m", "unittest", "discover"]):
+            env = parallel.command_env(argv)
+            self.assertIsInstance(env, dict,
+                                  "%s остался без своего окружения" % argv[0])
+            for name in self.POISON:
+                self.assertNotIn(name, env, "%s уехал в %s" % (name, argv[0]))
+            for name in ("PATH", "HOME", "TMPDIR", "LANG", self.KNOB):
+                self.assertIn(name, env, "%s потерян у %s" % (name, argv[0]))
+        self.assertEqual(parallel.command_env(["go", "test", "./..."])["GOWORK"],
+                         "off", "го-компонент остался в чужом workspace")
+
+    def test_board_task_handoff_survives_the_live_tail(self):
+        # Интеграционное доказательство той же причины: класс ротации
+        # board-task, падавший в официальном прогоне из живого шелла, идёт
+        # зелёным при отравленном родителе, потому что окружение компонента
+        # собирает command_env. Прогон идёт напрямую, без обёртки и её слота:
+        # обёртка в обёртке заняла бы слот у самой себя.
+        board = Path(__file__).resolve().parents[2] / "kit" / "skills" / "board-task"
+        argv = [sys.executable, "-m", "unittest", "task_run_test.TestRotateHandoff"]
+        p = subprocess.run(argv, cwd=str(board), env=parallel.command_env(argv),
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=300)
+        out = p.stdout.decode("utf-8", "replace")
+        self.assertEqual(p.returncode, 0,
+                         "ротация board-task красна при живом хвосте головы:\n%s"
+                         % "\n".join(out.splitlines()[-40:]))
 
 
 class BudgetTest(unittest.TestCase):

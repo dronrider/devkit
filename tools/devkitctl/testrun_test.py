@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 import parallel
+import selfcheck
 import testenv
 import testrun
 
@@ -151,10 +152,26 @@ class CommandTest(Stand):
         self.assertEqual(argv[-3:], ["-m", "unittest", "x_test"])
 
     def test_unittest_command_discovers_by_pattern(self):
-        argv, env = testrun.build(self.pkg(), "unittest", 3, [])
+        # DK-1694: оба входа прогонов собирают окружение одной функцией
+        # parallel.command_env, и питонова сюита получает отчищенную копию
+        # раннера, а не живую сессию как есть. Провал зовётся именами
+        # утёкших переменных, не значениями: прежний провал на живом хвосте
+        # вывалил в журнал прогона чужой токен.
+        for name in selfcheck.PIPE_ENV_DROP:
+            os.environ[name] = "foreign"
+        try:
+            argv, env = testrun.build(self.pkg(), "unittest", 3, [])
+        finally:
+            for name in selfcheck.PIPE_ENV_DROP:
+                del os.environ[name]
         self.assertEqual(argv[:3], self.nice_prefix())
         self.assertEqual(argv[-4:], ["unittest", "discover", "-p", "*_test.py"])
-        self.assertIsNone(env, "питоновая сюита идёт с окружением раннера")
+        leaked = [n for n in selfcheck.PIPE_ENV_DROP if n in env]
+        self.assertEqual(leaked, [],
+                         "питоновая сюита увезла хвост конвейера: %s"
+                         % ", ".join(leaked))
+        self.assertIsNotNone(env.get("PATH"),
+                             "питоновая сюита осталась без PATH")
 
     def test_run_filter_goes_to_unittest_k_for_python(self):
         # Хвост сценария пишется по образцу go (`-run DutyAgent`), а питоновая

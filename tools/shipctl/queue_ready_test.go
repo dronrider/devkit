@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,26 @@ import (
 	"testing"
 	"time"
 )
+
+// queueMarkField читает поле наклейки задачи из файла очереди как есть, без
+// типизированной структуры. Регчек возит этот файл на базу, где поля ready
+// ещё нет, и краснота тестов обязана быть поведенческой, а не несборкой
+// пакета от нового символа.
+func queueMarkField(t *testing.T, root, id, field string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, mergeQueuePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		Tasks map[string]map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := st.Tasks[id][field].(string)
+	return v
+}
 
 // taskTree даёт путь дерева задачи: queueBranch выкладывает ветку туда же.
 func taskTree(root, id string) string {
@@ -38,6 +59,7 @@ func logGreen(t *testing.T, logRoot string) {
 // вовсе, а причина ожидания названа в отчёте тика.
 func TestQueueDrainWaitsForReadiness(t *testing.T) {
 	root := queueSetup(t)
+	time.Sleep(1100 * time.Millisecond)
 	logGreen(t, taskTree(root, "XR-001"))
 	time.Sleep(1100 * time.Millisecond)
 	wt := taskTree(root, "XR-001")
@@ -62,8 +84,8 @@ func TestQueueDrainWaitsForReadiness(t *testing.T) {
 	if m == nil || m.Block == nil || m.Block.Code != "readiness" {
 		t.Fatalf("неготовая строка стоит блоком готовности: %+v", m)
 	}
-	if m.Ready != "" {
-		t.Errorf("доработка после regcheck не подтверждает отпечаток: %q", m.Ready)
+	if ready := queueMarkField(t, root, "XR-001", "ready"); ready != "" {
+		t.Errorf("доработка после regcheck не подтверждает отпечаток: %q", ready)
 	}
 }
 
@@ -110,7 +132,8 @@ func TestQueueReadinessSurvivesOwnRebase(t *testing.T) {
 	if _, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest}); err != nil {
 		t.Fatal(err)
 	}
-	if m := loadQueue(root).Tasks["XR-001"]; m == nil || m.Ready == "" {
+	if m := loadQueue(root).Tasks["XR-001"]; m == nil ||
+		queueMarkField(t, root, "XR-001", "ready") == "" {
 		t.Fatalf("подтверждённая готовность обязана запомнить отпечаток диффа: %+v", m)
 	}
 	// Второй заход: линия коммитов не готова, ребейз перезастаил коммиты,

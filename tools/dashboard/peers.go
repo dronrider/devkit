@@ -333,8 +333,14 @@ func peerListen(logf func(string, ...any)) func() {
 // поднятый оттуда, считает домом его: хуки харнеса раскрывают в нём тильду и
 // не находят себя, а состояние логина ищется там же, и клиент отвечает
 // «Not logged in». Дом берётся от uid через getpwuid, поэтому подложный HOME на
-// него не влияет вовсе.
+// него не влияет вовсе. Стенду эту цепочку не повернуть, и свой дом он называет
+// переменной DEVKIT_DASH_HOME: без неё читается машина как есть. Ключ отдельный
+// от DEVKIT_HOME: та называет дерево devkit, от которого берутся профили
+// (runs.go), и стенду нужны обе переменные разом.
 func realHome() string {
+	if h := strings.TrimSpace(os.Getenv("DEVKIT_DASH_HOME")); h != "" {
+		return h
+	}
 	if u, err := user.Current(); err == nil && u.HomeDir != "" {
 		return u.HomeDir
 	}

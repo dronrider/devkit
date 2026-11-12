@@ -1,0 +1,1589 @@
+{
+  "version": 1,
+  "id": "DK-1694",
+  "base_sha": "01a244eea5fd9655ac2addc0e7268e7d81fd6a86",
+  "head_sha": "6d1ddf4986ac1110f35d0a0017788b9f2b3498a5",
+  "code_hash": "ccb6b12cf06b6b7bd193a785cc7dbb3bb0865d64a3b0c63c461d3251a3b28763",
+  "task_hash": "3908d0195d684af40f974c4ab3175231f2db5e54f62355520e22cb3023bf1092",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "3fe00f6389de0fe3de5a998ca47d977329f24ff0101c05c9a7b7a9e3ecfa05cb"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "одна согласованная правка восстанавливает общий путь выполнения задач: занятость задачи видна снаружи отказом замка головы, конец фоновой работы поднимает следующий проход ровно одним заказом, ответ и подтверждение из панели доезжают ждущей сессии, guardian валидирует интервалы и паркуется при пропаже бинар tmux, синтетические стенды заводят обязательный аудит ревью",
+    "decision": "замок делегата это расширение существующего замка taskhead (HoldForDelegate с признаком жизни beat и токеном DEVKIT_TASK_LOCK_FROM для делегирования из живой головы); заказ после конца живой работы подаёт сама оболочка task-run.py в after_work с форой DEVKIT_TASK_WAKE_GRACE; доставка ответа идёт по ask-записи через deliverToCarrier с безадресным запасным путём; интервалы guardian валидируются при старте и подставляются в единый guardianScript; аудит у стендов снимается штатной taskctl review audit с общим DEVKIT_HOME у аудита и слияния",
+    "boundaries": "замок машинный в ~/.devkit/task-<ID>.lock, владелец это pid головы или делегата, признак жизни файл beat, пишет его владелец и keepBeat делегата; заказы проходов принадлежат оболочке task-run.py, голова их не знает; ask-запись chat.* адресует ждущую сессию, пишет её decide при вопросе человека и снимает ответ; отчёт аудита снимает утилита, выводы заполняет ревьювер, у фиксированной синтетической задачи стенда выводы закрывает сам прогон",
+    "alternative": "отдельный замок на делегата отвергнут: тик и дашборд уже читают taskhead, второй замок разъехался бы с головой и потребовал правок во всех читателях; подписка оболочки на события конца работы отвергнута: конец работы уже будит голову уведомлением, оболочке довольно ждать его опросом и подать заказ один раз; дублирование хешей правил у стенда отвергнуто в пользу штатной утилиты аудита",
+    "justification": "переиспользуются существующие механизмы с согласованными решениями: замок головы DK-931 (Take/beat/stale), ожидание конца живой работы DK-1463, доставка носителю DK-1569, ворота аудита DK-1675; новых слоёв и настроек сверх необходимых не заводится, каждая новая переменная окружения имеет стендового потребителя",
+    "result": "checked",
+    "evidence": [
+      "internal/taskhead/lock.go: HoldForDelegate, DelegateHold.keepBeat, Release (nil молчит)",
+      "tools/agentctl/run.go: замок до pickVerdict, BusyError -> taskhead.CodeBusy, токен детям",
+      "kit/skills/board-task/task-run.py: after_work (строки 2202-2257), счёт rides у потолка проходов (2425), secs() логирует мусор с именем переменной",
+      "tools/dashboard/cloudstart.go: cloudStartInterval (82-90) до взятия резервов, guardianScript с n=30 при пропавшем бинар (59-61)",
+      "tools/devkitctl/selfcheck.py: audit_report (249-319) через штатную утилиту с DEVKIT_HOME чекаута круга",
+      "tools/dashboard/chatselection.go deliverSelection, chatlift.go deliverToCarrier, chatproposalcontext.go deliverPreparedFormReceipt",
+      "прогоны: internal/taskhead 52 c ok, internal/taskform ok, agentctl lock-тесты ok, taskctl decide ok, dashboard cloudstart+delivery ok, board-task -k work_end -k silence 8 тестов ok, waitcheck audit-тест ok, selfcheck живой круг ok; записанные зелёные прогоны компонентов в разделе «Ход работы» задачи"
+    ]
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новые функции легли в существующие модули по ответственности: замок делегата в internal/taskhead рядом с замком головы, after_work в оболочке конвейера, валидация интервалов в cloudstart.go при guardianScript, доставка ответа в доменных файлах чата дашборда; несвязанной логики в модули не добавлено",
+      "evidence": [
+        {
+          "object": "HoldForDelegate",
+          "location": "internal/taskhead/lock.go:208",
+          "observation": "занимает задачу тем же замком, каким её поднимает taskctl run, модуль замков не расширяется чужой областью"
+        },
+        {
+          "object": "after_work",
+          "location": "kit/skills/board-task/task-run.py:2202",
+          "observation": "обязанность одна: дождаться конца живой работы и подать один заказ"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "taskhead расширен новыми экспортами (HoldForDelegate, DelegateHold, LockFromEnv) без смены прежних контрактов Take/Owner/Release/WaitHandoff; потребители taskctl run и дашборд не менялись и не пересобирались",
+      "evidence": [
+        {
+          "object": "контракт taskhead",
+          "location": "internal/taskhead/lock.go",
+          "observation": "существующие функции не изменены, добавлены только новые; вызовы в tools/taskctl и dashboard не правились"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "копий общей логики не добавлено: аудит у стенда снимается штатной taskctl review audit (инвентарь и хеши у утилиты), guardian остаётся единственным владельцем переходов состояний, интервалы едут параметрами одного сценария",
+      "evidence": [
+        {
+          "object": "audit_report",
+          "location": "tools/devkitctl/selfcheck.py:249-319",
+          "observation": "стенд зовёт утилиту с --base, хеши правил не пересчитывает"
+        },
+        {
+          "object": "guardianScript",
+          "location": "tools/dashboard/cloudstart.go:41-79",
+          "observation": "единый сценарий переходов, тесты меняют только интервалы"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новых слоёв и зависимостей нет: DelegateHold это расширение существующего замка, а не второй механизм; каждая новая переменная окружения решает названную задачу (токен владельца для делегата из живой головы, форa ответа окна, интервалы тестов панели)",
+      "evidence": [
+        {
+          "object": "DelegateHold",
+          "location": "internal/taskhead/lock.go:196-246",
+          "observation": "встроен в существующий замок task-<ID>.lock, отдельного хранилища нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "контракты описаны и различимы: HoldForDelegate возвращает nil при делегировании из живой головы и *BusyError при занятой задаче; run отдаёт код 3; after_work возвращает ложь только для вышедшей головы; deliverToCarrier false значит нужен запасной путь",
+      "evidence": [
+        {
+          "object": "докстринги контрактов",
+          "location": "internal/taskhead/lock.go:202-247, tools/dashboard/chatlift.go:106-115",
+          "observation": "контракт возвратов расписан в докстрингах и покрыт тестами nil-ветки (TestHoldForDelegateTakesAndReleases)"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "инвариант единственного исполнителя защищён в самом замке, а не в клиентах: оба подъёма (taskctl run и agentctl run) идут через один taskhead.Take с beat и stale-порогом, отдельного «проверю занятость перед вызовом» нет",
+      "evidence": [
+        {
+          "object": "Take и HoldForDelegate",
+          "location": "internal/taskhead/lock.go:131-220",
+          "observation": "одна точка защиты инварианта, все дороги подъёма через неё"
+        },
+        {
+          "object": "TestTakeKeepsWorkingOwner",
+          "location": "internal/taskhead/lock_test.go:85",
+          "observation": "работающий владелец не снимается вторым подъёмом"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "несовместимых смен публичных контрактов нет; расширенные сигнатуры task_work/event_wait (devkit) и selfcheck.run (env) обновлены во всех местах вызова в тех же файлах, внешних потребителей у них нет",
+      "evidence": [
+        {
+          "object": "task_work/event_wait",
+          "location": "tools/devkitctl/waitcheck.py:382,432",
+          "observation": "все вызовы внутри waitcheck.py обновлены, зовущий circle передаёт devkit"
+        },
+        {
+          "object": "selfcheck.run",
+          "location": "tools/devkitctl/selfcheck.py:92-110",
+          "observation": "параметр env с умолчанием None, прежние вызовы работают"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "источник правды замка это каталог task-<ID>.lock (pid + beat), кешей и копий нет; ask-запись читается и пишется только через chat.ReadAsk/WriteAsk/DropAskIf и снимается ответом",
+      "evidence": [
+        {
+          "object": "замок",
+          "location": "internal/taskhead/lock.go:47-124",
+          "observation": "единственное хранилище, Owner читает pid-файл напрямую у замка"
+        },
+        {
+          "object": "ask-запись",
+          "location": "tools/taskctl/decide.go, tools/dashboard/drafts.go",
+          "observation": "пара чтение-запись через функции пакета chat, отдельной копии состояния нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "владельцы ресурсов названы: cmdRun снимает замок defer hold.Release() на всех исходах, keepBeat останавливается close(stop); waitcheck-стенд убирает каталоги addClassCleanup; guardian в unknown держит резерв сознательно и оставляет owner-файл с адресом",
+      "evidence": [
+        {
+          "object": "замок делегата",
+          "location": "tools/agentctl/run.go:333-341",
+          "observation": "defer Release до всех исходов, включая codeNothingToDelegate"
+        },
+        {
+          "object": "каталоги стенда",
+          "location": "tools/devkitctl/testenv.py",
+          "observation": "addClassCleanup убирает bindir и standards после прогона"
+        },
+        {
+          "object": "резерв guardian",
+          "location": "tools/dashboard/cloudstart.go:66-68",
+          "observation": "unknown с owner-файлом это осознанное удержание, а не утечка"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "конкурентное взятие замка атомарно настолько, насколько нужно: Mkdir как захват, pid пишется через tmp+rename, молодой пустой замок 5 с не снимается, чтобы сосед не увидел пустоту между каталогом и pid; замерзший живой владелец снимается по beat, делегат держит beat сам",
+      "evidence": [
+        {
+          "object": "Take",
+          "location": "internal/taskhead/lock.go:131-151",
+          "observation": "young/stale/alive разобраны, гонка каталог-без-pid закрыта lockYoung"
+        },
+        {
+          "object": "TestTakeRefusesYoungEmptyLock",
+          "location": "internal/taskhead/lock_test.go:120",
+          "observation": "молодой пустой замок занят, старый пустой берётся"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "входы из окружения проверяются на границе: токен LockFromEnv принимается только при совпадении с живым владельцем замка; мусорные интервалы guardian и сроки оболочки отвергаются или логируются с именем переменной и умолчанием",
+      "evidence": [
+        {
+          "object": "LockFromEnv",
+          "location": "internal/taskhead/lock.go:208-212",
+          "observation": "fromEnv сверяется с Owner и Alive, чужой pid токеном не считается"
+        },
+        {
+          "object": "cloudStartInterval",
+          "location": "tools/dashboard/cloudstart.go:82-90",
+          "observation": "не-число даёт ошибку с именем переменной до взятия резервов"
+        },
+        {
+          "object": "secs",
+          "location": "kit/skills/board-task/task-run.py:2564-2575",
+          "observation": "мусор срока логируется с именем переменной и умолчанием"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "частичный отказ не выдаётся за успех: неудача deliverToCarrier уводит на безадресный запасной путь; заказ, не дошедший до окна, стопит конвейер с причиной; каждый шаг task_work возвращает код дальше",
+      "evidence": [
+        {
+          "object": "deliverSelection",
+          "location": "tools/dashboard/chatselection.go:188-230",
+          "observation": "возврат false у носителя ведёт к запасной безадресной строке"
+        },
+        {
+          "object": "send_order",
+          "location": "kit/skills/board-task/task-run.py:2253-2256",
+          "observation": "недошедший заказ это стоп с ORDER_REASON, не молчание"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "повторы учтены: заказ после конца работы подаётся ровно один и не дублируется поверх начатого хода (self.taken()); повторное подтверждение формы отражается в квитанции флагом repeated; отказ кода 3 не запускает повторного исполнителя",
+      "evidence": [
+        {
+          "object": "одиночный заказ",
+          "location": "kit/skills/board-task/task_run_test.py:1584-1586",
+          "observation": "в inbox одна строка ввода после конца работы"
+        },
+        {
+          "object": "repeated",
+          "location": "tools/dashboard/chatproposalcontext.go:305-311",
+          "observation": "флаг повторного применения едет в квитанции"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ошибки отличимы от штатного результата: BusyError отдельный тип с кодом 3 у run; guardian различает unknown/launch-failed/session-absent в state; журнал оболочки нумерует проходы и называет вид конца",
+      "evidence": [
+        {
+          "object": "BusyError",
+          "location": "tools/agentctl/run.go:334-338, internal/taskhead/raise.go:58",
+          "observation": "код занятости отделён от ошибок самого run"
+        },
+        {
+          "object": "state guardian",
+          "location": "tools/dashboard/cloudstart.go:74-76",
+          "observation": "три исхода различимы в файле состояния"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "правило про состав полей и строк запросов к данным; в диффе нет выборок из хранилищ с полями: входы это файлы замка (pid, beat целиком), переменные окружения и тексты документов, читаемые целиком по назначению",
+      "evidence": [
+        {
+          "object": "чтения данных",
+          "location": "internal/taskhead/lock.go, tools/taskctl/decide.go",
+          "observation": "файлы читаются целиком как носители значений, полевой выборки нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "последовательности запросов БД в диффе нет; последовательность шагов стенда разобрана: write_scenario -> audit_report -> rehearse -> review level -> merge, каждый шаг возвращает код и ранний отказ останавливает круг",
+      "evidence": [
+        {
+          "object": "task_work",
+          "location": "tools/devkitctl/waitcheck.py:382-421",
+          "observation": "шаги цепочкой с проверкой rc после каждого"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "транзакций БД нет; атомарность конкурентных состояний обеспечена механизмом замка (ARCH-010), многошаговых записей, требующих совместного завершения, правка не вводит",
+      "evidence": [
+        {
+          "object": "многошаговые записи",
+          "location": "internal/taskhead/lock.go",
+          "observation": "pid пишется tmp+rename, разрыв виден как молодой замок и занятость"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "запросов по элементам коллекций нет: циклы диффа обходят строки документов и списки сессий в памяти, внешних вызовов на элемент не появляется",
+      "evidence": [
+        {
+          "object": "циклы диффа",
+          "location": "internal/taskform/forks.go, tools/dashboard/chatproposalcontext.go",
+          "observation": "обход локальных структур, внешних вызовов в цикле нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "границы ответственности явные: дашборд доставляет ответ, но строку доски не двигает; оболочка подаёт заказы и не трогает замок головы, кроме признака жизни; утилита аудита считает хеши, стенд только заполняет выводы фиксированной задачи",
+      "evidence": [
+        {
+          "object": "дашборд и доска",
+          "location": "tools/dashboard/chatselection.go, drafts.go",
+          "observation": "доставка разговором, строки не правятся"
+        },
+        {
+          "object": "оболочка и замок",
+          "location": "kit/skills/board-task/task-run.py",
+          "observation": "beat заявляет жизнь, смены владельца нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "доработки идут по живым механизмам с их историей: консервативный разбор проб guardian (DK-1582) расширен случаем пропавшего бинар, а не обойдён; восстановление конвейера recovery.py не тронуто и остаётся правомочным",
+      "evidence": [
+        {
+          "object": "разбор проб",
+          "location": "tools/dashboard/cloudstart.go:59-61",
+          "observation": "кейс «no such file» довешан к существующему разбору, прежние ветки на месте"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "правки закрывают отказы действующих потребителей без смены поведения для остальных: разбор развилок с переносом не меняет разбор однострочных, формат ask-записи прежний, очередь слияний и конвейер читают те же файлы",
+      "evidence": [
+        {
+          "object": "однострочные развилки",
+          "location": "internal/taskform/forks_test.go",
+          "observation": "прежние тесты разбора идут рядом с новыми без правок ожиданий"
+        },
+        {
+          "object": "TestRunCLI",
+          "location": "tools/agentctl/run_test.go:188",
+          "observation": "штатное делегирование без замка не изменилось (код 0)"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "каждая настройка управляет заявленным поведением на всех путях: DEVKIT_TASK_WAKE_GRACE читается в after_work у всех трёх ожиданий; интервалы guardian подставляются в обе паузы сценария; DEVKIT_TASK_LOCK_FROM читается HoldForDelegate и передаётся детям",
+      "evidence": [
+        {
+          "object": "wake grace",
+          "location": "kit/skills/board-task/task-run.py:2231",
+          "observation": "единая точка чтения у форы"
+        },
+        {
+          "object": "интервалы",
+          "location": "tools/dashboard/cloudstart.go:68,70,78",
+          "observation": "tick/hold подставлены во все sleep сценария"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "у каждой опции есть сценарий потребности: интервалы нужны тестам панели проверять переходы состояний без реального времени, форa нужна концу работы не задваивать заказ, токен нужен штатному делегированию из живой головы",
+      "evidence": [
+        {
+          "object": "сценарии",
+          "location": "tools/dashboard/README.md, tools/agentctl/README.md",
+          "observation": "назначения переменных описаны в разделах guardian и делегирования"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "параметры окружения не смешаны с данными: замок и его владелец живут на диске, токен в окружении только ссылка на pid владельца; интервалы это конфигурация запуска, а не хранимое состояние",
+      "evidence": [
+        {
+          "object": "токен",
+          "location": "tools/agentctl/run.go:459-465",
+          "observation": "владелец читается из замка, токен только передаётся ребёнку"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "у настроек заданы имя, смысл и умолчание: WAKE_SECONDS 30 с при WAKE_ENV, WATCH_STEP 3 с, guardian tick 1 с и hold 60 с, ошибка мусора называет переменную и умолчание",
+      "evidence": [
+        {
+          "object": "константы",
+          "location": "kit/skills/board-task/task-run.py:404-424, tools/dashboard/cloudstart.go:96-103",
+          "observation": "пары env/умолчание собраны в одном месте"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новых источников, слоёв наследования и способов переопределения настроек не заведено: значения читаются os.Getenv у точки применения, как принято в проекте",
+      "evidence": [
+        {
+          "object": "чтение настроек",
+          "location": "cloudstart.go, task-run.py",
+          "observation": "прямое чтение окружения, переопределений и каскадов нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "неверное значение даёт ошибку с именем параметра: не-число у интервалов guardian это отказ запуска с именем переменной и значением; мусорный срок оболочки журналируется с именем и умолчанием",
+      "evidence": [
+        {
+          "object": "cloudStartInterval",
+          "location": "tools/dashboard/cloudstart.go:84-86",
+          "observation": "«%s: %q не число секунд» с %w"
+        },
+        {
+          "object": "secs",
+          "location": "kit/skills/board-task/task-run.py:2571-2573",
+          "observation": "лог называет переменную, значение и умолчание"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "минимальные рабочие примеры в README обновлены той же правкой: раздел делегирования agentctl (токен и код 3), guardian у dashboard (переменные и парковка), decide с признаком ожидания у taskctl; примеры сверены с кодом",
+      "evidence": [
+        {
+          "object": "README",
+          "location": "tools/agentctl/README.md, tools/dashboard/README.md, tools/taskctl/README.md",
+          "observation": "разделы описывают новое поведение и переменные"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "имена отражают назначение: HoldForDelegate, DelegateHold, keepBeat, forkQuestionEnd, cloudStartInterval, deliverPreparedFormReceipt, audit_report; читателю имя говорит о предмете",
+      "evidence": [
+        {
+          "object": "имена диффа",
+          "location": "все изменённые файлы",
+          "observation": "предметные имена без безликих data/manager"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "имя совпадает с поведением: BusyError.Error называет владельца замка; forkQuestionEnd отдаёт индекс за целым вопросом; deliverToCarrier действительно доставляет или честно возвращает false",
+      "evidence": [
+        {
+          "object": "BusyError",
+          "location": "internal/taskhead/lock.go:57-62",
+          "observation": "сообщение называет замок и владельца"
+        },
+        {
+          "object": "forkQuestionEnd",
+          "location": "internal/taskform/forks.go:233-239",
+          "observation": "возврат за головой и продолжениями"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "один смысл назван одинаково в коде, доке и журнале: замок, голова, делегат, проход, признак жизни; словарь совпадает с прежним корпусом проекта",
+      "evidence": [
+        {
+          "object": "словарь",
+          "location": "internal/taskhead, kit/skills/board-task/task-run.py, README",
+          "observation": "термины сквозные, новых синонимов не заведено"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "единицы выражены именем или типом: WAKE_SECONDS, lockStale и lockYoung как time.Duration, интервалы в секундах с именем переменной в ошибке",
+      "evidence": [
+        {
+          "object": "единицы",
+          "location": "kit/skills/board-task/task-run.py:424, internal/taskhead/lock.go:38-43",
+          "observation": "суффиксы и Duration исключают путаницу"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "короткие имена только в узкой области: rc, n, d внутри sh-сценария guardian и локальных циклов, публичные имена развёрнуты",
+      "evidence": [
+        {
+          "object": "локальные имена",
+          "location": "tools/dashboard/cloudstart.go:42-79",
+          "observation": "однобуквенные переменные живут внутри сценария"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новые параметры используются: devkit у task_work нужен audit_report и очередь ворота слияния, env у selfcheck.run нужен подмене окружения аудита; неиспользуемых параметров не добавлено",
+      "evidence": [
+        {
+          "object": "devkit",
+          "location": "tools/devkitctl/waitcheck.py:382-421",
+          "observation": "доезжает до audit_report и merge"
+        },
+        {
+          "object": "env",
+          "location": "tools/devkitctl/selfcheck.py:92-110",
+          "observation": "потребляется подменой окружения у audit_report"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "возвращаемые значения потребляются: код 3 занятости печатается errw и уходит вызывающему скрипту как признак «продолжает голова»; коды шагов стенда суммируются в отчёт",
+      "evidence": [
+        {
+          "object": "CodeBusy",
+          "location": "tools/agentctl/run.go:334-338",
+          "observation": "печать в errw и возврат кода вместо ошибки main"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "удалений параметров и вычислений нет; расширенные сигнатуры обновлены во всех вызовах (task_work, event_wait, circle, main), потерянных вызовов по grep нет",
+      "evidence": [
+        {
+          "object": "вызовы",
+          "location": "tools/devkitctl/waitcheck.py, selfcheck.py",
+          "observation": "grep по именам функций находит только обновлённые вызовы"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "функции связны: after_work ведёт одну обязанность с ранними выходами; deliverPreparedFormReceipt собирает и доставляет квитанцию; audit_report снимает отчёт и коммитит его",
+      "evidence": [
+        {
+          "object": "after_work",
+          "location": "kit/skills/board-task/task-run.py:2202-2257",
+          "observation": "одна петля ожидания с ясными выходами"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "литералы с предметным смыслом названы: lockStale, lockYoung, WAKE_SECONDS, IDLE_LIMIT; потолок проб n=30 в guardian существовал до правки и оставлен как есть",
+      "evidence": [
+        {
+          "object": "константы",
+          "location": "internal/taskhead/lock.go:31-43",
+          "observation": "магических чисел у новой логики нет"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "основной путь и отказы читаются прямо: after_work главный цикл с выходами по голове и ходу; cmdRun проверки аргументов и замка до делегирования; audit_report ранние возвраты по rc",
+      "evidence": [
+        {
+          "object": "структура",
+          "location": "tools/agentctl/run.go:290-345, selfcheck.py:249-319",
+          "observation": "порядок действий виден без переключения контекста"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "принятые формы языка: go-код собирается и обрабатывается штатным тулчейном (прогоны зелёные), python-файлы проходят свою сюиту, sh-сценарий guardian держит стиль существующих сценариев проекта с абсолютными путями",
+      "evidence": [
+        {
+          "object": "сборка",
+          "location": "прогоны internal, agentctl, taskctl, dashboard",
+          "observation": "компиляция и тесты проходят без жалоб тулчейна"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ошибки сохраняют причину: cloudStartInterval оборачивает %w с именем переменной и значением; отказы стенда несут вывод шага; журнал оболочки называет переменную окружения при мусорном сроке",
+      "evidence": [
+        {
+          "object": "обёртки ошибок",
+          "location": "tools/dashboard/cloudstart.go:85",
+          "observation": "fmt.Errorf с %w и контекстом"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "сообщения объясняют, что не получилось, и что делать: «второй исполнитель в то же дерево не поднимается, продолжает голова задачи»; unknown у guardian называет owner-файл и порядок разбора",
+      "evidence": [
+        {
+          "object": "отказ занятости",
+          "location": "tools/agentctl/run.go:336",
+          "observation": "симптом и способ продолжения в одной строке"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "комментарии объясняют неочевидное: почему nil это делегирование из живой головы, почему отчёт снимается до обкатки, почему окно тишины считается после конца работы; пересказа соседних строк нет",
+      "evidence": [
+        {
+          "object": "комментарии диффа",
+          "location": "internal/taskhead/lock.go:202-207, tools/devkitctl/waitcheck.py:407-412",
+          "observation": "причины и ограничения, а не пересказ"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "докстринги отражают контракт: HoldForDelegate (nil/BusyError), deliverToCarrier (false = запасной путь), audit_report (выводы только фиксированной задачи стенда), guardianScript (подмена интервалов тестами)",
+      "evidence": [
+        {
+          "object": "докстринги",
+          "location": "изменённые функции",
+          "observation": "результаты и ограничения названы, примеры потребления в README"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "каждая область правки едет с тестами: замок (lock_test), run (run_test), развилки (forks_test, decide_test), интервалы (cloudstart_intervals_test), доставка ответа (draftanswer_test, decideask_test), оболочка (task_run_test), стенды аудита (waitcheck_test, pre_push_test, selfcheck_test)",
+      "evidence": [
+        {
+          "object": "тестовые файлы",
+          "location": "дифф 48 файлов",
+          "observation": "на каждую поведенческую правку есть тестовый файл в том же коммите"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "регрессионные тесты на каждую подтверждённую причину есть; краснота на старом коде подтверждена: у DK-1663 записан regcheck в карточке, у замка и after_work автор прогнал копию базы с перенесёнными тестами и записал исходы в «Ходе работы»; собственный regcheck у этого ревью не гонялся (рубеж синхронности headless-сессии, препятствие записано в заде), это предел свидетельства",
+      "evidence": [
+        {
+          "object": "краснота базы",
+          "location": "docs/tasks/DK-1694.md, «Ход работы»",
+          "observation": "записаны отворот конвейера, lock=none, код 0 вместо 3, сборка без HoldForDelegate на копии базы"
+        },
+        {
+          "object": "зелёность ветки",
+          "location": "мои прогоны",
+          "observation": "taskhead, taskform, agentctl lock-тесты, decide, cloudstart, board-task work_end/silence, waitcheck audit, selfcheck круг"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "пирамида соблюдена: юниты логики (taskform, taskhead), интеграционные стенды стыка (task_run_test с подставным окном, waitcheck и selfcheck с собранными бинарями, HTTP-тесты дашборда)",
+      "evidence": [
+        {
+          "object": "пирамида",
+          "location": "наборы тестов диффа",
+          "observation": "юнит отдельно от стендов, стенды подменяют дом и PATH"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "типы тестов соответствуют зависимостям: юниты taskhead/taskform без сети и внешних процессов (кроме управляемых /bin/sleep), стенды с внешними вызовами помечены как стенды и подменяют окружение целиком",
+      "evidence": [
+        {
+          "object": "изоляция юнитов",
+          "location": "internal/taskhead/lock_test.go",
+          "observation": "внешний процесс только порождаемый sleep под контролем теста"
+        },
+        {
+          "object": "стенды",
+          "location": "tools/devkitctl/waitcheck.py stubs",
+          "observation": "клиент и tmux подставные, дом временный"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "тесты поставлены под конкретные поломки и называют их в комментарии: INC-20261111-14 у заказа после конца работы, DK-880/DK-864/DK-941 у живой работы, DK-1679 у доставки ответа, мусорный интервал у guardian",
+      "evidence": [
+        {
+          "object": "комментарии тестов",
+          "location": "task_run_test.py:1540-1657, lock_test.go, cloudstart_intervals_test.go",
+          "observation": "поломка названа до тела теста"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "типовые мутации прикрыты соседними тестами: молодой пустой замок, замерзший владелец, чужой pid у токена, непарная отметка конца, вторая работа за фору, повторное подтверждение формы; целевые прогоны зелёные, полный прогон компонентов записан в задаче",
+      "evidence": [
+        {
+          "object": "мутации",
+          "location": "lock_test.go, task_run_test.py, draftanswer_test.go",
+          "observation": "ветки отказа покрыты отдельными тестами"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "времязависимость сделана управляемой: интервалы и форa подменяются окружением у стенда, старение beat выставляется Chtimes, реальных минутных ожиданий в тестах нет",
+      "evidence": [
+        {
+          "object": "подмены времени",
+          "location": "task_run_test.py extra env, lock_test.go staleBeat, cloudstart_test подмена интервалов",
+          "observation": "детерминизм без sleep на минуты"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "правило фиксирует допустимость непокрытых слоёв; правка не вводит новых слоёв без юнитов: UI не правился, исключение стенда для kit/skills/board-task уже записано в файле задачи отдельной строкой",
+      "evidence": [
+        {
+          "object": "исключения",
+          "location": "docs/tasks/DK-1694.md, «Ход работы»",
+          "observation": "стендовое исключение оформлено по форме"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "подмена дома у тестов на месте: t.TempDir у замков и стендов, HOME и PATH у waitcheck, TestMain у дашборда; оговорка: прогоны из живой задачи несут DEVKIT-хвост, стенда waitcheck это касается через selfcheck.run, чистка окружения зафиксирована препятствием в задаче, а правка снятия хвоста в touch_test.go осталась незакоммиченной (замечание ревью)",
+      "evidence": [
+        {
+          "object": "подмена дома",
+          "location": "tools/devkitctl/waitcheck.py:658-669",
+          "observation": "HOME, PATH и DEVKIT_HOME стенда"
+        },
+        {
+          "object": "хвост окружения",
+          "location": "docs/tasks/DK-1694.md препятствие, tools/agentctl/touch_test.go (незакоммичено)",
+          "observation": "session-хвост красит стенды, фикс снятия не в ветке"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок документа без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md:1",
+          "observation": "требования лежат в блоках ниже, они разобраны по отдельности"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "оба уровня проверены: общие ARCH/STYLE/TEST и проектные блоки этого отчёта; конфликтов между уровнями по диффу не найдено",
+      "evidence": [
+        {
+          "object": "уровни",
+          "location": "отчёт целиком",
+          "observation": "каждый уровень имеет результат по каждой строке"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "содержимое разобрано блочно"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "раскладка соблюдена: новых файлов кода нет, правки легли в существующие каталоги по назначению (go в internal и tools, python у утилит и скилла); граница языков не тронута",
+      "evidence": [
+        {
+          "object": "новые файлы",
+          "location": "дифф",
+          "observation": "только тестовые файлы рядом с модулями и доки задач"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "домены дашборда не перемешаны: доставка ответа в файлах чата (chatselection, chatlift, chatproposalcontext), guardian в cloudstart; ход в домен через явные точки входа сохранён",
+      "evidence": [
+        {
+          "object": "домены",
+          "location": "tools/dashboard/chat*.go, cloudstart.go",
+          "observation": "правки в своих семьях, внутренности чужих доменов не тронуты"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "новых маршрутов HTTP нет: доставка подтверждения встроена в существующий handleDraftPreparedConfirm, ответы ошибок идут writeJSON",
+      "evidence": [
+        {
+          "object": "маршруты",
+          "location": "tools/dashboard/drafts.go:1195-1215",
+          "observation": "хендлер существующий, добавлен вызов доставки после снятия вопроса"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "дашборд доску не двигает: доставка ответа пишет разговор (putChat) и ask-запись, строки доски не правятся; квитанция не является движением строки",
+      "evidence": [
+        {
+          "object": "доска",
+          "location": "chatselection.go, chatproposalcontext.go, drafts.go",
+          "observation": "записи разговора и ask-файлы, обращений к TASKS.md на запись нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "общий каркас используется: замок и чат из internal (taskhead, chat), локальных копий не заводилось, прямой вызов git у дашборда не добавлялся",
+      "evidence": [
+        {
+          "object": "импорты",
+          "location": "tools/dashboard/chatselection.go, cloudstart.go",
+          "observation": "taskhead и stage.MainRoot из internal, дублей нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "блоки ниже разобраны по отдельности"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ответы изменённых хендлеров идут через writeJSON (ошибка «разбор применён; прежний вопрос не снят»), транскрипты и обращения к taskctl через прежние единые точки; новый код доставки HTTP-ответов не пишет",
+      "evidence": [
+        {
+          "object": "writeJSON",
+          "location": "tools/dashboard/drafts.go:1208",
+          "observation": "ответ хендлера через единственный выход"
+        },
+        {
+          "object": "доставка",
+          "location": "chatproposalcontext.go:296-342",
+          "observation": "putChat и peerSay, мимо HTTP"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "правило про свёртку разметки вызовов в репликах; реплики диффа (квитанция, ответ) идут обычным текстом без разметки вызовов",
+      "evidence": [
+        {
+          "object": "реплики",
+          "location": "chatproposalcontext.go wire",
+          "observation": "строка-плейнтекст, парсинг разметки не менялся"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "поверхность чата не расширялась: квитанция подтверждения это реплика разговора, новых элементов ввода и галочек вне реплик не добавлено",
+      "evidence": [
+        {
+          "object": "поверхность",
+          "location": "chatproposalcontext.go, chatselection.go",
+          "observation": "всё внутри реплик и ленты"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "признак ожидания согласия проверяется и пишется штатно: ask-запись через chat.WriteAsk/ReadAsk у развилки черновика, снятие DropAskIf после применения; соседи не затронуты",
+      "evidence": [
+        {
+          "object": "ask-запись",
+          "location": "tools/taskctl/decide.go, tools/dashboard/drafts.go",
+          "observation": "пишется при вопросе человека без готовой записи, снимается ответом"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "форма задачи в static/app.js не правилась, подготовленная и обычная задача идут прежней общей формой",
+      "evidence": [
+        {
+          "object": "форма",
+          "location": "дифф",
+          "observation": "файлов static/ в диффе нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "разделы формы черновика не правились; правка доставки не касается formContentBlock",
+      "evidence": [
+        {
+          "object": "форма",
+          "location": "дифф",
+          "observation": "static не менялся"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новой памяти процесса дашборда нет: делегат это внешний процесс run с собственным замком на диске, а не горутина с общей памятью",
+      "evidence": [
+        {
+          "object": "память",
+          "location": "дифф",
+          "observation": "полей состояния сервера не добавлено, только локальные структуры"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-cb52f7a016c8a058",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "подъём чатов обёрткой agentctl exec не менялся; доставка ответа идёт прежними дорогами (сокет, терминал, резюм liftChat)",
+      "evidence": [
+        {
+          "object": "подъём",
+          "location": "chatlift.go",
+          "observation": "использует существующий liftChat"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "сетевых мест не добавлено: изменений board.go и фонового догона нет, новый код локальный",
+      "evidence": [
+        {
+          "object": "сеть",
+          "location": "дифф",
+          "observation": "сетевых вызовов нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "поднимаемые процессы называют рабочий каталог: делегат run получает cmd.Dir = workdir, guardian cmd.Dir = tree, как требует DK-1373",
+      "evidence": [
+        {
+          "object": "cmd.Dir",
+          "location": "tools/agentctl/run.go (cmd.Dir = workdir), tools/dashboard/cloudstart.go (cmd.Dir = tree)",
+          "observation": "рабочий каталог задан явно у каждого подъёма"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "блоки ниже разобраны"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "место новому проверено по раскладке README: новых файлов кода нет, тестовые файлы легли рядом с модулями, доки задач в docs/tasks; выбор языка не делался",
+      "evidence": [
+        {
+          "object": "новые файлы",
+          "location": "дифф",
+          "observation": "cloudstart_intervals_test.go, draftanswer_test.go, decideask_test.go рядом с модулями"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "новый домен дашборда не заводился, все правки в существующих семьях файлов",
+      "evidence": [
+        {
+          "object": "домены",
+          "location": "дифф",
+          "observation": "новых каталогов нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "блоки ниже разобраны"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "дорога подъёма головы не менялась: taskhead.Raise и подтверждение PID оболочкой прежние; HoldForDelegate это отдельная дорога внешнего исполнителя, она не пересекает подтверждение запуска",
+      "evidence": [
+        {
+          "object": "Raise",
+          "location": "internal/taskhead/raise.go",
+          "observation": "не изменён; HoldForDelegate не пишет записи запуска"
+        },
+        {
+          "object": "poll_handoff",
+          "location": "kit/skills/board-task/task-run.py:2217",
+          "observation": "оболочка подтверждает PID как прежде"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "recovery не менялась и остаётся правомочной: делегат держит beat keepBeat-ом, чтобы живой внешний исполнитель не считался замерзшим, и снимает замок по выходу; общий замок машины по-прежнему один",
+      "evidence": [
+        {
+          "object": "beat делегата",
+          "location": "internal/taskhead/lock.go:225-236",
+          "observation": "тикает вчетверо чаще порога stale"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "подтверждение восстановления не менялось; ask-запись адресует ждущую сессию по Session и снимается только тем же содержимым (DropAskIf)",
+      "evidence": [
+        {
+          "object": "ask",
+          "location": "tools/dashboard/drafts.go DropAskIf",
+          "observation": "снятие условное, чужую запись ответ не ест"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок документа без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "требования в блоках ниже"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "оба уровня стиля проверены: общие STYLE и проектные блоки ниже; расхождений диффа с уровнями не найдено",
+      "evidence": [
+        {
+          "object": "уровни",
+          "location": "отчёт",
+          "observation": "строки STYLE и project-style закрыты результатами"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "блоки ниже разобраны"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "коды выходов у изменённых утилит различают исходы: agentctl run 0/1/3 с задокументированным смыслом тройки, selfcheck и waitcheck 0/1 по шагам, findings печатаются построчно в stdout",
+      "evidence": [
+        {
+          "object": "коды run",
+          "location": "tools/agentctl/run.go:45-52",
+          "observation": "тройка отделена от ошибок утилиты, комментарий объясняет"
+        },
+        {
+          "object": "стенды",
+          "location": "selfcheck.py, waitcheck.py main",
+          "observation": "печать шагов и код по сумме"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "рубежей hook-а в диффе нет: менялся только тест рубежа pre-push (фикстура аудита), сам хук и его строки не правились",
+      "evidence": [
+        {
+          "object": "hooks",
+          "location": "дифф",
+          "observation": "только pre_push_test.py"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "блоки ниже разобраны"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "тесты лежат рядом с модулями: cloudstart_intervals_test.go и draftanswer_test.go у cloudstart, decideask_test.go у decide, task_run_test.py у task-run.py, lock_test.go у lock.go",
+      "evidence": [
+        {
+          "object": "имена",
+          "location": "дифф",
+          "observation": "все новые тестовые файлы при своих модулях"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "синтетика во временных каталогах: t.TempDir у go-тестов, mkdtemp у стендов waitcheck/selfcheck, боевое дерево и живая доска не тронуты (прогоны прошли без следов)",
+      "evidence": [
+        {
+          "object": "каталоги",
+          "location": "lock_test.go, waitcheck.py:641-647",
+          "observation": "временные дома и проекты, очистка в finally"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "краснота на старом коде подтверждена не на глаз: у DK-1663 regcheck записан в карточке, у остальных причин записан ручной прогон на копии базы; regcheck этого ревью не гонялся по препятствию, отмечено в вердикте",
+      "evidence": [
+        {
+          "object": "регчек",
+          "location": "docs/tasks/DK-1663.md, docs/tasks/DK-1694.md",
+          "observation": "исходы регчека и копии базы записаны"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "стенды подменяют окружение целиком: waitcheck ставит HOME, PATH с подставными клиентом и tmux, DEVKIT_HOME; у дашборда TestMain прежний; хвост DEVKIT_TASK_RUN_ID сессии чистился прогоняющим, что и поймано препятствием в задаче",
+      "evidence": [
+        {
+          "object": "подмена",
+          "location": "waitcheck.py:658-669",
+          "observation": "окружение стенда собрано явно"
+        },
+        {
+          "object": "хвост",
+          "location": "docs/tasks/DK-1694.md",
+          "observation": "препятствие selfcheck.run записано"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "браузерные тесты дашборда в диффе не правились по существу (изменения фикстур времени сборок), живой браузер не затронут",
+      "evidence": [
+        {
+          "object": "браузер",
+          "location": "дифф dashboard *_test.go",
+          "observation": "правки вокруг сборок и доставки, браузерных сценариев новых нет"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "заголовок раздела без требования",
+      "evidence": [
+        {
+          "object": "заголовок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "блоки ниже разобраны"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "файлы звутся по домену префиксом семьи: правки в chat* и cloudstart у дашборда, новых файлов кода нет; хендлеры handle*, шаги обкатки не менялись",
+      "evidence": [
+        {
+          "object": "имена файлов",
+          "location": "дифф",
+          "observation": "новых файлов кода нет, тестовые имена при модулях"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "символы и стиль текста проверены хуком check-symbols.py по изменённым текстовым файлам диффа: находок нет; проза доков прошла вычитку по записям в заде",
+      "evidence": [
+        {
+          "object": "check-symbols",
+          "location": "изменённые .go/.py/.md диффа",
+          "observation": "хук молчит, выход чист"
+        },
+        {
+          "object": "вычитка",
+          "location": "docs/tasks/DK-1694.md",
+          "observation": "записи вычитки README и постановки"
+        }
+      ]
+    }
+  ]
+}

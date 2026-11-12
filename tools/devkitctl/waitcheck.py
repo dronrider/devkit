@@ -26,12 +26,14 @@
 проект и подставной выкат, а общие куски стенд берёт у соседа вместо второй
 копии.
 """
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -58,13 +60,15 @@ MISSED = "WT-006"
 MODE_WAIT = "ожидание"
 MODE_RECORD = "запись"
 
-# Сколько проходов подряд голова кончает ожиданием. Воронка оболочки встаёт на
-# третьем холостом проходе, поэтому ожиданий берётся на один больше. Три
-# прошли бы и при сломанном счёте.
+# Сколько ожиданий требует счёт стенда. Воронка оболочки встаёт на третьем
+# холостом проходе, поэтому клиент ставит отметок на одну больше (MARKS у
+# stubs): потеря одной отметки не роняет стенд, а чужой запас воронке не
+# мешает.
 WAIT_PASSES = 4
-# Срок отметки ожидания. Короче секунды его не поставить (время в записи идёт
-# до секунды), а длинный растянул бы прогон вчетверо.
-WAIT_UNTIL = "5s"
+# Срок отметки это страховка от потери нити наблюдателя, а не способ кончить
+# ожидание. Пяти секунд не хватало под нагрузкой полного прогона (DK-1694):
+# оболочка считывала отметку позже срока, и проход считался холостым.
+WAIT_UNTIL = "60s"
 # Причина парковки, которой голова кончает первое ожидание. Проза, а не
 # машинный разряд. Разбуженная строка ушла бы в подъём посреди прогона.
 PARK_WHY = "стенд: голова отработала свои проходы"
@@ -146,10 +150,10 @@ def main():
     note(m + "\\t" + said)
     if m != WAIT:
         return 0
-    if seen(WAIT) <= WAITS:
-        # Ход кончился машинным ожиданием. Отметку ставит сама утилита. Копия
-        # записи разошлась бы с нею на первой правке.
-        subprocess.run(MARK)
+    if seen(WAIT) <= len(MARKS):
+        # Ход кончился машинным ожиданием. Отметку ставит сама утилита, своя
+        # на проход. Копия записи разошлась бы с нею на первой правке.
+        subprocess.run(MARKS[seen(WAIT) - 1])
         return 0
     # Проходы ожидания кончились, и голова паркует свою строку. Оболочка встаёт
     # на запаркованной задаче штатным нулём, и стенду видно, что воронка её не
@@ -176,12 +180,17 @@ sys.exit(1)
 '''
 
 
-def wait_cmd(proj):
-    """Команда, которой голова отмечает машинное ожидание. Отметку ставит сама
-    утилита, и звено это в стенде одно. Тест откатывает его подменой команды, и
-    голова без отметки уходит в воронку."""
-    return ["agentctl", "wait", FUNNEL, "срок", "--until", WAIT_UNTIL,
-            "--note", "стенд ждёт соседа", "-C", str(proj)]
+def wait_cmd(proj, n, events):
+    """Команда, которой голова отмечает машинное ожидание. Отметка ждёт
+    файла-события своего прохода, и путь у каждого прохода свой: в кортеже
+    дедупликации оболочки различаются цели, и отметки одной секунды не
+    считаются дубликатами. Срок остаётся страховкой на случай, когда событие
+    не пришло вовсе. Тест откатывает звено подменой команды, и голова без
+    отметки уходит в воронку."""
+    return ["agentctl", "wait", FUNNEL, "есть",
+            os.path.join(str(events), "проход-%d" % n),
+            "--until", WAIT_UNTIL, "--note", "стенд ждёт соседа",
+            "-C", str(proj)]
 
 
 def write_stub(path, head, body):
@@ -196,12 +205,18 @@ def stubs(bin_dir, log, mode_file, proj, heads_log):
     Пути зашиваются в сами программы, а не едут окружением. Голову поднимают
     утилиты через свои подпроцессы, и пара, поставленная стендом, до неё
     доходит не всегда.
+
+    Отметки ожидания это список по одной на проход: клиент берёт команду
+    своего прохода по счётчику журнала, а запас в одну отметку сверху
+    переживает потерю любой из них.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
-    head = ("LOG = %r\nMODE = %r\nPROJ = %r\nTASK = %r\nWAITS = %d\n"
-            "MARK = %r\nWHY = %r\nWAIT = %r\nRECORD = %r\n"
-            % (str(heads_log), str(mode_file), str(proj), FUNNEL, WAIT_PASSES,
-               wait_cmd(proj), PARK_WHY, MODE_WAIT, MODE_RECORD))
+    events = Path(mode_file).parent / "события"
+    marks = [wait_cmd(proj, n, events) for n in range(1, WAIT_PASSES + 2)]
+    head = ("LOG = %r\nMODE = %r\nPROJ = %r\nTASK = %r\nMARKS = %r\n"
+            "WHY = %r\nWAIT = %r\nRECORD = %r\n"
+            % (str(heads_log), str(mode_file), str(proj), FUNNEL, marks,
+               PARK_WHY, MODE_WAIT, MODE_RECORD))
     write_stub(bin_dir / "claude", head, CLIENT_BODY)
     write_stub(bin_dir / "tmux", "LOG = %r\n" % str(log), TMUX_BODY)
 
@@ -341,14 +356,41 @@ def add_row(cmd_run, proj, task, title, status=""):
         return cmd_run(args + ["--body-file", body_file])
 
 
-def funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log):
+def wake_waits(mark_path, stop):
+    """Наблюдатель отметок: стенд завершает каждое ожидание созданием
+    файла-события. Оболочка ждёт файла-события своего прохода, и стенд кладёт
+    его, увидев свежую отметку. Пока нить жива, ожидание кончается событием,
+    а не сроком."""
+    done = set()
+    while not stop.is_set():
+        try:
+            with open(str(mark_path), encoding="utf-8") as f:
+                mark = json.load(f)
+            if not isinstance(mark, dict):
+                mark = {}
+        except (OSError, ValueError):
+            mark = {}
+        target = str(mark.get("target") or "")
+        if mark.get("kind") == "есть" and target and target not in done:
+            path = Path(target)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(str(mark.get("since") or ""), encoding="utf-8")
+            done.add(target)
+        stop.wait(0.05)
+
+
+def funnel_wait(cmd_run, proj, home, devkit, mode_file, client, heads_log):
     """Ожидание первое: голова с живым ожиданием переживает воронку оболочки.
 
     Оболочка конвейера зовётся напрямую с подставным клиентом. Клиент кончает
-    ход отметкой `agentctl wait` столько раз подряд, сколько воронке хватило бы
-    с запасом. Последним проходом он паркует строку, и оболочка встаёт на этом
-    штатным нулём. Провал тут это стоп воронки. Она сняла бы голову вместе с
-    работой, как снимала до DK-899.
+    ход отметкой `agentctl wait`, отметок на одну больше требуемого счёта, и у
+    каждой свой файл-событие: стенд завершает ожидание созданием
+    файла-события нитью наблюдателя, и синхронизация идёт событиями, а не
+    часами. Срок отметки остаётся
+    страховкой на случай, когда событие не пришло вовсе. Последним проходом
+    клиент паркует строку, и оболочка встаёт на этом штатным нулём. Провал
+    тут это стоп воронки. Она сняла бы голову вместе с работой, как снимала
+    до DK-899.
     """
     mode_file.write_text(MODE_WAIT, encoding="utf-8")
     rc, out = add_row(cmd_run, proj, FUNNEL, "голова ждёт машинного события",
@@ -356,17 +398,25 @@ def funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log):
     if rc != 0:
         return step("строка ожидания не завелась", rc, out)
     runner = Path(devkit) / "kit" / "skills" / "board-task" / "task-run.py"
-    rc, out = cmd_run(["python3", str(runner), FUNNEL, "-C", str(proj),
-                       "--project", "waitcheck", "--", str(client)])
+    mark = Path(home) / ".devkit" / "waits" / (FUNNEL + ".json")
+    stop = threading.Event()
+    watcher = threading.Thread(target=wake_waits, args=(mark, stop), daemon=True)
+    watcher.start()
+    try:
+        rc, out = cmd_run(["python3", str(runner), FUNNEL, "-C", str(proj),
+                           "--project", "waitcheck", "--", str(client)])
+    finally:
+        stop.set()
+        watcher.join(timeout=10)
     passes = len([ln for ln in raises(heads_log) if ln.startswith(MODE_WAIT + "\t")])
     held = len(re.findall(r"проход \d+ ждёт:", out))
     if rc != 0:
         return step("оболочка вышла кодом %d вместо нуля: воронка сняла голову "
                     "с живым ожиданием (проходов %d, ожиданий %d)"
                     % (rc, passes, held), rc, out)
-    if passes <= WAIT_PASSES:
-        return step("проходов всего %d при %d ожиданиях: оболочка встала раньше "
-                    "срока" % (passes, WAIT_PASSES), 1, out)
+    if passes < WAIT_PASSES + 2:
+        return step("проходов всего %d при %d ожидаемых: оболочка встала раньше "
+                    "срока" % (passes, WAIT_PASSES + 2), 1, out)
     if held < WAIT_PASSES:
         return step("оболочка насчитала %d ожиданий из %d: отметка `agentctl "
                     "wait` до неё не дошла" % (held, WAIT_PASSES), 1, out)
@@ -616,7 +666,8 @@ def circle(cmd_run, proj, home, devkit, mode_file, client, heads_log, log):
         return steps
     waits = (
         ("живое ожидание против воронки",
-         lambda: funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log)),
+         lambda: funnel_wait(cmd_run, proj, home, devkit, mode_file, client,
+                             heads_log)),
         ("close и merge поднимают ждущих",
          lambda: event_wait(cmd_run, proj, home, mode_file, heads_log, devkit)),
         ("тик добирает пропущенное",

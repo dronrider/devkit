@@ -9,7 +9,15 @@ devkit: заглушки ни доску не двигают, ни голову 
 из трёх звеньев, и молчаливое «всё прошло» на сломанном ожидании было бы хуже
 отсутствия стенда.
 """
+import ast
+import json
+import os
+import shutil
+import tempfile
+import threading
+import time
 import unittest
+from pathlib import Path
 
 import testenv
 import waitcheck
@@ -17,6 +25,107 @@ import watch
 from testenv import SandboxCase, go_cache_env, run, write
 
 TOOLS = ("taskctl", "shipctl", "agentctl", "regcheck")
+
+
+def span_secs(span):
+    """Срок отметки в секундах, разбор тех же видов, что принимает утилита."""
+    unit = span[-1:]
+    return int(span[:-1]) * {"s": 1, "m": 60, "h": 3600}[unit]
+
+
+class WaitMarksTest(unittest.TestCase):
+    """Форма отметок ожидания (DK-1694): событие вместо гонки с истечением
+    срока.
+
+    Синхронизация шла сроком в пять секунд, и под нагрузкой полного прогона
+    оболочка считывала отметку позже срока: проход считался холостым, и стенд
+    недосчитывался ожидания. Отметки разбираются из клиента, которого печатает
+    stubs, без подъёма бинарей.
+    """
+
+    def marks(self):
+        where = Path(tempfile.mkdtemp(prefix="waitcheck-marks-"))
+        self.addCleanup(shutil.rmtree, str(where), True)
+        waitcheck.stubs(where / "bin", where / "tmux", where / "режим",
+                        where / "proj", where / "головы")
+        text = (where / "bin" / "claude").read_text(encoding="utf-8")
+        for ln in text.splitlines():
+            if ln.startswith("MARKS = "):
+                return ast.literal_eval(ln[len("MARKS = "):].strip())
+            if ln.startswith("MARK = "):
+                # прежняя форма: одна отметка на все проходы. Разбор нужен,
+                # чтобы на базе тест падал поведением, а не отсутствием
+                # списка.
+                return [ast.literal_eval(ln[len("MARK = "):].strip())]
+        self.fail("клиент стенда не получил список отметок")
+
+    def test_marks_wait_for_unique_event_files(self):
+        # Вид «есть» с абсолютным путём-событием на каждый проход: в кортеже
+        # дедупликации различаются цели, и отметки одной секунды не считаются
+        # дубликатами. Запас в одну отметку переживает потерю любой из них.
+        marks = self.marks()
+        self.assertEqual(len(marks), waitcheck.WAIT_PASSES + 1,
+                         "запаса отметок нет")
+        targets = []
+        for argv in marks:
+            self.assertEqual(argv[:3], ["agentctl", "wait", waitcheck.FUNNEL],
+                             "отметка стоит не утилитой ожидания")
+            self.assertEqual(argv[3], "есть",
+                             "отметка кончается часом, а не событием")
+            self.assertTrue(os.path.isabs(argv[4]),
+                            "цель события не абсолютна: %s" % argv[4])
+            targets.append(argv[4])
+        self.assertEqual(len(set(targets)), len(targets),
+                         "цели событий повторяются: %s" % targets)
+
+    # Голодание читателя из журнала прогона (DK-1694): отметка легла в
+    # 12:59:22, а оболочка под нагрузкой полного прогона считала её в
+    # 12:59:28, на шестой секунде. Пятисекундный срок к тому чтению уже
+    # истёк, и проход стал холостым.
+    STARVED_READ_SECS = 6
+
+    def test_mark_survives_the_starved_reader(self):
+        # Срок страховки обязан переживать голодание читателя, случившееся
+        # в журнале, и кончаться событием: тогда опоздавшая к сроку отметка
+        # всё равно снимает ожидание проходом.
+        marks = self.marks()
+        argv = marks[0]
+        i = argv.index("--until")
+        self.assertGreater(span_secs(argv[i + 1]), self.STARVED_READ_SECS,
+                           "отметка истекает до чтения при голодании "
+                           "оболочки в шесть секунд")
+        self.assertEqual(argv[3], "есть",
+                          "голодевший читатель обязан выйти событием, а не "
+                          "сроком")
+
+    def test_watcher_ends_the_wait_by_the_event(self):
+        # Стенд завершает ожидание созданием файла-события: нить наблюдателя
+        # кладёт файл прохода, увидев свежую отметку. Проверяется без бинарей,
+        # отметка лежит файлом того же вида, каким её кладёт agentctl wait.
+        watcher = getattr(waitcheck, "wake_waits", None)
+        if watcher is None:
+            self.fail("нити наблюдателя нет: ожидание кончается часом, "
+                      "а не событием")
+        where = Path(tempfile.mkdtemp(prefix="waitcheck-wake-"))
+        self.addCleanup(shutil.rmtree, str(where), True)
+        events = where / "события"
+        mark_path = where / "WT-001.json"
+        mark_path.write_text(json.dumps({
+            "task": waitcheck.FUNNEL, "kind": "есть",
+            "target": str(events / "проход-1"),
+            "since": "2026-11-12T12:59:22", "until": "2026-11-12T13:00:22",
+            "note": "стенд ждёт соседа"}, ensure_ascii=False), encoding="utf-8")
+        stop = threading.Event()
+        thread = threading.Thread(target=watcher, args=(mark_path, stop),
+                                  daemon=True)
+        self.addCleanup(thread.join, 10)
+        self.addCleanup(stop.set)
+        thread.start()
+        deadline = time.time() + 10
+        while time.time() < deadline and not (events / "проход-1").exists():
+            time.sleep(0.02)
+        self.assertTrue((events / "проход-1").exists(),
+                        "наблюдатель не положил файл-событие прохода")
 
 
 class WaitcheckTest(SandboxCase):
@@ -65,7 +174,7 @@ class WaitcheckTest(SandboxCase):
         self.assertIn("три ожидания прошли", out, "отчёт не назвал итог")
         # Каждая строка исхода говорит не «ок», а чем ожидание снялось: по
         # голому «ок» разбирать провал в ночном журнале нечем.
-        self.assertIn("проходов 5, из них ожиданий 4", out,
+        self.assertIn("проходов 6, из них ожиданий 5", out,
                       "исход воронки не назвал счёт проходов:\n%s" % out)
         self.assertIn("слияние %s подняло %s" % (waitcheck.DEP, waitcheck.ARMED), out,
                       "исход обхода не назвал взведённую строку:\n%s" % out)
@@ -103,7 +212,7 @@ class WaitcheckTest(SandboxCase):
         # оболочки снимает её на третьем проходе, как снимала до DK-899, и
         # стенд обязан выйти ненулевым кодом с названным ожиданием.
         was = waitcheck.wait_cmd
-        waitcheck.wait_cmd = lambda proj: ["python3", "-c", "pass"]
+        waitcheck.wait_cmd = lambda proj, n, events: ["python3", "-c", "pass"]
         try:
             rc, out = self.stand("stand-nomark")
         finally:

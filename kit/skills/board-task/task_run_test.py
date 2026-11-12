@@ -2380,14 +2380,18 @@ class TestWaitEvents(WaitStand):
 
     @loadmark.wall_clock
     def test_wait_end_closes_the_stage(self):
-        # Тот же срок стенного времени, что у test_merge_ends_the_wait
-        # (обкатка DK-1230 поймала его сама: pipe.held вернул пустую строку
-        # вместо события на загруженной машине).
         # Предмет DK-1193. Отметку ожидания кладёт agentctl wait, а этап «ждёт
         # события» в записи задачи до этой правки не закрывал никто: у DK-920
         # строка доски шесть часов говорила «ждёт события», пока шло ревью.
         # Конец условия видит одна оболочка, и она же называет конец записи.
+        # Оболочка поднята до отметки. Отметка старше оболочки считается
+        # оставшейся от прошлого запуска, и проход её не ждёт, а на загруженной
+        # машине секунда между agentctl wait и подъёмом оболочки кончалась
+        # (пустая строка вместо события в полных прогонах 2026-11-12).
+        # Процесс прибран синхронно, hold опрашивает событие в цикле, и момент
+        # смерти в гонке не участвует.
         os.environ["HOME"] = self.root
+        pipe = self.pipe()
         p = subprocess.Popen(["sleep", "30"])
         self.addCleanup(p.wait)
         self.order("процесс", str(p.pid))
@@ -2396,10 +2400,8 @@ class TestWaitEvents(WaitStand):
         self.assertIn("ждёт события", opened[0])
         self.assertEqual(opened[0].split("|")[4].strip(), "", opened[0])
 
-        timer = threading.Timer(0.5, p.kill)
-        timer.start()
-        self.addCleanup(timer.cancel)
-        pipe = self.pipe()
+        p.kill()
+        p.wait()
         self.assertEqual(pipe.held(1, "In progress"), task_run.WAIT_EVENT)
 
         closed = self.runs()

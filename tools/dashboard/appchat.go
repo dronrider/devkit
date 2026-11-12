@@ -45,6 +45,21 @@ func (c *appChat) busyNow() bool {
 	return c.busy
 }
 
+// setEffort и effortNow держат уровень глубины под тем же замком, что и
+// занятость: реплика пишет его из HTTP-горутины, а ход читает при отправке,
+// и две одновременные реплики без замка гоняли бы строковое поле.
+func (c *appChat) setEffort(e string) {
+	c.mu.Lock()
+	c.effort = e
+	c.mu.Unlock()
+}
+
+func (c *appChat) effortNow() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.effort
+}
+
 // appBusyCap это потолок одного хода без новостей: дольше он не «идёт», а
 // висит, и состояние чата обязано это назвать, а не молчать часами.
 const appBusyCap = 30 * time.Minute
@@ -95,6 +110,13 @@ func (s *server) appFeedRead(sid string) []reply {
 	if err != nil {
 		return nil
 	}
+	return appFeedParse(data)
+}
+
+// appFeedParse разбирает ленту из прочитанного файла: ключ и номер записи это
+// её строка в файле, и разбор отделён от чтения, чтобы поток брал записи и
+// смещение хвоста из одного снимка.
+func appFeedParse(data []byte) []reply {
 	out := []reply{}
 	for i, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		if line == "" {
@@ -241,7 +263,7 @@ func (s *server) appTurn(c *appChat, text string) error {
 	_, err := c.proc.call("turn/start", map[string]any{
 		"threadId": c.thread,
 		"input":    []map[string]string{{"type": "text", "text": text}},
-		"effort":   appEffort(c.effort),
+		"effort":   appEffort(c.effortNow()),
 	})
 	if err != nil {
 		c.mu.Lock()
@@ -353,8 +375,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			chatModelName(model, harness))})
 		return
 	}
-	if effort != "" {
-		st.CxEffort = effort
+	// Уровень глубины ложится в запись разговора каждым изменением, а не только
+	// сменой модели или нити: процесс смерти переживает, и без записи выбор
+	// ползунка молча возвращался к умолчанию после каждого обрыва.
+	effortSet := false
+	if effort != "" && effort != st.CxEffort {
+		st.CxEffort, effortSet = effort, true
 	}
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
@@ -374,8 +400,8 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			st.Thread = c.thread
 		}
 	}
-	c.effort = st.CxEffort
-	if st.Model != model || st.Harness != harness || st.Thread != c.thread {
+	c.setEffort(st.CxEffort)
+	if st.Model != model || st.Harness != harness || st.Thread != c.thread || effortSet {
 		st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
 		if err := s.chatStoreWrite(sid, st); err != nil {
 			s.logf("настройки разговора %s не записались: %v", sid, err)
@@ -436,7 +462,7 @@ func (s *server) appStart(w http.ResponseWriter, found *Project, id, blank, text
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат не поднялся: " + msg})
 		return
 	}
-	c.effort = st.CxEffort
+	c.setEffort(st.CxEffort)
 	st.Thread = c.thread
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
@@ -599,7 +625,7 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 		return
 	}
 	if r.URL.Query().Get("stream") == "1" {
-		s.appFeedStream(w, r, sid, file, fi.Size())
+		s.appFeedStream(w, r, file)
 		return
 	}
 	items := s.appFeedRead(sid)
@@ -631,12 +657,17 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 // appFeedStream это лента живым потоком: хвост файла уезжает событиями по
 // мере записи, как у транскриптной ленты. Ключ записи это её номер в файле, и
 // счётчик продолжает нумерацию чтения без разрыва.
-func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid, file string, size int64) {
+func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file string) {
 	f, ok := sseOpen(w)
 	if !ok {
 		return
 	}
-	items := s.appFeedRead(sid)
+	// Записи и смещение хвоста берутся из одного снимка файла: смещение из
+	// раннего os.Stat опаздывало за записью, дописанной между Stat и открытием
+	// потока, и она уезжала в панель дважды под двумя ключами.
+	data, _ := os.ReadFile(file)
+	items := appFeedParse(data)
+	off := int64(len(data))
 	if len(items) > repliesDefault {
 		items = items[len(items)-repliesDefault:]
 	}
@@ -650,13 +681,12 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid, file
 	// чтобы панель, сменившая поток окном, не увидела одну запись под двумя
 	// ключами.
 	line := 0
-	if data, err := os.ReadFile(file); err == nil && len(data) > 0 {
+	if len(data) > 0 {
 		line = strings.Count(string(data), "\n")
 		if !strings.HasSuffix(string(data), "\n") {
 			line++
 		}
 	}
-	off := size
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()
 	for {

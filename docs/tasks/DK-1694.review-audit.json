@@ -2,8 +2,8 @@
   "version": 1,
   "id": "DK-1694",
   "base_sha": "01a244eea5fd9655ac2addc0e7268e7d81fd6a86",
-  "head_sha": "6d1ddf4986ac1110f35d0a0017788b9f2b3498a5",
-  "code_hash": "ccb6b12cf06b6b7bd193a785cc7dbb3bb0865d64a3b0c63c461d3251a3b28763",
+  "head_sha": "6b7bcd27c5a257fa34125fd2927676f0471ddfa5",
+  "code_hash": "c209d7f8a754d1e8be8c4df75d9fa2e3a0019b38286376b9d59011633d572492",
   "task_hash": "3908d0195d684af40f974c4ab3175231f2db5e54f62355520e22cb3023bf1092",
   "sources": [
     {
@@ -51,7 +51,8 @@
       "tools/dashboard/cloudstart.go: cloudStartInterval (82-90) до взятия резервов, guardianScript с n=30 при пропавшем бинар (59-61)",
       "tools/devkitctl/selfcheck.py: audit_report (249-319) через штатную утилиту с DEVKIT_HOME чекаута круга",
       "tools/dashboard/chatselection.go deliverSelection, chatlift.go deliverToCarrier, chatproposalcontext.go deliverPreparedFormReceipt",
-      "прогоны: internal/taskhead 52 c ok, internal/taskform ok, agentctl lock-тесты ok, taskctl decide ok, dashboard cloudstart+delivery ok, board-task -k work_end -k silence 8 тестов ok, waitcheck audit-тест ok, selfcheck живой круг ok; записанные зелёные прогоны компонентов в разделе «Ход работы» задачи"
+      "прогоны: internal/taskhead 52 c ok, internal/taskform ok, agentctl lock-тесты ok, taskctl decide ok, dashboard cloudstart+delivery ok, board-task -k work_end -k silence 8 тестов ok, waitcheck audit-тест ok, selfcheck живой круг ok; записанные зелёные прогоны компонентов в разделе «Ход работы» задачи",
+      "исправление замечания 1: fix(agentctl) 1850a3439 закоммитил снятие DEVKIT-хвоста в TestMain, fix(gitignore) 6b7bcd27c отнёс .devkit/tmp-* к машинным помощникам; git status чист"
     ]
   },
   "rules": [
@@ -946,7 +947,7 @@
       "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "подмена дома у тестов на месте: t.TempDir у замков и стендов, HOME и PATH у waitcheck, TestMain у дашборда; оговорка: прогоны из живой задачи несут DEVKIT-хвост, стенда waitcheck это касается через selfcheck.run, чистка окружения зафиксирована препятствием в задаче, а правка снятия хвоста в touch_test.go осталась незакоммиченной (замечание ревью)",
+      "reason": "подмена дома у тестов на месте: t.TempDir у замков и стендов, HOME и PATH у waitcheck, TestMain у дашборда; снятие DEVKIT-хвоста у прогона agentctl (DEVKIT_TASK, DEVKIT_RUN_DEPTH, DEVKIT_TASK_LOCK_FROM в TestMain) вошло в ветку фикс-коммитом 1850a3439 по замечанию 1, тесты с хвостом ставят его сами через t.Setenv",
       "evidence": [
         {
           "object": "подмена дома",
@@ -955,8 +956,8 @@
         },
         {
           "object": "хвост окружения",
-          "location": "docs/tasks/DK-1694.md препятствие, tools/agentctl/touch_test.go (незакоммичено)",
-          "observation": "session-хвост красит стенды, фикс снятия не в ветке"
+          "location": "tools/agentctl/touch_test.go TestMain (коммит 1850a3439)",
+          "observation": "снятие трёх переменных до запуска тестов, нужные ставят сами через t.Setenv"
         }
       ]
     },

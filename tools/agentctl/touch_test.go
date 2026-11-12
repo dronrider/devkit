@@ -6,6 +6,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/runsguard"
 	"github.com/dronrider/devkit/internal/sessions"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // TestMain снимает с прогона ID живой сессии (DK-631). touchWork зовётся на
@@ -16,12 +17,21 @@ import (
 // никуда: mark() в internal/sessions выходит по пустому sid раньше, чем
 // тронет диск.
 //
+// Тем же порядком снимается хвост окружения головы задачи (DK-1694). Прогон,
+// поднятый из живой головы или её делегата, несёт DEVKIT_TASK, и страж
+// материала у exec ищет настоящую задачу в синтетическом корне; ограничитель
+// вложенности и замок делегата у run читают свои переменные тем же способом.
+// Тесты, которым хвост нужен, ставят его сами через t.Setenv.
+//
 // runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs, как
 // у taskctl: писатели этапов (wait, run, stage) берут дом из HOME процесса, и
 // тест без подмены дома оставлял бы след в боевом каталоге, который при
 // параллельном прогоне пакетов ловил сторож соседа (DK-911).
 func TestMain(m *testing.M) {
 	os.Unsetenv(sessions.SessionEnv)
+	os.Unsetenv("DEVKIT_TASK")
+	os.Unsetenv(runDepthEnv)
+	os.Unsetenv(taskhead.LockFromEnv)
 	os.Exit(runsguard.Guard(m))
 }
 

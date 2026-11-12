@@ -2,8 +2,8 @@
   "version": 1,
   "id": "DK-1695",
   "base_sha": "cc40570da2ac11cfe51cbe3c832ee267d938519b",
-  "head_sha": "5905ad332cd954d593c2ca682e0ddbf0e6483037",
-  "code_hash": "e158680070a2dd2257060ddc875660e72dec1b8c0944a2fe07ff4e5fa8869f3a",
+  "head_sha": "ef38ff3534c616a261d1bc443309984c3d7affb4",
+  "code_hash": "b37f475befa1b50eb5ab2428ab280a17e705aa0317847b41e77a1b57ae46004b",
   "task_hash": "75e0aa62481e4cf08e116167e933eed71bb1353df6d1c6083e7f14b907f8ed6f",
   "sources": [
     {

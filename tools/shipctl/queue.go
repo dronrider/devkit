@@ -1,16 +1,20 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/dronrider/devkit/internal/merged"
+	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/trace"
 )
 
@@ -63,6 +67,9 @@ type queueMark struct {
 	Reason          string      `json:"reason,omitempty"`
 	Block           *queueBlock `json:"block,omitempty"`
 	RegcheckPending bool        `json:"regcheck_pending,omitempty"`
+	// Ready это подтверждённый зелёным regcheck отпечаток диффа задачи:
+	// пока дифф совпадает с ним, ребейз очереди готовность не гасит.
+	Ready string `json:"ready,omitempty"`
 }
 
 const queueRegcheck = "regcheck"
@@ -208,12 +215,18 @@ func (st *queueState) mark(id string) *queueMark {
 	return m
 }
 
-// queueItem это строка очереди: задача, её ранг и наклейка.
+// queueItem это строка очереди: задача, её ранг и наклейка. Wait называет
+// причину неготовности к заказу слияния, Diff это отпечаток диффа задачи, а
+// Confirm просит запомнить его в наклейке: подтверждённая готовность
+// переживает ребейз очереди (DK-1650).
 type queueItem struct {
-	ID    string
-	Title string
-	Rank  int
-	Mark  queueMark
+	ID      string
+	Title   string
+	Rank    int
+	Mark    queueMark
+	Wait    string
+	Diff    string
+	Confirm bool
 }
 
 // queueRows собирает состав очереди: строки In progress с веткой, по
@@ -242,7 +255,7 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 	st := loadQueue(root)
 	var items []queueItem
 	for _, r := range b.sects["in-progress"] {
-		var code string
+		var code, codeBranch string
 		for _, branch := range branches {
 			if !branchOfTask(branch, r.ID) {
 				continue
@@ -252,11 +265,22 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 				return nil, err
 			}
 			if code != "" {
+				codeBranch = branch
 				break
 			}
 		}
 		if code == "" {
 			continue
+		}
+		// Слияние берёт ветку дерева задачи или текущую, а список веток отдаёт
+		// первую по алфавиту: готовность обязана мерить ту же ветку, что уедет
+		// в main.
+		if current != main && branchOfTask(current, r.ID) {
+			codeBranch = current
+		} else if wt, werr := taskWorktree(root, r.ID); werr != nil {
+			return nil, werr
+		} else if wt != nil {
+			codeBranch = wt.Branch
 		}
 		mark := *st.mark(r.ID)
 		if mark.Code != "" {
@@ -277,14 +301,132 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 					return nil, err
 				}
 				if code != "" && code != mark.Code {
-					mark = queueMark{Block: mark.Block, RegcheckPending: mark.RegcheckPending}
+					mark = queueMark{Block: mark.Block, RegcheckPending: mark.RegcheckPending, Ready: mark.Ready}
 				}
 			}
 		}
-		items = append(items, queueItem{ID: r.ID, Title: r.Title, Rank: r.Rank, Mark: mark})
+		why, diff, confirm := queueReadiness(root, main, codeBranch, r.ID, b.rowOf(r.ID).Type, code, mark)
+		items = append(items, queueItem{ID: r.ID, Title: r.Title, Rank: r.Rank, Mark: mark, Wait: why, Diff: diff, Confirm: confirm})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Rank > items[j].Rank })
 	return items, nil
+}
+
+// queueReadiness спрашивает дешёвую готовность строки к заказу слияния
+// (DK-1650): файл задачи, исходы замечаний ревью и след regcheck читаются до
+// merge, и неготовая строка не получает попытку вовсе. Разлив ходит тиком
+// каждые пять минут, и попытки по живой разработке оставляли файлу задачи
+// записи слияний, а отвороты уходили дежурному эскалацией (у DK-1072 легло
+// пятнадцать записей «Слияние»). Тяжёлые проверки остаются в merge, поэтому
+// готовность не повторяет ворота, а снимает заведомо бессмысленные заходы:
+// пустой why значит готовность, confirm просит запомнить отпечаток диффа.
+//
+// Отпечаток снимается с текста кодового диффа ветки против merge-base с
+// main: линия коммитов не годится, ребейз очереди перезастаивает коммиты и
+// гасил бы готовность зря, а дифф задачи ребейз не меняет. Пока дифф совпадает
+// с подтверждённым отпечатком в наклейке, готовность держится и после ребейза;
+// доработка кода меняет дифф, и готовность гаснет сама на следующем обходе.
+func queueReadiness(root, main, branch, id, taskType, code string, mark queueMark) (why, diff string, confirm bool) {
+	doc := queueTaskDoc(root, id, branch)
+	if doc == "" {
+		return "файл задачи не читается ни из дерева задачи, ни из ветки " + branch, "", false
+	}
+	if open := trace.ReviewNotesOpen(doc); len(open) > 0 {
+		return fmt.Sprintf("в ревью %s замечаний без исхода: %s", id, firstLine(open[0])), "", false
+	}
+	if !strings.Contains(taskType, "bug") || taskform.Exception(doc, taskform.GateRegcheck) {
+		return "", "", false
+	}
+	logRoot := root
+	if wt, err := taskWorktree(root, id); err == nil && wt != nil {
+		logRoot = wt.Path
+	}
+	logPath := filepath.Join(logRoot, trace.RunLogPath)
+	if _, err := os.Stat(logPath); err != nil {
+		// Без журнала след не работает (см. Regcheck): обвязка кладёт его
+		// задолго до первого прогона, и молчание тут штатнее отказа.
+		return "", "", false
+	}
+	green, ok := trace.LastGreenRegcheck(logPath)
+	if !ok {
+		return "", "", false
+	}
+	// Граница регчека у ворот слияния это merge-base, и ожидание по ней merge
+	// ставит сам, с полной диагностикой и механизмом повтора. Отбор его работу
+	// не дублирует и снимает только то, что ворот пропускает: регчек свежее
+	// базы, но линия кода ушла дальше него живой доработкой.
+	if base, err := git(root, "merge-base", main, branch); err == nil && base != "" {
+		if out, err := git(root, "log", "-1", "--format=%ct", base); err == nil {
+			if sec, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err == nil && !green.After(time.Unix(sec, 0)) {
+				return "", "", false
+			}
+		}
+	}
+	diff = queueDiffHash(root, main, branch)
+	if diff != "" && diff == mark.Ready {
+		return "", diff, false
+	}
+	out, err := git(root, "log", "-1", "--format=%ct", code)
+	if err != nil {
+		return "не прочитано время последнего кодового коммита ветки", diff, false
+	}
+	ct, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+	if err != nil {
+		return "не разобрано время последнего кодового коммита ветки", diff, false
+	}
+	if green.After(time.Unix(ct, 0)) {
+		return "", diff, true
+	}
+	return "после последнего regcheck была доработка", diff, false
+}
+
+// queueDiffHash даёт отпечаток кодового диффа ветки против merge-base с main:
+// чужие коммиты main в отпечаток задачи не входят, а досовские файлы выведены,
+// потому что записи этапов и аудиты приезжают коммитами поверх кода и кодовый
+// дифф не меняют.
+func queueDiffHash(root, main, branch string) string {
+	out, err := git(root, "diff", main+"..."+branch)
+	if err != nil || strings.TrimSpace(out) == "" {
+		return ""
+	}
+	var keep strings.Builder
+	for _, section := range strings.Split(out, "diff --git ") {
+		if section == "" {
+			continue
+		}
+		head := section
+		if i := strings.IndexByte(section, '\n'); i >= 0 {
+			head = section[:i]
+		}
+		// Заголовок «a/старый b/новый»: путь диффа несёт правая сторона.
+		rel := ""
+		if fields := strings.Fields(head); len(fields) == 2 {
+			rel = strings.TrimPrefix(fields[1], "b/")
+		}
+		if merged.BoardRel(rel) {
+			continue
+		}
+		keep.WriteString(section)
+	}
+	if keep.Len() == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(keep.String())))
+}
+
+// queueTaskDoc читает файл задачи из дерева задачи, а без дерева из ветки:
+// очередь работает из основного чекаута, и кандидат без распакованного
+// дерева не должен молча выглядеть неготовым.
+func queueTaskDoc(root, id, branch string) string {
+	if wt, err := taskWorktree(root, id); err == nil && wt != nil {
+		if data, err := os.ReadFile(filepath.Join(wt.Path, "docs", "tasks", id+".md")); err == nil {
+			return string(data)
+		}
+	}
+	if doc, err := git(root, "show", branch+":docs/tasks/"+id+".md"); err == nil {
+		return doc
+	}
+	return ""
 }
 
 // queueCode пропускает коммит с записью о снятии и другие коммиты доски.
@@ -372,7 +514,7 @@ func queueRetry(root, id, why, before, code string) (string, bool) {
 			return
 		}
 		if mk.Last != why || mk.Code != before {
-			*mk = queueMark{}
+			*mk = queueMark{Ready: mk.Ready}
 		}
 		mk.Tries++
 		mk.Last, mk.Code, mk.At = why, code, time.Now()
@@ -615,6 +757,25 @@ func queueTry(root string, item queueItem, p QueueParams) (merged bool, note str
 	say := p.Say
 	if say == nil {
 		say = func(string) {}
+	}
+	if item.Wait != "" {
+		// Готовность спрашивается до заказа слияния (DK-1650): ворота merge
+		// и так отказали бы неготовой строке, но попытка оставляла бы след в
+		// файле задачи и отвороты дежурному.
+		report.Failed, report.Waiting = false, true
+		block, changed := queueSetBlock(root, id, queueBlock{
+			Code:   "readiness",
+			Reason: item.Wait,
+			Owner:  "исполнитель " + id,
+			Resume: "живая доработка уходит в ветку, замечания закрываются исходом, regcheck прогоняется; готовность вернётся следующим обходом",
+		})
+		report.Block, report.Changed = &block, changed
+		return false, "", false, "ждёт готовности: " + item.Wait
+	}
+	if item.Confirm {
+		// Зелёный regcheck новее кода: подтверждённый отпечаток диффа
+		// переживает ребейз очереди.
+		queueMutate(root, func(st *queueState) { st.mark(id).Ready = item.Diff })
 	}
 	started := false
 	// Ожидания замка тут нет нарочно. Тик сам и есть цикл повтора: он приходит

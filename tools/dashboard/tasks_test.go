@@ -207,10 +207,78 @@ func runTaskctl(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+var (
+	seedBoardOnce sync.Once
+	seedBoardDir  string
+	seedBoardErr  error
+)
+
+// seedBoardRows заводит доску настоящей утилитой. Набор команд один и тот же
+// для заготовки и для сторожа свежести, поэтому и живёт отдельной функцией.
+func seedBoardRows(t *testing.T, proj string) error {
+	t.Helper()
+	// Доска заводится настоящим git в PATH: taskctl init ищет корень
+	// репозитория через «rev-parse --show-toplevel», и подставленная фикстура
+	// git увела бы доску в текущий каталог. Фикстура встаёт после, когда
+	// стенду нужны молчаливые add, commit и push.
+	rows := [][]string{{"init", "--prefix", "XR", "--name", "demo"}}
+	for _, row := range [][]string{
+		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent"},
+		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M", "--accept", "agent"},
+		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
+		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
+	} {
+		rows = append(rows, append([]string{"add", "--body-file", taskBodyFixture(t)}, row...))
+	}
+	rows = append(rows,
+		[]string{"dep", "add", "XR-002", "XR-001"},
+		[]string{"dep", "add", "XR-003", "XR-002"})
+	for _, args := range rows {
+		cmd := exec.Command(realTaskctlPath, append(args, "-C", proj)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("taskctl %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	return nil
+}
+
+// seedBoard строит доску-заготовку один раз на прогон пакета. Стендов на этой
+// доске около сотни, и семь запусков утилиты на каждом стоили больше времени,
+// чем сами замеры, а результат у всех один: цепочка XR-001 -> XR-002 -> XR-003
+// и одиночная XR-004. Формат строки по-прежнему держит утилита: заготовку она
+// заводит сама, а TestTasksEnvSeedMatchesUtility сторожит копию против
+// свежего прогона тех же команд.
+func seedBoard(t *testing.T) string {
+	t.Helper()
+	seedBoardOnce.Do(func() {
+		home, err := os.MkdirTemp("", "dashboard-board-seed")
+		if err != nil {
+			seedBoardErr = err
+			return
+		}
+		proj := filepath.Join(home, "projects", "demo")
+		mkProject(t, proj)
+		if err := os.Remove(filepath.Join(proj, "docs", "TASKS.md")); err != nil {
+			seedBoardErr = err
+			return
+		}
+		buildTaskctl(t)
+		if err := seedBoardRows(t, proj); err != nil {
+			seedBoardErr = err
+			return
+		}
+		seedBoardDir = proj
+	})
+	if seedBoardErr != nil {
+		t.Fatal(seedBoardErr)
+	}
+	return seedBoardDir
+}
+
 // tasksEnv поднимает сервер на доске с цепочкой XR-001 -> XR-002 -> XR-003
-// («после» в эту сторону) и одиночной XR-004. Доску заводит сама утилита:
-// формат строки её, и переписывать его в тесте руками значит разойтись с ней
-// на первой же правке.
+// («после» в эту сторону) и одиночной XR-004. Доска ложится копией заготовки
+// утилиты: каждая правка формата строки проходит через неё и попадает в
+// заготовку вместе со сторожем свежести.
 func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
 	kit, err := filepath.Abs("../..")
@@ -221,27 +289,87 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Setenv("DEVKIT_HOME", kit)
 	taskctlFixture(t, e.bin)
 	sandboxRealNotifier(t, e)
-	if err := os.Remove(filepath.Join(e.proj, "docs", "TASKS.md")); err != nil {
+	if err := os.RemoveAll(e.proj); err != nil {
 		t.Fatal(err)
 	}
-	// Доска заводится настоящим git в PATH: taskctl init ищет корень
-	// репозитория через «rev-parse --show-toplevel», и подставленная фикстура
-	// git увела бы доску в текущий каталог. Фикстура встаёт после, когда
-	// стенду нужны молчаливые add, commit и push.
-	runTaskctl(t, e.proj, "init", "--prefix", "XR", "--name", "demo")
-	for _, row := range [][]string{
-		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent"},
-		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M", "--accept", "agent"},
-		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
-		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
-	} {
-		runTaskctl(t, e.proj, append([]string{"add", "--body-file", taskBodyFixture(t)}, row...)...)
+	if err := os.MkdirAll(e.proj, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "dep", "add", "XR-002", "XR-001")
-	runTaskctl(t, e.proj, "dep", "add", "XR-003", "XR-002")
+	if err := os.CopyFS(e.proj, os.DirFS(seedBoard(t))); err != nil {
+		t.Fatal(err)
+	}
 	gitLog := filepath.Join(e.home, "git.log")
 	writeScript(t, e.bin, "git", gitFakeOK(gitLog))
 	return e, e.loggedClient(t), gitLog
+}
+
+// boardTree снимает дерево доски в карту «путь -> содержимое». Каталог .git не
+// снимается: коммиты несут отметку времени и у двух честных прогонов разные, а
+// предмет сторожа это файлы доски.
+func boardTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		tree[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+// Заготовка равна свежему прогону утилиты. Стенды берут доску копией, и без
+// этого сторожа правка формата строки в утилите могла бы ехать в тестах
+// заготовкой вчерашней свежести, а формат строки держит утилита, не копия.
+func TestTasksEnvSeedMatchesUtility(t *testing.T) {
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	t.Setenv("HOME", t.TempDir())
+	proj := filepath.Join(t.TempDir(), "demo")
+	mkProject(t, proj)
+	if err := os.Remove(filepath.Join(proj, "docs", "TASKS.md")); err != nil {
+		t.Fatal(err)
+	}
+	buildTaskctl(t)
+	if err := seedBoardRows(t, proj); err != nil {
+		t.Fatal(err)
+	}
+	got := boardTree(t, proj)
+	want := boardTree(t, seedBoard(t))
+	if len(got) == 0 || len(want) == 0 {
+		t.Fatalf("доска не собралась: свежая %d файлов, заготовка %d", len(got), len(want))
+	}
+	for path, data := range want {
+		if got[path] != data {
+			t.Errorf("файл %s разошёлся: копия заготовки обязана быть байт в байт тем, что сейчас кладёт утилита", path)
+		}
+	}
+	for path := range got {
+		if _, ok := want[path]; !ok {
+			t.Errorf("в заготовке нет файла %s, который кладёт свежий прогон", path)
+		}
+	}
 }
 
 // regcheck:test-begin

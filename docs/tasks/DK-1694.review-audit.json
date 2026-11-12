@@ -2,9 +2,9 @@
  "version": 1,
  "id": "DK-1694",
  "base_sha": "cc40570da2ac11cfe51cbe3c832ee267d938519b",
- "head_sha": "fed4de2768c845829768dc5e0c8ce3b1bbf2c8fc",
- "code_hash": "3fddd9bb387675b03547b9201054456b59d834453fc3094c78812cae211e9d95",
- "task_hash": "1631506e1ab5799de983b8c14f16addf015d6c02ad0ab59dec6841eb34509359",
+ "head_sha": "0d61ed67020b40874ce0b705649bec7f3e9d8f7a",
+ "code_hash": "e565988140fc6ea4fd7a4b3aea099aef1c058e5e3eb7c942003320b4e6ab1a35",
+ "task_hash": "dfe9f348e360b27eadfcdaa336dc49e3bd65d8146a4151c22d5953d1b4445da2",
  "sources": [
   {
    "name": "common-architecture",
@@ -48,7 +48,7 @@
    "regcheck диспетчера по двум фиксам: изоляция хвоста красная на 6e87821e2 и зелёная на d1136a49b, waitcheck (test_mark_survives_the_starved_reader) красный на 6e87821e2 и зелёный на ea3980800, оба rc0; доказательства в файле задачи, прогон не повторял",
    "свои точечные прогоны через обёртку из живой сессии с настоящим хвостом: devkitctl test tools/devkitctl waitcheck_test.WaitMarksTest три теста OK 0,155 с; devkitctl test tools/devkitctl parallel_test.ComponentEnvTest.test_tail_leaves_every_component OK; spot-проверка command_env отравленным родителем: DEVKIT_TASK, DEVKIT_TASK_HEAD_SESSION и шесть остальных имён сняты у python и go, ручка DEVKIT_WRITE_GOLDEN сохранилась, GOWORK=off только у go",
    "браузерный стенд геометрии: отрицательный контроль с возвратом контейнера в #groups красный первым же кейсом (AssertionError «перерисовка доски сняла тестовый узел проверки геометрии»), штатный стенд зелёный, следы в .devkit/test-runs.log 15:39:56 ok:false 17 с и 15:41:09 ok:true 48,3 с",
-   "чтение: PIPE_ENV_DROP в parallel.py:251, selfcheck.py:61 и testenv.py:37 сверен по трём файлам, восемь имён совпадают; инвентаризация потребителей DEVKIT_* по raise.go env() (постановщик хвоста), task-run.py и хукам сходится с перечнем; wake_waits в waitcheck.py:359 создаёт файл-событие по цели отметки, wait_done вида «есть» в task-run.py:1720 кончается существованием файла, страховка 60 с ниже потолка 2 ч; блок flip в effort_browser.mjs требует painted, isConnected с тождеством узла, отсутствие #groups в предках, совпадение коробок до пикселя и видимость меню",
+   "чтение: PIPE_ENV_DROP в parallel.py:251, selfcheck.py:61 и testenv.py:37 сверен по трём файлам, восемь имён совпадают; инвентаризация потребителей DEVKIT_* по raise.go env() (постановщик хвоста), task-run.py и хукам сходится с перечнем; wake_waits в waitcheck.py:359 создаёт файл-событие по цели отметки, wait_done вида «есть» в task-run.py:1720 кончается существованием файла, страховка 60 с ниже потолка 2 ч; блок flip в effort_browser.mjs требует painted, isConnected с тождеством узла, отсутствие #groups в предках, совпадение коробок до пикселя и видимость меню; зеркальный тест RunnerDropsPipelineTail (коммит 524e985c9, закрытие замечания 7) сверяет список раннера с эталоном selfcheck.PIPE_ENV_DROP, прогон зелёный по записи диспетчера",
    "amend 7f56fd337 -> d4927e626 сверен диффом: пять замен формулировок в комментариях и сообщениях assert (fixture -> тестовый узел проверки геометрии, boxMatches -> boxState с печатью обеих коробок), поведения и селекторов не тронуты, снимок аудита снят после amend, head 5bba688dc1"
   ]
  },
@@ -99,7 +99,7 @@
    "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
    "applicability": "applicable",
    "result": "checked",
-   "reason": "Общая логика имеет владельцев: разбор блока развилки сведён в forkBlock, список хвоста окружения в круге 3 получил копии по модулям (selfcheck, testenv) с тестами синхронизации; новый список в parallel.py третья копия с собственным поведенческим тестом, перекрёстной синхронизации с selfcheck нет, риск расхождения списков записан неблокирующим замечанием ревью",
+   "reason": "Общая логика имеет владельцев: разбор блока развилки сведён в forkBlock, список хвоста окружения лежит копиями по модулям, у песочниц selfcheck и testenv связка тестом SandboxDropsPipelineTail, у раннера parallel.py после замечания ревью появился зеркальный тест RunnerDropsPipelineTail против эталона selfcheck.PIPE_ENV_DROP, девятое забытое имя остаётся в leaked и красит прогон",
    "evidence": [
     {
      "object": "tools/devkitctl/parallel.py",
@@ -107,9 +107,14 @@
      "observation": "восемь имён, идентичны selfcheck.PIPE_ENV_DROP и testenv.PIPE_ENV_DROP, сверено чтением трёх файлов"
     },
     {
+     "object": "tools/devkitctl/parallel_test.py",
+     "location": "RunnerDropsPipelineTail.test_pipeline_tail_dropped, коммит 524e985c9",
+     "observation": "отравляет окружение эталонным списком selfcheck и требует от command_env пустого leaked, дрейф третьей копии ловится прогоном"
+    },
+    {
      "object": "tools/devkitctl/testenv_test.py",
      "location": "SandboxDropsPipelineTail",
-     "observation": "синхронизация testenv с selfcheck есть, парного теста у parallel нет"
+     "observation": "связка testenv с selfcheck, зеркальный тест построен по её образцу"
     }
    ]
   },
@@ -819,7 +824,7 @@
    "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
    "applicability": "applicable",
    "result": "checked",
-   "reason": "Типовые мутации покрыты: отравление родителя восемью именами, сохранность ручки DEVKIT_WRITE_GOLDEN, граница срока против шести секунд голодания, уникальность целей событий, возврат контейнера в #groups",
+   "reason": "Типовые мутации покрыты: отравление родителя восемью именами, сохранность ручки DEVKIT_WRITE_GOLDEN, граница срока против шести секунд голодания, уникальность целей событий, возврат контейнера в #groups, забытая девятая копия имени хвоста ловится зеркальным тестом",
    "evidence": [
     {
      "object": "tools/devkitctl/waitcheck_test.py",

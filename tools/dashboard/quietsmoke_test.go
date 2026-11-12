@@ -72,7 +72,16 @@ const showTab = (on) => {
   const res = { ok: false, error: "", visible: 0, hidden: 0, catchup: 0, after: 0, ms: 0 };
   try {
     // Страница поднялась, панель разговора открылась, первые запросы прошли.
-    await sleep(2000);
+    // Волна загрузки оседает своим темпом: счёт открывается в тишине между
+    // опросами, иначе первые залпы экрана зашли бы в окно открытой вкладки
+    // целиком и сократили его до долей тика.
+    let prev = -1;
+    for (let i = 0; i < 30; i += 1) {
+      const n = await count();
+      if (n === prev) break;
+      prev = n;
+      await sleep(200);
+    }
     const from = await count();
     const t0 = Date.now();
     while (Date.now() - t0 < 25000) {
@@ -424,7 +433,14 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 
 	counter := &quietCounter{}
 	resultCh := make(chan quietResult, 1)
-	base, _ := smokeWrap(t, e, quietDriverJS, func(mux *http.ServeMux) {
+	// Каденции опроса стенд поднимает ключом devkit.poll до четверти секунды:
+	// замер сторожит выключатель видимости, а не сами каденции продукта.
+	// Быстрые тики сжимают окно замера с сохранением предмета: сколько
+	// запросов набрала открытая вкладка, столько же времени фон обязан молчать,
+	// а работающий в фоне опрос за то же окно набрал бы несколько запросов.
+	base, _ := smokeWrapPre(t, e,
+		`for (const k of ["ask", "groom", "pulse"]) localStorage.setItem("devkit.poll." + k, "250");`,
+		quietDriverJS, func(mux *http.ServeMux) {
 		// Путь «GET /api/» точнее общего «/», поэтому запросы экрана идут
 		// сначала сюда, а обслуживает их тот же обработчик дашборда.
 		inner := e.s.handler()

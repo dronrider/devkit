@@ -234,6 +234,14 @@ func smokeLine(text string, at time.Time) string {
 // обработчика.
 func smokeWrap(t *testing.T, e *testEnv, driver string, extra ...func(*http.ServeMux)) (string, <-chan smokeResult) {
 	t.Helper()
+	return smokeWrapPre(t, e, "", driver, extra...)
+}
+
+// smokeWrapPre ставит на страницу смоука скрипт до модуля app.js: каденции
+// опроса экран читает ключами devkit.poll при загрузке, и встать раньше модуля
+// ключи обязаны. Сам смоук-драйвер по-прежнему едет после модуля.
+func smokeWrapPre(t *testing.T, e *testEnv, pre, driver string, extra ...func(*http.ServeMux)) (string, <-chan smokeResult) {
+	t.Helper()
 	// Стенд поднимает настоящий браузер и судит по стенному времени: под
 	// нагрузкой он краснеет чужой задаче, и признание об этом обязано быть в
 	// выводе (wallClock, DK-1218).
@@ -268,8 +276,12 @@ func smokeWrap(t *testing.T, e *testEnv, driver string, extra ...func(*http.Serv
 	if !strings.Contains(string(html), appTag) {
 		t.Fatal("разметка index.html разъехалась: тег app.js не найден")
 	}
+	head := appTag
+	if pre != "" {
+		head = "<script>" + pre + "</script>\n" + appTag
+	}
 	injected := strings.Replace(string(html), appTag,
-		appTag+"\n<script type=\"module\">"+driver+"</script>", 1)
+		head+"\n<script type=\"module\">"+driver+"</script>", 1)
 
 	resultCh := make(chan smokeResult, 1)
 	mux := http.NewServeMux()

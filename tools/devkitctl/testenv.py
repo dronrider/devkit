@@ -29,6 +29,22 @@ HERE = Path(__file__).resolve().parent
 DEVKIT_SRC = HERE.parent.parent
 PY = sys.executable
 
+# Хвост окружения конвейера задачи (DK-1694): сюиту зовут и из живой сессии
+# задачи, и без съёма её запись запуска, голова и замок уезжали в команды
+# песочницы. Чужой DEVKIT_TASK_RUN_ID ронял стендовому task-run подтверждение
+# запуска, воронка снимала голову кодом 2. Хвост снимается с песочницы
+# целиком: тест, которому он нужен, передаёт свои значения поверх.
+PIPE_ENV_DROP = (
+    "DEVKIT_TASK",
+    "DEVKIT_RUN_DEPTH",
+    "DEVKIT_TASK_LOCK_FROM",
+    "DEVKIT_TASK_HEAD_SESSION",
+    "DEVKIT_TASK_HEAD_SESSION_ARGS",
+    "DEVKIT_TASK_RUN_ID",
+    "DEVKIT_TASK_RUN_MODEL",
+    "DEVKIT_RECOVERY_ATTEMPT",
+)
+
 # Настоящий HOME из-под тестов не виден вовсе: и модули devkitctl, и сам доктор
 # ходят в него через expanduser, и тест, забывший подставить свой, читал бы
 # раскладку машины, на которой запущен. Такой тест зелен у того, у кого devkit
@@ -213,6 +229,8 @@ def sandbox_env(env=None, path=None, home=None):
     # Сборка бинарей идёт в GOBIN либо GOPATH, а они на машине выставлены на
     # настоящий ~/go/bin: без сброса самопроверка положила бы туда заглушки.
     for k in ("GOBIN", "GOPATH"):
+        e.pop(k, None)
+    for k in PIPE_ENV_DROP:
         e.pop(k, None)
     if home is not None:
         e["HOME"] = str(home)

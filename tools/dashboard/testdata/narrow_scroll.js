@@ -199,10 +199,13 @@ const LLD_ROWS = `
     <span class="sm"><span class="stale">docs/lld/354-chat.md:3</span><span class="chip">2026-09-30</span></span></div>`;
 
 const parts = new URLSearchParams(location.search).get("bar") || "tasks";
-const body = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
+const bodies = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
   drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK,
-  chat: TABS + CHAT_HEAD, lld: TABS + FQ + LLD_ROWS }[parts] || TABS + TASK_ROWS;
-document.getElementById("groups").innerHTML = body;
+  chat: TABS + CHAT_HEAD, lld: TABS + FQ + LLD_ROWS };
+// Слово all меряет все полосы за одну загрузку: подъём браузера стоит дороже
+// отрисовки, и прогоны, которым нужны все разделы, гоняют один запуск на окно.
+// Замеры каждой полосы едут в заголовок с её именем в префиксе.
+const bars = parts === "all" ? Object.keys(bodies) : (bodies[parts] ? [parts] : ["tasks"]);
 // Шапка страницы заполняется вместе с разделом: тело вбок не ездит никогда, а
 // уносить его умеет и она. Имя проекта берётся длинное нарочно: в выпадашке
 // стоят имена всех проектов машины, и жмётся она по самому длинному из них.
@@ -241,7 +244,6 @@ function worst() {
 // ширины. Обрезанный кромкой текст (заголовок строки, длинный чип) за край
 // выходит нарочно и прокрутки не даёт, поэтому мерой служит scrollWidth, а имя
 // виноватого берётся у коробок для разбора.
-const bad = worst();
 const groups = document.getElementById("groups");
 
 // Кружок состояния на узком экране: он стоит слева от того, к чему относится, и
@@ -295,23 +297,26 @@ function tapWide() {
 }
 // Полоса табов доски едет вбок сама по себе, без широких строк: ktabs это
 // флекс без переноса, и разъезд меряется против ширины самой полосы.
-const bar = document.querySelector("#groups .ktabs");
-const out = [
-  "screen=" + screen,
-  "barover=" + Math.max(0, Math.round(bar.scrollWidth - bar.clientWidth)),
-  "doc=" + Math.round(document.documentElement.scrollWidth),
-  "body=" + Math.round(document.body.scrollWidth),
-  // Раздел это свой скроллер: .groups просит overflow-y, а браузер делает
-  // прокручиваемой и вторую ось, и вбок ездит именно он, а не тело страницы.
-  "groups=" + Math.round(groups.scrollWidth),
-  "gclient=" + Math.round(groups.clientWidth),
-  // Мера разъезда: на сколько содержимое раздела шире самого раздела.
-  "over=" + Math.max(0, Math.round(groups.scrollWidth - groups.clientWidth)),
-  "widest=" + bad.over,
-  "who=" + (bad.name || "none"),
-  "dotgap=" + dotGap(),
-  "chip=" + chipWide(),
-  "pick=" + pickWide(),
-  "tap=" + tapWide(),
-].join(" ");
-document.title = out;
+const rows = [];
+for (const name of bars) {
+  groups.innerHTML = bodies[name];
+  const bad = worst();
+  const bar = document.querySelector("#groups .ktabs");
+  rows.push(
+    name + ".barover=" + Math.max(0, Math.round(bar.scrollWidth - bar.clientWidth)),
+    name + ".doc=" + Math.round(document.documentElement.scrollWidth),
+    name + ".body=" + Math.round(document.body.scrollWidth),
+    // Раздел это свой скроллер: .groups просит overflow-y, а браузер делает
+    // прокручиваемой и вторую ось, и вбок ездит именно он, а не тело страницы.
+    name + ".groups=" + Math.round(groups.scrollWidth),
+    name + ".gclient=" + Math.round(groups.clientWidth),
+    // Мера разъезда: на сколько содержимое раздела шире самого раздела.
+    name + ".over=" + Math.max(0, Math.round(groups.scrollWidth - groups.clientWidth)),
+    name + ".widest=" + bad.over,
+    name + ".who=" + (bad.name || "none"),
+    name + ".dotgap=" + dotGap(),
+    name + ".chip=" + chipWide(),
+    name + ".pick=" + pickWide(),
+    name + ".tap=" + tapWide());
+}
+document.title = "screen=" + screen + " " + rows.join(" ");

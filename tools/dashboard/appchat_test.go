@@ -68,7 +68,7 @@ for raw in sys.stdin:
         log("resume " + str(params.get("threadId", "")))
         emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}}})
     elif m == "turn/start":
-        log("turn")
+        log("turn " + str(params.get("effort", "")))
         text = ""
         for part in params.get("input") or []:
             text = text + " " + str(part.get("text", ""))
@@ -386,6 +386,78 @@ func TestAppChatModelSwitch(t *testing.T) {
 	appWaitFeed(t, e, sid, "ответ на реплику")
 	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start модель-codex2") {
 		t.Fatalf("свежая нить поднялась не новой моделью: %s", log)
+	}
+}
+
+// Ручной уровень глубины переживает смерть процесса: выбор ложится в запись
+// разговора каждым изменением, и следующий подъём берёт его из записи, а не
+// возвращается к умолчанию.
+func TestAppChatEffortSurvivesDeath(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "первый вопрос")
+	appWaitFeed(t, e, sid, "ответ на реплику")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "второй вопрос", "msg_id": "m-2", "effort": "high"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика с ручным уровнем не ушла: %d %s", resp.StatusCode, body(t, resp))
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику")
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "turn high") {
+		t.Fatalf("ручной уровень не доехал до клиента: %s", log)
+	}
+
+	// Смерть процесса и следующий подъём: уровень берётся из записи разговора.
+	e.s.appDrop(sid, "тест смерти")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "третий вопрос", "msg_id": "m-3"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика после смерти не ушла: %d %s", resp.StatusCode, body(t, resp))
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику")
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if strings.Count(log, "turn high") != 2 {
+		t.Fatalf("уровень глубины не пережил смерть процесса: %s", log)
+	}
+	if st := e.s.chatStoreRead(sid); st.CxEffort != "high" {
+		t.Fatalf("запись разговора не держит уровень глубины: %+v", st)
+	}
+}
+
+// Поток ленты чужого протокола нумерует записи по строкам файла: дописанная
+// после открытия потока запись приезжает один раз, следующим номером файла, и
+// не дублирует уже отправленные ключи. Записи и смещение хвоста берутся из
+// одного снимка файла, иначе запись между снимками уезжала в панель дважды.
+func TestAppFeedStreamKeysFollowFile(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "первый вопрос")
+	appWaitFeed(t, e, sid, "ответ на реплику")
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid+"?stream=1", "")
+	defer resp.Body.Close()
+	if err := e.s.appFeedAppend(sid, []reply{{Role: "user", Text: "дописанная реплика"}}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 8192)
+	seen := ""
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) && !strings.Contains(seen, "дописанная реплика") {
+		n, err := resp.Body.Read(buf)
+		seen += string(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(seen, "дописанная реплика") {
+		t.Fatalf("поток не дочитал дописанную запись: %q", seen)
+	}
+	items := e.s.appFeedRead(sid)
+	last := items[len(items)-1]
+	if last.Text != "дописанная реплика" {
+		t.Fatalf("дописанной записи нет в ленте: %+v", items)
+	}
+	if got := strings.Count(seen, `"key":"`+last.Key+`"`); got != 1 {
+		t.Fatalf("дописанная запись уехала в поток %d раз под ключом %s: %q", got, last.Key, seen)
 	}
 }
 

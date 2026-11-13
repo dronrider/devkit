@@ -79,6 +79,7 @@ func corpSame(t *testing.T, got, want string) {
 // TestFindRootRedirect: ключ задан, корнем становится боковая директория, хотя
 // в дереве клона доски нет и подъём вверх её не нашёл бы.
 func TestFindRootRedirect(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	corpGitT(t, clone, "config", "devkit.local", "../proj-local")
 
@@ -92,6 +93,7 @@ func TestFindRootRedirect(t *testing.T) {
 // TestFindRootRedirectFromSubdir ловит мутацию «путь разрешён от cwd»: из
 // поддиректории клона относительный путь от cwd указал бы на proj/sub/../proj-local.
 func TestFindRootRedirectFromSubdir(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	corpGitT(t, clone, "config", "devkit.local", "../proj-local")
 	sub := filepath.Join(clone, "sub", "deep")
@@ -112,6 +114,7 @@ func TestFindRootRedirectFromSubdir(t *testing.T) {
 // мутации базы разом, а заодно чтение ключа не только в основном чекауте:
 // линкованное дерево делит конфиг с клоном и обязано видеть тот же редирект.
 func TestFindRootRedirectFromDistantWorktree(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	corpGitT(t, clone, "config", "devkit.local", "../proj-local")
 
@@ -130,6 +133,7 @@ func TestFindRootRedirectFromDistantWorktree(t *testing.T) {
 
 // TestFindRootRedirectAbsolute: абсолютный путь в ключе берётся как есть.
 func TestFindRootRedirectAbsolute(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	corpGitT(t, clone, "config", "devkit.local", local)
 
@@ -148,6 +152,7 @@ func TestFindRootRedirectAbsolute(t *testing.T) {
 // Побеждать обязан редирект: он свойство самого клона, а найденная подъёмом
 // доска чужая.
 func TestFindRootRedirectBeatsBoardAbove(t *testing.T) {
+	t.Parallel()
 	for _, where := range []string{"над клоном", "в дереве клона"} {
 		t.Run(where, func(t *testing.T) {
 			base, clone, local := corpClone(t)
@@ -170,6 +175,7 @@ func TestFindRootRedirectBeatsBoardAbove(t *testing.T) {
 // TestFindRootNoRedirect: ключа нет, значит прежний подъём по docs/TASKS.md.
 // Домашние проекты редиректа не замечают.
 func TestFindRootNoRedirect(t *testing.T) {
+	t.Parallel()
 	_, clone, _ := corpClone(t)
 	corpBoard(t, clone)
 	sub := filepath.Join(clone, "docs")
@@ -183,6 +189,7 @@ func TestFindRootNoRedirect(t *testing.T) {
 
 // TestFindRootOutsideGit: вне git-репозитория поведение прежнее, подъём вверх.
 func TestFindRootOutsideGit(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	proj := filepath.Join(base, "proj")
 	corpBoard(t, proj)
@@ -198,6 +205,7 @@ func TestFindRootOutsideGit(t *testing.T) {
 // лежит боковая директория с привязкой к этому клону, и отказ называет команду
 // восстановления.
 func TestFindRootFailureHint(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	corpWrite(t, filepath.Join(local, corpTrackerPath), "key = XX\nrepo = "+clone+"\n")
 
@@ -217,6 +225,7 @@ func TestFindRootFailureHint(t *testing.T) {
 // указывает на чужой клон, значит отказ прежний. Иначе подсказка вылезала бы в
 // любом проекте, у которого сосед носит такое имя.
 func TestFindRootFailureHintForeignLocal(t *testing.T) {
+	t.Parallel()
 	base, clone, local := corpClone(t)
 	corpWrite(t, filepath.Join(local, corpTrackerPath), "repo = "+filepath.Join(base, "other")+"\n")
 
@@ -231,6 +240,7 @@ func TestFindRootFailureHintForeignLocal(t *testing.T) {
 
 // TestFindRootFailurePlain: привязки нет вовсе, отказ прежний.
 func TestFindRootFailurePlain(t *testing.T) {
+	t.Parallel()
 	_, clone, _ := corpClone(t)
 
 	_, err := findRoot(clone)
@@ -267,6 +277,7 @@ func TestCorpLocalGlobalKeyIgnored(t *testing.T) {
 // TestCorpLocalSignal: редирект это признак корп-контура, и он одинаков для
 // основного чекаута и для дерева ветки, а без ключа пуст.
 func TestCorpLocalSignal(t *testing.T) {
+	t.Parallel()
 	_, clone, local := corpClone(t)
 	if got := corpLocal(clone); got != "" {
 		t.Fatalf("контур без ключа: %s", got)
@@ -284,6 +295,7 @@ func TestCorpLocalSignal(t *testing.T) {
 // более длинном номере, без левой в чужом префиксе, а ячейка со ссылкой на
 // файл задачи ключом тикета не притворяется.
 func TestCorpTicketKey(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ key, cell, want string }{
 		{"ABC", "[ABC-42](https://tracker/browse/ABC-42)", "ABC-42"},
 		{"ABC", "[тикет](https://tracker/browse/abc-42)", "ABC-42"},
@@ -305,6 +317,7 @@ func TestCorpTicketKey(t *testing.T) {
 // Шаблон привязки волен нести префикс, поэтому домашнее правило «имя
 // начинается с ключа» тут не годится, а границы всё равно нужны обе.
 func TestCorpBranchOfTicket(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		branch, key string
 		want        bool
@@ -330,6 +343,7 @@ func TestCorpBranchOfTicket(t *testing.T) {
 // клона потеряна, а отказ обязан назвать её так же, как называет соседнюю
 // «<проект>-local» прежней раскладки.
 func TestFindRootFailureHintContourLocal(t *testing.T) {
+	t.Parallel()
 	base, clone, _ := corpClone(t)
 	contour := filepath.Join(base, "acme-local", "proj")
 	corpBoard(t, contour)

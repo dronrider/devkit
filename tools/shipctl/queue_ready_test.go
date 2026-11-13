@@ -58,6 +58,7 @@ func logGreen(t *testing.T, logRoot string) {
 // DK-1072 их легло пятнадцать), поэтому неготовая строка не получает попытку
 // вовсе, а причина ожидания названа в отчёте тика.
 func TestQueueDrainWaitsForReadiness(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	time.Sleep(1100 * time.Millisecond)
 	logGreen(t, taskTree(root, "XR-001"))
@@ -92,6 +93,7 @@ func TestQueueDrainWaitsForReadiness(t *testing.T) {
 // TestQueueDrainPoursReadyRow: зелёный regcheck новее кода и замечаний без
 // исхода нет, готовая строка заказывает слияние и льётся.
 func TestQueueDrainPoursReadyRow(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	time.Sleep(1100 * time.Millisecond)
 	logGreen(t, taskTree(root, "XR-001"))
@@ -115,6 +117,7 @@ func TestQueueDrainPoursReadyRow(t *testing.T) {
 // дифф задачи не менялся вовсе: отбитая нагрузочной краснотой ветка не ждёт
 // нового regcheck.
 func TestQueueReadinessSurvivesOwnRebase(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	board, err := os.ReadFile(filepath.Join(root, "docs/TASKS.md"))
 	if err != nil {
@@ -151,6 +154,7 @@ func TestQueueReadinessSurvivesOwnRebase(t *testing.T) {
 // готовность до заказа слияния, а не воротами merge, которые уже успели бы
 // оставить след попытки.
 func TestQueueDrainSkipsRowWithOpenNotes(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	wt := taskTree(root, "XR-001")
 	doc, err := os.ReadFile(filepath.Join(wt, "docs", "tasks", "XR-001.md"))
@@ -176,6 +180,7 @@ func TestQueueDrainSkipsRowWithOpenNotes(t *testing.T) {
 // читает файл задачи из ветки, и открытое замечание веточной версии гасит
 // готовность, а не выглядит «файл не читается».
 func TestQueueReadinessReadsDocFromBranch(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	wt := taskTree(root, "XR-001")
 	doc, err := os.ReadFile(filepath.Join(wt, "docs", "tasks", "XR-001.md"))

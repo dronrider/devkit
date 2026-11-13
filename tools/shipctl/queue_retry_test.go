@@ -9,6 +9,7 @@ import (
 )
 
 func TestQueueRetryResumesAfterCodeChange(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	gitT(t, root, "branch", "xr-001-a", "xr-007-small")
 	for i := 0; i < queueRetryLimit; i++ {
@@ -40,6 +41,7 @@ func TestQueueRetryResumesAfterCodeChange(t *testing.T) {
 }
 
 func TestQueueRetryResetsAfterReasonChange(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	changed := strings.ReplaceAll(loadRedTest, "TestDashboardSmokeHiddenTabQuiet", "TestDashboardOther")
 	for _, command := range []string{loadRedTest, loadRedTest, changed} {
@@ -58,6 +60,7 @@ func TestQueueRetryResetsAfterReasonChange(t *testing.T) {
 }
 
 func TestQueueRetryCountsSameFailuresAcrossRebases(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	forward := `sh -c 'printf "%s\n" "a (outside-a) 0.1s FAIL" "b (outside-b) 0.1s FAIL"; exit 1'`
 	reverse := `sh -c 'printf "%s\n" "b (outside-b) 0.1s FAIL" "a (outside-a) 0.1s FAIL"; exit 1'`
@@ -72,6 +75,7 @@ func TestQueueRetryCountsSameFailuresAcrossRebases(t *testing.T) {
 }
 
 func TestQueueRetrySkipsConcurrentDrain(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	f, err := os.OpenFile(filepath.Join(root, lockPath+".queue"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {

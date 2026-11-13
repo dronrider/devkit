@@ -8,6 +8,7 @@ import (
 )
 
 func TestPushAuditRequiresCompletedCurrentReport(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing", "stale", "complete"} {
 		t.Run(mode, func(t *testing.T) {
 			root, _ := setup(t, rowInProg, "")
@@ -33,6 +34,7 @@ func TestPushAuditRequiresCompletedCurrentReport(t *testing.T) {
 }
 
 func TestPushAuditUsesPushedVersion(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-qb", "xr-001")
@@ -48,6 +50,7 @@ func TestPushAuditUsesPushedVersion(t *testing.T) {
 }
 
 func TestPushAuditAcceptsReviewedCommitWithDifferentWorkspace(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-qb", "xr-001")
@@ -64,6 +67,7 @@ func TestPushAuditAcceptsReviewedCommitWithDifferentWorkspace(t *testing.T) {
 }
 
 func TestPushAuditBoardDoesNotBorrowCurrentTask(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-qb", "xr-001")
@@ -82,6 +86,7 @@ func TestPushAuditBoardDoesNotBorrowCurrentTask(t *testing.T) {
 }
 
 func TestPushAuditNoteNeedsLabelAndReport(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
@@ -105,6 +110,7 @@ func TestPushAuditNoteNeedsLabelAndReport(t *testing.T) {
 }
 
 func TestMergeAuditRefusesBeforeTestsAndMain(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing", "stale", "rebase"} {
 		t.Run(mode, func(t *testing.T) {
 			root, _ := setup(t, rowInProg, "")

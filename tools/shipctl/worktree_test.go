@@ -12,6 +12,7 @@ import (
 // чекаут; повторный start отбивается, второй заход после удаления worktree
 // подхватывает старую ветку.
 func TestStartWorktree(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, "", "")
 	msg, err := cmdStart(root, StartParams{ID: "XR-002", Slug: "wt"})
 	if err != nil {
@@ -69,6 +70,7 @@ func TestStartWorktree(t *testing.T) {
 // коммитится в проект и оказывается в worktree чекаутом, а не отдельной работой
 // start. Зеркало корп-тесту TestCorpStartPlacesLinks. DK-205, LLD DK-193 решение 2.
 func TestStartWorktreeCarriesCommittedLink(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", "")
 	// Ссылка на дерево правил коммитится в свой проект (DK-204): git хранит её
 	// записью 120000, и чекаут раскладывает на любой машине сам, до всякого
@@ -98,6 +100,7 @@ func TestStartWorktreeCarriesCommittedLink(t *testing.T) {
 // TestMergeForeignWorktree: merge одной задачи из worktree другой отбивается,
 // иначе в main уехала бы чужая ветка, а в Check перевелась своя.
 func TestMergeForeignWorktree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	if _, err := cmdMerge(wt, MergeParams{ID: "XR-003", Test: "true"}); err == nil ||
@@ -125,6 +128,7 @@ func TestMergeForeignWorktree(t *testing.T) {
 // (дерево снесли rm -rf) не падает на мёртвом пути, а отвечает по делу:
 // после prune ветку сливать неоткуда.
 func TestMergeStaleWorktreeRegistration(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	if err := os.RemoveAll(wt); err != nil {
@@ -139,6 +143,7 @@ func TestMergeStaleWorktreeRegistration(t *testing.T) {
 // TestStartPreconditions: чужой статус и незнакомый ID это чистые ошибки,
 // без следов в git.
 func TestStartPreconditions(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", rowCheck)
 	if _, err := cmdStart(root, StartParams{ID: "XR-404"}); err == nil ||
 		!strings.Contains(err.Error(), "нет на доске") {
@@ -176,6 +181,7 @@ func startTask(t *testing.T, root, id, file string) string {
 // живёт в worktree. merge находит её по ID, сливает fast-forward и прибирает
 // дерево с веткой.
 func TestMergeFromMainWithWorktree(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -203,6 +209,7 @@ func TestMergeFromMainWithWorktree(t *testing.T) {
 // TestMergeFromInsideWorktree: merge запускается из самого worktree (корень
 // найден по его docs/TASKS.md), а слияние и доска идут в основном дереве.
 func TestMergeFromInsideWorktree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	if _, err := cmdMerge(wt, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
@@ -223,6 +230,7 @@ func TestMergeFromInsideWorktree(t *testing.T) {
 // фичеветке, основной чекаут на main их не видит. merge обязан читать файл
 // из worktree: открытое замечание там держит слияние.
 func TestMergeWorktreeReviewOnBranch(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	data, _ := os.ReadFile(filepath.Join(wt, "docs", "tasks", "XR-001.md"))
@@ -238,6 +246,7 @@ func TestMergeWorktreeReviewOnBranch(t *testing.T) {
 // TestMergeWorktreeDirty: незакоммиченное в worktree держит слияние, а
 // untracked-хлам не валит merge, но оставляет дерево на уборку руками.
 func TestMergeWorktreeDirty(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	write(t, wt, "code.txt", "dirty\n")
@@ -263,6 +272,7 @@ func TestMergeWorktreeDirty(t *testing.T) {
 // TestStatusShowsWorktrees: status перечисляет worktree задач и одинаково
 // отвечает из основного дерева и из worktree.
 func TestStatusShowsWorktrees(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	for _, from := range []string{root, wt} {

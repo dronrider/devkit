@@ -11,6 +11,7 @@ import (
 // следующего merge («в рабочем дереве незакоммиченное»), тем самым случаем, из-за
 // которого этапы и уехали из рабочего дерева.
 func TestCommitBoardTakesTaskFile(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/TASKS.md", "# доска после перевода\n")
 	write(t, root, "docs/tasks/XR-001.md",
@@ -31,6 +32,7 @@ func TestCommitBoardTakesTaskFile(t *testing.T) {
 // Pathspec по несуществующему пути git отбивает, а строка без файла на доске
 // законна, и падать из-за неё нельзя.
 func TestCommitBoardWithoutTaskFile(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/TASKS.md", "# доска после перевода\n")
 	if _, err := commitBoard(root, "docs(tasks): XR-404 в Check", "XR-404"); err != nil {

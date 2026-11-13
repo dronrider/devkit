@@ -25,6 +25,7 @@ func branchNoID(t *testing.T, root, id, branch, file string) {
 // дальше очередь держится этой записью, а не ID в subject. Без записи merge
 // следующей задачи прошёл бы при непроверенном выкате на проде.
 func TestMergeRecordsCommits(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchNoID(t, root, "XR-001", "xr-001-fix", "code.txt")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -86,6 +87,7 @@ func TestMergeRecordsCommits(t *testing.T) {
 // TestTrainTasksFromRecord: состав поезда собирается по записи. Задача с
 // коммитами без ID иначе уехала бы на прод, не попав ни в поезд, ни в Check.
 func TestTrainTasksFromRecord(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	branchNoID(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -103,6 +105,7 @@ func TestTrainTasksFromRecord(t *testing.T) {
 // TestRevertFromRecord: откат находит коммиты задачи по записи. Раньше он
 // отвечал «откатывать нечего», и прод оставался сломанным.
 func TestRevertFromRecord(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchNoID(t, root, "XR-001", "xr-001-fix", "code.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
@@ -123,6 +126,7 @@ func TestRevertFromRecord(t *testing.T) {
 // TestRecordSecondRound: круг доработки после возврата из Check дописывает
 // строку в тот же раздел, прежние коммиты остаются в записи.
 func TestRecordSecondRound(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchNoID(t, root, "XR-001", "xr-001-fix", "code.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
@@ -155,6 +159,7 @@ func TestRecordSecondRound(t *testing.T) {
 // TestMergedShasParse: разбор берёт из раздела только коммиты и не путается
 // в соседних разделах и прозе.
 func TestMergedShasParse(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001: заголовок\n\n"+
 		"## Выкат\n\n- 2026-08-02 слито: 1a2b3c4, 5d6e7f8\n- 2026-08-03 слито: abcdef1\n"+
@@ -177,6 +182,7 @@ func TestMergedShasParse(t *testing.T) {
 // проверки, цитирует чужую запись выката. Читая её как свою, очередь считает
 // выкаченной не ту задачу: sha из цитаты в логе есть.
 func TestMergedShasSkipsFenced(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001: заголовок\n\n"+
 		"## Сценарий проверки\n\nВывод shipctl merge на синтетической доске:\n\n"+
@@ -194,6 +200,7 @@ func TestMergedShasSkipsFenced(t *testing.T) {
 // TestAppendToSectionSkipsFenced: запись нового круга ищет свой раздел мимо
 // цитаты, иначе строка уедет внутрь ограждённого блока и запись потеряется.
 func TestAppendToSectionSkipsFenced(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: задача\n\n## Ход работы\n\n~~~\n## Выкат\n\n- 2026-08-01 слито: 9999999\n~~~\n\n" +
 		"## Выкат\n\n- 2026-08-02 слито: 1111111\n"
 	got := appendToSection(doc, "- 2026-08-03 слито: 2222222")
@@ -214,6 +221,7 @@ func TestAppendToSectionSkipsFenced(t *testing.T) {
 // TestMergeIgnoresFencedReviewNote: замечание, процитированное в выводе
 // внутри файла задачи, отбивало слияние, хотя своё ревью закрыто.
 func TestMergeIgnoresFencedReviewNote(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n"+
 		"## Сценарий проверки\n\nВывод taskctl review show соседней задачи:\n\n"+
@@ -231,6 +239,7 @@ func TestMergeIgnoresFencedReviewNote(t *testing.T) {
 // видеть коммиты задачи по записи. Иначе она молчит ровно там, где нужнее
 // всего: на ветке, чьи коммиты ID не несут, а файл правят оба.
 func TestTrainOverlapFromRecord(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	setBoard7(t, root)
 	taskWithScenario(t, root, "XR-003")
@@ -253,6 +262,7 @@ func TestTrainOverlapFromRecord(t *testing.T) {
 // конец файла. Раздел «Выкат» оказывается последним не всегда: у задачи с
 // разделом «Ревью» после него строка уехала бы в чужой раздел.
 func TestAppendToSectionKeepsTail(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: задача\n\n## Выкат\n\n- 2026-08-01 слито: 1111111\n\n## Ревью\n\n- замечание: исправлено\n"
 	got := appendToSection(doc, "- 2026-08-02 слито: 2222222")
 	want := "# XR-001: задача\n\n## Выкат\n\n- 2026-08-01 слито: 1111111\n- 2026-08-02 слито: 2222222\n\n## Ревью\n\n- замечание: исправлено\n"
@@ -265,6 +275,7 @@ func TestAppendToSectionKeepsTail(t *testing.T) {
 // TASKFORM.md перед «Проверкой», а не в хвост файла. Файл, где «Проверка»
 // написана до слияния, иначе получал переставленный раздел и находку lint.
 func TestAppendToSectionGoesByForm(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: задача\n\n## Сценарий проверки\n\n1. шаг\n\n## Проверка\n\nвывод прогона\n"
 	got := appendToSection(doc, "- 2026-08-02 слито: 2222222")
 	want := "# XR-001: задача\n\n## Сценарий проверки\n\n1. шаг\n\n## Выкат\n\n- 2026-08-02 слито: 2222222\n\n## Проверка\n\nвывод прогона\n"

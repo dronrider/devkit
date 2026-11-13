@@ -65,6 +65,7 @@ func TestSmokeMarkCarriesSessionTail(t *testing.T) {
 // человеком. На старом коде отметки не существовало, и слияние уходило в
 // поездной режим.
 func TestSmokeMarkFreesQueue(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	deployedCheckTask(t, root, "XR-009", "2026-08-02")
 
@@ -89,6 +90,7 @@ func TestSmokeMarkFreesQueue(t *testing.T) {
 // очередь, как и до двухступенчатого Check. Отметка это ослабление, а не
 // отмена инварианта «непроверенный выкат один».
 func TestQueueHeldByRecordWithoutSmoke(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	deployedCheckTask(t, root, "XR-009", "")
 
@@ -114,6 +116,7 @@ func TestQueueHeldByRecordWithoutSmoke(t *testing.T) {
 // отметка после последней записи, иначе доработка ехала бы на прод мимо
 // инварианта.
 func TestSmokeStaleAfterRework(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	deployedCheckTask(t, root, "XR-009", "2026-08-02")
 	f, _ := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
@@ -135,6 +138,7 @@ func TestSmokeStaleAfterRework(t *testing.T) {
 // сценария, повторная отметка отбивается, а очередь команда освобождает
 // сразу.
 func TestSmokeCommand(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 
@@ -176,6 +180,7 @@ func TestSmokeCommand(t *testing.T) {
 // TestSmokeIgnoresForeignDirty: чужое незакоммиченное мимо файлов задачи не
 // должно отбивать smoke, той же сужением предусловия, что у merge (DK-720).
 func TestSmokeIgnoresForeignDirty(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n")
 	gitT(t, root, "add", ".")
@@ -194,6 +199,7 @@ func TestSmokeIgnoresForeignDirty(t *testing.T) {
 // TestSmokeRefusedOnOwnFileDirty: незакоммиченное по файлу самой задачи
 // по-прежнему отбивает smoke, и отказ называет именно этот путь.
 func TestSmokeRefusedOnOwnFileDirty(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	write(t, root, "nine.txt", "недокоммиченное\n")
@@ -207,6 +213,7 @@ func TestSmokeRefusedOnOwnFileDirty(t *testing.T) {
 // непроверенным выкатом. Бескодовой задаче в Check и задаче вне Check она не
 // ставится: освобождать нечего, а лишняя отметка только путала бы запись.
 func TestSmokeRefusedWithoutDeploy(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowLLD)
 	lldCommit(t, root, "XR-005")
 	if _, err := cmdSmoke(root, SmokeParams{ID: "XR-005"}); err == nil ||
@@ -222,6 +229,7 @@ func TestSmokeRefusedWithoutDeploy(t *testing.T) {
 // TestSmokeDoneParse: разбор отметки берёт раздел «Выкат» мимо цитат и
 // прозы, и действующей считается отметка после последней строки с коммитами.
 func TestSmokeDoneParse(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	cases := []struct {
 		name string
@@ -256,6 +264,7 @@ func TestSmokeDoneParse(t *testing.T) {
 // DK-516 обе строки шли одной фразой «приёмка глазами за пользователем», и
 // совет «закрыть задачу» стоял над строкой, закрывать которую было некому.
 func TestStatusNamesWhoWaitsForHuman(t *testing.T) {
+	t.Parallel()
 	userRow := "| XR-008 | Ждёт глаз [приёмка: user] | task | P2 | 30 (25+5+0+0+0) |  |\n"
 	root, _ := setup(t, rowInProg, rowCheck+userRow)
 	deployedCheckTask(t, root, "XR-009", "2026-08-02")
@@ -288,6 +297,7 @@ func TestStatusNamesWhoWaitsForHuman(t *testing.T) {
 // пустым разделом «Проверка», тику не по зубам (ворота close требуют вывода),
 // и status зовёт вложить вывод, а не ждать закрытия.
 func TestStatusNamesEmptyVerification(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	deployedCheckTask(t, root, "XR-009", "2026-08-02")
 
@@ -317,6 +327,7 @@ func readDoc(t *testing.T, root, id string) string {
 // обещает. Отбор `taskctl closable` её не отдаёт (сначала чинится прод), и
 // обещание закрытия расходилось бы с тем, что тик сделает на самом деле.
 func TestStatusSilentOnFailedCheck(t *testing.T) {
+	t.Parallel()
 	failRow := "| XR-009 | Ждёт проверки [провал: упал вход] | task | P2 | 30 (25+5+0+0+0) |  |\n"
 	root, _ := setup(t, rowInProg, failRow)
 	deployedCheckTask(t, root, "XR-009", "2026-08-02")

@@ -11,6 +11,7 @@ import (
 // молчит явным текстом, а не отбивается ошибкой, как обычный ship (LLD
 // DK-306, решение 2).
 func TestShipDrainEmptyTrainNoop(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	msg, err := cmdShip(root, ShipParams{Drain: true})
 	if err != nil {
@@ -23,6 +24,7 @@ func TestShipDrainEmptyTrainNoop(t *testing.T) {
 
 // TestShipDrainQueueBusyNoop: та же тишина на занятой очереди.
 func TestShipDrainQueueBusyNoop(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	msg, err := cmdShip(root, ShipParams{Drain: true})
@@ -36,6 +38,7 @@ func TestShipDrainQueueBusyNoop(t *testing.T) {
 
 // Чужой провал не меняет причину пустого разлива.
 func TestShipDrainBrokenProdNoop(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	msg, err := cmdShip(root, ShipParams{Drain: true})
 	if err != nil {
@@ -53,6 +56,7 @@ func TestShipDrainBrokenProdNoop(t *testing.T) {
 // под --drain он выходит нулём с маркером «разлив не нужен», а не валит
 // тик строкой «разлив упал» в журнале сторожка.
 func TestShipDrainBusyLockNoop(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	unlock, err := acquireLock(root, "merge XR-009")
@@ -76,6 +80,7 @@ func TestShipDrainBusyLockNoop(t *testing.T) {
 // состыковкой. Замок, который не открывается, заводится каталогом на его
 // пути: open с O_RDWR на каталог отказывает.
 func TestShipDrainLockAnomalyStaysError(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	if err := os.Mkdir(filepath.Join(root, lockPath), 0o755); err != nil {
@@ -92,6 +97,7 @@ func TestShipDrainLockAnomalyStaysError(t *testing.T) {
 // очереди и целом проде --drain не отличает от обычного ship: один деплой,
 // перевод в Check, сдвиг тега.
 func TestShipDrainNonEmptyTrainShipsNormally(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -165,6 +171,7 @@ func TestShipWithoutDrainDeployFailureNoFailureMark(t *testing.T) {
 }
 
 func TestShipDrainEmptyTrainKeepsForeignCard(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	path := "docs/tasks/XR-001.md"
 	before, err := os.ReadFile(filepath.Join(root, path))

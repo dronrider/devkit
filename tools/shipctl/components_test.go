@@ -42,6 +42,7 @@ func componentWorktree(t *testing.T, root, branch string, files map[string]strin
 // раскладкой компоненты вместе с их командой, не задетый диффом компонент не
 // упоминается.
 func TestStatusPrintsComponents(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
@@ -68,6 +69,7 @@ func TestStatusPrintsComponents(t *testing.T) {
 // информационная строка, не отказ: status обязан дойти до конца и назвать
 // остальные задачи тоже.
 func TestStatusComponentsMissingPath(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
@@ -91,6 +93,7 @@ func TestStatusComponentsMissingPath(t *testing.T) {
 // катит их по очереди в порядке конфига, оба маркера остаются на месте, и
 // задача уезжает в Check.
 func TestMergeComponentsHappyPath(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
@@ -125,6 +128,7 @@ func TestMergeComponentsHappyPath(t *testing.T) {
 // падает, web к этому моменту уже выкачен и не перезапускается. Отказ
 // называет упавший компонент и то, что уже уехало (решение «двое», DK-894).
 func TestMergeComponentsStopsOnFirstFailure(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, true))
 	addRemote(t, root)
@@ -162,6 +166,7 @@ func TestMergeComponentsStopsOnFirstFailure(t *testing.T) {
 // катить нечем, merge отказывает и называет путь и подсказку про ключ, до
 // тестов и ребейза.
 func TestMergeRefusesUnmappedPath(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
@@ -192,6 +197,7 @@ func TestMergeRefusesUnmappedPath(t *testing.T) {
 // пользователя прямо сейчас, раскладка ей не указ, даже если дифф задел путь,
 // для которого нет компонента.
 func TestMergeExplicitDeployBypassesComponents(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
@@ -214,6 +220,7 @@ func TestMergeExplicitDeployBypassesComponents(t *testing.T) {
 // компоненты, ship считает раскладку по диапазону deployed..main и катит
 // задетые компоненты по очереди, разом переводя обе задачи в Check.
 func TestShipRunsComponentsForTrain(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg+rowInProg3, "")
 	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
@@ -261,6 +268,7 @@ func TestShipRunsComponentsForTrain(t *testing.T) {
 // предусловие, что занятая очередь или пустой поезд, --drain отступает молча,
 // а без него называет путь и подсказку.
 func TestShipDrainSwallowsUnmappedPath(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	componentWorktree(t, root, "xr-001-fix", map[string]string{

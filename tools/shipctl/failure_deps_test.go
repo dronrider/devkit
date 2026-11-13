@@ -13,6 +13,7 @@ func failureRow(id, suffix string) string {
 }
 
 func TestFailureDependenciesMerge(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, suffix, others string
 		paths                []string
@@ -50,6 +51,7 @@ func TestFailureDependenciesMerge(t *testing.T) {
 }
 
 func TestFailureIndependentTrainAndOwnFix(t *testing.T) {
+	t.Parallel()
 	for _, own := range []bool{false, true} {
 		t.Run(fmt.Sprintf("own-%v", own), func(t *testing.T) {
 			first := rowInProg
@@ -89,6 +91,7 @@ func TestFailureIndependentTrainAndOwnFix(t *testing.T) {
 }
 
 func TestFailureTrainBecomesDependent(t *testing.T) {
+	t.Parallel()
 	for _, drain := range []bool{false, true} {
 		t.Run(fmt.Sprint(drain), func(t *testing.T) {
 			root, calls := setup(t, rowInProg+rowInProg3+failureRow("XR-004", "[после XR-003]"), "")
@@ -134,6 +137,7 @@ func TestFailureTrainBecomesDependent(t *testing.T) {
 }
 
 func TestFailureQueueSkipsDependent(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, failureRow("XR-001", "[после XR-004]")+failureRow("XR-004", "[после XR-003]")+rowInProgLow+rowFailed, "")
 	devkitDir(t, root)
 	taskWithScenario(t, root, "XR-007")
@@ -149,6 +153,7 @@ func TestFailureQueueSkipsDependent(t *testing.T) {
 }
 
 func TestFailureOwnCycleAndClearing(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, strings.Replace(rowSelfFailed, "[провал:", "[после XR-004] [провал:", 1)+failureRow("XR-004", "[после XR-001]"), "")
 	taskWithScenario(t, root, "XR-004")
 	codeCommit(t, root, "XR-004", "prior.txt")

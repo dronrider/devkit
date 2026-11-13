@@ -7,6 +7,7 @@ import (
 )
 
 func TestLoadDeployConfig(t *testing.T) {
+	t.Parallel()
 	// Файла нет: не ошибка, выкат остаётся за пользователем.
 	root := t.TempDir()
 	if c, err := loadDeployConfig(root); err != nil || c.Deploy != "" || c.Autonomous {
@@ -34,13 +35,14 @@ func TestLoadDeployConfig(t *testing.T) {
 }
 
 func TestUnquote(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
-		`"make deploy"`:         "make deploy",
-		`'make deploy'`:         "make deploy",
-		`make deploy`:           "make deploy",
-		`ssh h 'restart foo'`:   "ssh h 'restart foo'", // внешней пары нет, не трогаем
-		`"`:                     `"`,
-		``:                      ``,
+		`"make deploy"`:       "make deploy",
+		`'make deploy'`:       "make deploy",
+		`make deploy`:         "make deploy",
+		`ssh h 'restart foo'`: "ssh h 'restart foo'", // внешней пары нет, не трогаем
+		`"`:                   `"`,
+		``:                    ``,
 	}
 	for in, want := range cases {
 		if got := unquote(in); got != want {
@@ -50,6 +52,7 @@ func TestUnquote(t *testing.T) {
 }
 
 func TestResolveDeploy(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeCfg := func(s string) {
 		if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {

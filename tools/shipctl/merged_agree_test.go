@@ -39,6 +39,7 @@ func agreeCommit(t *testing.T, dir, subj, rel, body string) {
 // дождавшаяся слияния, и откат той же задачи спорили бы о том, есть ли в main
 // что откатывать.
 func TestTaskCommitsAgreeWithMerged(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	agreeGit(t, root, "init", "-q", "-b", "main")
 	steps := []struct {

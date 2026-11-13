@@ -24,7 +24,16 @@ import (
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
-	os.Exit(m.Run())
+	code := m.Run()
+	if floorRoot != "" {
+		if err := os.RemoveAll(floorRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "уборка общего стенда: %v\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+	}
+	os.Exit(code)
 }
 
 // writeNotifyStub кладёт в отдельный devkit/hooks/notify.py уведомитель:

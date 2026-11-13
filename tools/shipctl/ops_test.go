@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dronrider/devkit/internal/reviewaudit"
@@ -39,12 +40,142 @@ func section(rows string) string {
 const rowInProg = "| XR-001 | Починка бага | bug | P1 | 55 (50+0+0+5+0) | [tasks/XR-001.md](tasks/XR-001.md) |\n"
 
 // setup собирает репозиторий с доской: XR-001 в заданных секциях, стаб
-// taskctl в PATH пишет вызовы в лог и имитирует правку доски.
+// taskctl в PATH пишет вызовы в лог и имитирует правку доски. Тесту,
+// вставшему в t.Parallel, стенд ставится на общем этаже standFloor.
 func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	t.Helper()
-	// Записи этапов shipctl пишет в ~/.devkit/runs, и без подмены дома стенд
-	// нёс бы их в боевой каталог машины (тот же случай, что DK-818 у taskctl).
-	t.Setenv("HOME", t.TempDir())
+	// Параллельность узнаётся по запрету t.Setenv после t.Parallel: setup зовут
+	// и помощники (queueSetup и соседи), и передавать режим через все цепочки
+	// вызовов потребовало бы больше правок. Проба живёт в замыкании и на
+	// параллельном тесте гасится recover, а последовательный тест просто
+	// удаляет пробную переменную до того, как её увидит кто-то чужой.
+	par := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				par = true
+			}
+		}()
+		t.Setenv("DEVKIT_STAND_PROBE", "1")
+		os.Unsetenv("DEVKIT_STAND_PROBE")
+	}()
+	return setupAt(t, inProg, check, par)
+}
+
+// standFloor это общий этаж параллельной группы: один дом процесса, одно
+// дерево devkit и один каталог стабов на все параллельные тесты пакета.
+// Дом один на группу, а не на тест: записи этапов в ~/.devkit/runs
+// расходятся по своим файлам сами, имя записи включает слаг корня
+// (internal/stage), а корни у тестов разные. Отката этажу не нужно:
+// параллельные тесты возобновляются после всех последовательных, и увидеть
+// подмену вслед за ними в процессе некому.
+type standFloor struct {
+	bin string // общий каталог стабов PATH, taskctl пишет вызовы в корень вызова
+}
+
+var (
+	floorOnce sync.Once
+	floorEnv  *standFloor
+	floorRoot string
+)
+
+func standFloorInit(t *testing.T) {
+	t.Helper()
+	floorOnce.Do(func() {
+		floorEnv = buildStandFloor(t)
+	})
+	if floorEnv == nil {
+		t.Fatal("общий этаж стенда не поднялся")
+	}
+}
+
+func buildStandFloor(t *testing.T) *standFloor {
+	dir, err := os.MkdirTemp("", "shipctl-floor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	floorRoot = dir
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Ярус и лестница подписки приезжают фикстурой agentctl: живой отвечал бы
+	// по машине разработчика, и модель проверяющего ездила бы от неё.
+	writeAgentctlFake(t, bin, "base")
+	// Дерево devkit стенда: оболочка конвейера, без которой голове негде жить,
+	// и перечень прав, отвечающий «права на месте». Живой perms.py читал бы
+	// настройки машины. Дерево пишется в каталог этажа, а не через t.TempDir:
+	// время жизни t первого подошедшего теста короче всей группы.
+	devkit := filepath.Join(dir, "devkit")
+	if err := writeFakeDevkit(devkit, false); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("HOME", dir)
+	os.Setenv("DEVKIT_HOME", devkit)
+	os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeFloorStub(t, bin)
+	return &standFloor{bin: bin}
+}
+
+// writeFloorStub кладёт стаб taskctl на общий этаж: каталог стабов один на
+// параллельную группу, поэтому вызовы пишутся в .devkit/calls.log корня
+// вызова, который стаб вычитывает из аргументов (`-C <root>`, у run корень
+// идёт позже), а не в файл общего каталога.
+func writeFloorStub(t *testing.T, bin string) {
+	t.Helper()
+	// Ветки те же, что у личного стаба последовательного теста: обход ждущих
+	// (DK-932) тих, подъём проверяющего (DK-947) отвечает ступенью лестницы,
+	// а код выхода берёт из TASKCTL_RUN_CODE, чтобы стенд сыграл занятый замок.
+	stub := "#!/bin/sh\nroot=''; prev=''\n" +
+		"for a in \"$@\"; do [ \"$prev\" = -C ] && root=\"$a\"; prev=\"$a\"; done\n" +
+		"if [ -n \"$root\" ]; then mkdir -p \"$root/.devkit\"; echo \"$@\" >> \"$root/.devkit/calls.log\"; fi\n" +
+		"if [ \"$1\" = run ]; then echo \"голова $2 поднята в новом окне tmux task-$2\"; " +
+		"echo 'ступень: новое окно, код '\"${TASKCTL_RUN_CODE:-0}\"; exit \"${TASKCTL_RUN_CODE:-0}\"; fi\n" +
+		"[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$root/docs/TASKS.md\"\n"
+	write(t, bin, "taskctl", stub)
+	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeStandStub кладёт стаб taskctl в личный bin последовательного теста:
+// лог пишется в тот же bin, и тесты, играющие поведением стаба, подменяют
+// его в этом же каталоге.
+func writeStandStub(t *testing.T, bin, callLog string) {
+	t.Helper()
+	// Обход ждущих (DK-932) доску стенда не правит: будить на ней некого, а
+	// лишняя строка после последнего коммита оставила бы дерево грязным.
+	// Подъём проверяющего после выката (DK-947) зовёт `taskctl run`: стаб
+	// отвечает ступенью лестницы, а код выхода берёт из TASKCTL_RUN_CODE, чтобы
+	// стенд мог сыграть занятый замок и зов человеку.
+	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\n" +
+		"if [ \"$1\" = run ]; then echo \"голова $2 поднята в новом окне tmux task-$2\"; " +
+		"echo 'ступень: новое окно, код '\"${TASKCTL_RUN_CODE:-0}\"; exit \"${TASKCTL_RUN_CODE:-0}\"; fi\n" +
+		"[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
+	write(t, bin, "taskctl", stub)
+	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setupAt(t *testing.T, inProg, check string, par bool) (root, callLog string) {
+	t.Helper()
+	var seqCallLog string
+	if !par {
+		// Записи этапов shipctl пишет в ~/.devkit/runs, и без подмены дома стенд
+		// нёс бы их в боевой каталог машины (тот же случай, что DK-818 у taskctl).
+		t.Setenv("HOME", t.TempDir())
+		bin := t.TempDir()
+		t.Setenv("DEVKIT_HOME", fakeDevkit(t, false))
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		seqCallLog = filepath.Join(bin, "calls.log")
+		writeStandStub(t, bin, seqCallLog)
+		writeAgentctlFake(t, bin, "base")
+	} else {
+		// Стабы и переменные уже стоят этажом: перезапись общего стаба из
+		// каждого теста гонилась бы с исполнением соседей.
+		standFloorInit(t)
+	}
 	root = t.TempDir()
 	gitT(t, root, "init", "-q", "-b", "main")
 	gitT(t, root, "config", "user.email", "test@test")
@@ -67,34 +198,15 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	// (DK-1125): в боевом проекте его прячет devkitctl тем же списком записей,
 	// что cmdout, а фикстуры заводят .gitignore руками и без строки словили бы
 	// его в "git add .", ломая последующий checkout внутри merge.
-	write(t, root, ".gitignore", ".devkit/cmdout/\n.devkit/test-runs.log\n.devkit/ship.lock*\n.devkit/log\n.devkit/deploy.local\n")
+	// .devkit/calls.log пишет стаб taskctl: каталог стабов бывает общим на
+	// параллельную группу, и файл обязан жить в корне вызова, а не в bin.
+	write(t, root, ".gitignore", ".devkit/cmdout/\n.devkit/test-runs.log\n.devkit/ship.lock*\n.devkit/log\n.devkit/deploy.local\n.devkit/calls.log\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed")
-
-	bin := t.TempDir()
-	callLog = filepath.Join(bin, "calls.log")
-	// Обход ждущих (DK-932) доску стенда не правит: будить на ней некого, а
-	// лишняя строка после последнего коммита оставила бы дерево грязным.
-	// Подъём проверяющего после выката (DK-947) зовёт `taskctl run`: стаб
-	// отвечает ступенью лестницы, а код выхода берёт из TASKCTL_RUN_CODE, чтобы
-	// стенд мог сыграть занятый замок и зов человеку.
-	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\n" +
-		"if [ \"$1\" = run ]; then echo \"голова $2 поднята в новом окне tmux task-$2\"; " +
-		"echo 'ступень: новое окно, код '\"${TASKCTL_RUN_CODE:-0}\"; exit \"${TASKCTL_RUN_CODE:-0}\"; fi\n" +
-		"[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
-	write(t, bin, "taskctl", stub)
-	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
-		t.Fatal(err)
+	if !par {
+		return root, seqCallLog
 	}
-	// Ярус и лестница подписки приезжают фикстурой agentctl: живой отвечал бы
-	// по машине разработчика, и модель проверяющего ездила бы от неё.
-	writeAgentctlFake(t, bin, "base")
-	// Дерево devkit стенда: оболочка конвейера, без которой голове негде жить,
-	// и перечень прав, отвечающий «права на месте». Живой perms.py читал бы
-	// настройки машины.
-	t.Setenv("DEVKIT_HOME", fakeDevkit(t, false))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return root, callLog
+	return root, filepath.Join(root, ".devkit", "calls.log")
 }
 
 // ladderFixture это ответ agentctl harness --json: одна подписка, три ступени.
@@ -114,20 +226,36 @@ func writeAgentctlFake(t *testing.T, bin, tier string) {
 }
 
 // fakeDevkit собирает дерево devkit с оболочкой конвейера и перечнем прав;
-// deny просит перечень ответить нехваткой прав.
+// deny просит перечень ответить нехваткой прав. Отдельная запись без t живёт
+// в writeFakeDevkit: общему этажу параллельной группы дерево нужно без
+// привязки к времени жизни чьего-то t.TempDir.
 func fakeDevkit(t *testing.T, deny bool) string {
 	t.Helper()
 	dir := t.TempDir()
-	write(t, dir, "RULES.architecture.md", "# Architecture\n\n- **ARCH-001.** Keep the data boundary explicit.\n")
-	write(t, dir, "RULES.style.md", "# Style\n\n- **STYLE-001.** Name values by purpose.\n")
-	write(t, dir, "RULES.md", "# Rules\n\n## Тесты обязательны\n\n- **TEST-001.** Exercise changed behavior.\n")
-	write(t, dir, "kit/skills/board-task/task-run.py", "import sys\n")
+	if err := writeFakeDevkit(dir, deny); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func writeFakeDevkit(dir string, deny bool) error {
+	if err := writeAt(dir, "RULES.architecture.md", "# Architecture\n\n- **ARCH-001.** Keep the data boundary explicit.\n"); err != nil {
+		return err
+	}
+	if err := writeAt(dir, "RULES.style.md", "# Style\n\n- **STYLE-001.** Name values by purpose.\n"); err != nil {
+		return err
+	}
+	if err := writeAt(dir, "RULES.md", "# Rules\n\n## Тесты обязательны\n\n- **TEST-001.** Exercise changed behavior.\n"); err != nil {
+		return err
+	}
+	if err := writeAt(dir, "kit/skills/board-task/task-run.py", "import sys\n"); err != nil {
+		return err
+	}
 	perms := "import sys\n"
 	if deny {
 		perms += "print('в ~/.claude/settings.json не хватает прав машинного контура, 2 из 37')\nsys.exit(1)\n"
 	}
-	write(t, dir, "tools/devkitctl/perms.py", perms)
-	return dir
+	return writeAt(dir, "tools/devkitctl/perms.py", perms)
 }
 
 // fixtureReviewLevel это раздел «Ревью» со строкой уровня: без неё ворот следа
@@ -143,13 +271,17 @@ const fixtureRehearsal = "\n## Ход работы\n\n- Исключение: о
 
 func write(t *testing.T, root, name, content string) {
 	t.Helper()
+	if err := writeAt(root, name, content); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAt(root, name, content string) error {
 	path := filepath.Join(root, name)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 // addRemote заводит bare-репозиторий как origin с отслеживанием main, чтобы
@@ -234,6 +366,7 @@ func writeReviewAudit(t *testing.T, root, id string, board, commit bool) string 
 }
 
 func TestMergeHappyPath(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -266,6 +399,7 @@ func TestMergeHappyPath(t *testing.T) {
 // .devkit/deploy.local (гитигнорнут, поэтому пишется после ветки, untracked
 // и preflight его не считает грязью), катится только при autonomous=true.
 func TestMergeDeployFromConfig(t *testing.T) {
+	t.Parallel()
 	deployed := func(root string) bool {
 		_, err := os.Stat(filepath.Join(root, "deployed.marker"))
 		return err == nil
@@ -324,6 +458,7 @@ func TestMergeDeployFromConfig(t *testing.T) {
 // на origin уехала вперёд (другая машина поставила задачу в Check), и merge
 // на такой копии обязан упасть, не тронув ни main, ни фичеветку.
 func TestMergeStaleMain(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	branchWithFix(t, root)
@@ -364,6 +499,7 @@ func codeCommit(t *testing.T, root, id, file string) {
 // свободной очереди в поезде. Сессии исполнителя к этому моменту обычно уже
 // нет, и получателя у события освобождения очереди не будет.
 func TestMergeQueueBusy(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	branchWithFix(t, root)
@@ -407,6 +543,7 @@ func TestMergeQueueBusy(t *testing.T) {
 }
 
 func TestMergeQueueBusyFailed(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowSelfFailed, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	gitT(t, root, "tag", "deployed")
@@ -437,6 +574,7 @@ func lldCommit(t *testing.T, root, id string) {
 // подтверждения пользователя) очередь выката не держит: merge и ship
 // проходят, инвариант про непроверенный выкат, а не про секцию доски.
 func TestQueueDocsOnly(t *testing.T) {
+	t.Parallel()
 	// Одиночный merge при LLD в Check.
 	root, _ := setup(t, rowInProg, rowLLD)
 	lldCommit(t, root, "XR-005")
@@ -466,6 +604,7 @@ func TestQueueDocsOnly(t *testing.T) {
 }
 
 func TestMergeOpenReview(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	f := filepath.Join(root, "docs", "tasks", "XR-001.md")
 	data, _ := os.ReadFile(f)
@@ -486,6 +625,7 @@ func TestMergeOpenReview(t *testing.T) {
 // исхода замечание не закрывает. Иначе merge отбивался бы на разметке, а не на
 // содержании, и расходился бы с taskctl review show (DK-277).
 func TestReviewNotesMarkup(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n"+
@@ -521,6 +661,7 @@ func TestReviewNotesMarkup(t *testing.T) {
 // позиции, где его пишет taskctl review resolve, а не по факту появления
 // слова где-то в тексте.
 func TestReviewNotesQuotedWord(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n"+
@@ -547,6 +688,7 @@ func TestReviewNotesQuotedWord(t *testing.T) {
 // слияние пропускала. Вердикт, записанный рукой по той же форме, замечанием
 // не считается и merge не держит.
 func TestReviewNotesVerdictPhrase(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n"+
@@ -574,6 +716,7 @@ func TestReviewNotesVerdictPhrase(t *testing.T) {
 // вердикта своим sha (taskctl cmdReviewClean, DK-812), и раздел с двумя
 // такими строками ворота слияния читают закрытым ревью наравне с одной.
 func TestReviewNotesSecondRoundVerdict(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
@@ -596,6 +739,7 @@ func TestReviewNotesSecondRoundVerdict(t *testing.T) {
 }
 
 func TestMergeRedTests(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "false"})
@@ -611,6 +755,7 @@ func TestMergeRedTests(t *testing.T) {
 }
 
 func TestMergePreconditions(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err == nil ||
 		!strings.Contains(err.Error(), "сливать нечего") {
@@ -647,6 +792,7 @@ func foreignTaskFile(t *testing.T, root string) {
 // общем чекауте чужое незакоммиченное, и оно не должно отбивать merge, если
 // не пересекается с диапазоном слияния (DK-720).
 func TestMergeIgnoresForeignDirty(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	foreignTaskFile(t, root)
 	branchWithFix(t, root)
@@ -667,6 +813,7 @@ func TestMergeIgnoresForeignDirty(t *testing.T) {
 // по-прежнему отбивает merge, и отказ называет именно этот путь, а не весь
 // git status (в дереве рядом лежит чужая правка мимо задачи).
 func TestMergeRefusedOnOwnFileDirty(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	foreignTaskFile(t, root)
 	branchWithFix(t, root)
@@ -682,6 +829,7 @@ func TestMergeRefusedOnOwnFileDirty(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	msg, err := cmdStatus(root)
 	if err != nil {
@@ -723,6 +871,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestRevert(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, "", rowInProg) // задача уже в Check
 	write(t, root, "code.txt", "broken\n")
 	gitT(t, root, "add", ".")
@@ -767,6 +916,7 @@ func TestRevert(t *testing.T) {
 // Revert пушит откат до повторного выката (команда выката сверяет origin/main
 // с main, маркер появится только на свежем origin) и пушит доску следом.
 func TestRevertAutonomous(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", rowInProg) // задача в Check
 	bare := addRemote(t, root)
 	write(t, root, "code.txt", "broken\n")
@@ -824,6 +974,7 @@ func taskWithScenario(t *testing.T, root, id string) {
 // перевода в Check, одиночный merge на непустом поезде отбивается, ship
 // катит один деплой, двигает тег и переводит обе задачи в Check разом.
 func TestTrainMergeAndShip(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg+rowInProg3, "")
 
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
@@ -898,6 +1049,7 @@ func TestTrainMergeAndShip(t *testing.T) {
 // слияние на прод ничего не везёт и проходит; выкат и одиночный merge на той
 // же доске отбиваются как раньше.
 func TestMergeTrainQueueBusy(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg+rowInProg3, rowCheck)
 	codeCommit(t, root, "XR-009", "nine.txt")
 	gitT(t, root, "tag", "deployed") // XR-009 уехала на прод и ждёт проверки
@@ -938,6 +1090,7 @@ func TestMergeTrainQueueBusy(t *testing.T) {
 
 // TestShipPreconditions: пустой поезд и занятая очередь это чистые ошибки.
 func TestShipPreconditions(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if _, err := cmdShip(root, ShipParams{}); err == nil ||
 		!strings.Contains(err.Error(), "поезд пуст") {
@@ -954,6 +1107,7 @@ func TestShipPreconditions(t *testing.T) {
 // TestRevertFromTrain: откат задачи из невыкаченного поезда не катит деплой
 // (он увёз бы на прод остальной поезд) и выводит задачу из состава.
 func TestRevertFromTrain(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	addRemote(t, root)
 	taskWithScenario(t, root, "XR-003")
@@ -995,6 +1149,7 @@ func TestRevertFromTrain(t *testing.T) {
 // (иначе вторая машина не видит поезда и одиночный merge там увезёт чужие
 // правки), и при ship, уже сдвинутым на выкаченный main.
 func TestTrainTagPushed(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	bare := addRemote(t, root)
 	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = true\n")
@@ -1029,6 +1184,7 @@ func TestTrainTagPushed(t *testing.T) {
 // In progress, останавливает и merge, и ship: иначе её непроверенный код
 // уехал бы на прод без Check.
 func TestTrainStray(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	addRemote(t, root)
 	taskWithScenario(t, root, "XR-003")
@@ -1093,6 +1249,7 @@ func TestTrainStray(t *testing.T) {
 // форс-пуш тегов) не роняет ship: доска доводится до Check и прикрывает
 // вторую машину занятой очередью, напоминание про тег уходит в отчёт.
 func TestShipTagPushRejected(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = true\n")
@@ -1125,6 +1282,7 @@ func TestShipTagPushRejected(t *testing.T) {
 // задачу ни грузом поезда, ни осиротевшей: LLD-задача из Backlog не роняет
 // ship и не уезжает в Check с чужим выкатом.
 func TestTrainDocsNotCargo(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -1155,6 +1313,7 @@ func TestTrainDocsNotCargo(t *testing.T) {
 // двигает тег. Docs-коммит лежит под тегом, вне окна поезда: тут задачу не
 // спасает защита inTrain, работает именно фильтр docs/.
 func TestRevertDocsOnly(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	addRemote(t, root)
 	lldCommit(t, root, "XR-003")
@@ -1196,6 +1355,7 @@ func TestRevertDocsOnly(t *testing.T) {
 // TestTrainRevertCustomMsg: откат с кастомным -m (белый список префиксов)
 // распознаётся по слову «откат», задача выбывает из поезда.
 func TestTrainRevertCustomMsg(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -1224,6 +1384,7 @@ func TestTrainRevertCustomMsg(t *testing.T) {
 }
 
 func TestLoadBoardAndReview(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	b, err := loadBoard(root)
 	if err != nil {
@@ -1293,6 +1454,7 @@ func TestMissingTaskctlNamesTheInstallCommand(t *testing.T) {
 // агенту в блоке significant, а полный вывод лежит в файле по path. Тест падает
 // на прежнем tail (в выводе нет ни significant, ни path), на новом проходит.
 func TestCmdoutFrameCatchesSignificant(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	// Двести строк: в середине строки 40 и 80 несут FAIL и panic:, последние 30
 	// строк (171..200) без маркеров. Прежняя tail(out) отдала бы только хвост.
@@ -1351,6 +1513,7 @@ func TestCmdoutFrameCatchesSignificant(t *testing.T) {
 // отдаётся как есть, к нему приписывается path к файлу. Это путь коротких
 // статусных выводов git (status --porcelain с парой строк), где резать нечего.
 func TestCmdoutFrameShortOutput(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	out := " M code.txt\n?? draft.txt\n"
 	rendered := cmdoutFrame(root, "git-status", out)
@@ -1394,6 +1557,7 @@ func branchSewnWithMain(t *testing.T, root string) {
 // без ребейза. До DK-637 ребейз звался безусловно, расплющивал сшивку и падал
 // на возвращённом конфликте, так что длинная ветка не сливалась вообще никак.
 func TestMergeSewnBranchKeepsHistory(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchSewnWithMain(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -1423,6 +1587,7 @@ func TestMergeSewnBranchKeepsHistory(t *testing.T) {
 // двигает его в третий раз. gitT форсирует подпись в false своим -c, поэтому
 // tag.gpgsign включается здесь явной записью в локальный .git/config.
 func TestDeployTagUnderGPGSign(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	gitT(t, root, "config", "tag.gpgsign", "true")
 

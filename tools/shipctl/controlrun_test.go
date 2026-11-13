@@ -41,6 +41,7 @@ func controlStand(t *testing.T, row string) (string, string) {
 // до отбора полями Control и Due, заказ несёт черновик рисков, напоминание и
 // дожим просрочки.
 func TestControlRunRaisesInspectorByTitle(t *testing.T) {
+	t.Parallel()
 	root, callLog := controlStand(t, controlRow(controlDue()))
 
 	out, failed, err := cmdControlRun(root, nil, true)
@@ -72,6 +73,7 @@ func TestControlRunRaisesInspectorByTitle(t *testing.T) {
 // Контроль вне окна подъёмом не кончается и поломкой не считается: окно
 // решает отбор по полям строки, а не сам вызов.
 func TestControlRunOutsideWindowStaysQuiet(t *testing.T) {
+	t.Parallel()
 	far := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
 	root, _ := controlStand(t, controlRow(far))
 

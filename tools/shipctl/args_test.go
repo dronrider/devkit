@@ -23,6 +23,7 @@ func goRunShip(t *testing.T, root string, args ...string) (string, error) {
 // форма отбивалась в разборе «жду: start <ID>», потому что args[1] проверяли
 // до fs.Parse и флаг принимали за пропущенный ID.
 func TestStartFlagAnywhere(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 
 	outAfter, errA := goRunShip(t, root, "start", "XR-999", "--slug", "хвост")
@@ -42,6 +43,7 @@ func TestStartFlagAnywhere(t *testing.T) {
 // флагов молча (DK-236). После починки это отказ с «лишний аргумент», а не
 // тихое продвижение. Обе формы «флаг до» и «флаг после» проверяются.
 func TestStartExtraPositionalRejects(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	cases := [][]string{
 		{"start", "XR-001", "junk", "--slug", "хвост"},
@@ -61,6 +63,7 @@ func TestStartExtraPositionalRejects(t *testing.T) {
 // TestStatusExtraPositionalRejects: статус не принимает позиционных, и лишний
 // аргумент у него раньше молчал. now NeedArgs(pos, 0, 0, ...) его отбивает.
 func TestStatusExtraPositionalRejects(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	out, err := goRunShip(t, root, "status", "junk")
 	if err == nil {

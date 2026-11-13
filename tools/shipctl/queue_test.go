@@ -53,6 +53,7 @@ func queueBranch(t *testing.T, root, id, branch, file string) {
 // TestQueueOrderFollowsRank: состав очереди производный от доски, и голова у
 // него это строка с наибольшим рангом.
 func TestQueueOrderFollowsRank(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	msg, err := cmdQueue(root, QueueParams{})
 	if err != nil {
@@ -74,6 +75,7 @@ func TestQueueOrderFollowsRank(t *testing.T) {
 // TestQueueDrainPoursOneBranch: разлив льёт одну ветку за заход, голову
 // очереди, и остальные оставляет следующему тику.
 func TestQueueDrainPoursOneBranch(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
 	if err != nil {
@@ -95,6 +97,7 @@ func TestQueueDrainPoursOneBranch(t *testing.T) {
 }
 
 func TestQueueDrainIndependentDespiteFailedCheck(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	devkitDir(t, root)
 	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
@@ -107,6 +110,7 @@ func TestQueueDrainIndependentDespiteFailedCheck(t *testing.T) {
 // TestQueueDrainEmptyNoop: разливать нечего значит нулевой выход со своим
 // маркером, по нему тик отличает пустой заход от значимого.
 func TestQueueDrainEmptyNoop(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
@@ -123,6 +127,7 @@ func TestQueueDrainEmptyNoop(t *testing.T) {
 // каждые пять минут, и прежнее «очередь слияний пуста» маскировала стоящую
 // работу до отдельного вызова queue (DK-1334).
 func TestQueueDrainNamesHeldRows(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	for _, id := range []string{"XR-001", "XR-007"} {
 		if _, err := cmdQueue(root, QueueParams{Hold: id, Reason: "жду ответа смежника"}); err != nil {
@@ -155,6 +160,7 @@ const ownRedTest = `sh -c 'printf "%s\n" "code (code.txt) 0.1s FAIL" "FAIL code"
 // TestQueueRetriesOnLoadRed: ветка, отбитая нагрузочным падением вне диффа,
 // встаёт в хвост очереди сама, с повтором в наклейке.
 func TestQueueRetriesOnLoadRed(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest})
 	if err != nil {
@@ -191,6 +197,7 @@ const alienRedTest = `sh -c 'printf "%s\n" "other (other.txt) 0.1s FAIL" "FAIL o
 // TestQueueStopsOnAlienRed: третий исход отказа. Повтор считается, а проход
 // встаёт: один прогон на заход вместо всего состава.
 func TestQueueStopsOnAlienRed(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: alienRedTest})
 	if err != nil {
@@ -210,6 +217,7 @@ func TestQueueStopsOnAlienRed(t *testing.T) {
 // TestQueueDrainDoesNotWaitLock: разлив не ждёт замок. Тик сам и есть цикл
 // повтора, а ожидание внутри захода упиралось бы в потолок подпроцесса.
 func TestQueueDrainDoesNotWaitLock(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	unlock, err := acquireLock(root, "merge XR-009")
 	if err != nil {
@@ -232,6 +240,7 @@ func TestQueueDrainDoesNotWaitLock(t *testing.T) {
 // TestQueueLeavesOnRetryLimit: три повтора подряд это уже не нагрузка, и на
 // потолке строка уходит из очереди.
 func TestQueueLeavesOnRetryLimit(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	for i := 1; i <= queueRetryLimit; i++ {
 		msg, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest})
@@ -378,6 +387,7 @@ func TestQueueTraceOnHold(t *testing.T) {
 // TestQueueHoldAndFree: снятие руками просит причину, а возврат обнуляет
 // повторы: препятствие разобрано, и прошлые отказы к делу не относятся.
 func TestQueueHoldAndFree(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	if _, err := cmdQueue(root, QueueParams{Hold: "XR-001"}); err == nil {
 		t.Error("снятие без причины должно отказывать")
@@ -407,6 +417,7 @@ func TestQueueHoldAndFree(t *testing.T) {
 // недельная снятая неотличима от вчерашней, а разбор её откладывается до
 // бесконечности (DK-1322).
 func TestQueueShowsHoldAge(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	if _, err := cmdQueue(root, QueueParams{Hold: "XR-001", Reason: "ждём смежника"}); err != nil {
 		t.Fatal(err)
@@ -427,6 +438,7 @@ func TestQueueShowsHoldAge(t *testing.T) {
 // доработки после возврата из Check это второй заход той же задачи, и
 // повторы прошлого круга ему не наследуются.
 func TestQueueMarkGoesAfterMerge(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	if _, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest}); err != nil {
 		t.Fatal(err)
@@ -445,6 +457,7 @@ func TestQueueMarkGoesAfterMerge(t *testing.T) {
 // TestStatusPrintsMergeQueue: очередь видна снаружи, позицией и повторами, а
 // не только в журнале.
 func TestStatusPrintsMergeQueue(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	if _, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest}); err != nil {
 		t.Fatal(err)
@@ -464,6 +477,7 @@ func TestStatusPrintsMergeQueue(t *testing.T) {
 // TestQueueRetryCountVisibleAfterTwoRuns: два отбоя подряд видны снаружи
 // командой shipctl queue, а не только в наблюдении самой наклейки (DK-1229).
 func TestQueueRetryCountVisibleAfterTwoRuns(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	for i := 0; i < 2; i++ {
 		if _, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest}); err != nil {
@@ -491,6 +505,7 @@ func TestQueueRetryCountVisibleAfterTwoRuns(t *testing.T) {
 // заход, конкурирующий с держащим тестом, проходит мимо него почти мгновенно.
 // После фикса тот же заход встаёт и ждёт освобождения.
 func TestQueueRetryRaceKeepsBothTries(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 
@@ -542,6 +557,7 @@ func TestQueueRetryRaceKeepsBothTries(t *testing.T) {
 // замка конвейера ради наклейки встало бы в очередь на двадцать минут
 // (DK-1229).
 func TestQueueLockIndependentOfShipLock(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 
@@ -579,6 +595,7 @@ func TestQueueLockIndependentOfShipLock(t *testing.T) {
 // TestQueueRetryWithoutDevkit: без каталога .devkit наклейки не пишутся
 // вовсе, как и раньше, а замок наклеек не заводится (DK-1229).
 func TestQueueRetryWithoutDevkit(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	msg, left := queueRetry(root, "XR-001", "провал", "", "")
 	if !left || !strings.Contains(msg, "повтор 1 из 3") {
@@ -611,6 +628,7 @@ func queueJSONItems(t *testing.T, root string, p QueueParams) []queueReport {
 }
 
 func TestQueueJSONDirtyWorktreeReportsEveryTask(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	for _, item := range []struct{ id, file string }{{"XR-001", "code.txt"}, {"XR-007", "small.txt"}} {
 		wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+strings.ToLower(item.id))
@@ -628,6 +646,7 @@ func TestQueueJSONDirtyWorktreeReportsEveryTask(t *testing.T) {
 }
 
 func TestQueueJSONLockIsWaiting(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	unlock, err := acquireLock(root, "стенд")
 	if err != nil {
@@ -641,6 +660,7 @@ func TestQueueJSONLockIsWaiting(t *testing.T) {
 }
 
 func TestQueueJSONEmptyAndBrokenProdHaveNoIncidents(t *testing.T) {
+	t.Parallel()
 	for _, rows := range []string{"", rowFailed} {
 		root, _ := setup(t, rows, "")
 		devkitDir(t, root)
@@ -652,6 +672,7 @@ func TestQueueJSONEmptyAndBrokenProdHaveNoIncidents(t *testing.T) {
 }
 
 func TestQueueJSONReportsMergedTask(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
 	if len(items) != 1 || items[0].ID != "XR-001" || !items[0].Merged || items[0].Failed {
@@ -660,6 +681,7 @@ func TestQueueJSONReportsMergedTask(t *testing.T) {
 }
 
 func TestQueueJSONDependencyIsWaiting(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	devkitDir(t, root)
 	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
@@ -674,6 +696,7 @@ func TestQueueJSONDependencyIsWaiting(t *testing.T) {
 // очереди и не эскалирует её дежурному: у снятой уже есть исполнитель и
 // поручение (DK-1334).
 func TestQueueJSONNamesHeldRows(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	for _, id := range []string{"XR-001", "XR-007"} {
 		if _, err := cmdQueue(root, QueueParams{Hold: id, Reason: "жду ответа смежника"}); err != nil {
@@ -704,6 +727,7 @@ func TestQueueJSONNamesHeldRows(t *testing.T) {
 }
 
 func TestQueueJSONRootErrorHasNoInventedTask(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
 	if len(items) != 1 || items[0].ID != "" || !items[0].Failed || items[0].Line == "" {
@@ -712,6 +736,7 @@ func TestQueueJSONRootErrorHasNoInventedTask(t *testing.T) {
 }
 
 func TestQueueJSONDependencyDoesNotHideEarlierFailure(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	devkitDir(t, root)
 	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
@@ -724,6 +749,7 @@ func TestQueueJSONDependencyDoesNotHideEarlierFailure(t *testing.T) {
 }
 
 func TestQueueDraftBranchesDoNotAttemptMerge(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"empty", "board"} {
 		t.Run(kind, func(t *testing.T) {
 			root, _ := setup(t, rowInProg, "")
@@ -749,6 +775,7 @@ func TestQueueDraftBranchesDoNotAttemptMerge(t *testing.T) {
 }
 
 func TestQueueReadyCodeStillRequiresReview(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	// Готовый код без ревью остаётся кандидатом, ворота дают реальный отказ.
 	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-xr-001")
@@ -762,6 +789,7 @@ func TestQueueReadyCodeStillRequiresReview(t *testing.T) {
 }
 
 func TestQueueReadmeChangesAreWork(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	wt := filepath.Join(t.TempDir(), "docs-work")

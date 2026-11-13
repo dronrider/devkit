@@ -20,6 +20,7 @@ func forkDoc(t *testing.T, root, id, list string) {
 // доска при этом остаётся нетронутой: отказавший старт ничего не успел
 // поменять. Ответ на развилку ворота отпускает.
 func TestStartHeldByFork(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, "", "")
 	forkDoc(t, root, "XR-002", "- «доступ»: токен положен в secretctl?\n  - решает: человек\n  - рекомендация: считать приватным\n")
 
@@ -56,6 +57,7 @@ func TestStartHeldByFork(t *testing.T) {
 // держит (LLD DK-552, решение 2): исполнитель идёт по рекомендации. Файла
 // задачи может не быть вовсе, и это тоже старт без вопросов.
 func TestStartPassesExecutorFork(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", "")
 	forkDoc(t, root, "XR-002", "- «поле»: как звать поле?\n  - решает: исполнитель\n  - рекомендация: «решает»\n")
 	if _, err := cmdStart(root, StartParams{ID: "XR-002"}); err != nil {

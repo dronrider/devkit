@@ -26,6 +26,7 @@ func rehearsalLine(doc, sha string) string {
 // отбивался, и задача оставалась в In progress при слитом коде. Ворот стоит в
 // готовности правки, до слияния, и main отказ не трогает.
 func TestMergeNeedsRehearsal(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg3, "")
 	write(t, root, "docs/tasks/XR-003.md", taskScenarioDoc("XR-003"))
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
@@ -47,6 +48,7 @@ func TestMergeNeedsRehearsal(t *testing.T) {
 // TestMergePassesAfterRehearsal: отметка обкатки под вершиной ветки ворот
 // открывает, и задача сливается целиком.
 func TestMergePassesAfterRehearsal(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg3, "")
 	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
 	doc := taskScenarioDoc("XR-003")
@@ -66,6 +68,7 @@ func TestMergePassesAfterRehearsal(t *testing.T) {
 // держит человек, машинной отметки с него не спрашивают, и слияние проходит.
 
 func TestMergeSkipsRehearsalForUserKind(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "| XR-003 | Вторая мелочь [приёмка: user] | task | P3 | 8 (0+3+0+5+0) |  |\n", "")
 	write(t, root, "docs/tasks/XR-003.md", taskScenarioDoc("XR-003"))
 	gitT(t, root, "add", "docs/tasks/XR-003.md")

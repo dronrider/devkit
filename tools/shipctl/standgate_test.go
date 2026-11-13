@@ -72,6 +72,7 @@ func standPrint(t *testing.T, root, branch, subject string) string {
 // TestStandGateNoScenario: правка скилла без сценария стенда отбивается, и
 // отказ называет файл с разделом, из-за которого встал.
 func TestStandGateNoScenario(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, "kit/skills/review/SKILL.md")
 	// Предмет сеяного сценария указывает на чужой файл, поэтому дерево обязано
@@ -90,6 +91,7 @@ func TestStandGateNoScenario(t *testing.T) {
 // TestStandGateException: пометка «- Исключение: стенд» гасит ворота, как и у
 // четырёх соседних.
 func TestStandGateException(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, "kit/skills/review/SKILL.md")
 	write(t, root, "kit/skills/review/SKILL.md", "# review\n")
@@ -109,6 +111,7 @@ func TestStandGateException(t *testing.T) {
 // TestStandGateNoMark: сценарий на раздел есть, а следа прогона в файле задачи
 // нет. Отказ печатает команду прогона с назначенной базой.
 func TestStandGateNoMark(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
@@ -122,6 +125,7 @@ func TestStandGateNoMark(t *testing.T) {
 // TestStandGatePasses: сценарий и зачтённый след с той же базой и сошедшимся
 // отпечатком открывают ворота.
 func TestStandGatePasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
@@ -137,6 +141,7 @@ func TestStandGatePasses(t *testing.T) {
 // TestStandGateWrongBase: прогон шёл с базой «пусто», а разделу назначена
 // «старый». Зачёт с базой «старый» мягче, и подменять им прогон нельзя.
 func TestStandGateWrongBase(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
@@ -153,6 +158,7 @@ func TestStandGateWrongBase(t *testing.T) {
 // TestStandGateStalePrint: текст предмета правили после прогона, отпечаток не
 // сходится, и след устарел.
 func TestStandGateStalePrint(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
@@ -169,6 +175,7 @@ func TestStandGateStalePrint(t *testing.T) {
 // TestStandGateFailedMark: красная отметка «- Стенд не зачтён:» ворота не
 // открывает, иначе провал прогона стоил бы столько же, сколько его отсутствие.
 func TestStandGateFailedMark(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
@@ -186,6 +193,7 @@ func TestStandGateFailedMark(t *testing.T) {
 // «пусто». Новый текст едет в контекст каждой сессии, и вопрос к нему «есть ли
 // польза», а не «не стало ли хуже».
 func TestStandGateNewSection(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill)
 	standBranch(t, root, standSkillText+"\n## Чего не делать\n\nНе звать скилл после письма.\n")
@@ -206,6 +214,7 @@ func TestStandGateNewSection(t *testing.T) {
 // правка раздела с базой «старый»: снятая строка правила меняет поведение не
 // меньше дописанной.
 func TestStandGateDeletedLines(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	standBranch(t, root, strings.Replace(standSkillText, "\nКоманда одна.\n", "", 1))
@@ -220,6 +229,7 @@ func TestStandGateDeletedLines(t *testing.T) {
 // встают. Доказательство удаления это прогон ревизии с базой «пусто», а
 // сценарий уходит или перепривязывается той же веткой.
 func TestStandGateDroppedSection(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Кто зовёт»")
 	standBranch(t, root, "# prose\n\n## Кто зовёт\n\nСкилл зовут до письма.\n")
@@ -235,6 +245,7 @@ func TestStandGateDroppedSection(t *testing.T) {
 // TestStandGateOrphanSubject: ветка удалила файл, на который смотрит сценарий.
 // Прогон такого сценария зеленел бы на тексте, которого больше нет.
 func TestStandGateOrphanSubject(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
@@ -252,6 +263,7 @@ func TestStandGateOrphanSubject(t *testing.T) {
 // TestStandGateSilent: ворота молчат на ветке без агентских файлов и в проекте,
 // где сценариев стенда нет вовсе.
 func TestStandGateSilent(t *testing.T) {
+	t.Parallel()
 	// Дифф без агентских файлов.
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
@@ -273,6 +285,7 @@ func TestStandGateSilent(t *testing.T) {
 // предметов обоих. Ворота, считавшие отпечаток по одному покрывающему
 // сценарию, отбивали такое слияние словами про несошедшийся отпечаток.
 func TestStandGateMultiScenarioMark(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	second := "kit/skills/review/SKILL.md"
 	secondText := "# review\n\n## Как читать\n\nЧитают дифф целиком.\n"
@@ -319,6 +332,7 @@ func TestStandGateMultiScenarioMark(t *testing.T) {
 // заголовка. Раздела с таким заголовком в файле нет, поэтому покрывает её
 // только предмет на весь файл, а база у шапки прежнего файла это «старый».
 func TestStandGateHeadSection(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill)
 	standBranch(t, root, strings.Replace(standSkillText, "# prose\n", "# prose\n\nСкилл про выборку эталонов.\n", 1))
@@ -333,6 +347,7 @@ func TestStandGateHeadSection(t *testing.T) {
 // новый файл, поэтому базу «пусто» получают все его разделы. Сценарий той же
 // веткой перепривязан на новый путь, иначе он остался бы без предмета.
 func TestStandGateRenamedFile(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	standSeed(t, root, standSkill+" «Как звать»")
 	renamed := "kit/skills/prose-sample/SKILL.md"

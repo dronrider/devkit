@@ -16,6 +16,7 @@ import (
 // (природа 98b43e7: слепок стенда считал __pycache__) в свежем дереве
 // отсутствует, и команда, красная в прогретом чекауте, слияние проходит.
 func TestMergeRunsTestsInFreshTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, ".git/info/exclude", "cache.pyc\n")
 	branchWithFix(t, root)
@@ -53,6 +54,7 @@ func TestMergeRunsTestsInFreshTree(t *testing.T) {
 // TestMergeRedTestNamesFreshTree: отказ красных тестов называет свежее дерево,
 // а само дерево убирается и при провале.
 func TestMergeRedTestNamesFreshTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "false"})
@@ -106,6 +108,7 @@ func TestMergeSeesHomeToolchain(t *testing.T) {
 // TestMergeRedTestNamesMissingCommand: отказ красных тестов по нехватке
 // команды называет её саму и места, где прогон искал.
 func TestMergeRedTestNamesMissingCommand(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "xrmissingtool --version"})

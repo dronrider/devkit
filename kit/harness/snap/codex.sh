@@ -111,7 +111,6 @@ try:
         fail("в ответе нет снимка лимита: %s" % json.dumps(result)[:200])
 
     rows = {}
-    unclassified = []
     for place in ("primary", "secondary"):
         window = snap.get(place)
         if window is None:
@@ -119,26 +118,23 @@ try:
         if not isinstance(window, dict) or not isinstance(window.get("usedPercent"), int):
             fail("окно %s без процента потраченного: %s" % (place, json.dumps(window)[:200]))
         length = window.get("windowDurationMins")
-        name = WINDOWS.get(length) if isinstance(length, int) else None
         if length is None:
-            # Протокол обновлений разреженный, и null здесь нетронутое поле, а не
-            # ноль: подменять его нулём значило бы притянуть окно наугад.
-            unclassified.append(place)
-            continue
+            # Окно существует, а длины у него нет: процент такого окна реален, и
+            # выбросить его значило бы выдать неполный ответ за отсутствие окна.
+            # Отсутствие окна это place = null, и оно проходит молча.
+            fail("у окна %s нет длины, классифицировать его нечем" % place)
+        name = WINDOWS.get(length) if isinstance(length, int) else None
         if name is None:
             fail("у окна %s незнакомая длина %s мин, разбор отказан" % (place, length))
         if name in rows:
             fail("оба окна ответа длиной %s мин, окна перепутаны" % length)
         rows[name] = window
     if "week_all" not in rows:
-        why = "в ответе нет обязательного недельного окна"
-        if unclassified:
-            why += " (окно %s приехало без длины и не классифицируется)" % " и ".join(unclassified)
-        fail(why)
+        fail("в ответе нет обязательного недельного окна")
 
     # taken минутой, вслед строки окон: нетронутое окно без даты сброса это
     # законная строка формата (parseBucket в quota.go), процент выше потолка
-    # подрезается.
+    # обрезается.
     now = datetime.datetime.now().replace(second=0, microsecond=0)
     print("taken = " + now.strftime("%Y-%m-%dT%H:%M"))
     for name in ("window5h_all", "week_all"):

@@ -109,7 +109,7 @@ class CodexSnapTest(unittest.TestCase):
         self.assertNotIn("window5h", out, out)
 
     def test_both_windows_with_resets(self):
-        """Оба окна со сроками сброса едут в снимок, потолок подрезается."""
+        """Оба окна со сроками сброса едут в снимок, потолок обрезается."""
         result = {"rateLimits": {"primary": window(120, 300, 1794937422),
                                  "secondary": window(46, 10080, 1795000000)},
                   "rateLimitsByLimitId": None}
@@ -185,23 +185,47 @@ class CodexSnapTest(unittest.TestCase):
         self.assertNotEqual(rc, 0, "незнакомое окно классифицировано наугад: %s" % out)
         self.assertIn("1440", out, out)
 
-    def test_null_duration_window_not_a_bucket(self):
-        """Окно без длины не превращается в бакет, но снимок не роняет."""
-        result = {"rateLimits": {"primary": window(46, None, None),
-                                 "secondary": window(30, 10080, 1794937422)},
+    def test_null_duration_window_refused(self):
+        """Существующее окно без длины это отказ, а не отсутствие окна.
+
+        Объект окна с windowDurationMins = null несёт процент реального окна,
+        и выбросить его значило бы выдать неполный ответ за отсутствие
+        необязательного окна. Отсутствие окна выглядит иначе, это
+        secondary = null, и оно законный пропуск. Съёмщик отказывает с
+        причиной и не печатает снимок вовсе.
+        """
+        result = {"rateLimits": {"primary": window(46, 10080, 1794937422),
+                                 "secondary": window(90, None, None)},
                   "rateLimitsByLimitId": None}
         rc, out = self.snap(result=result)
-        self.assertEqual(rc, 0, out)
-        self.assertIn("week_all = 30%", out, out)
-        self.assertNotIn("window5h", out, out)
+        self.assertNotEqual(rc, 0, "окно без длины выброшено молча: %s" % out)
+        self.assertIn("нет длины", out, out)
+        self.assertNotIn("week_all", out, "отказ напечатал снимок: %s" % out)
 
     def test_null_duration_without_week_refused(self):
-        """Одно бесплотное окно это отказ с причиной про длину окна."""
+        """Одно окно без длины это отказ с причиной про длину окна."""
         result = {"rateLimits": {"primary": window(46, None, None)},
                   "rateLimitsByLimitId": None}
         rc, out = self.snap(result=result)
         self.assertNotEqual(rc, 0, "снимок без единого окна прошёл: %s" % out)
-        self.assertIn("длины", out, out)
+        self.assertIn("нет длины", out, out)
+
+    def test_spent_window_without_reset_prints_percent(self):
+        """Потраченное окно без срока сброса печатается процентом без даты.
+
+        Подставлять дату наугад значило бы выдумать сброс, а ноль подменял бы
+        трату. Строка без даты законна форматом снимка, а диагноз такому
+        бакету ставит вердикт quota --json, отказом в доступности без даты
+        сброса (случай no-reset в tools/agentctl/quota_json_test.go).
+        """
+        result = {"rateLimits": {"primary": window(46, 10080, 1794937422),
+                                 "secondary": window(12, 300, None)},
+                  "rateLimitsByLimitId": None}
+        rc, out = self.snap(result=result)
+        self.assertEqual(rc, 0, out)
+        five = [ln for ln in out.splitlines() if ln.startswith("window5h_all")]
+        self.assertEqual(len(five), 1, "окно без сброса потерялось или задвоилось: %s" % out)
+        self.assertRegex(five[0], r"^window5h_all = 12%$")
 
     def test_process_death_after_initialize(self):
         """Смерть app-server до ответа называется причиной, а не тишиной."""

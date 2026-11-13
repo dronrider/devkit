@@ -162,6 +162,54 @@ func TestMimoQuotaProfile(t *testing.T) {
 	}
 }
 
+// codexSpec это объявление квоты codex из настоящего профиля репозитория.
+// Машинный слой пустой, как на живой машине: клиент чужого протокола работает
+// с глобальным входом из ~/.codex, и пар окружения ему не нужны.
+func codexSpec(t *testing.T, path string) *quotaSpec {
+	t.Helper()
+	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
+enabled = ["claude-code", "codex"]
+
+[codex]
+`)
+	l, err := mergeLayers(filepath.Join(repoRoot(t), profileDirGroup, profileDirName), machine, "")
+	if err != nil {
+		t.Fatalf("слои харнесов: %v", err)
+	}
+	q := quotaSpecOf(l, "codex")
+	if q == nil {
+		t.Fatal("у codex нет объявления квоты: профиль вернулся к пустой секции [quota]")
+	}
+	q.Path, q.From = path, path
+	return q
+}
+
+// TestCodexQuotaProfile: остаток Codex снимает съёмщик через штатный
+// app-server, и в снимок идут те же два окна, что у второй подписки.
+// Пятичасовое окно живёт в подписке с перерывами и объявлено необязательным:
+// пока секция была пуста, остаток подписки не видел никто, и тест стоит на
+// том, чтобы она не опустела снова.
+func TestCodexQuotaProfile(t *testing.T) {
+	q := codexSpec(t, filepath.Join(t.TempDir(), "quota", "codex.local"))
+	if q.Snap != snapScript || q.Script != "snap/codex.sh" {
+		t.Fatalf("остаток снимает не съёмщик из kit/harness/snap: %+v", q)
+	}
+	if !contains(q.Buckets, "week_all") || !contains(q.Buckets, "window5h_all") {
+		t.Fatalf("у снимка нет обеих шкал подписки: %v", q.Buckets)
+	}
+	if q.Required != "week_all" {
+		t.Fatalf("обязательный бакет %q, жду week_all", q.Required)
+	}
+	// Необязательность пятичасового окна проверяется поведением в
+	// TestQuotaJSONCodexWindows: снимок без окна остаётся полным. Прямая
+	// сверка поля завязла бы на символ, которого в старом коде нет.
+	for _, tier := range tierNames {
+		if !contains(q.Spend[tier], "week_all") || !contains(q.Spend[tier], "window5h_all") {
+			t.Fatalf("уровень %s тратит не из обоих окон: %v", tier, q.Spend[tier])
+		}
+	}
+}
+
 // TestSnapshotCredLines: строки «N кред» это снимок провайдера с пакетом
 // кредитов на месяц: траты окна с подписью его размера, остаток из лимита и
 // израсходованное число, из которого показ пересчитывает точный процент.

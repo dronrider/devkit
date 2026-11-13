@@ -1,10 +1,10 @@
 {
   "version": 1,
   "id": "DK-1695",
-  "base_sha": "cc40570da2ac11cfe51cbe3c832ee267d938519b",
-  "head_sha": "ef38ff3534c616a261d1bc443309984c3d7affb4",
-  "code_hash": "b37f475befa1b50eb5ab2428ab280a17e705aa0317847b41e77a1b57ae46004b",
-  "task_hash": "75e0aa62481e4cf08e116167e933eed71bb1353df6d1c6083e7f14b907f8ed6f",
+  "base_sha": "4eb1db1e9f445675ddfdd2990bd7dff5db86d015",
+  "head_sha": "47943c603013c84eabdfe3613f1be1cbd86deadb",
+  "code_hash": "b2f2cb1ea3ca6434795e307d4e6e7ed4317a3ed9a2d09d8db56f44ccd5dca212",
+  "task_hash": "88fc1fe4ba563816fe99839a583a994b63104a1dfc67a01b40be5c5a414811ff",
   "sources": [
     {
       "name": "common-architecture",

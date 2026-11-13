@@ -1,0 +1,1639 @@
+{
+  "version": 1,
+  "id": "DK-1706",
+  "base_sha": "9917578f7b68be3b73042d947e6dbc70ccd3f76e",
+  "head_sha": "8b22e941aef7182b7251dc652c07f7b6bacc0e6f",
+  "code_hash": "c7b085a921daa1a7aa2f9c76520dc450cd3481ab0aaff4370e0f11c633752a96",
+  "task_hash": "9b488bf3dd59cc493b8dce3aa927749252df9e9fd5ea08b1eb732917c85691cd",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "3ecafb65a37d24fc8cc9b32fc13f6df5bc10a78afb1080fbc66624983faa11ac"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "Пользователь видит в общем индикаторе квот дашборда остаток и время сброса доступных окон подписки Codex; снимок обновляется штатным сборщиком без активного чата и модельного хода.",
+    "decision": "Остаток снимает сменный съёмщик kit/harness/snap/codex.sh по контракту DK-033: sh-обёртка с встроенным python3 поднимает codex app-server --stdio из PATH, обменивается JSON-RPC строками (initialize, initialized, account/rateLimits/read) с потолком 30 с на весь обмен и убивает процесс в finally при любом исходе. Снимок берётся из карты rateLimitsByLimitId (приоритет над одиночным rateLimits), окна классифицируются длиной windowDurationMins (10080 -> week_all, 300 -> window5h_all), позиция primary/secondary не используется. Недельное окно обязательное, пятичасовое объявлено новым ключом optional секции [quota]; agentctl (harness.go, quota.go, quota_json.go) и devkitctl (harness.py) валидируют ключ зеркально, missingQuotaBuckets пропускает необязательные бакеты при подсчёте полноты.",
+    "boundaries": "Съёмщик ничего не пишет на диск: файл снимка пишет только agentctl атомарно (quotaSpec.write), отказ съёмщика оставляет прежний снимок нетронутым (snapByScript). Вход Codex берётся глобально из ~/.codex, пар окружения профилю не нужны. Ключ optional это поле профиля репозитория, а не машинного слоя. Жизненный цикл: app-server живёт ровно один обмен, снимок протухает по snapshotMaxAge, дашборд читает готовые файлы quota/*.local своей разборкой.",
+    "alternative": "Переиспользовать app-server открытого чата дашборда нельзя: съём обязан работать без активного чата, и процесс чата живёт не у сборщика. HTTP-эндпоинта у Codex нет (постановка). Выкинуть window5h_all из buckets вовсе значило бы потерять окно, когда оно есть; пометка partial закрывала бы available на штатном перерыве окна. Ключ optional минимален: одна семантика (отсутствие не пробел) в одном месте подсчёта полноты, у профилей без ключа поведение прежнее.",
+    "justification": "Контракт съёмщика и формат [quota] существовали до задачи (DK-033, раздел «Контракт съёмщика»), app-server это штатная дорога чужого протокола в devkit (DK-090, protocol = codex у профиля), модельный ход для чтения квот не нужен. Версия машинного ответа agentctl/quota не поднята, у профилей без optional строгость полноты та же (TestQuotaJSONCodexWindows, кейс glm без окна). Схема GetAccountRateLimitsResponse от диспетчера сверена: usedPercent integer обязателен, resetsAt и windowDurationMins nullable, и оба nullable-поля скрипт нулём не подменяет. Решение считаю обоснованным; найденный дефект относится к диагностике одной формы ответа в реализации (замечание 1), а не к выбранному способу.",
+    "evidence": [
+      "kit/harness/snap/codex.sh: обмен с app-server, потолок DEADLINE_SECS = 30, kill() в finally, классификация окон словарём WINDOWS по windowDurationMins, вывод только taken и строк бакетов",
+      "kit/harness/codex.toml: snap = script, buckets = [week_all, window5h_all], required = week_all, optional = [window5h_all], все четыре spend_* из обоих окон",
+      "схема /private/tmp/devkit-codex-quota-schema-20261113/v2/GetAccountRateLimitsResponse.json: usedPercent integer обязателен, resetsAt и windowDurationMins integer|null, secondary RateLimitWindow|null, rateLimitsByLimitId object|null, разбор скрипта совпадает с контрактом",
+      "tools/dashboard/appchat.go appSpawn (198-204): initialize с clientInfo и capabilities.experimentalApi, затем initialized, скрипт повторяет состав обмена",
+      "tools/agentctl/quota_json.go missingQuotaBuckets: необязательные бакеты пропускаются только по явному списку q.Optional, complete и refusal идут от одного списка missing",
+      "валидаторы tools/agentctl/harness.go и tools/devkitctl/harness.py: оба проверяют optional в границах buckets и несовпадение с required",
+      "прогоны: go test ./... в tools/agentctl зелёный (181.9 с), devkitctl test codex_snap_test harness_test зелёный (35 тестов), regcheck на main красный для Go-тестов профиля и обоих питоньих файлов"
+    ],
+    "result": "checked"
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Съёмщик codex.sh делает одну работу: обмен с app-server и печать снимка, файлы не трогает. Ключ optional лёг в существующую валидацию секции [quota] обоих парсеров без посторонней логики.",
+      "evidence": [
+        {
+          "object": "codex.sh",
+          "location": "kit/harness/snap/codex.sh",
+          "observation": "только съём и разбор ответа, запись снимка осталась agentctl"
+        },
+        {
+          "object": "validateQuota",
+          "location": "tools/agentctl/harness.go 474-484",
+          "observation": "новая проверка стоит в существующей функции валидации квоты"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Скрипт зовёт штатный app-server по его публичному JSON-RPC и вызывается agentctl через контракт съёмщика DK-033; внутренние детали agentctl не понадобились.",
+      "evidence": [
+        {
+          "object": "контракт съёмщика",
+          "location": "docs/lld/DK-033-universal-kit.md, «Контракт съёмщика»",
+          "observation": "stdin не даётся, окружение DEVKIT_HARNESS, stdout это снимок, отказ ненулевым кодом с причиной в stderr; скрипт контракту следует"
+        },
+        {
+          "object": "вызов",
+          "location": "tools/agentctl/usage.go snapByScript",
+          "observation": "скрипт запускается как чёрный ящик, вывод разбирается общим парсером снимков"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Классификация окон живёт в одном месте, в скрипте; Go про длины окон не знает. Зеркальные парсеры профиля это записанное решение DK-033, третий экземпляр не появился: optional добавлен в оба существующих.",
+      "evidence": [
+        {
+          "object": "зеркало парсеров",
+          "location": "tools/agentctl/harness.go, tools/devkitctl/harness.py",
+          "observation": "проверки optional совпадают формулировками, новой копии логики нет"
+        },
+        {
+          "object": "классификация окон",
+          "location": "kit/harness/snap/codex.sh, словарь WINDOWS",
+          "observation": "длины 10080 и 300 переведены в имена бакетов только здесь"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых зависимостей нет: скрипт использует python3 stdlib и codex из PATH. Ключ optional решает конкретную задачу перерывистого пятичасового окна.",
+      "evidence": [
+        {
+          "object": "импорты скрипта",
+          "location": "kit/harness/snap/codex.sh, строка 18",
+          "observation": "datetime, json, queue, subprocess, sys, threading, time, всё stdlib"
+        },
+        {
+          "object": "optional",
+          "location": "docs/lld/DK-033-universal-kit.md, таблица [quota]",
+          "observation": "ключ описан в доке формата"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Допустимые входы и выходы съёмщика определены контрактом DK-033 и шапкой скрипта: окружение, stdout, stderr, ненулевой код отказа; разбор ответа перечисляет формы и отказывается от нераспознаваемых. Пробел одной формы ответа записан отдельным замечанием (ARCH-012, ARCH-014).",
+      "evidence": [
+        {
+          "object": "контракт",
+          "location": "docs/lld/DK-033-universal-kit.md 510-533",
+          "observation": "вход, выход и отказ съёмщика расписаны"
+        },
+        {
+          "object": "разбор форм ответа",
+          "location": "kit/harness/snap/codex.sh 97-137",
+          "observation": "нетризуальный result, карта без codex, окно без процента и незнакомая длина отказаны"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Обязательность недельного окна защищена дважды: скрипт отказывает без week_all и snapByScript отдельно требует q.Required в выводе съёмщика; полнота считается в одном месте, missingQuotaBuckets, и оба потребителя (complete и refusal) идут от него.",
+      "evidence": [
+        {
+          "object": "двойная защита required",
+          "location": "kit/harness/snap/codex.sh 133-137 и tools/agentctl/usage.go 474-476",
+          "observation": "отказ и в скрипте, и в вызывающем agentctl"
+        },
+        {
+          "object": "полнота",
+          "location": "tools/agentctl/quota_json.go 54, 73",
+          "observation": "missing считается один раз и кормит оба поля вердикта"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "optional это добавление: схема профиля расширена, версия agentctl/quota осталась 1, у профилей без ключа список missing не меняется, что проверено кейсом glm в TestQuotaJSONCodexWindows.",
+      "evidence": [
+        {
+          "object": "версия ответа",
+          "location": "tools/agentctl/quota_json.go 17",
+          "observation": "quotaJSONVersion = 1 не тронута"
+        },
+        {
+          "object": "строгость старых профилей",
+          "location": "tools/agentctl/quota_json_test.go 131-145",
+          "observation": "glm без optional и без окна остаётся неполным и недоступным"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Источник истины снимков это файл quota/codex.local; пишет его только agentctl атомарно, съёмщик и дашборд только читают. Право записи не расширялось.",
+      "evidence": [
+        {
+          "object": "запись снимка",
+          "location": "tools/agentctl/quota.go 638-651",
+          "observation": "q.write пишет атомарно, других писателей нет"
+        },
+        {
+          "object": "дашборд",
+          "location": "tools/dashboard/quota.go 177-202",
+          "observation": "демон только читает готовые файлы каталога квот"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Порождённый app-server освобождается владельцем при любом исходе: kill и wait в finally, включая SystemExit от честного отказа и исключение разбора; тест ждёт фактической смерти процесса по pid.",
+      "evidence": [
+        {
+          "object": "finally",
+          "location": "kit/harness/snap/codex.sh 153-159",
+          "observation": "kill() доходит и к отказу, и к сломанному разбору"
+        },
+        {
+          "object": "тест смерти",
+          "location": "tools/devkitctl/codex_snap_test.py test_damaged_answer_refuses_and_kills_server",
+          "observation": "поллинг os.kill(pid, 0) до исчезновения процесса"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Обмен однопоточный поверх нити-читателя с очередью; конкурентный доступ к файлу снимка закрыт атомарной записью и общим замком refreshLockPath у периодического съёма, обе механики существовали до правки.",
+      "evidence": [
+        {
+          "object": "нить и очередь",
+          "location": "kit/harness/snap/codex.sh 44-51",
+          "observation": "чтение отдельной нитью, обоснование выбора в комментарии"
+        },
+        {
+          "object": "замок съёма",
+          "location": "tools/agentctl/run.go 167-186",
+          "observation": "общий замок quota-refresh.lock остался прежним"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ответ app-server проверяется по форме на границе: тип result, карта лимитов, обязательный целый usedPercent, длина окна из замкнутого словаря. Семантический пробел одной формы (существующее окно с null-длиной выдано за отсутствие) записан замечанием 1 и отражён в ARCH-012 и ARCH-014.",
+      "evidence": [
+        {
+          "object": "проверки формы",
+          "location": "kit/harness/snap/codex.sh 97-131",
+          "observation": "isinstance-проверки и отказ от нераспознаваемых форм"
+        },
+        {
+          "object": "схема",
+          "location": "/private/tmp/devkit-codex-quota-schema-20261113/v2/GetAccountRateLimitsResponse.json",
+          "observation": "типы полей окна сверены со схемой"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "Нарушено: существующий объект окна с windowDurationMins = null молча выбрасывается при классифицированном недельном окне, съёмщик выходит нулём, и неполный ответ выдаётся за полное отсутствие необязательного окна (complete = true, available = true). Условие, последствие и проверка записаны замечанием 1 в разделе «Ревью» файла задачи.",
+      "evidence": [
+        {
+          "object": "молчаливый пропуск",
+          "location": "kit/harness/snap/codex.sh 121-127",
+          "observation": "length is None уходит в unclassified и continue, провал виден только когда нет week_all"
+        },
+        {
+          "object": "тест фиксирует неверное",
+          "location": "tools/devkitctl/codex_snap_test.py test_null_duration_window_not_a_bucket",
+          "observation": "ждёт rc = 0 и одну строку week_all при существующем окне с null-длиной"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Повторов вызова нет: один обмен на съём; ожидание ограничено общим потолком 30 с через monotonic-часы, зависший сервер не держит сборщик.",
+      "evidence": [
+        {
+          "object": "потолок",
+          "location": "kit/harness/snap/codex.sh 22, 52, 62-69",
+          "observation": "deadline на весь обмен, истечение отказывает с причиной"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "Нарушено: состояние «окна нет» (secondary = null) и «окно есть, но длина не прислана» (объект с windowDurationMins = null) неразличимы в исходе съёма, хотя это разные состояния протокола. Диагностика требует различать их; подробности в замечании 1.",
+      "evidence": [
+        {
+          "object": "неразличимые исходы",
+          "location": "kit/harness/snap/codex.sh 116-127",
+          "observation": "window is None и length is None дают один исход: окно не попадает в снимок"
+        },
+        {
+          "object": "форма ответа",
+          "location": "схема GetAccountRateLimitsResponse",
+          "observation": "secondary допускает и null, и объект окна с nullable-полями, формы различимы"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Читается ровно один метод account/rateLimits/read без модельного хода; на stdout едут только проценты и даты сброса, токены и данные учётной записи не печатаются, stderr сервера отброшен.",
+      "evidence": [
+        {
+          "object": "единственный вызов",
+          "location": "kit/harness/snap/codex.sh 93",
+          "observation": "после initialized один запрос чтения лимитов"
+        },
+        {
+          "object": "выход",
+          "location": "kit/harness/snap/codex.sh 142-152",
+          "observation": "печатаются taken и строки бакетов, другого вывода нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Последовательность обмена прослежена целиком: initialize (id 1), initialized, account/rateLimits/read (id 2); посторонние сообщения пропускаются, ответы сопоставляются по id. Состав сверен с подъёмом дашборда appSpawn.",
+      "evidence": [
+        {
+          "object": "обмен",
+          "location": "kit/harness/snap/codex.sh 86-96",
+          "observation": "три сообщения, сверка по id"
+        },
+        {
+          "object": "образец",
+          "location": "tools/dashboard/appchat.go 198-204",
+          "observation": "дашборд поднимает app-server тем же составом приветствия"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Съём не транзакционен по сети, но запись снимка атомарна и происходит только после полного разбора: половины снимка на диске не бывает, отказ оставляет прежний файл.",
+      "evidence": [
+        {
+          "object": "атомарная запись",
+          "location": "tools/agentctl/quota.go 638-651",
+          "observation": "комментарий и реализация write"
+        },
+        {
+          "object": "отказ без записи",
+          "location": "tools/agentctl/usage.go 457-476",
+          "observation": "любой отказ съёмщика возвращает ошибку до записи"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Коллекционных запросов нет: один вызов app-server на один съём, перебора элементов и скрытых ленивых загрузок в диффе нет.",
+      "evidence": [
+        {
+          "object": "объём обмена",
+          "location": "kit/harness/snap/codex.sh 86-96",
+          "observation": "по одному сообщению на шаг, циклов запросов нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Слои не размазаны: скрипт только снимает и печатает, разбор и валидация снимка в quota.go, отображение в дашборде своей разборкой, валидация профиля в парсерах. Правка сохранила это деление.",
+      "evidence": [
+        {
+          "object": "разбор снимка",
+          "location": "tools/agentctl/quota.go parseBucket 603-626",
+          "observation": "разбор остался в одном месте"
+        },
+        {
+          "object": "дашборд",
+          "location": "tools/dashboard/quota.go parseQuotaSnapshot",
+          "observation": "демон разбирает строки снимка независимо, правка его не тронула"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Правка не дорабатывает legacy- или deprecated-механизмы: съёмщик новый, ключ optional новый, существующий код квот не deprecated.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff 9917578f7..de148f7a3",
+          "observation": "новый скрипт, секция профиля и ключ, существующий код не помечен устаревшим"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Правка не является исправлением безопасности или совместимости в стабильной ветке: обычная фича в ветке задачи от main.",
+      "evidence": [
+        {
+          "object": "ветка",
+          "location": "dk-1706, база 9917578f7",
+          "observation": "пять коммитов фичи, горячих правок нет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Значение optional прослежено от чтения до использования: t.Arr(\"optional\") в quotaSpecOf, поле quotaSpec.Optional, единственный потребитель missingQuotaBuckets; spend и required пути ключ не читают, полнота и доступность идут от одного списка.",
+      "evidence": [
+        {
+          "object": "путь ключа",
+          "location": "tools/agentctl/harness.go 1206, tools/agentctl/quota.go 173, tools/agentctl/quota_json.go 89",
+          "observation": "чтение, поле и единственное использование"
+        },
+        {
+          "object": "зеркало",
+          "location": "tools/devkitctl/harness.py 37-38",
+          "observation": "питоний парсер читает тот же ключ профиля"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сценарий выбора реален: живая фиксация от 2026-11-13 не содержит пятичасового окна вовсе, и без optional подписка выглядела бы неполной навсегда при рабочем недельном остатке.",
+      "evidence": [
+        {
+          "object": "живой ответ",
+          "location": "tools/devkitctl/codex_snap_test.py LIVE_RESULT",
+          "observation": "secondary = null, окно одно, фиксация снята с настоящей подписки"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "optional это объявление формата профиля в репозитории, а не изменяемые машинные данные; статус подписки в ответе сервера на него не влияет.",
+      "evidence": [
+        {
+          "object": "место ключа",
+          "location": "kit/harness/codex.toml [quota]",
+          "observation": "профиль репозитория, машинный слой его не переопределяет"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имя, тип и смысл optional расписаны в таблице DK-033 (массив строк, по умолчанию отсутствует, отсутствие бакета не пробел); применяется при загрузке профиля, конфликтующих источников нет.",
+      "evidence": [
+        {
+          "object": "дока формата",
+          "location": "docs/lld/DK-033-universal-kit.md, строка optional в таблице [quota]",
+          "observation": "смысл и тип записаны"
+        },
+        {
+          "object": "умолчание",
+          "location": "tools/agentctl/quota.go 170-173",
+          "observation": "пустой список у профилей без ключа"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Второго способа переопределения полноты не появилось: один ключ, одна семантика, пометки partial и borrowed остались со своими смыслами.",
+      "evidence": [
+        {
+          "object": "соседние механики",
+          "location": "tools/agentctl/quota.go markPartial, parseNote",
+          "observation": "существующие пометки не тронуты, optional не дублирует их"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Неверное сочетание optional с buckets или required даёт ошибку с именем ключа, файла и значением в обоих парсерах; молчаливого съезда на умолчание нет.",
+      "evidence": [
+        {
+          "object": "ошибки валидации",
+          "location": "tools/agentctl/harness.go 477-484, tools/devkitctl/harness.py 400-406",
+          "observation": "формулировки называют ключ и бакет"
+        },
+        {
+          "object": "тесты отказа",
+          "location": "tools/devkitctl/harness_test.py QuotaOptionalTest",
+          "observation": "вне buckets и на required отказ проверены"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Глазами потребителя проверено тестами и сценарием: минимальный профиль (optional валиден), смена одной опции (optional-gap против incomplete в TestQuotaJSONReadOnlyRefusals), неверный ввод (QuotaOptionalTest), живые шаги сценария в файле задачи.",
+      "evidence": [
+        {
+          "object": "смена одной опции",
+          "location": "tools/agentctl/quota_json_test.go 26-30, 61",
+          "observation": "одно и то же снятое окно с optional и без даёт разные вердикты"
+        },
+        {
+          "object": "живой путь",
+          "location": "docs/tasks/DK-1706.md, сценарий проверки",
+          "observation": "шаги refresh и quota --json описаны для машины с входом Codex"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имена по назначению: WINDOWS, unclassified, missingQuotaBuckets, quotaSpec.Optional; файл codex_snap_test.py лёг в семейство <имя>_snap_test.py рядом с mimo_snap_test.py и snap_test.py.",
+      "evidence": [
+        {
+          "object": "семейство тестов",
+          "location": "tools/devkitctl/",
+          "observation": "snap_test.py, mimo_snap_test.py, codex_snap_test.py"
+        },
+        {
+          "object": "имена",
+          "location": "kit/harness/snap/codex.sh, tools/agentctl/quota.go",
+          "observation": "имена отражают предмет"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имя соответствует поведению: optional действительно необязателен только для полноты, required остаётся обязательным везде; fail() именно отказывает.",
+      "evidence": [
+        {
+          "object": "optional",
+          "location": "tools/agentctl/quota_json.go 86-93",
+          "observation": "пропуск только в подсчёте missing, Available и дальше со своими причинами"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Одни и те же смыслы названы одинаково во всех частях: week_all и window5h_all в скрипте, профиле, Go и разборке дашборда; префиксы bucketWindows покрывают оба имени.",
+      "evidence": [
+        {
+          "object": "имена бакетов",
+          "location": "kit/harness/codex.toml, kit/harness/snap/codex.sh, tools/agentctl/quota.go 72-84",
+          "observation": "сквозные имена без переименований"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Единицы видны в именах: DEADLINE_SECS, windowDurationMins из протокола, resetsAt как unix-секунды протокола; проценты в выводе маркированы знаком %.",
+      "evidence": [
+        {
+          "object": "имена с единицами",
+          "location": "kit/harness/snap/codex.sh 22-25",
+          "observation": "потолок в секундах, длины окон в минутах из ответа"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Короткие имена только в узкой области (send, fail, answer внутри скрипта), предметные имена наружу; имён-пустышек нет.",
+      "evidence": [
+        {
+          "object": "область имён",
+          "location": "kit/harness/snap/codex.sh",
+          "observation": "локальные помощники однострочны, общие имена предметны"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый параметр используется: Optional читается missingQuotaBuckets и валидатором; неиспользуемых параметров правка не добавила.",
+      "evidence": [
+        {
+          "object": "потребитель",
+          "location": "tools/agentctl/quota_json.go 89",
+          "observation": "поле читается на каждом подсчёте полноты"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Возвращаемое missingQuotaBuckets потребляется дважды (complete и refusal) в cmdQuotaJSON; игнорируемых результатов нет.",
+      "evidence": [
+        {
+          "object": "вызовы",
+          "location": "tools/agentctl/quota_json.go 54, 73",
+          "observation": "список missing уходит в оба поля вердикта"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Правка не удаляет параметров, полей и вычислений; единственное удаление это gofmt-выравнивание поля Warns без смены смысла.",
+      "evidence": [
+        {
+          "object": "дифф harness.go",
+          "location": "git diff 9917578f7..de148f7a3",
+          "observation": "только выравнивание и добавления"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Скрипт ведёт одну связную операцию обмена с ясным основным путём; валидаторы расширены одной проверкой без подмешивания чужих задач.",
+      "evidence": [
+        {
+          "object": "структура",
+          "location": "kit/harness/snap/codex.sh 81-152",
+          "observation": "линейный обмен, разбор, печать"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Литералы с предметным смыслом названы: 30 это DEADLINE_SECS, длины окон в словаре WINDOWS, потолок процента 100 прокомментирован у min.",
+      "evidence": [
+        {
+          "object": "именованные литералы",
+          "location": "kit/harness/snap/codex.sh 22, 25, 148",
+          "observation": "константы и словарь вместо рассыпанных чисел"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Основной путь и отказы читаются прямо: try/except/finally, ранние fail с причиной; уплотнение порядок действий не прячет.",
+      "evidence": [
+        {
+          "object": "структура",
+          "location": "kit/harness/snap/codex.sh 81-159",
+          "observation": "основной путь, ветки отказа, finally с kill"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Форма принята языком: sh-обёртка с heredoc повторяет семейство snap/, Go выровнен gofmt (Warns), python идиоматичен; проверка символов по изменённым файлам прошла чисто.",
+      "evidence": [
+        {
+          "object": "gofmt",
+          "location": "tools/agentctl/harness.go 677-680",
+          "observation": "выравнивание Warns приведено к gofmt"
+        },
+        {
+          "object": "символы",
+          "location": "hooks/check-symbols.py по 9 изменённым файлам",
+          "observation": "выход 0"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Отказы несут причину и контекст: имя метода, окно, длина, обрезанный дамп ответа; OSError и исключение разбора попадают в сообщение с представлением %s/%r.",
+      "evidence": [
+        {
+          "object": "сообщения",
+          "location": "kit/harness/snap/codex.sh 33, 59, 91-136",
+          "observation": "каждый отказ называет место и причину"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сообщения объясняют, что не получилось, и как действовать (переснять, проверить вход); внутренних адресов и секретов нет. Потеря stderr самого сервера осознана: причина сводится к словам JSON-RPC и исходу процесса.",
+      "evidence": [
+        {
+          "object": "диагностика",
+          "location": "kit/harness/snap/codex.sh 40-42, 65-71",
+          "observation": "истечение, смерть процесса и отказ метода названы отдельно"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарии объясняют неочевидное: почему нить с очередью, почему позиция окна не значит длину, почему null не подменяется нулём. Комментарий про null-длину после исправления замечания 1 перепишется вместе с поведением.",
+      "evidence": [
+        {
+          "object": "комментарии",
+          "location": "kit/harness/snap/codex.sh 20-25, 44-45, 79-85, 124-126",
+          "observation": "причины, а не пересказ"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Публичная операция съёмщика описана контрактом DK-033 и шапкой скрипта: вход, выход, отказ, ограничения (без модельного хода, только проценты и даты).",
+      "evidence": [
+        {
+          "object": "шапка",
+          "location": "kit/harness/snap/codex.sh 1-9",
+          "observation": "контракт и границы названы со ссылкой на LLD"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Правка едет с тестами обоих языков: 13 изолированных тестов съёмщика, кейсы optional-gap и профиля в Go, зеркальная валидация в python; regcheck-ом подтверждена краснота переносимых тестов на main.",
+      "evidence": [
+        {
+          "object": "новые тесты",
+          "location": "tools/devkitctl/codex_snap_test.py, tools/agentctl/quota_json_test.go, tools/agentctl/quota_test.go",
+          "observation": "покрыты разбор, профиль, полнота, отказы, смерть процесса"
+        },
+        {
+          "object": "прогоны",
+          "location": "дерево задачи",
+          "observation": "go test ./... зелёный, devkitctl test зелёный"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Фича, а не баг, но новые тесты проверены на красноту базы: regcheck по tools/agentctl/quota_test.go и harness_test.go краснеет на main и зелёный на ветке, оба питоньих файла тем же прогоном. Для quota_json_test.go перенос regcheck-ом невозможен (тест прямо пишет q.Optional, в базе поля нет), это ограничение утилиты; поведение optional-gap на базе покрыто краснотой профиля целиком.",
+      "evidence": [
+        {
+          "object": "regcheck Go",
+          "location": "regcheck -C tools/agentctl --base main --tests quota_test.go,harness_test.go",
+          "observation": "красный на main, зелёный на ветке"
+        },
+        {
+          "object": "regcheck Python",
+          "location": "regcheck --base main --tests codex_snap_test.py,harness_test.py",
+          "observation": "красный на main, зелёный на ветке"
+        },
+        {
+          "object": "непереносимый тест",
+          "location": "tools/agentctl/quota_json_test.go 29",
+          "observation": "q.Optional отсутствует в базе, перенос не собирается"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Пирамида соблюдена: юниты разбора и валидации в обоих языках, стык скрипта с контрактом через заглушку codex на PATH, живой съём вынесен шагами сценария проверки.",
+      "evidence": [
+        {
+          "object": "юниты",
+          "location": "tools/devkitctl/codex_snap_test.py, tools/agentctl/quota_json_test.go",
+          "observation": "разбор и вердикты в изоляции"
+        },
+        {
+          "object": "стык",
+          "location": "codex_snap_test.py stub_body",
+          "observation": "скрипт целиком против подменного codex"
+        },
+        {
+          "object": "живой уровень",
+          "location": "docs/tasks/DK-1706.md, сценарий",
+          "observation": "три живых шага с настоящим входом"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Тип теста соответствует зависимостям: изолированные прогоны идут через sandbox_env с подменным PATH и временными каталогами, сети и живого клиента нет; живая фиксация это записанный литерал, сверенный с файлом диспетчера дословно.",
+      "evidence": [
+        {
+          "object": "изоляция",
+          "location": "tools/devkitctl/testenv.py run, sandbox_env",
+          "observation": "окружение подменяется, stdin закрыт"
+        },
+        {
+          "object": "фикстура",
+          "location": "/private/tmp/DK-1706-rate-limits-live.json против LIVE_RESULT",
+          "observation": "сравнение дословное, совпадает"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Каждый тест поставлен под конкретную правку и назван в докстринге: карта против одиночного вида, потолок процента, нетронутое окно, смерть процесса, повреждённый ответ.",
+      "evidence": [
+        {
+          "object": "докстринги",
+          "location": "tools/devkitctl/codex_snap_test.py",
+          "observation": "тринадцать тестов с предметными ожиданиями"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "violated",
+      "reason": "Мутации прогонялись широко (незнакомая длина, повреждённый ответ, смерть, ошибка источника, перевес процента), но мутация «существующему окну не прислана длина» не валит ни один тест: test_null_duration_window_not_a_bucket закрепляет успех вместо диагностики. Это та же проблема, что в замечании 1; после исправления мутация обязана краснеть.",
+      "evidence": [
+        {
+          "object": "непойманная мутация",
+          "location": "kit/harness/snap/codex.sh 121-127 + tools/devkitctl/codex_snap_test.py 188-196",
+          "observation": "окно с null-длиной теряется, тест ждёт rc = 0"
+        },
+        {
+          "object": "пойманные мутации",
+          "location": "codex_snap_test.py 111-238",
+          "observation": "остальные формы мутаций покрыты отказами"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Время детерминировано: потолок на monotonic-часах, даты в тестах проверяются регулярным выражением, ожидание смерти процесса ограничено поллингом со счётчиком; sleep наугад нет.",
+      "evidence": [
+        {
+          "object": "monotonic",
+          "location": "kit/harness/snap/codex.sh 52",
+          "observation": "deadline от time.monotonic()"
+        },
+        {
+          "object": "поллинг",
+          "location": "codex_snap_test.py 230-238",
+          "observation": "100 итераций по 0.05 с с выходом по исчезновению pid"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Живой обмен с настоящим app-server сознательно вынесен из автоматических тестов в шаги сценария с пометкой «живой шаг, исключение обкатки»: это записано в файле задачи, изоляция остальных тестов от клиента полная.",
+      "evidence": [
+        {
+          "object": "живое исключение",
+          "location": "docs/tasks/DK-1706.md, сценарий проверки",
+          "observation": "три живых шага помечены и исключены из обкатки"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Подмена дома соблюдена: питоньи тесты идут через sandbox_env с временными каталогами, Go-тесты пишут снимки и harness.local в t.TempDir; в боевой ~/.devkit прогоны ничего не оставляют (полный набор agentctl зелёный под сторожем runsguard).",
+      "evidence": [
+        {
+          "object": "временные каталоги",
+          "location": "codex_snap_test.py snap(), quota_json_test.go t.TempDir()",
+          "observation": "все записи во временные каталоги"
+        },
+        {
+          "object": "полный прогон",
+          "location": "go test ./... tools/agentctl",
+          "observation": "прошёл без находок сторожа"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок документа «Архитектура devkit», требование не несёт; сами требования разобраны по блокам ниже.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/ARCHITECTURE.md, строка 1",
+          "observation": "заголовок"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверены оба уровня: общие ARCH/STYLE/TEST выше и проектные блоки этого документа по строкам.",
+      "evidence": [
+        {
+          "object": "уровни",
+          "location": "настоящий отчёт",
+          "observation": "общие и проектные правила заполнены по одному предмету правки"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Границы», самостоятельного требования не несёт.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Раскладка соблюдена по README «Раскладка»: новый sh-файл лёг в kit/harness/snap/ рядом с glm-code.sh и mimo.sh, Go-правки в tools/agentctl, python в tools/devkitctl, дока в docs/lld.",
+      "evidence": [
+        {
+          "object": "места файлов",
+          "location": "kit/harness/snap/codex.sh, tools/agentctl/*, tools/devkitctl/*",
+          "observation": "граница go/python/sh соблюдена, новое место согласовано с README"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Дашборд-код не менялся: правка в kit, tools/agentctl и tools/devkitctl, домены дашборда не затронуты.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "файлов tools/dashboard в диффе нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "HTTP-маршруты и хендлеры дашборда не менялись; новый снимок читается существующей ручкой api/quota.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Строки доски правкой не трогались; файл задачи вёл taskctl, дашборд в диффе отсутствует.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "только docs/tasks/DK-1706.md и код утилит"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Копий пакетов internal не появилось: дашборд не менялся, agentctl использует свои существующие пакеты.",
+      "evidence": [
+        {
+          "object": "импорты",
+          "location": "tools/agentctl/harness.go, quota.go",
+          "observation": "новых импортов internal нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Инварианты», требование не несёт; конкретные инварианты разобраны по своим блокам.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "writeJSON и parseReplies дашборда не менялись; правка дашборд не трогает.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Разметка вызовов в репликах не менялась; правка про квоты, поверхность чата не тронута.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Поверхность чата не менялась.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Механизм prepared-вопросов не менялся.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/taskctl и дашборд в диффе отсутствуют"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Форма задачи дашборда не менялась.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "static/app.js не менялся"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Форма черновика не менялась.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "static/app.js не менялся"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Память процесса дашборда не менялась.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3b1e41ceae5295a7",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Подъём чатов обёрткой agentctl exec не менялся; правка касается съёма квот, не чата.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "appchat.go не менялся"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-91fb2123abfa64cb",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Занятость хода открывается до отправки реплики и гасится\n  уведомлением конца хода, смерть процесса записывается в ленту словами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Дорога чужого протокола соблюдена и для квот: съёмщик Codex идёт app-server (initialize/initialized/account/rateLimits/read), tmux и HTTP не используются; состав приветствия сверен с appSpawn дашборда.",
+      "evidence": [
+        {
+          "object": "app-server дорога",
+          "location": "kit/harness/snap/codex.sh 86-96",
+          "observation": "JSON-RPC обмен вместо tmux"
+        },
+        {
+          "object": "сверка с дашбордом",
+          "location": "tools/dashboard/appchat.go 198-204",
+          "observation": "тот же состав clientInfo и capabilities"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Сетевых вызовов в дереве дашборда правка не добавила: съёмщик это подпроцесс agentctl, дашборд остаётся на своих двух местах сети.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Поднимаемый процесс получает рабочий каталог: snapByScript назначает cmd.Dir через panelDir (тот же DK-1373), внутренний subprocess наследует его; комментарий у назначения сохранён.",
+      "evidence": [
+        {
+          "object": "рабочий каталог",
+          "location": "tools/agentctl/usage.go 438-447",
+          "observation": "panelDir для съёмщика, обоснование DK-1373 в комментарии"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Куда кладётся новое», требование не несёт; места разобраны по следующим блокам.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Место каждого нового файла согласовано с README «Раскладка»: съёмщик в kit/harness/snap/ по образцу семьи, тест съёмщика в tools/devkitctl по образцу mimo_snap_test.py, дока в существующих LLD без новых файлов.",
+      "evidence": [
+        {
+          "object": "новые файлы",
+          "location": "kit/harness/snap/codex.sh, tools/devkitctl/codex_snap_test.py",
+          "observation": "оба легли в существующие семьи каталогов"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Нового домена дашборда нет.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела про восстановление конвейера, требование не несёт.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/ARCHITECTURE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "taskhead.Raise и подъём конвейера не менялись.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "соответствующих файлов в диффе нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "recovery.py не менялся.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "соответствующих файлов в диффе нет"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Механизм подтверждения запуска не менялся.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "соответствующих файлов в диффе нет"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок документа «Стиль devkit», требование не несёт; требования разобраны по блокам ниже.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/STYLEGUIDE.md, строка 1",
+          "observation": "заголовок"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общий стандарт и проектные дополнения проверены вместе: общие STYLE выше, раскладка тестов и имена ниже.",
+      "evidence": [
+        {
+          "object": "уровни",
+          "location": "настоящий отчёт",
+          "observation": "оба уровня заполнены"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Ошибки и отказы», требование не несёт.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "codex.sh не проверочная утилита: его контракт это снимок в stdout и отказ причиной в stderr ненулевым кодом по DK-033, троица кодов 0/1/2 проверочных утилит к съёмщику не относится.",
+      "evidence": [
+        {
+          "object": "контракт съёмщика",
+          "location": "docs/lld/DK-033-universal-kit.md 510-533",
+          "observation": "иной род инструмента, чем check-*"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Рубежей hook-а правка не добавляла.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "hooks/ в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Раскладка тестов», требование не несёт.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Тесты лежат рядом со своими семьями: codex_snap_test.py в tools/devkitctl по образцу snap_test.py и mimo_snap_test.py (испытатель sh-съёмщиков один, питоний раннер), Go-тесты в tools/agentctl при модулях; общего файла на несколько модулей нет.",
+      "evidence": [
+        {
+          "object": "семейство",
+          "location": "tools/devkitctl/",
+          "observation": "snap_test.py, mimo_snap_test.py, codex_snap_test.py"
+        },
+        {
+          "object": "Go",
+          "location": "tools/agentctl/quota_json_test.go, quota_test.go",
+          "observation": "рядом с quota_json.go и quota.go"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Синтетика во временных каталогах: mkdtemp у python, t.TempDir() у Go; боевое дерево читано только там, где нужно (профиль репозитория), и не писано.",
+      "evidence": [
+        {
+          "object": "временные каталоги",
+          "location": "codex_snap_test.py snap(), quota_json_test.go codexSpec",
+          "observation": "заглушки и снимки только во временном"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Regcheck прогнан ревьювером на проверяемой версии: Go-тесты профиля и оба питоньих файла краснеют на main и проходят на ветке; непереносимость quota_json_test.go записана в TEST-002 с причиной.",
+      "evidence": [
+        {
+          "object": "прогоны regcheck",
+          "location": "две команды regcheck --base main",
+          "observation": "оба исхода подтверждены на машине ревью"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Стенд подменяет окружение целиком: sandbox_env собирает окружение с нуля с нужным PATH и DEVKIT_HARNESS, унаследованные переменные сессии в тесты не протекают.",
+      "evidence": [
+        {
+          "object": "подмена окружения",
+          "location": "tools/devkitctl/testenv.py sandbox_env, run",
+          "observation": "env задаётся явно, stdin закрыт"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Браузерный стенд дашборда правкой не затронут; живые шаги этой задачи это агентский сценарий съёмщика, а не живьёв дашборда.",
+      "evidence": [
+        {
+          "object": "состав диффа",
+          "location": "git diff --stat",
+          "observation": "tools/dashboard в диффе отсутствует"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок раздела «Имена», требование не несёт.",
+      "evidence": [
+        {
+          "object": "блок",
+          "location": "docs/STYLEGUIDE.md",
+          "observation": "заголовок раздела"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имя файла по семье и домену: codex_snap_test.py продолжает серию <субъект>_snap_test.py испытателей съёмщиков; в agentctl правки легли в существующие файлы семьи quota*.",
+      "evidence": [
+        {
+          "object": "имена файлов",
+          "location": "tools/devkitctl/codex_snap_test.py, tools/agentctl/quota*.go",
+          "observation": "следуют семьям"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Тексты правки выверены: комментарии и сообщения на русском без англицизмов ради них самих, код не одушевлён, прогон hooks/check-symbols.py по девяти изменённым файлам чист.",
+      "evidence": [
+        {
+          "object": "символы",
+          "location": "hooks/check-symbols.py",
+          "observation": "выход 0 по всем изменённым файлам правки"
+        }
+      ]
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -109,6 +110,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	}
 	defer log.Close()
 	server := exec.Command(bin, "serve")
+	server.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	server.Dir = st.e.proj
 	server.Env = os.Environ()
 	server.Stdout = log
@@ -116,7 +118,22 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { server.Process.Kill(); server.Wait() })
+	t.Cleanup(func() {
+		group := -server.Process.Pid
+		if err := syscall.Kill(group, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			t.Errorf("остановка группы dashboard: %v", err)
+		}
+		server.Wait()
+		var groupErr error
+		for range 100 {
+			groupErr = syscall.Kill(group, 0)
+			if groupErr == syscall.ESRCH {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Errorf("группа dashboard не исчезла: %v", groupErr)
+	})
 	base := "http://" + address
 	deadline := time.Now().Add(15 * time.Second)
 	for {

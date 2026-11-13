@@ -35,8 +35,8 @@ PROFILE_SCHEMA = (
     ("hooks", (("protocol", STR), ("config", STR), ("events", ARR),
                ("memory_index", STR))),
     ("quota", (("snap", STR), ("script", STR), ("buckets", ARR), ("required", STR),
-               ("spend_mini", ARR), ("spend_base", ARR), ("spend_pro", ARR),
-               ("spend_max", ARR), ("budget_based", BOOL))),
+               ("optional", ARR), ("spend_mini", ARR), ("spend_base", ARR),
+               ("spend_pro", ARR), ("spend_max", ARR), ("budget_based", BOOL))),
 )
 
 # Шестая секция, ось скиллов (docs/lld/DK-100-context-tree.md, раздел «Харнесы
@@ -394,6 +394,16 @@ def validate_quota(d):
     if req not in buckets:
         raise ProfileError("%s: [quota] required = %s, такого бакета нет в buckets"
                            % (d.name, quote(req)))
+    # Необязательный бакет живёт в подписке с перерывами: его нет на снимке
+    # это штатное состояние, а не пробел. Обязательным такой бакет быть не
+    # может, и ссылаться ему мимо buckets тоже.
+    for b in d.arr_of("quota", "optional"):
+        if b not in buckets:
+            raise ProfileError("%s: [quota] optional ссылается на бакет %s, которого нет в buckets"
+                               % (d.name, quote(b)))
+        if b == req:
+            raise ProfileError("%s: [quota] optional называет обязательный бакет %s"
+                               % (d.name, quote(b)))
     for key in spend:
         for b in d.arr_of("quota", key):
             if b not in buckets:

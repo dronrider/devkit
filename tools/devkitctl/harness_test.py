@@ -254,6 +254,36 @@ class CodexProfileTest(unittest.TestCase):
                           "интерактивной головы без хука конца хода профилю не положено")
 
 
+class QuotaOptionalTest(unittest.TestCase):
+    """Ключ optional секции [quota] валидируется синтетическим профилем:
+    элементы обязаны стоять в buckets, а обязательный бакет необязательным
+    стать не может. Зеркальная валидация agentctl покрыта своими тестами.
+    """
+
+    def validate(self, quota):
+        text = ('[detect]\n[rules]\nmode = "embed"\n[delegate]\nmode = "none"\n'
+                '[hooks]\nprotocol = "codex"\n[quota]\n'
+                'snap = "script"\nscript = "snap/probe.sh"\n'
+                'buckets = ["week_all", "window5h_all"]\nrequired = "week_all"\n'
+                + quota +
+                'spend_mini = ["week_all"]\nspend_base = ["week_all"]\n'
+                'spend_pro = ["week_all"]\nspend_max = ["week_all"]\n')
+        harness.validate_profile(harness.parse("probe.toml", text))
+
+    def test_optional_bucket_passes(self):
+        self.validate('optional = ["window5h_all"]\n')
+
+    def test_optional_outside_buckets_refused(self):
+        with self.assertRaises(harness.ProfileError) as ctx:
+            self.validate('optional = ["month_plan"]\n')
+        self.assertIn("optional", str(ctx.exception))
+
+    def test_required_bucket_not_optional(self):
+        with self.assertRaises(harness.ProfileError) as ctx:
+            self.validate('optional = ["week_all", "window5h_all"]\n')
+        self.assertIn("обязательный", str(ctx.exception))
+
+
 class ProjectNarrowingTest(SandboxCase):
     """Проектный слой только сужает машинный список: профиль embed-tool на
     месте, но в машинном слое его нет, и сужением его не включить. Остаться

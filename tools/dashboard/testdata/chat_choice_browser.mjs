@@ -52,6 +52,10 @@ try {
     const response = page.waitForResponse((r) => r.url().endsWith("/say") && r.request().method() === "POST");
     await page.getByRole("button", { name, exact: true }).click();
     assert.equal((await response).status(), status);
+    await page.waitForFunction(() => {
+      const button = document.querySelector(".csend");
+      return button && !button.disabled;
+    });
   };
   await submit("По рекомендации");
   assert.equal(sent.at(-1).text, "");
@@ -145,7 +149,30 @@ try {
   await radio.nth(1).locator("..").click();
   assert.equal(await page.locator("input.caskpick[type=radio]:disabled").nth(1).isChecked(), true, "новая radio group сохраняет старый выбор");
   await page.route("**/say", (route) => route.fulfill({ json: { way: "ask" } }));
-  await submit("Мой вариант");
+  await page.evaluate(() => {
+    window.choiceResponseGate = {};
+    const text = Response.prototype.text;
+    Response.prototype.text = async function (...args) {
+      const body = await text.apply(this, args);
+      if (this.url.endsWith("/say")) {
+        Response.prototype.text = text;
+        window.choiceResponseGate.blocked = true;
+        await new Promise((resolve) => { window.choiceResponseGate.release = resolve; });
+      }
+      return body;
+    };
+  });
+  let submitted = false;
+  const sending = submit("Мой вариант").then(() => { submitted = true; });
+  await page.waitForFunction(() => window.choiceResponseGate.blocked);
+  try {
+    assert.equal(await radio.count(), 2, "до обработки ответа выбор остаётся активным");
+    assert.equal(await send.isDisabled(), true, "отправка ждёт обработки ответа");
+    assert.equal(submitted, false, "submit не завершается до обработки тела ответа");
+  } finally {
+    await page.evaluate(() => window.choiceResponseGate.release());
+  }
+  await sending;
   assert.equal(await radio.count(), 0, "повтор того же выбора подтверждает новый экземпляр вопроса");
   await page.unroute("**/say");
   await page.setViewportSize({ width: 320, height: 800 });

@@ -237,6 +237,86 @@ func TestQueueDrainDoesNotWaitLock(t *testing.T) {
 	}
 }
 
+// TestQueueDrainLockSurvivesForkedCopy: снятие замка разлива обязано идти
+// явным LOCK_UN и не связываться временем жизни дескриптора. Замок висит на
+// описании открытого файла, и Close отпускает его только вместе с последней
+// ссылкой на описание, а такую ссылку держит ребёнок конкурирующего fork
+// между fork и exec: под нагрузкой полного прогона окно переживает возврат
+// разлива, и подряд идущие заходы queue ловили «другой разлив уже идёт».
+// Тест дублирует дескриптор замка тем же dup, каким описание наследуется при
+// fork, и держит копию за возвратом разлива: следующий заход обязан пройти,
+// а не отбиться занятостью замка.
+func TestQueueDrainLockSurvivesForkedCopy(t *testing.T) {
+	root := queueSetup(t)
+	// Файл замка заводится заранее, чтобы поймать его дескриптор по иноду:
+	// разлив открывает тот же файл, и ничто его не переименовывает.
+	probe, err := os.OpenFile(filepath.Join(root, lockPath+".queue"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := probe.Stat()
+	probe.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSt, ok := want.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("инода замка разлива не прочиталась")
+	}
+	found := make(chan *os.File, 1)
+	stop := make(chan struct{})
+	go func() {
+		// Сканер идёт по номерам дескрипторов, а не по листингу /dev/fd:
+		// readdir на нём портится от транзитных дескрипторов, закрывшихся
+		// между листингом и fstatat, и отдаёт отказ целиком.
+		maxfd := 4096
+		var lim syscall.Rlimit
+		if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err == nil && lim.Cur < uint64(maxfd) {
+			maxfd = int(lim.Cur)
+		}
+		for {
+			for n := 3; n < maxfd; n++ {
+				var st syscall.Stat_t
+				if err := syscall.Fstat(n, &st); err != nil {
+					continue
+				}
+				if st.Dev != wantSt.Dev || st.Ino != wantSt.Ino {
+					continue
+				}
+				dup, err := syscall.Dup(n)
+				if err != nil {
+					continue
+				}
+				found <- os.NewFile(uintptr(dup), "копия замка разлива")
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+	if _, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	close(stop)
+	var forked *os.File
+	select {
+	case forked = <-found:
+		defer forked.Close()
+	case <-time.After(10 * time.Second):
+		t.Fatal("живой дескриптор замка разлива не пойман за время разлива")
+	}
+	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "другой разлив уже идёт") {
+		t.Fatalf("замок разлива не отпущен при живой копии описания: %q", msg)
+	}
+}
+
 // TestQueueLeavesOnRetryLimit: три повтора подряд это уже не нагрузка, и на
 // потолке строка уходит из очереди.
 func TestQueueLeavesOnRetryLimit(t *testing.T) {

@@ -167,6 +167,10 @@ type quotaSpec struct {
 	Script   string
 	Buckets  []string
 	Required string
+	// Optional это бакеты, которых в снимке может не быть: окно подписки
+	// живёт с перерывами, и его отсутствие это не пробел снимка. Пустой
+	// список у профилей, где каждое окно обязательное.
+	Optional []string
 	Spend    map[string][]string
 	// Расход в деньгах: съёмщику передаётся бюджет из машинного конфига.
 	BudgetBased bool

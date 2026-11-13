@@ -11,7 +11,7 @@ import (
 )
 
 func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
-	for _, name := range []string{"healthy", "missing", "stale", "future", "incomplete", "partial", "borrowed", "spent", "expired", "no-reset", "no-buckets"} {
+	for _, name := range []string{"healthy", "optional-gap", "missing", "stale", "future", "incomplete", "partial", "borrowed", "spent", "expired", "no-reset", "no-buckets"} {
 		t.Run(name, func(t *testing.T) {
 			q := glmSpec(t, filepath.Join(t.TempDir(), "quota.local"))
 			q.Buckets = []string{"week_all", "window5h_all"}
@@ -22,6 +22,11 @@ func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
 			case "future":
 				s.Taken = testNow.Add(time.Minute)
 			case "incomplete":
+				s.Buckets = s.Buckets[:1]
+			case "optional-gap":
+				// Пропавшее необязательное окно не пробел: у обязательных
+				// бакетов цифры на месте, и вердикт остаётся доступным.
+				q.Optional = []string{"window5h_all"}
 				s.Buckets = s.Buckets[:1]
 			case "partial":
 				s.Partial = map[string]string{"week_all": "нет ответа"}
@@ -53,7 +58,7 @@ func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
 			if got.Schema != "agentctl/quota" || got.Version != 1 || got.Harness != q.Harness {
 				t.Fatal(out)
 			}
-			if got.Available != (name == "healthy") {
+			if got.Available != (name == "healthy" || name == "optional-gap") {
 				t.Fatalf("%s: %s", name, out)
 			}
 			if !got.Available && got.Reason == "" {
@@ -75,6 +80,9 @@ func TestQuotaJSONRefusesParserWarnings(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// CODEX-TEST-CUT
+
 
 func TestQuotaJSONCLIIsReadOnly(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "agentctl")

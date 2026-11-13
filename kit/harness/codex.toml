@@ -39,7 +39,21 @@ map_max = "gpt-6-astra"
 # называет эту дорогу утилитам опроса подписок.
 protocol = "codex"
 
+# Остаток снимает kit/harness/snap/codex.sh: окна лимитов отдаёт штатный
+# codex app-server методом account/rateLimits/read, без модельного хода и
+# без открытого чата. Недельное окно обязательное, а пятичасового на подписке
+# может не быть вовсе, и оно объявлено необязательным: его отсутствие не делает
+# снимок неполным.
 [quota]
+snap = "script"
+script = "snap/codex.sh"
+buckets = ["week_all", "window5h_all"]
+required = "week_all"
+optional = ["window5h_all"]
+spend_mini = ["week_all", "window5h_all"]
+spend_base = ["week_all", "window5h_all"]
+spend_pro = ["week_all", "window5h_all"]
+spend_max = ["week_all", "window5h_all"]
 
 # Скиллы клиент подхватывает сам из пользовательского каталога навыков
 # контракта Codex, скан там автоматический, и указатель им не нужен.

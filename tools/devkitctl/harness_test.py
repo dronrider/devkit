@@ -246,10 +246,14 @@ class CodexProfileTest(unittest.TestCase):
     def test_machine_axes_are_empty(self):
         # Секция [hooks] у Codex называет чужой протокол и пуста сверх него:
         # настроек хуков формата claude-code у клиента нет, и по ключу дашборд
-        # узнаёт дорогу чата. Квота остаётся пустой: съёмщика остатка нет.
+        # узнаёт дорогу чата. Квоту снимает съёмщик из snap/codex.sh, и её
+        # объявление живёт в профиле (DK-1706). Головы задач у клиента нет.
         self.assertEqual(self.prof.str_of("hooks", "protocol"), "codex",
                          "протокол чата Codex профилем не назван")
-        self.assertFalse(self.prof.table("quota"), "секция [quota] непуста, а механики у Codex нет")
+        quota = self.prof.table("quota")
+        self.assertTrue(quota, "секция [quota] пуста, а остаток снимает snap/codex.sh")
+        self.assertEqual(self.prof.str_of("quota", "snap"), "script")
+        self.assertEqual(self.prof.str_of("quota", "script"), "snap/codex.sh")
         self.assertIsNone(self.prof.table("head"),
                           "интерактивной головы без хука конца хода профилю не положено")
 

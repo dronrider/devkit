@@ -552,6 +552,20 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		list = append(list, w)
 		busy[goal] = true
 	}
+	for _, entry := range s.appListRows("") {
+		st := s.chatStoreRead(entry.ID)
+		if st.GroomSource == "" || !sameGroomTree(st.GroomTree, projectPath) {
+			continue
+		}
+		c := s.appLive(entry.ID)
+		if c == nil || !c.busyNow() {
+			continue
+		}
+		list = append(list, Work{ID: st.GroomSource, Kind: "task", Via: workViaSession,
+			Session: entry.ID, Title: st.GroomSource + " груминг", Model: st.Model,
+			Harness: st.Harness, Live: workBusy, Started: st.Born})
+		busy[st.GroomSource] = true
+	}
 	list = append(list, s.sessionWorks(projectPath, prefix, rows, busy, alive)...)
 	// Заказ дожима стопа спрашивается разом на все работы: он лежит при имени
 	// окна, а не при задаче, и одной работе соответствует один заход в память

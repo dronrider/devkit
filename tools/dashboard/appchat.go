@@ -34,8 +34,8 @@ type appChat struct {
 	thread  string
 	project string
 
-	mu    sync.Mutex
-	busy  bool
+	mu     sync.Mutex
+	busy   bool
 	turnAt time.Time
 }
 
@@ -178,9 +178,14 @@ func (s *server) appDead(sid string) {
 // хвостом stderr, потому что причины входа клиент пишет именно туда.
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string) (*appChat, error) {
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
+	st := s.chatStoreRead(sid)
+	var env []string
+	if st.GroomSource != "" {
+		env = []string{"DEVKIT_TASK=" + st.GroomSource, "DEVKIT_GROOM_SOURCE=" + st.GroomSource, "DEVKIT_GROOM_MODE=" + st.GroomMode}
+	}
 	proc, err := appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
 		s.appNote(sid, method, params)
-	})
+	}, env...)
 	if err != nil {
 		return nil, err
 	}
@@ -386,6 +391,9 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		st.CxEffort = "medium"
 	}
 	dir := chatTree(found.Path, st.Task)
+	if st.GroomTree != "" {
+		dir = st.GroomTree
+	}
 	c := s.appLive(sid)
 	if c == nil {
 		var err error
@@ -429,6 +437,10 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 // настроек и тот же ход, что у живого разговора. tmux-механики дороге не нужны,
 // и ответ называет адрес ленты сразу, ждать родившейся сессии нечего.
 func (s *server) appStart(w http.ResponseWriter, found *Project, id, blank, text, model, harness, effort string) {
+	s.appStartRecord(w, found, id, blank, text, model, harness, effort, chatStore{})
+}
+
+func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank, text, model, harness, effort string, st chatStore) {
 	h := s.chatHarnessOf(model, harness)
 	if h == nil || !h.foreign() {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
@@ -436,8 +448,8 @@ func (s *server) appStart(w http.ResponseWriter, found *Project, id, blank, text
 		return
 	}
 	sid := "as" + msgID()
-	st := chatStore{Model: model, Harness: harness, Protocol: h.Protocol,
-		Task: id, Project: found.Name, Born: s.now().Unix(), CxEffort: effort}
+	st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
+	st.Task, st.Project, st.Born, st.CxEffort = id, found.Name, s.now().Unix(), effort
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}
@@ -455,10 +467,15 @@ func (s *server) appStart(w http.ResponseWriter, found *Project, id, blank, text
 		}
 	}
 	s.appSayRecord(sid, text)
-	c, err := s.appSpawn(sid, h, model, chatTree(found.Path, id), found.Name, "")
+	dir := chatTree(found.Path, id)
+	if st.GroomTree != "" {
+		dir = st.GroomTree
+	}
+	c, err := s.appSpawn(sid, h, model, dir, found.Name, "")
 	if err != nil {
 		msg := err.Error()
 		s.logf("разговор %s не поднялся дорогой app-server: %s", sid, msg)
+		s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true, Text: "чат не поднялся: " + msg, Time: s.now().UTC().Format(time.RFC3339)}})
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат не поднялся: " + msg})
 		return
 	}
@@ -605,6 +622,9 @@ func (s *server) appListRows(proj string) []chatEntry {
 			if it.Role == "user" && strings.TrimSpace(it.Text) != "" {
 				e.First = truncate(strings.TrimSpace(it.Text), 200)
 				e.Title = e.First
+				if st.GroomSource != "" {
+					e.Title = st.GroomSource + " груминг"
+				}
 				break
 			}
 		}

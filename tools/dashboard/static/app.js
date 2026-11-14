@@ -16064,7 +16064,11 @@ async function groomDraft(project, id, afterOk, harness, tier, mode, effort) {
   // панель молчала до перезагрузки страницы (живой случай пользователя).
   if (r.ok && r.body.session) {
     markRunLive(project, id, r.body.session);
-    chatSewHere(project, id, r.body.session);
+    if (r.body.way === "appserver") {
+      if (chatHere(project, id)) switchChat(r.body.session);
+    } else {
+      chatSewHere(project, id, r.body.session);
+    }
   }
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);

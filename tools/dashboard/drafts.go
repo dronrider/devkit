@@ -328,6 +328,14 @@ func draftGroomError(projPath, id string, text []byte) bool {
 // агенту, решение 3 LLD DK-354). Разговор про запись работой не считается: у
 // него та же tmux-сессия, а файла он не трогает.
 func (s *server) draftBusy(projPath, id string) string {
+	for _, row := range s.appListRows("") {
+		st := s.chatStoreRead(row.ID)
+		if st.GroomSource == id && sameGroomTree(st.GroomTree, projPath) {
+			if c := s.appLive(row.ID); c != nil && c.busyNow() {
+				return row.ID
+			}
+		}
+	}
 	talk := s.tmuxTalk(projPath)
 	for _, name := range tmuxSessions() {
 		if name != draftSession(id) && name != "goal-"+id {
@@ -685,15 +693,21 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
-	if m := tmuxMissingCheck(); m != "" {
-		s.logf("груминг %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
+	if !own.foreign() {
+		if m := tmuxMissingCheck(); m != "" {
+			s.logf("груминг %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+			return
+		}
 	}
 	order, err := groomTypedPrompt(found.Path, id, ask, mode)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	if own.foreign() {
+		s.groomStartMu.Lock()
+		defer s.groomStartMu.Unlock()
 	}
 	sess := draftSession(id)
 	// Живой разбор спрашивается тем же вопросом, что и правка текста: разойтись
@@ -703,6 +717,22 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		s.logf("груминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, busy)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать груминг поверх живой сессии нельзя, сначала стоп", id, busy)})
+		return
+	}
+	if own.foreign() {
+		lock, err := draftmeta.CloudShared(found.Path, id)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		defer lock.Close()
+		if err := draftmeta.GuardRecord(found.Path, id); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		s.appStartRecord(w, found, id, "", order, model, own.Name, wantEffort, chatStore{
+			GroomSource: id, GroomMode: mode, GroomTree: found.Path,
+		})
 		return
 	}
 	// Остаток прошлого разбора: сессия жива, а хода в ней нет. Повторный

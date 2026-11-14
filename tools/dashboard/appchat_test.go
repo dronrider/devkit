@@ -60,6 +60,7 @@ for raw in sys.stdin:
     m = msg.get("method", "")
     params = msg.get("params") or {}
     if m == "initialize":
+        log("groom " + os.getenv("DEVKIT_GROOM_SOURCE", "") + " " + os.getenv("DEVKIT_GROOM_MODE", ""))
         emit({"id": mid, "result": {}})
     elif m == "thread/start":
         log("start " + str(params.get("model", "")))

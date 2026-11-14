@@ -2168,3 +2168,90 @@ func TestStaticDraftsPreparedSingleRequest(t *testing.T) {
 		t.Fatalf("общее чтение состава согласования: %v\n%s", err, out)
 	}
 }
+
+func appDraftFixture(t *testing.T, e *testEnv, id string) {
+	t.Helper()
+	writeScript(t, e.bin, "taskctl", `case "$*" in
+  *"draft types --json"*) printf '%s' '{"types":[{"name":"task","skill":"board-groom"}]}' ;;
+  *) printf '%s' '`+boardFixtureJSON+`' ;;
+esac`)
+	dir := filepath.Join(e.proj, "docs", "tasks", "drafts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".md"), []byte("# Мысль для разбора\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDraftGroomAppServer(t *testing.T) {
+	for _, mode := range []string{draftModeGroom, draftModeRun} {
+		t.Run(mode, func(t *testing.T) {
+			e, c := appEnv(t)
+			id := "XR-77"
+			appDraftFixture(t, e, id)
+			appMode(t, e, "mute")
+			tmuxLog := filepath.Join(e.home, "tmux.log")
+			writeTmuxFake(t, e.bin, tmuxLog, "")
+			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
+				`{"harness":"codextest","tier":"pro","effort":"high","mode":"`+mode+`"}`)
+			text := body(t, resp)
+			var got struct{ Way, Session, Model, Harness string }
+			if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(text), &got) != nil || got.Way != "appserver" || !strings.HasPrefix(got.Session, "as") {
+				t.Fatalf("груминг чужого протокола не начал ход: %d %s", resp.StatusCode, text)
+			}
+			defer e.s.appDrop(got.Session, "конец теста")
+			if got.Model != "модель-codex" || got.Harness != "codextest" {
+				t.Fatalf("потерян выбор: %+v", got)
+			}
+			st := e.s.chatStoreRead(got.Session)
+			if st.GroomSource != id || st.GroomMode != mode || st.GroomTree != e.proj || st.Task != id {
+				t.Fatalf("контекст разбора потерян: %+v", st)
+			}
+			appWaitFeed(t, e, got.Session, groomPrompt(id, "", mode))
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			for _, want := range []string{"start модель-codex", "turn high", "groom " + id + " " + mode} {
+				if !strings.Contains(log, want) {
+					t.Errorf("нет %q в заказе клиента: %s", want, log)
+				}
+			}
+			if data, _ := os.ReadFile(tmuxLog); strings.Contains(string(data), "new-session") {
+				t.Fatalf("чужой протокол пошёл в tmux: %s", data)
+			}
+			if busy := e.s.draftBusy(e.proj, id); busy != got.Session {
+				t.Fatalf("занятость разбора потеряна: %q", busy)
+			}
+			works := e.s.liveWorks(e.proj, "XR", json.RawMessage(boardFixtureJSON))
+			found := false
+			for _, w := range works {
+				if w.ID == id && w.Session == got.Session && w.Live == workBusy {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("разбора нет среди работ: %+v", works)
+			}
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"harness":"codextest"}`)
+			if text := body(t, resp); resp.StatusCode != http.StatusConflict {
+				t.Fatalf("второй грумер поднялся: %d %s", resp.StatusCode, text)
+			}
+		})
+	}
+}
+
+func TestDraftGroomAppServerFailure(t *testing.T) {
+	e, c := appEnv(t)
+	id := "XR-78"
+	appDraftFixture(t, e, id)
+	writeScript(t, e.bin, "клиент-app", "echo 'нет входа в клиент' >&2; exit 2")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"harness":"codextest"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "нет входа в клиент") {
+		t.Fatalf("причина старта потеряна: %d %s", resp.StatusCode, text)
+	}
+	rows := e.s.appListRows("demo")
+	if len(rows) != 1 {
+		t.Fatalf("разговор отказа не виден: %+v", rows)
+	}
+	appWaitFeed(t, e, rows[0].ID, "нет входа в клиент")
+}

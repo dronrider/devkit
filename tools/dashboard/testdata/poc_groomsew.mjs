@@ -120,3 +120,21 @@ const fireEvery = (timers, ms) => {
 }
 
 console.log("poc_groomsew: ok");
+
+{
+  const sid = "as-groom-77";
+  let tmuxLookups = 0;
+  const { sandbox } = makeSandbox(app, (path, init) => {
+    if (path.includes("/groom") && init?.method === "POST") {
+      return { way: "appserver", session: sid, message: "разбор поднят" };
+    }
+    if (path.includes("/chats?tmux=")) tmuxLookups += 1;
+    if (path.includes("/chats")) return { chats: [], models: [] };
+    return {};
+  });
+  sandbox.location.hash = "#demo/drafts/chat/" + ID;
+  await sandbox.groomDraft("demo", ID);
+  await settle();
+  if (!String(sandbox.location.hash).includes(sid)) fail("панель app-server не пришита: " + sandbox.location.hash);
+  if (tmuxLookups) fail("app-server ищется в tmux");
+}

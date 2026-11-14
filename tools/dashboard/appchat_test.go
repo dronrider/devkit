@@ -55,6 +55,16 @@ def log(line):
     with open(os.path.join(os.getcwd(), "fake-app-log"), "a") as f:
         f.write(line + "\n")
 
+def configure_tools(params):
+    # Process DEVKIT variables are filtered by the client before tool launch.
+    # Only explicit per-thread values reach the command environment.
+    config = params.get("config") or {}
+    prefix = "shell_environment_policy.set."
+    env = {k[len(prefix):]: v for k, v in config.items() if k.startswith(prefix)}
+    log("effective-env " + json.dumps(env))
+    log("groom " + env.get("DEVKIT_GROOM_SOURCE", "") + " " + env.get("DEVKIT_GROOM_MODE", ""))
+    log("session " + env.get("DEVKIT_CHAT_SESSION_ID", ""))
+
 for raw in sys.stdin:
     raw = raw.strip()
     if not raw:
@@ -64,13 +74,12 @@ for raw in sys.stdin:
     m = msg.get("method", "")
     params = msg.get("params") or {}
     if m == "initialize":
-        log("groom " + os.getenv("DEVKIT_GROOM_SOURCE", "") + " " + os.getenv("DEVKIT_GROOM_MODE", ""))
-        log("session " + os.getenv("DEVKIT_CHAT_SESSION_ID", ""))
         emit({"id": mid, "result": {}})
     elif m == "thread/start":
         if mode() == "unsupported-reviewer" and params.get("approvalsReviewer"):
             emit({"id": mid, "error": {"message": "approvalsReviewer не поддерживается"}})
             continue
+        configure_tools(params)
         log("start " + str(params.get("model", "")))
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": {"thread": {"id": "th-1"}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": "user" if mode() == "ignored-reviewer" else params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
@@ -78,6 +87,7 @@ for raw in sys.stdin:
         if mode() == "unsupported-reviewer" and params.get("approvalsReviewer"):
             emit({"id": mid, "error": {"message": "approvalsReviewer не поддерживается"}})
             continue
+        configure_tools(params)
         log("resume " + str(params.get("threadId", "")))
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
@@ -615,6 +625,27 @@ func TestAppGroomApprovalPolicy(t *testing.T) {
 				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "policy ")), &p); err != nil {
 					t.Fatal(err)
 				}
+				config, ok := p["config"].(map[string]any)
+				count := 2
+				if grooming {
+					count = 5
+				}
+				if !ok || len(config) != count {
+					t.Fatalf("не узкая конфигурация окружения: %v", p)
+				}
+				toolEnv := map[string]any{}
+				for key, value := range config {
+					if !strings.HasPrefix(key, "shell_environment_policy.set.") {
+						t.Fatalf("лишняя настройка окружения: %s", key)
+					}
+					toolEnv[strings.TrimPrefix(key, "shell_environment_policy.set.")] = value
+				}
+				if len(toolEnv) != count || toolEnv["DEVKIT_CHAT_SESSION_ID"] != sid || toolEnv["DEVKIT_HARNESS"] != "codextest" {
+					t.Fatalf("tool env: %v", config)
+				}
+				if grooming && (toolEnv["DEVKIT_TASK"] != "XR-77" || toolEnv["DEVKIT_GROOM_SOURCE"] != "XR-77" || toolEnv["DEVKIT_GROOM_MODE"] != "groom") {
+					t.Fatalf("groom tool env: %v", toolEnv)
+				}
 				want := "never"
 				if grooming {
 					want = "on-request"
@@ -656,6 +687,17 @@ func TestAppGroomPreparedAgreement(t *testing.T) {
 			if !strings.Contains(readFile(t, filepath.Join(e.proj, "fake-app-log")), "session "+sid) {
 				t.Fatal("ID панели не передан клиенту")
 			}
+			var effective map[string]string
+			for _, line := range strings.Split(readFile(t, filepath.Join(e.proj, "fake-app-log")), "\n") {
+				if strings.HasPrefix(line, "effective-env ") {
+					if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "effective-env ")), &effective); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if len(effective) != 5 || effective["DEVKIT_CHAT_SESSION_ID"] != sid || effective["DEVKIT_HARNESS"] != "codextest" || effective["DEVKIT_TASK"] != "XR-77" || effective["DEVKIT_GROOM_SOURCE"] != "XR-77" || effective["DEVKIT_GROOM_MODE"] != "run" {
+				t.Fatalf("effective command env: %v", effective)
+			}
 			bin := buildTaskctl(t)
 			old := taskctlBin
 			taskctlBin = bin
@@ -666,7 +708,7 @@ func TestAppGroomPreparedAgreement(t *testing.T) {
 			cli := func(input string, args ...string) string {
 				t.Helper()
 				cmd := exec.Command(bin, append([]string{"-C", e.proj}, args...)...)
-				cmd.Env = standSpawnEnv("DEVKIT_CHAT_SESSION_ID="+sid, "CLAUDE_CODE_SESSION_ID=", "DEVKIT_TMUX=", "DEVKIT_HOME="+kit, "HOME="+e.home)
+				cmd.Env = standSpawnEnv("DEVKIT_CHAT_SESSION_ID="+effective["DEVKIT_CHAT_SESSION_ID"], "DEVKIT_TASK="+effective["DEVKIT_TASK"], "DEVKIT_HARNESS="+effective["DEVKIT_HARNESS"], "DEVKIT_GROOM_SOURCE="+effective["DEVKIT_GROOM_SOURCE"], "DEVKIT_GROOM_MODE="+effective["DEVKIT_GROOM_MODE"], "CLAUDE_CODE_SESSION_ID=", "DEVKIT_TMUX=", "DEVKIT_HOME="+kit, "HOME="+e.home)
 				cmd.Stdin = strings.NewReader(input)
 				out, err := cmd.CombinedOutput()
 				if err != nil {
@@ -778,5 +820,28 @@ func TestAppGroomUnsupportedReviewer(t *testing.T) {
 				t.Fatalf("клиент начал ход с другой политикой: %s", log)
 			}
 		})
+	}
+}
+
+func TestAppGroomStoreFailure(t *testing.T) {
+	e, c := appEnv(t)
+	appDraftFixture(t, e, "XR-77")
+	dir := chatStoreDir(e.home)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("нет каталога чатов"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-77/groom", `{"harness":"codextest","mode":"run"}`)
+	raw := body(t, r)
+	if r.StatusCode != 502 || !strings.Contains(raw, "контекст груминга не записался") {
+		t.Fatalf("контекст потерян при успешном старте: %d %s", r.StatusCode, raw)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "fake-app-log")); !os.IsNotExist(err) {
+		t.Fatalf("клиент поднят после потери контекста: %v", err)
 	}
 }

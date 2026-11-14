@@ -179,9 +179,13 @@ func (s *server) appDead(sid string) {
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string) (*appChat, error) {
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
-	env := []string{"DEVKIT_CHAT_SESSION_ID=" + sid}
+	toolEnv := map[string]string{"DEVKIT_CHAT_SESSION_ID": sid, "DEVKIT_HARNESS": h.Name}
 	if st.GroomSource != "" {
-		env = append(env, "DEVKIT_TASK="+st.GroomSource, "DEVKIT_GROOM_SOURCE="+st.GroomSource, "DEVKIT_GROOM_MODE="+st.GroomMode)
+		toolEnv["DEVKIT_TASK"], toolEnv["DEVKIT_GROOM_SOURCE"], toolEnv["DEVKIT_GROOM_MODE"] = st.GroomSource, st.GroomSource, st.GroomMode
+	}
+	var env []string
+	for key, value := range toolEnv {
+		env = append(env, key+"="+value)
 	}
 	proc, err := appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
 		s.appNote(sid, method, params)
@@ -209,7 +213,11 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	if err := proc.notify("initialized", map[string]any{}); err != nil {
 		return fail(fmt.Errorf("клиент не принял приветствие: %w", err))
 	}
-	policy := map[string]any{"approvalPolicy": "never"}
+	config := map[string]any{}
+	for key, value := range toolEnv {
+		config["shell_environment_policy.set."+key] = value
+	}
+	policy := map[string]any{"approvalPolicy": "never", "config": config}
 	if st.GroomSource != "" {
 		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
 	}
@@ -471,6 +479,10 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
+		if st.GroomSource != "" {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "контекст груминга не записался: " + err.Error()})
+			return
+		}
 	}
 	// Незачатая запись выросла этим разговором: панель, стоящая на её адресе,
 	// переедет на живой разговор по полю Grown, как у tmux-дороги.

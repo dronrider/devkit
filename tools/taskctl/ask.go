@@ -47,7 +47,7 @@ var askPanelRe = regexp.MustCompile(`^(chat|goal|task)-`)
 
 // AskPanel отвечает, поднята ли сессия панелью дашборда.
 func AskPanel(env func(string) string) bool {
-	return askPanelRe.MatchString(strings.TrimSpace(env(askTmuxEnv)))
+	return strings.TrimSpace(env("DEVKIT_CHAT_SESSION_ID")) != "" || askPanelRe.MatchString(strings.TrimSpace(env(askTmuxEnv)))
 }
 
 // AskParams это разобранные аргументы команды.

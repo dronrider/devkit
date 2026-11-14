@@ -24,6 +24,10 @@ func sameGroomTree(a, b string) bool {
 }
 
 func (s *server) inheritedGroomContext(sid, task string) (string, string) {
+	st := s.chatStoreRead(sid)
+	if st.Protocol != "" && st.Task == task && st.GroomSource == task && (st.GroomMode == "run" || st.GroomMode == "groom") {
+		return st.GroomSource, st.GroomMode
+	}
 	binds := s.bindsAll()
 	visited := map[string]bool{}
 	var visit func(string) (string, string)
@@ -293,7 +297,7 @@ func finishPreparedFormConsent(captures []preparedConsentCapture, key string) er
 // же строкой и той же дорогой, что и ответ в чате: клавишами в живое окно
 // спрашивавшего либо носителю без терминала, и лишь без адреса ложится
 // безадресной строкой для сессии, которая продолжит запись.
-func (s *server) deliverPreparedFormReceipt(p *Project, captures []preparedConsentCapture, key string, results []draftproposal.Receipt, repeated bool, request draftproposal.ConfirmRequest) {
+func (s *server) deliverPreparedFormReceipt(p *Project, captures []preparedConsentCapture, key string, results []draftproposal.Receipt, repeated bool, request draftproposal.ConfirmRequest) error {
 	wire, anchor := "", ""
 	var undelivered []string
 	for _, capture := range captures {
@@ -311,11 +315,17 @@ func (s *server) deliverPreparedFormReceipt(p *Project, captures []preparedConse
 			}{"", key, results, repeated, proposalAnswer{Anchor: anchor, Tree: p.Path, Snapshots: request.Snapshots, Decisions: request.Decisions}})
 			if err != nil {
 				s.logf("квитанция подтверждения с формы не собралась: %v", err)
-				return
+				return err
 			}
 			wire = "Ответ панели обработан taskctl: " + string(payload)
 		}
 		sid := capture.ask.Ask.Session
+		if s.chatStoreRead(sid).Protocol != "" {
+			if err := s.appCarrierTurn(p, sid, wire); err != nil {
+				return err
+			}
+			continue
+		}
 		if s.processedNativeConsent(p.Path, sid) {
 			// Нативная модалка вопроса ещё открыта, и клавиши ушли бы в неё,
 			// а не в разговор: у формы тот же барьер, что и у ответа в чате.
@@ -334,9 +344,10 @@ func (s *server) deliverPreparedFormReceipt(p *Project, captures []preparedConse
 		undelivered = append(undelivered, sid)
 	}
 	if len(undelivered) == 0 {
-		return
+		return nil
 	}
 	if _, _, err := putChat(stage.MainRoot(p.Path), chat.TaskName(anchor), wire, chat.TaskLine(s.now(), wire)); err != nil {
 		s.logf("исход подтверждения с формы не доставлен (%s): %v", strings.Join(undelivered, ", "), err)
 	}
+	return nil
 }

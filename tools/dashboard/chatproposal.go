@@ -202,7 +202,9 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		}
 		err = nil
 		_, native := s.groomConsent(answer.Tree, sid)
-		if len(native) > 0 {
+		if s.chatStoreRead(sid).Protocol != "" {
+			err = s.appCarrierTurn(p, sid, text)
+		} else if len(native) > 0 {
 			peer, live := s.peers()[sid]
 			if live && peerSay(peer.Sock, text) == nil {
 				err = nil
@@ -280,7 +282,9 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 	if match != nil && last.Task == answer.Anchor && (last.Tree == answer.Tree || (last.Tree == "" && p.Path == answer.Tree)) {
 		term = s.sayTermOf(sid, binds)
 	}
-	if s.processedNativeConsent(answer.Tree, sid) {
+	if s.chatStoreRead(sid).Protocol != "" {
+		err = s.appCarrierTurn(p, sid, wire)
+	} else if s.processedNativeConsent(answer.Tree, sid) {
 		// A canonical reply must not become literal keys in the old modal.
 		peer, live := s.peers()[sid]
 		if live && peerSay(peer.Sock, wire) == nil {

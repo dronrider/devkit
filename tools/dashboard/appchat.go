@@ -179,9 +179,9 @@ func (s *server) appDead(sid string) {
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string) (*appChat, error) {
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
-	var env []string
+	env := []string{"DEVKIT_CHAT_SESSION_ID=" + sid}
 	if st.GroomSource != "" {
-		env = []string{"DEVKIT_TASK=" + st.GroomSource, "DEVKIT_GROOM_SOURCE=" + st.GroomSource, "DEVKIT_GROOM_MODE=" + st.GroomMode}
+		env = append(env, "DEVKIT_TASK="+st.GroomSource, "DEVKIT_GROOM_SOURCE="+st.GroomSource, "DEVKIT_GROOM_MODE="+st.GroomMode)
 	}
 	proc, err := appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
 		s.appNote(sid, method, params)
@@ -209,17 +209,21 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	if err := proc.notify("initialized", map[string]any{}); err != nil {
 		return fail(fmt.Errorf("клиент не принял приветствие: %w", err))
 	}
+	policy := map[string]any{"approvalPolicy": "never"}
+	if st.GroomSource != "" {
+		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
+	}
+	var configured json.RawMessage
 	if thread != "" {
-		if _, err := proc.call("thread/resume", map[string]any{
-			"threadId": thread, "excludeTurns": true,
-		}); err != nil {
+		policy["threadId"], policy["excludeTurns"] = thread, true
+		configured, err = proc.call("thread/resume", policy)
+		if err != nil {
 			return fail(fmt.Errorf("нить разговора не продолжилась: %w", err))
 		}
 	} else {
-		raw, err := proc.call("thread/start", map[string]any{
-			"cwd": dir, "model": model,
-			"sandbox": "workspace-write", "approvalPolicy": "never",
-		})
+		policy["cwd"], policy["model"], policy["sandbox"] = dir, model, "workspace-write"
+		raw, err := proc.call("thread/start", policy)
+		configured = raw
 		if err != nil {
 			return fail(fmt.Errorf("клиент не завёл разговор: %w", err))
 		}
@@ -232,6 +236,18 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 			return fail(fmt.Errorf("клиент не назвал нить разговора"))
 		}
 		c.thread = got.Thread.ID
+	}
+	if st.GroomSource != "" {
+		var actual struct {
+			ApprovalPolicy string `json:"approvalPolicy"`
+			Reviewer       string `json:"approvalsReviewer"`
+			Sandbox        struct {
+				Type string `json:"type"`
+			} `json:"sandbox"`
+		}
+		if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
+			return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций груминга; обновите Codex"))
+		}
 	}
 	s.appMu.Lock()
 	s.appChats[sid] = c
@@ -729,4 +745,37 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file stri
 			}
 		}
 	}
+}
+
+func (s *server) appCarrierTurn(p *Project, sid, text string) error {
+	st := s.chatStoreRead(sid)
+	h := s.chatHarnessOf(st.Model, st.Harness)
+	if h == nil || !h.foreign() {
+		return fmt.Errorf("подписка разговора %s не определилась", sid)
+	}
+	c := s.appLive(sid)
+	if c == nil {
+		dir := chatTree(p.Path, st.Task)
+		if st.GroomTree != "" {
+			dir = st.GroomTree
+		}
+		var err error
+		c, err = s.appSpawn(sid, h, st.Model, dir, p.Name, st.Thread)
+		if err != nil {
+			return err
+		}
+		st.Thread = c.thread
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			return err
+		}
+	}
+	if c.busyNow() {
+		return fmt.Errorf("ход уже идёт: ответ согласования пока не доставлен")
+	}
+	c.setEffort(st.CxEffort)
+	s.appSayRecord(sid, text)
+	if err := s.appTurn(c, text); err != nil {
+		return err
+	}
+	return nil
 }

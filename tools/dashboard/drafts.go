@@ -1234,11 +1234,14 @@ func (s *server) handleDraftPreparedConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "результат подтверждения не прочитался"})
 		return
 	}
+	if err := s.deliverPreparedFormReceipt(found, captures, result.Key, result.Results, result.Repeated, request); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "разбор применён; ответ агенту не доставлен: " + err.Error()})
+		return
+	}
 	if err := finishPreparedFormConsent(captures, result.Key); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "разбор применён; прежний вопрос не снят: " + err.Error()})
 		return
 	}
-	s.deliverPreparedFormReceipt(found, captures, result.Key, result.Results, result.Repeated, request)
 	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "подтверждённые задачи применены"}
 	if !result.Repeated && len(result.Paths) > 0 {
 		if note := commitDocs(found.Path, "docs(tasks): применение подтверждённых задач", result.Paths...); note != "" {

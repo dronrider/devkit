@@ -8,6 +8,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
 // appHarnessJSON это раскладка стенда: подписка по умолчанию и две подписки
@@ -61,13 +65,22 @@ for raw in sys.stdin:
     params = msg.get("params") or {}
     if m == "initialize":
         log("groom " + os.getenv("DEVKIT_GROOM_SOURCE", "") + " " + os.getenv("DEVKIT_GROOM_MODE", ""))
+        log("session " + os.getenv("DEVKIT_CHAT_SESSION_ID", ""))
         emit({"id": mid, "result": {}})
     elif m == "thread/start":
+        if mode() == "unsupported-reviewer" and params.get("approvalsReviewer"):
+            emit({"id": mid, "error": {"message": "approvalsReviewer не поддерживается"}})
+            continue
         log("start " + str(params.get("model", "")))
-        emit({"id": mid, "result": {"thread": {"id": "th-1"}}})
+        log("policy " + json.dumps(params))
+        emit({"id": mid, "result": {"thread": {"id": "th-1"}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": "user" if mode() == "ignored-reviewer" else params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
     elif m == "thread/resume":
+        if mode() == "unsupported-reviewer" and params.get("approvalsReviewer"):
+            emit({"id": mid, "error": {"message": "approvalsReviewer не поддерживается"}})
+            continue
         log("resume " + str(params.get("threadId", "")))
-        emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}}})
+        log("policy " + json.dumps(params))
+        emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
     elif m == "turn/start":
         log("turn " + str(params.get("effort", "")))
         text = ""
@@ -566,5 +579,204 @@ func TestAppItemReplies(t *testing.T) {
 	}
 	if got := appItemReplies(map[string]any{"type": "agentMessage", "text": "  "}, ""); len(got) != 0 {
 		t.Fatalf("пустой ответ не пропущен: %+v", got)
+	}
+}
+
+func TestAppGroomApprovalPolicy(t *testing.T) {
+	for _, grooming := range []bool{false, true} {
+		t.Run(fmt.Sprint(grooming), func(t *testing.T) {
+			e, c := appEnv(t)
+			sid := ""
+			if grooming {
+				appDraftFixture(t, e, "XR-77")
+				r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-77/groom", `{"harness":"codextest"}`)
+				var got struct{ Session string }
+				raw := body(t, r)
+				if r.StatusCode != 200 || json.Unmarshal([]byte(raw), &got) != nil {
+					t.Fatalf("groom %d %s", r.StatusCode, raw)
+				}
+				sid = got.Session
+			} else {
+				sid = appStartChat(t, e, c, "первый ход")
+			}
+			appWaitBusy(t, e, c, sid, false)
+			e.s.appDrop(sid, "возобновление")
+			r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить"}`)
+			if raw := body(t, r); r.StatusCode != 200 {
+				t.Fatalf("resume %d %s", r.StatusCode, raw)
+			}
+			defer e.s.appDrop(sid, "конец теста")
+			policies := 0
+			for _, line := range strings.Split(readFile(t, filepath.Join(e.proj, "fake-app-log")), "\n") {
+				if !strings.HasPrefix(line, "policy ") {
+					continue
+				}
+				var p map[string]any
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "policy ")), &p); err != nil {
+					t.Fatal(err)
+				}
+				want := "never"
+				if grooming {
+					want = "on-request"
+					if p["approvalsReviewer"] != "auto_review" {
+						t.Fatalf("reviewer: %v", p)
+					}
+				} else if p["approvalsReviewer"] != nil {
+					t.Fatalf("обычный чат поменял reviewer: %v", p)
+				}
+				if p["approvalPolicy"] != want {
+					t.Fatalf("policy: %v", p)
+				}
+				if policies == 0 && p["sandbox"] != "workspace-write" {
+					t.Fatalf("песочница потеряна: %v", p)
+				}
+				policies++
+			}
+			if policies != 2 {
+				t.Fatalf("нет старта и продолжения: %d", policies)
+			}
+		})
+	}
+}
+
+func TestAppGroomPreparedAgreement(t *testing.T) {
+	for _, form := range []bool{false, true} {
+		t.Run(fmt.Sprint(form), func(t *testing.T) {
+			e, c := appEnv(t)
+			appDraftFixture(t, e, "XR-77")
+			r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-77/groom", `{"harness":"codextest","mode":"run","effort":"high"}`)
+			var got struct{ Session string }
+			raw := body(t, r)
+			if r.StatusCode != 200 || json.Unmarshal([]byte(raw), &got) != nil {
+				t.Fatalf("groom: %d %s", r.StatusCode, raw)
+			}
+			sid := got.Session
+			defer e.s.appDrop(sid, "конец теста")
+			appWaitBusy(t, e, c, sid, false)
+			if !strings.Contains(readFile(t, filepath.Join(e.proj, "fake-app-log")), "session "+sid) {
+				t.Fatal("ID панели не передан клиенту")
+			}
+			bin := buildTaskctl(t)
+			old := taskctlBin
+			taskctlBin = bin
+			t.Cleanup(func() { taskctlBin = old })
+			kit, _ := filepath.Abs("../..")
+			t.Setenv("DEVKIT_HOME", kit)
+			putDoc(t, e.proj, "docs/TASKS-archive.md", "# Архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|---|---|---|---|---|---|\n")
+			cli := func(input string, args ...string) string {
+				t.Helper()
+				cmd := exec.Command(bin, append([]string{"-C", e.proj}, args...)...)
+				cmd.Env = standSpawnEnv("DEVKIT_CHAT_SESSION_ID="+sid, "CLAUDE_CODE_SESSION_ID=", "DEVKIT_TMUX=", "DEVKIT_HOME="+kit, "HOME="+e.home)
+				cmd.Stdin = strings.NewReader(input)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("CLI %v: %s %v", args, out, err)
+				}
+				return string(out)
+			}
+			var view struct{ Snapshot string }
+			if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-77")), &view); err != nil {
+				t.Fatal(err)
+			}
+			material := "## Что происходит\n\nПроверка записи.\n\n## Чего хотим\n\nЗапись проверяется.\n\n## DoD\n\n- Видно результат.\n\n## Ранг\n\n`0+1+1+0+1 = 3`, P3.\n\n- Серьёзность 0: работа продолжается.\n- Ценность 1: один сценарий.\n- Неопределённость 1: место известно.\n- Поправка на баг 0: новая работа.\n- Рычаг 1: убирает повтор.\n"
+			payload, _ := json.Marshal(map[string]any{"complete": true, "conclusion": "Создать задачу", "proposals": []draftproposal.Proposal{{ID: "one", Revision: 1, Outcome: "add", Title: "Проверка продолжения", Text: material, BoardType: "task", Rank: "0+1+1+0+1", Size: "S", Accept: "agent"}}})
+			cli(string(payload), "draft", "prepared", "save", "XR-77", "--base", view.Snapshot)
+			var q chat.Question
+			if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "ask", "XR-77")), &q); err != nil || q.Prepared == nil {
+				t.Fatalf("question %+v %v", q, err)
+			}
+			ask, ok := chat.ReadAsk(chat.AskPath(e.proj, chat.TaskName("XR-77")))
+			if !ok || ask.Session != sid {
+				t.Fatalf("identity: %+v", ask)
+			}
+			r = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", "")
+			raw = body(t, r)
+			if r.StatusCode != 200 || !strings.Contains(raw, `"prepared"`) {
+				t.Fatalf("вопрос не показан: %d %s", r.StatusCode, raw)
+			}
+			source := q.Prepared.Sources[0]
+			req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: source.Source, Digest: source.Basis, Revision: source.Revision}}, Decisions: []draftproposal.Decision{{Source: source.Source, Proposal: source.Proposals[0].ID, Revision: source.Proposals[0].Revision, Action: "accept"}}}
+			data, _ := json.Marshal(map[string]any{"text": "принять", "proposal": proposalAnswer{Mode: "apply", Anchor: "XR-77", Tree: e.proj, Snapshots: req.Snapshots, Decisions: req.Decisions}})
+			url := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"
+			if form {
+				data, _ = json.Marshal(req)
+				url = e.srv.URL + "/api/projects/demo/drafts/prepared/confirm"
+			}
+			appMode(t, e, "mute")
+			comment, _ := json.Marshal(map[string]any{"text": "пояснить перед согласием", "proposal": proposalAnswer{Mode: "comment", Anchor: "XR-77", Tree: e.proj, Snapshots: req.Snapshots}})
+			r = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", string(comment))
+			if out := body(t, r); r.StatusCode != 200 {
+				t.Fatalf("comment: %d %s", r.StatusCode, out)
+			}
+			appWaitFeed(t, e, sid, "пояснить перед согласием")
+			if _, ok := chat.ReadAsk(chat.AskPath(e.proj, chat.TaskName("XR-77"))); !ok {
+				t.Fatal("комментарий снял вопрос")
+			}
+			r = doReq(t, c, "POST", url, string(data))
+			if out := body(t, r); r.StatusCode != 502 || !strings.Contains(out, "ход уже идёт") {
+				t.Fatalf("нет отказа доставки: %d %s", r.StatusCode, out)
+			}
+			_, pending := chat.ReadAsk(chat.AskPath(e.proj, chat.TaskName("XR-77")))
+			if form && !pending {
+				t.Fatal("ошибка доставки с формы сняла вопрос")
+			}
+			if !form && len(e.s.proposalContexts(sid)) == 0 {
+				t.Fatal("нет сохранённой квитанции для повтора из чата")
+			}
+			e.s.appDrop(sid, "согласие после перезапуска")
+			appMode(t, e, "")
+			r = doReq(t, c, "POST", url, string(data))
+			raw = body(t, r)
+			if r.StatusCode != 200 {
+				t.Fatalf("agreement: %d %s", r.StatusCode, raw)
+			}
+			appWaitFeed(t, e, sid, "ответ на реплику: Ответ панели обработан taskctl")
+			state, err := draftproposal.ParsePrepared([]byte(readFile(t, draftproposal.PreparedPath(e.proj, "XR-77"))))
+			if err != nil || len(state.Proposals) != 1 || state.Proposals[0].Result == nil || len(state.Proposals[0].Result.IDs) != 1 {
+				t.Fatalf("нет ID созданной задачи: %+v %v", state, err)
+			}
+			created := state.Proposals[0].Result.IDs[0]
+			appWaitFeed(t, e, sid, created)
+			if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", created+".md")); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := chat.ReadAsk(chat.AskPath(e.proj, chat.TaskName("XR-77"))); ok {
+				t.Fatal("вопрос остался после согласия")
+			}
+			if lines := chat.ReadLines(chat.Path(e.proj, chat.TaskName("XR-77"))); len(lines) != 0 {
+				t.Fatalf("согласие ушло в терминальный вход: %v", lines)
+			}
+			st := e.s.chatStoreRead(sid)
+			if st.GroomMode != "run" || st.GroomSource != "XR-77" || st.GroomTree != e.proj || st.Model != "модель-codex" || st.Harness != "codextest" || st.CxEffort != "high" || st.Thread != "th-1" {
+				t.Fatalf("run continuation: %+v", st)
+			}
+		})
+	}
+}
+
+func TestAppGroomUnsupportedReviewer(t *testing.T) {
+	for _, mode := range []string{"unsupported-reviewer", "ignored-reviewer"} {
+		t.Run(mode, func(t *testing.T) {
+			e, c := appEnv(t)
+			appDraftFixture(t, e, "XR-77")
+			appMode(t, e, mode)
+			r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-77/groom", `{"harness":"codextest"}`)
+			raw := body(t, r)
+			why := "approvalsReviewer не поддерживается"
+			if mode == "ignored-reviewer" {
+				why = "клиент не подтвердил workspace-write"
+			}
+			if r.StatusCode != 502 || !strings.Contains(raw, why) {
+				t.Fatalf("нет конкретного отказа: %d %s", r.StatusCode, raw)
+			}
+			rows := e.s.appListRows("demo")
+			if len(rows) != 1 {
+				t.Fatalf("отказ не виден: %+v", rows)
+			}
+			appWaitFeed(t, e, rows[0].ID, why)
+			if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Contains(log, "turn ") {
+				t.Fatalf("клиент начал ход с другой политикой: %s", log)
+			}
+		})
 	}
 }

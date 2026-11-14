@@ -498,6 +498,45 @@ func TestAppChatListAndArchive(t *testing.T) {
 	}
 }
 
+func TestAppChatTitleFromFirstMessage(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "Привет, проверь список файлов. Потом ответь")
+	appWaitFeed(t, e, sid, "ответ на реплику")
+	for i := 0; i < 2; i++ {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?days=0", "")
+		var list struct {
+			Chats []chatEntry `json:"chats"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &list); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, row := range list.Chats {
+			if row.ID == sid {
+				found = true
+				if row.Title != "проверь список файлов" {
+					t.Fatalf("название: %q", row.Title)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("разговор %s не найден", sid)
+		}
+		feed := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+		var got struct {
+			Head struct {
+				First string `json:"first"`
+			} `json:"head"`
+		}
+		if err := json.Unmarshal([]byte(body(t, feed)), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Head.First != "Привет, проверь список файлов. Потом ответь" {
+			t.Fatalf("первая реплика: %q", got.Head.First)
+		}
+	}
+}
+
 // Перевод уровня глубины: верх дашборда выше потолка клиента, и всё, что выше,
 // идёт его потолком.
 func TestAppEffort(t *testing.T) {

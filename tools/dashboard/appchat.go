@@ -604,6 +604,7 @@ func (s *server) appListRows(proj string) []chatEntry {
 		for _, it := range items {
 			if it.Role == "user" && strings.TrimSpace(it.Text) != "" {
 				e.First = truncate(strings.TrimSpace(it.Text), 200)
+				e.Title = e.First
 				break
 			}
 		}

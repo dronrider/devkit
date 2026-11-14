@@ -152,12 +152,16 @@ func askText(qs []chat.Question) string {
 }
 
 // askSession называет сессию, чьи реплики признак ожидания считает своими, и
-// говорит, откуда она взялась. Порядок такой: ключ, переменная харнеса,
+// говорит, откуда она взялась. Порядок такой: ключ, переменная разговора,
+// переменная харнеса,
 // реестр чатов по задаче. Не нашлось ничего, значит признак ждёт безадресные
 // строки, и это видно первой же строкой вывода, а не скрыто.
 func askSession(p AskParams, home string, env func(string) string) (sid, note string) {
 	if s := strings.TrimSpace(p.Session); s != "" {
 		return s, "сессия из ключа --session"
+	}
+	if s := strings.TrimSpace(env("DEVKIT_CHAT_SESSION_ID")); s != "" {
+		return s, "сессия из окружения разговора"
 	}
 	if s := strings.TrimSpace(env(askSessionEnv)); s != "" {
 		return s, "сессия из окружения хода"

@@ -315,3 +315,22 @@ func TestAskNeedsAnID(t *testing.T) {
 		t.Fatal("пустой ID принят")
 	}
 }
+
+func TestAskUsesDashboardSession(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	st.env["DEVKIT_CHAT_SESSION_ID"] = "as-dashboard"
+	st.env[askSessionEnv] = "parent-client"
+	writeDraft(t, root, "XR-77", "мысль")
+	if _, err := st.run(root, AskParams{ID: "XR-77", Draft: true, Question: "что выбрать"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-77")))
+	if !ok || got.Session != "as-dashboard" {
+		t.Fatalf("вопрос не связан с панелью: %+v", got)
+	}
+	sid, _ := askSession(AskParams{Session: "explicit"}, "", func(k string) string { return st.env[k] })
+	if sid != "explicit" {
+		t.Fatalf("явный адрес потерян: %q", sid)
+	}
+}

@@ -818,3 +818,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1695 | В дашборде работает профиль Codex | task | P2 | 2026-11-13 | [tasks/archive/2026/DK-1695.md](tasks/archive/2026/DK-1695.md) |
 | DK-1706 | В дашборде виден остаток квоты Codex | task | P2 | 2026-11-14 | [tasks/archive/2026/DK-1706.md](tasks/archive/2026/DK-1706.md) |
 | DK-1710 | Чат Codex остаётся с техническим идентификатором вместо названия | bug | P2 | 2026-11-14 | [tasks/archive/2026/DK-1710.md](tasks/archive/2026/DK-1710.md) |
+| DK-1711 | Груминг на Sol завершается до первого хода | bug | P2 | 2026-11-14 | [tasks/archive/2026/DK-1711.md](tasks/archive/2026/DK-1711.md) |

@@ -467,3 +467,16 @@ func TestPlanSetOverFinishedPlan(t *testing.T) {
 		t.Fatalf("доделанный план сессии после отказа не цел: %+v", got)
 	}
 }
+
+func TestPlanDashboardSession(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{"DEVKIT_CHAT_SESSION_ID": "as-dashboard", planEnvSession: "parent-client", planEnvTmux: "parent-terminal"})
+	a, err := planResolve(home, "", "", env)
+	if err != nil || a.sid != "as-dashboard" || a.tmux || a.file != filepath.Join(home, ".devkit", "plans", "as-dashboard.json") {
+		t.Fatalf("план панели: %+v %v", a, err)
+	}
+	a, err = planResolve(home, "explicit", "", env)
+	if err != nil || a.sid != "explicit" {
+		t.Fatalf("явная сессия потеряна: %+v %v", a, err)
+	}
+}

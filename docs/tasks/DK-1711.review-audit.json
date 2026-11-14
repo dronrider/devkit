@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1711",
   "base_sha": "2fc7cf565b3b7c62f1b48ad98e44a5e8c44ab81f",
-  "head_sha": "e1a12793d1bc3e17b88f755bb2b026a7137dafb6",
-  "code_hash": "6ed70b2877f5d8019a95bee16878d3d60c2c9df97b86b99478d384b7d6d16ad0",
-  "task_hash": "204fee5a2d9bb5511afdec04950582d4818d35f8e0e87a9086549560dd734053",
+  "head_sha": "5be572e30115a3ecaac1bef7889b22ba9144a666",
+  "code_hash": "a6bdb882766bcdbd42569092eb226fe7cf3a2db79bf3a4ad945d2757e7532bc9",
+  "task_hash": "fe21573f3251a61ec28af22945ed87402177d6351cbc9e2bc1a18205a32b7ef5",
   "sources": [
     {
       "name": "common-architecture",
@@ -38,23 +38,17 @@
     }
   ],
   "architecture": {
-    "goal": "Пользователь запускает груминг на выбранной Sol/Codex, видит результат и отдельно согласует подготовленные задачи.",
-    "decision": "Foreign groom использует существующий app-server, persisted GroomSource/Mode/Tree, общую ленту и busy-механизм.",
-    "boundaries": "Dashboard владеет процессом и лентой; agentctl exec подпиской и резервом; taskctl guard, prepared и согласием. ChatStore переживает рестарт, appChat хранит живое состояние.",
-    "alternative": "Codex CLI-флаги в groomCmd короче, но потребовали бы второго механизма ленты и противоречат принятому app-server контракту foreign профиля DK-1695.",
-    "justification": "Повторное использование app-server обосновано. Однако обязательный guard запрещён sandbox/never, вопросы taskctl не связаны с as-ID: архитектурная интеграция не завершена.",
-    "result": "violated",
+    "goal": "Восстановить заказанный пользователем запуск груминга на Sol/Codex, показать работу и вопросы/подготовленный результат, сохранить отдельное согласие на применение.",
+    "decision": "Foreign groom использует существующий app-server, persisted GroomSource/Mode/Tree, общий процесс/ленту. Neutral ID связывает Ask и план с as-разговором; carrier доставляет typed согласие через turn/resume. Только grooming использует workspace-write + on-request/auto_review.",
+    "boundaries": "Dashboard выбирает профиль/модель и владеет процессом/лентой/chatStore. Agentctl exec применяет подписку и cloud резерв; taskctl владеет guard/prepared/Ask/apply/receipt. Codex владеет sandbox и независимым review эскалаций. Persisted контекст переживает смерть процесса, appChat хранит только живое состояние.",
+    "alternative": "Нативные CLI флаги Codex в groomCmd короче, но потребовали бы второй реализации ленты и состояния и противоречат принятому foreign app-server контракту DK-1695. Вынести новый общий сервис не нужно: appSpawn/appTurn уже имеют нужную ответственность.",
+    "justification": "Модель/профиль и порядок отдельного согласия обязательны по задаче; app-server обоснован существующим проектным контрактом. Ранние ошибки реально воспроизведены: never запрещал guard, прежний Ask не был связан с as-ID. Исправления используют штатные policy/identity/delivery контракты, человек явно разрешил grooming-only auto_review, sandbox и guard сохранены.",
+    "result": "checked",
     "evidence": [
-      {
-        "object": "groom guard",
-        "location": "tools/dashboard/appchat.go:224-227",
-        "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-      },
-      {
-        "object": "groom Ask identity",
-        "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-        "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
-      }
+      "причина исходного отказа; docs/tasks/DK-1711.md:Ход работы; tools/dashboard/drafts.go:handleDraftGroom: Claude --permission-mode раньше передавался Codex и завершал клиент до хода; foreign теперь не вызывает groomCmd.",
+      "политика и persisted контекст; tools/dashboard/appchat.go:appSpawn,appCarrierTurn; appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement: Проверены свежий/продолженный grooming и plain never, model/mode/tree/effort, comment/form/chat, отказ доставки и receipt retry.",
+      "реальный Sol sandbox/approval/Ask; /tmp/dk1711-live-built-runtime.log; docs/tasks/DK-1711.md:Ход работы: Реальный HTTP grooming с изолированной synthetic fixture вне TMPDIR, common.git вне cwd, require_escalated, guard/save/ask и PreparedQuestion через GET /ask. Ничего не применялось.",
+      "полный перечень стандартов; docs/tasks/DK-1711.review-audit.json:rules: 94 правила разобраны; AGENTS требует guard/pick, taskctl для замечаний, ID в commit и немедленный push docs. Эти действия соблюдены, stage native hook не имитировался. Новых infra адресов/секретов в tracked текстах нет."
     ]
   },
   "rules": [
@@ -62,55 +56,74 @@
       "id": "common-architecture:ARCH-001",
       "source": "common-architecture",
       "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Groom запуск принадлежит drafts, процесс/лента appchat, JSONL appserver, видимость board. Новая taskctl/agentctl логика ограничена выбором session ID.",
+      "evidence": [
+        {
+          "object": "ARCH-001",
+          "location": "tools/dashboard/drafts.go:handleDraftGroom; appchat.go:appSpawn,appCarrierTurn; tools/taskctl/ask.go:askSession; tools/agentctl/plan.go:planResolve",
+          "observation": "Groom запуск принадлежит drafts, процесс/лента appchat, JSONL appserver, видимость board. Новая taskctl/agentctl логика ограничена выбором session ID."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-002",
       "source": "common-architecture",
       "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Foreign маршрут использует контракт appStartRecord/appSpawn; carriers используют appCarrierTurn. Поле way=appserver потребляется UI. Прежний appStart сохранён обёрткой.",
+      "evidence": [
+        {
+          "object": "ARCH-002",
+          "location": "tools/dashboard/appchat.go:appStartRecord,appCarrierTurn; chatlift.go:deliverToCarrier; static/app.js:groomDraft",
+          "observation": "Foreign маршрут использует контракт appStartRecord/appSpawn; carriers используют appCarrierTurn. Поле way=appserver потребляется UI. Прежний appStart сохранён обёрткой."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-003",
       "source": "common-architecture",
       "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Запуск не скопирован в drafts: appStartRecord переиспользует appSpawn/appTurn; env и policy выбираются только appSpawn. Ask identity и plan имеют разных владельцев и одинаковый приоритет явного ключа.",
+      "evidence": [
+        {
+          "object": "ARCH-003",
+          "location": "tools/dashboard/appchat.go:appStartRecord,appSpawn; tools/taskctl/ask.go:askSession; tools/agentctl/plan.go:planResolve",
+          "observation": "Запуск не скопирован в drafts: appStartRecord переиспользует appSpawn/appTurn; env и policy выбираются только appSpawn. Ask identity и plan имеют разных владельцев и одинаковый приоритет явного ключа."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-004",
       "source": "common-architecture",
       "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый helper нужен для сохранения Groom контекста и доставки квитанции без tmux. Нового пакета, пользовательского слоя конфигурации, зависимости и отдельного сервиса нет. Explicit per-thread config задаёт обязательный контекст исполнения на границе клиента.",
+      "evidence": [
+        {
+          "object": "ARCH-004",
+          "location": "git diff 2fc7cf565 HEAD --stat; tools/dashboard/appchat.go:appStartRecord,appCarrierTurn",
+          "observation": "Новый helper нужен для сохранения Groom контекста и доставки квитанции без tmux. Нового пакета, пользовательского слоя конфигурации, зависимости и отдельного сервиса нет. Explicit per-thread config задаёт обязательный контекст исполнения на границе клиента."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-005",
       "source": "common-architecture",
       "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Проверены API входы groom/chat/form, 409 busy и 502 отказа/доставки, сохранение результата и receipt retry. Реальные thread/start/resume должны подтвердить policy/reviewer/sandbox; несовместимый клиент получает ошибку.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "ARCH-005",
+          "location": "tools/dashboard/drafts.go:handleDraftGroom,handleDraftPreparedConfirm; appchat.go:appSpawn,appCarrierTurn; appchat_test.go:TestAppGroomPreparedAgreement",
+          "observation": "Проверены API входы groom/chat/form, 409 busy и 502 отказа/доставки, сохранение результата и receipt retry. Реальные thread/start/resume должны подтвердить policy/reviewer/sandbox; несовместимый клиент получает ошибку."
         }
       ]
     },
@@ -118,28 +131,29 @@
       "id": "common-architecture:ARCH-006",
       "source": "common-architecture",
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ID, профиль, tier, mode, effort и GuardRecord проверяются сервером до запуска; foreign busy-check и старт сериализованы groomStartMu. Apply результатов делает taskctl после typed consent.",
+      "evidence": [
+        {
+          "object": "ARCH-006",
+          "location": "tools/dashboard/drafts.go:handleDraftGroom; server.go:groomStartMu; chatproposal.go:handleProposalSay",
+          "observation": "ID, профиль, tier, mode, effort и GuardRecord проверяются сервером до запуска; foreign busy-check и старт сериализованы groomStartMu. Apply результатов делает taskctl после typed consent."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-007",
       "source": "common-architecture",
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Claude tmux ветка и appStart wrapper сохранены, foreign получает прежние Groom поля. Новый нейтральный ID связывает Ask/plan с as-разговором; явный session ключ приоритетнее и Claude fallback остаётся.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "ARCH-007",
+          "location": "tools/taskctl/ask.go:askSession,AskPanel; tools/agentctl/plan.go:planResolve; appchat_test.go:TestAppGroomPreparedAgreement",
+          "observation": "Claude tmux ветка и appStart wrapper сохранены, foreign получает прежние Groom поля. Новый нейтральный ID связывает Ask/plan с as-разговором; явный session ключ приоритетнее и Claude fallback остаётся."
         }
       ]
     },
@@ -147,46 +161,59 @@
       "id": "common-architecture:ARCH-008",
       "source": "common-architecture",
       "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Источник контекста это chatStore с Model/Harness/Thread/CxEffort/GroomSource/Mode/Tree; appSay/carrier читают его на resume. Ask принадлежит taskctl, receipt это draftproposal. Память appChat хранит только живой процесс/busy.",
+      "evidence": [
+        {
+          "object": "ARCH-008",
+          "location": "tools/dashboard/appchat.go:appSpawn,appSay,appCarrierTurn; chatproposalcontext.go:rememberProposalContext",
+          "observation": "Источник контекста это chatStore с Model/Harness/Thread/CxEffort/GroomSource/Mode/Tree; appSay/carrier читают его на resume. Ask принадлежит taskctl, receipt это draftproposal. Память appChat хранит только живой процесс/busy."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-009",
       "source": "common-architecture",
       "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appSpawn fail убивает процесс; watcher appDead чистит реестр и пишет обрыв; Stop/Drop закрывают процесс без потери ленты. CloudShared освобождается defer, agentctl exec удерживает клиентский резерв.",
+      "evidence": [
+        {
+          "object": "ARCH-009",
+          "location": "tools/dashboard/appchat.go:appSpawn,appDead,appStop,appDrop; tools/dashboard/drafts.go:handleDraftGroom; tools/agentctl/exec.go:cmdExec",
+          "observation": "appSpawn fail убивает процесс; watcher appDead чистит реестр и пишет обрыв; Stop/Drop закрывают процесс без потери ленты. CloudShared освобождается defer, agentctl exec удерживает клиентский резерв."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-010",
       "source": "common-architecture",
       "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "groomStartMu охватывает foreign busy-check и запуск; appMu защищает appChats, c.mu это busy/effort. Порядок указан в server. DropAskIf сравнивает исходный Ask и сохраняет новый вопрос при гонке.",
+      "evidence": [
+        {
+          "object": "ARCH-010",
+          "location": "tools/dashboard/server.go:groomStartMu; appchat.go:appTurn,appLive; chatproposalcontext.go:finishPreparedFormConsent",
+          "observation": "groomStartMu охватывает foreign busy-check и запуск; appMu защищает appChats, c.mu это busy/effort. Порядок указан в server. DropAskIf сравнивает исходный Ask и сохраняет новый вопрос при гонке."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-011",
       "source": "common-architecture",
       "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Входы валидируют ресурс и GuardRecord. Groom сохраняет workspace-write, on-request+auto_review включён только для GroomSource и явно согласован человеком; прочие чаты never. Ответ клиента проверяется перед ходом. Guard и облачный резерв не ослаблены.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "ARCH-011",
+          "location": "docs/tasks/DK-1711.md:Развилки; tools/dashboard/appchat.go:appSpawn; drafts.go:handleDraftGroom",
+          "observation": "Входы валидируют ресурс и GuardRecord. Groom сохраняет workspace-write, on-request+auto_review включён только для GroomSource и явно согласован человеком; прочие чаты never. Ответ клиента проверяется перед ходом. Guard и облачный резерв не ослаблены."
         }
       ]
     },
@@ -195,18 +222,13 @@
       "source": "common-architecture",
       "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Отказ первичной записи groom chatStore даёт 502 до клиента, обязательный контекст не теряется. Spawn refusal попадает в HTTP 502 и Fail-ленту. Неудачная доставка после apply называет частичный исход; form сохраняет Ask до доставки, chat повтор читает ProposalContexts/receipt без повторного apply.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "ARCH-012",
+          "location": "tools/dashboard/appchat.go:appStartRecord; drafts.go:handleDraftPreparedConfirm; chatproposal.go:handleProposalSay; appchat_test.go:TestAppGroomPreparedAgreement",
+          "observation": "Отказ первичной записи groom chatStore даёт 502 до клиента, обязательный контекст не теряется. Spawn refusal попадает в HTTP 502 и Fail-ленту. Неудачная доставка после apply называет частичный исход; form сохраняет Ask до доставки, chat повтор читает ProposalContexts/receipt без повторного apply."
         }
       ]
     },
@@ -214,100 +236,149 @@
       "id": "common-architecture:ARCH-013",
       "source": "common-architecture",
       "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Повтор busy groom получает 409, appServer.call и appBusyCap ограничивают ожидание; повтор подтверждения использует сохранённую квитанцию и не создаёт задачи снова.",
+      "evidence": [
+        {
+          "object": "ARCH-013",
+          "location": "tools/dashboard/drafts.go:handleDraftGroom; appserver.go:call; appchat.go:appBusyCap; appchat_test.go:TestAppGroomPreparedAgreement",
+          "observation": "Повтор busy groom получает 409, appServer.call и appBusyCap ограничивают ожидание; повтор подтверждения использует сохранённую квитанцию и не создаёт задачи снова."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-014",
       "source": "common-architecture",
       "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "В диагностике профиля/клиента сохранены действие и stderr; тест раннего выхода проверяет причину в API и ленте. Новые env содержат только ID/mode, значения токенов не добавлены в логи.",
+      "evidence": [
+        {
+          "object": "ARCH-014",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord; drafts_test.go:TestDraftGroomAppServerFailure",
+          "observation": "В диагностике профиля/клиента сохранены действие и stderr; тест раннего выхода проверяет причину в API и ленте. Новые env содержат только ID/mode, значения токенов не добавлены в логи."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-015",
       "source": "common-architecture",
       "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "На изменённых путях и в их storage helpers нет SQL, ORM или удалённой БД. AppListRows/chatStore/appFeed читают локальные файлы для модели, проекта, контекста и состояния. Правило о полях SQL-выборки не применяется.",
+      "evidence": [
+        {
+          "object": "ARCH-015",
+          "location": "tools/dashboard/appchat.go:appListRows,appFeedRead; drafts.go:draftBusy; board.go:liveWorks",
+          "observation": "На изменённых путях и в их storage helpers нет SQL, ORM или удалённой БД. AppListRows/chatStore/appFeed читают локальные файлы для модели, проекта, контекста и состояния. Правило о полях SQL-выборки не применяется."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-016",
       "source": "common-architecture",
       "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Нет последовательности запросов БД или ORM: загрузки это существующие локальные chatStore/feed, подготовленный результат читает taskctl. Новый внешний data-source запрос не введён.",
+      "evidence": [
+        {
+          "object": "ARCH-016",
+          "location": "tools/dashboard/appchat.go:appListRows; tools/dashboard/chatproposal.go:handleProposalSay",
+          "observation": "Нет последовательности запросов БД или ORM: загрузки это существующие локальные chatStore/feed, подготовленный результат читает taskctl. Новый внешний data-source запрос не введён."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-017",
       "source": "common-architecture",
       "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Транзакции БД отсутствуют. Атомарность бизнес-применения остаётся taskctl/draftproposal, новый delivery callback не подменяет её; partial delivery проверен отдельно.",
+      "evidence": [
+        {
+          "object": "ARCH-017",
+          "location": "tools/dashboard/drafts.go:handleDraftPreparedConfirm; tools/dashboard/chatproposal.go:handleProposalSay",
+          "observation": "Транзакции БД отсутствуют. Атомарность бизнес-применения остаётся taskctl/draftproposal, новый delivery callback не подменяет её; partial delivery проверен отдельно."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-018",
       "source": "common-architecture",
       "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "SQL/ORM N+1 отсутствует: каталог appListRows и отдельные chatStore файлы локальны. Повторное чтение необходимо для GroomSource/Tree, которых нет в chatEntry; новый сетевой запрос на каждый элемент не добавлен.",
+      "evidence": [
+        {
+          "object": "ARCH-018",
+          "location": "tools/dashboard/drafts.go:draftBusy; tools/dashboard/board.go:liveWorks; appchat.go:appListRows",
+          "observation": "SQL/ORM N+1 отсутствует: каталог appListRows и отдельные chatStore файлы локальны. Повторное чтение необходимо для GroomSource/Tree, которых нет в chatEntry; новый сетевой запрос на каждый элемент не добавлен."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-019",
       "source": "common-architecture",
       "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Chat storage остаётся в chatStore/appFeed, guard/cloud в internal/draftmeta, prepared/apply/receipts это taskctl/draftproposal. Dashboard выбирает маршрут и не пишет строки доски собственной логикой.",
+      "evidence": [
+        {
+          "object": "ARCH-019",
+          "location": "tools/dashboard/appchat.go; drafts.go:handleDraftGroom,handleDraftPreparedConfirm; chatproposal.go:handleProposalSay",
+          "observation": "Chat storage остаётся в chatStore/appFeed, guard/cloud в internal/draftmeta, prepared/apply/receipts это taskctl/draftproposal. Dashboard выбирает маршрут и не пишет строки доски собственной логикой."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-020",
       "source": "common-architecture",
       "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Статус путей проверен: tmux поддерживается для Claude, foreign app-server принят DK-1695. Deprecated механизм не расширяется.",
+      "evidence": [
+        {
+          "object": "ARCH-020",
+          "location": "docs/ARCHITECTURE.md:Инварианты; tools/dashboard/drafts.go:handleDraftGroom",
+          "observation": "Статус путей проверен: tmux поддерживается для Claude, foreign app-server принят DK-1695. Deprecated механизм не расширяется."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-021",
       "source": "common-architecture",
       "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Баг чужого протокола исправляется в поддерживаемом app-server; Claude groomCmd не расширен Codex-флагами и остаётся действующим путём Claude.",
+      "evidence": [
+        {
+          "object": "ARCH-021",
+          "location": "tools/dashboard/drafts.go:handleDraftGroom,groomCmd",
+          "observation": "Баг чужого протокола исправляется в поддерживаемом app-server; Claude groomCmd не расширен Codex-флагами и остаётся действующим путём Claude."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-022",
       "source": "common-architecture",
       "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Неумолчальный high effort, обе mode, выбранные harness/model и Tree проверены fake интеграцией, сохранены при resume/consent. Нейтральный ID реально связывает Ask с панелью; policy ограничена grooming, plain never.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "ARCH-022",
+          "location": "tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; drafts_test.go:TestDraftGroomAppServer",
+          "observation": "Неумолчальный high effort, обе mode, выбранные harness/model и Tree проверены fake интеграцией, сохранены при resume/consent. Нейтральный ID реально связывает Ask с панелью; policy ограничена grooming, plain never."
         }
       ]
     },
@@ -315,406 +386,659 @@
       "id": "common-architecture:ARCH-023",
       "source": "common-architecture",
       "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых переключателей нет: protocol определяет дорогу, GroomSource определяет согласованный режим прав. Harness/tier/mode/effort существовали и отражают независимый выбор пользователя.",
+      "evidence": [
+        {
+          "object": "ARCH-023",
+          "location": "tools/dashboard/drafts.go:draftAsk,handleDraftGroom; appchat.go:appSpawn",
+          "observation": "Новых переключателей нет: protocol определяет дорогу, GroomSource определяет согласованный режим прав. Harness/tier/mode/effort существовали и отражают независимый выбор пользователя."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-024",
       "source": "common-architecture",
       "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Динамический контекст запуска хранится в chatStore, а не машинном конфиге. Env применяется при spawn, persisted model/thread/effort используются следующим ходом и после смерти процесса.",
+      "evidence": [
+        {
+          "object": "ARCH-024",
+          "location": "tools/dashboard/appchat.go:appSpawn,appSay,appCarrierTurn",
+          "observation": "Динамический контекст запуска хранится в chatStore, а не машинном конфиге. Env применяется при spawn, persisted model/thread/effort используются следующим ходом и после смерти процесса."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-025",
       "source": "common-architecture",
       "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "DEVKIT_CHAT_SESSION_ID и DEVKIT_HARNESS задаются per-variable shell_environment_policy.set при thread/start/resume; grooming также получает TASK/SOURCE/MODE. Произвольные env, секреты и inherit=all не добавлены; остальные пользовательские set не затираются. Нейтральный DEVKIT_CHAT_SESSION_ID документирован в taskctl/agentctl README, задаётся appSpawn; --session/--sid приоритетнее, далее neutral, Claude, прежний fallback. Прежний пустой effort получает medium.",
+      "evidence": [
+        {
+          "object": "ARCH-025",
+          "location": "tools/taskctl/README.md:Внутренний писатель признака; tools/agentctl/README.md:План работ сессии; appchat.go:appStartRecord",
+          "observation": "DEVKIT_CHAT_SESSION_ID и DEVKIT_HARNESS задаются per-variable shell_environment_policy.set при thread/start/resume; grooming также получает TASK/SOURCE/MODE. Произвольные env, секреты и inherit=all не добавлены; остальные пользовательские set не затираются. Нейтральный DEVKIT_CHAT_SESSION_ID документирован в taskctl/agentctl README, задаётся appSpawn; --session/--sid приоритетнее, далее neutral, Claude, прежний fallback. Прежний пустой effort получает medium."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-026",
       "source": "common-architecture",
       "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Нейтральный ID нужен foreign протоколу без Claude env и tmux. Обязательный контекст задан explicit per-thread config и не зависит от пользовательских правил наследования env. Реальный ход подтвердил все5полей без export; ранние пустые Ask на стенде использовали старый installed CLI и не доказывают фильтрацию самим Codex. Это идентичность разговора, не дубль модели/профиля; Claude имена сохранены для совместимости. Пользовательского alias/config слоя нет.",
+      "evidence": [
+        {
+          "object": "ARCH-026",
+          "location": "tools/dashboard/appchat.go:appSpawn; tools/taskctl/ask.go:askSession; tools/agentctl/plan.go:planResolve",
+          "observation": "Нейтральный ID нужен foreign протоколу без Claude env и tmux. Обязательный контекст задан explicit per-thread config и не зависит от пользовательских правил наследования env. Реальный ход подтвердил все5полей без export; ранние пустые Ask на стенде использовали старый installed CLI и не доказывают фильтрацию самим Codex. Это идентичность разговора, не дубль модели/профиля; Claude имена сохранены для совместимости. Пользовательского alias/config слоя нет."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-027",
       "source": "common-architecture",
       "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Неизвестные harness/tier/mode/effort отклоняются до запуска. Если клиент не подтверждает on-request/auto_review/workspaceWrite, appSpawn возвращает конкретную ошибку обновления, не откатывается на небезопасный режим.",
+      "evidence": [
+        {
+          "object": "ARCH-027",
+          "location": "tools/dashboard/drafts.go:draftAsk,handleDraftGroom; appchat.go:appSpawn",
+          "observation": "Неизвестные harness/tier/mode/effort отклоняются до запуска. Если клиент не подтверждает on-request/auto_review/workspaceWrite, appSpawn возвращает конкретную ошибку обновления, не откатывается на небезопасный режим."
+        }
+      ]
     },
     {
       "id": "common-architecture:ARCH-028",
       "source": "common-architecture",
       "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Пользовательский вход из README проверен реальным Sol через HTTP groom; fake integration отдельно проверяет model/mode/effort, comment, согласие в chat/form, отказ доставки и retry. Лишних ручных настроек для запуска не добавлено.",
+      "evidence": [
+        {
+          "object": "ARCH-028",
+          "location": "tools/dashboard/README.md:Первый запуск Codex; appchat_test.go:TestAppGroomPreparedAgreement; /tmp/dk1711-live-built-runtime.log",
+          "observation": "Пользовательский вход из README проверен реальным Sol через HTTP groom; fake integration отдельно проверяет model/mode/effort, comment, согласие в chat/form, отказ доставки и retry. Лишних ручных настроек для запуска не добавлено."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-001",
       "source": "common-style",
       "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appStartRecord/appCarrierTurn, groomStartMu и neutral session ID названы по назначению; доменные файлы не переименованы.",
+      "evidence": [
+        {
+          "object": "STYLE-001",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "appStartRecord/appCarrierTurn, groomStartMu и neutral session ID названы по назначению; доменные файлы не переименованы."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-002",
       "source": "common-style",
       "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appSpawn/appCarrierTurn явно запускают/продолжают процесс, busyNow читает bool; askSession и planResolve только выбирают адрес, побочного сохранения в них нет.",
+      "evidence": [
+        {
+          "object": "STYLE-002",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "appSpawn/appCarrierTurn явно запускают/продолжают процесс, busyNow читает bool; askSession и planResolve только выбирают адрес, побочного сохранения в них нет."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-003",
       "source": "common-style",
       "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "GroomSource/Mode/Tree используются согласованно в store/spawn/drafts/board; neutral ID имеет одно имя в dashboard/taskctl/agentctl.",
+      "evidence": [
+        {
+          "object": "STYLE-003",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "GroomSource/Mode/Tree используются согласованно в store/spawn/drafts/board; neutral ID имеет одно имя в dashboard/taskctl/agentctl."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-004",
       "source": "common-style",
       "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Born/Started используют прежний Unix seconds контракт, turnAt time.Time; новых неоднозначных размерных полей нет.",
+      "evidence": [
+        {
+          "object": "STYLE-004",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Born/Started используют прежний Unix seconds контракт, turnAt time.Time; новых неоднозначных размерных полей нет."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-005",
       "source": "common-style",
       "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "st/c/dir локальны коротким блокам, appCarrierTurn/appStartRecord предметные; новых общих data/manager сущностей нет.",
+      "evidence": [
+        {
+          "object": "STYLE-005",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "st/c/dir локальны коротким блокам, appCarrierTurn/appStartRecord предметные; новых общих data/manager сущностей нет."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-006",
       "source": "common-style",
       "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "st у appStartRecord и env у appServerStart потребляются; wrapper передаёт пустой контекст, grooming заполненный. Новый session env читают AskPanel/askSession/planResolve.",
+      "evidence": [
+        {
+          "object": "STYLE-006",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "st у appStartRecord и env у appServerStart потребляются; wrapper передаёт пустой контекст, grooming заполненный. Новый session env читают AskPanel/askSession/planResolve."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-007",
       "source": "common-style",
       "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый error deliverPreparedFormReceipt потребляет handleDraftPreparedConfirm; все appCarrierTurn вызовы проверяют error. appServerStart/appSpawn результаты имеют прежних потребителей.",
+      "evidence": [
+        {
+          "object": "STYLE-007",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Новый error deliverPreparedFormReceipt потребляет handleDraftPreparedConfirm; все appCarrierTurn вызовы проверяют error. appServerStart/appSpawn результаты имеют прежних потребителей."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-008",
       "source": "common-style",
       "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Поля ответа и appStart не удалены, variadic env сохраняет прежние вызовы appServerStart; error доставки не выброшен, а поднят до API.",
+      "evidence": [
+        {
+          "object": "STYLE-008",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Поля ответа и appStart не удалены, variadic env сохраняет прежние вызовы appServerStart; error доставки не выброшен, а поднят до API."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-009",
       "source": "common-style",
       "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Функции выполняют связные операции запуска, доставки квитанции и выбора адреса; foreign ветка завершает handleDraftGroom до tmux cleanup.",
+      "evidence": [
+        {
+          "object": "STYLE-009",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Функции выполняют связные операции запуска, доставки квитанции и выбора адреса; foreign ветка завершает handleDraftGroom до tmux cleanup."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-010",
       "source": "common-style",
       "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Policy/reviewer/sandbox имеют протокольные имена и проверяемые значения, mode и env предметные. Нового флага с неясным bool контрактом нет.",
+      "evidence": [
+        {
+          "object": "STYLE-010",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Policy/reviewer/sandbox имеют протокольные имена и проверяемые значения, mode и env предметные. Нового флага с неясным bool контрактом нет."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-011",
       "source": "common-style",
       "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки профиля/guard/резерва/процесса завершают путь последовательно; foreign branch явный, недостижимый Codex groomCmd не используется.",
+      "evidence": [
+        {
+          "object": "STYLE-011",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Ошибки профиля/guard/резерва/процесса завершают путь последовательно; foreign branch явный, недостижимый Codex groomCmd не используется."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-012",
       "source": "common-style",
       "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go if/map/error/mutex и JS if используют принятые формы; форматирование проверено обычными воротами коммита, preference-стандарт не вводится.",
+      "evidence": [
+        {
+          "object": "STYLE-012",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Go if/map/error/mutex и JS if используют принятые формы; форматирование проверено обычными воротами коммита, preference-стандарт не вводится."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-013",
       "source": "common-style",
       "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Spawn failure сохраняет stderr и error context, delivery error сообщает уже применённый разбор. Retry не заменён пустым успехом.",
+      "evidence": [
+        {
+          "object": "STYLE-013",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Spawn failure сохраняет stderr и error context, delivery error сообщает уже применённый разбор. Retry не заменён пустым успехом."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-014",
       "source": "common-style",
       "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки называют отказавший клиент/доставку/политику; совет обновить Codex даётся при неподтверждённом контракте. Busy текст с tmux термином для as-ID неточен, но причина занятости и session ID остаются понятны.",
+      "evidence": [
+        {
+          "object": "STYLE-014",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Ошибки называют отказавший клиент/доставку/политику; совет обновить Codex даётся при неподтверждённом контракте. Busy текст с tmux термином для as-ID неточен, но причина занятости и session ID остаются понятны."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-015",
       "source": "common-style",
       "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарий groomStartMu объясняет атомарность и порядок appMu; комментарии askSession/plan и дока отражают neutral priority. Остальные Claude-комментарии относятся к сохранённой ветке.",
+      "evidence": [
+        {
+          "object": "STYLE-015",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Комментарий groomStartMu объясняет атомарность и порядок appMu; комментарии askSession/plan и дока отражают neutral priority. Остальные Claude-комментарии относятся к сохранённой ветке."
+        }
+      ]
     },
     {
       "id": "common-style:STYLE-016",
       "source": "common-style",
       "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Дока в той же ветке описывает Codex выбор, grooming-only review, sandbox, сохранение исходника и отдельное согласование. taskctl/agentctl README описывают neutral ID и приоритет явного ключа.",
+      "evidence": [
+        {
+          "object": "STYLE-016",
+          "location": "tools/dashboard/appchat.go:appSpawn,appStartRecord,appCarrierTurn; chatproposal.go:handleProposalSay; chatproposalcontext.go:deliverPreparedFormReceipt; tools/taskctl/ask.go; tools/agentctl/plan.go",
+          "observation": "Дока в той же ветке описывает Codex выбор, grooming-only review, sandbox, сохранение исходника и отдельное согласование. taskctl/agentctl README описывают neutral ID и приоритет явного ключа."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-001",
       "source": "common-tests",
       "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Код идёт с drafts_test/appchat_test, ask_test и plan_test; JS panel probe расширен в testdata. Тесты не отложены.",
+      "evidence": [
+        {
+          "object": "TEST-001",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Код идёт с drafts_test/appchat_test, ask_test и plan_test; JS panel probe расширен в testdata. Тесты не отложены."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-002",
       "source": "common-tests",
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Regcheck на 2fc7cf565 подтвердил routing/panel, на e1a12793d это permission/identity, на 91d6ab187 это AskPanel delivery. Команды/версии/исходы записаны в задаче; новые тесты различают прежний неверный путь.",
+      "evidence": [
+        {
+          "object": "TEST-002",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Regcheck на 2fc7cf565 подтвердил routing/panel, на e1a12793d это permission/identity, на 91d6ab187 это AskPanel delivery. Команды/версии/исходы записаны в задаче; новые тесты различают прежний неверный путь."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-003",
       "source": "common-tests",
       "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "HTTP/process стык проверяют fake-app integration и настоящий taskctl prepared API; session resolver имеет отдельные юниты; UI переключение проверяет Node probe. Реальный Sol probe проверяет sandbox/approval и Ask.",
+      "evidence": [
+        {
+          "object": "TEST-003",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "HTTP/process стык проверяют fake-app integration и настоящий taskctl prepared API; session resolver имеет отдельные юниты; UI переключение проверяет Node probe. Реальный Sol probe проверяет sandbox/approval и Ask."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-004",
       "source": "common-tests",
       "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Fake app процессы и HTTP/CLI prepared интеграционные; planResolve и AskPanel без внешнего сервиса. Actual prepared-delivery тест использует taskctl fixture с git и не называется чистым юнитом. Адресные группы запускаются отдельно, реальные auth/клиент не встроены в постоянный общий setup.",
+      "evidence": [
+        {
+          "object": "TEST-004",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Fake app процессы и HTTP/CLI prepared интеграционные; planResolve и AskPanel без внешнего сервиса. Actual prepared-delivery тест использует taskctl fixture с git и не называется чистым юнитом. Адресные группы запускаются отдельно, реальные auth/клиент не встроены в постоянный общий setup."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-005",
       "source": "common-tests",
       "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ожидания way/as/model/env/mode/high/409/502 задаются вручную; prepared API использует настоящий taskctl. Fake app JSONL расширяет существующий проверенный контракт и не подменяет внутреннюю routing логику.",
+      "evidence": [
+        {
+          "object": "TEST-005",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Ожидания way/as/model/env/mode/high/409/502 задаются вручную; prepared API использует настоящий taskctl. Fake app JSONL расширяет существующий проверенный контракт и не подменяет внутреннюю routing логику."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-006",
       "source": "common-tests",
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Автор выполнил четыре адресные мутации: потеря mode, потеря neutral ID, never у groom, auto_review у plain. Каждая ожидаемо красная, код восстановлен; прочие проверки regcheck ловят старую ветку и panel. След есть в задаче.",
+      "evidence": [
+        {
+          "object": "TEST-006",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Автор выполнил четыре адресные мутации: потеря mode, потеря neutral ID, never у groom, auto_review у plain. Каждая ожидаемо красная, код восстановлен; прочие проверки regcheck ловят старую ветку и panel. След есть в задаче."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-007",
       "source": "common-tests",
       "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Busy тест использует mute fake, event waiting ограничено дедлайном без измерения скорости; новых случайных sleep/сравнений стенного времени в постоянных тестах нет.",
+      "evidence": [
+        {
+          "object": "TEST-007",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Busy тест использует mute fake, event waiting ограничено дедлайном без измерения скорости; новых случайных sleep/сравнений стенного времени в постоянных тестах нет."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-008",
       "source": "common-tests",
       "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "UI не исключён: poc_groomsew проверяет hash/as и отсутствие tmux lookup; core путь покрыт HTTP интеграцией. Согласованных пропусков юнитов не вводится.",
+      "evidence": [
+        {
+          "object": "TEST-008",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "UI не исключён: poc_groomsew проверяет hash/as и отсутствие tmux lookup; core путь покрыт HTTP интеграцией. Согласованных пропусков юнитов не вводится."
+        }
+      ]
     },
     {
       "id": "common-tests:TEST-009",
       "source": "common-tests",
       "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые тесты используют прежние newTestEnv/appEnv и явный временный HOME для actual taskctl; реальные подписки в постоянном setup не вызываются. TestMain taskctl и agentctl обёрнуты runsguard.Guard. У dashboard прежний TestMain проверяет spare sessions и не содержит runsguard; этот существующий пробел не внесён изменением и сам TestMain не менялся. Отдельный разрешённый live probe выполнялся отдельно от постоянной сюиты.",
+      "evidence": [
+        {
+          "object": "TEST-009",
+          "location": "docs/tasks/DK-1711.md:Ход работы,Проверка; tools/dashboard/appchat_test.go:TestAppGroomApprovalPolicy,TestAppGroomPreparedAgreement; tools/taskctl/ask_test.go; tools/agentctl/plan_test.go",
+          "observation": "Новые тесты используют прежние newTestEnv/appEnv и явный временный HOME для actual taskctl; реальные подписки в постоянном setup не вызываются. TestMain taskctl и agentctl обёрнуты runsguard.Guard. У dashboard прежний TestMain проверяет spare sessions и не содержит runsguard; этот существующий пробел не внесён изменением и сам TestMain не менялся. Отдельный разрешённый live probe выполнялся отдельно от постоянной сюиты."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0fc945667d2dd2f2",
       "source": "project-architecture",
       "text": "# Архитектура devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-0fc945667d2dd2f2",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0a6d5f937b6744cf",
       "source": "project-architecture",
       "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общие ARCH/STYLE/TEST и оба проектных документа проверяются совместно; все 94 строки сохранены в отчёте.",
+      "evidence": [
+        {
+          "object": "block-0a6d5f937b6744cf",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Общие ARCH/STYLE/TEST и оба проектных документа проверяются совместно; все 94 строки сохранены в отчёте."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-927d754447cbe51a",
       "source": "project-architecture",
       "text": "## Границы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-927d754447cbe51a",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-bd4bce11068e7b08",
       "source": "project-architecture",
       "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "README «Раскладка» прочитан: код остаётся Go в tools/dashboard/taskctl/agentctl, JS fixture в dashboard/testdata, задача/audit в docs/tasks. Нового инструмента/верхнего каталога нет.",
+      "evidence": [
+        {
+          "object": "block-bd4bce11068e7b08",
+          "location": "README.md:320-365; git diff 2fc7cf565 HEAD --stat",
+          "observation": "README «Раскладка» прочитан: код остаётся Go в tools/dashboard/taskctl/agentctl, JS fixture в dashboard/testdata, задача/audit в docs/tasks. Нового инструмента/верхнего каталога нет."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-76ff3ff8f504faa3",
       "source": "project-architecture",
       "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Правятся существующие семьи drafts/appchat/board/chatproposal до их переноса; новый домен не добавлен. Внутренние generic пакеты не копируются.",
+      "evidence": [
+        {
+          "object": "block-76ff3ff8f504faa3",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Правятся существующие семьи drafts/appchat/board/chatproposal до их переноса; новый домен не добавлен. Внутренние generic пакеты не копируются."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-1086535d7c6e2d47",
       "source": "project-architecture",
       "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых маршрутов нет; прежние handleDraftGroom/handleProposalSay/handleDraftPreparedConfirm остаются в доменных файлах. JS только переключает существующую ленту.",
+      "evidence": [
+        {
+          "object": "block-1086535d7c6e2d47",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новых маршрутов нет; прежние handleDraftGroom/handleProposalSay/handleDraftPreparedConfirm остаются в доменных файлах. JS только переключает существующую ленту."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-3795ec1243732caa",
       "source": "project-architecture",
       "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Dashboard вызывает taskctl для typed apply/receipt и agentctl exec для клиента; собственной логики записи строк доски не добавляет.",
+      "evidence": [
+        {
+          "object": "block-3795ec1243732caa",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Dashboard вызывает taskctl для typed apply/receipt и agentctl exec для клиента; собственной логики записи строк доски не добавляет."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-21a8892967ce47cf",
       "source": "project-architecture",
       "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Переиспользованы internal/draftmeta, chat, draftproposal и прежний sameGroomTree; нового git/storage дубликата нет.",
+      "evidence": [
+        {
+          "object": "block-21a8892967ce47cf",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Переиспользованы internal/draftmeta, chat, draftproposal и прежний sameGroomTree; нового git/storage дубликата нет."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-feefa59680bc01df",
       "source": "project-architecture",
       "text": "## Инварианты",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-feefa59680bc01df",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-df103c9ebbc1dbc2",
       "source": "project-architecture",
       "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые успехи/ошибки используют writeJSON; taskctl вызывается прежней taskctlDo воронкой. Нового parseReplies или отдельного transcript parser не введено.",
+      "evidence": [
+        {
+          "object": "block-df103c9ebbc1dbc2",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новые успехи/ошибки используют writeJSON; taskctl вызывается прежней taskctlDo воронкой. Нового parseReplies или отдельного transcript parser не введено."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-b9d12cba420d16a2",
       "source": "project-architecture",
       "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Текстовый tool_use внешнего Claude шлюза и parseReplies не меняются. AppItemReplies существовал до ветки, новый путь лишь использует прежний native JSONL renderer.",
+      "evidence": [
+        {
+          "object": "block-b9d12cba420d16a2",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Текстовый tool_use внешнего Claude шлюза и parseReplies не меняются. AppItemReplies существовал до ветки, новый путь лишь использует прежний native JSONL renderer."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-746f66466c253955",
       "source": "project-architecture",
       "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых служебных кнопок/плашек нет: открывается существующая as-лента, выбор согласия живёт в существующем PreparedQuestion и форме записи.",
+      "evidence": [
+        {
+          "object": "block-746f66466c253955",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новых служебных кнопок/плашек нет: открывается существующая as-лента, выбор согласия живёт в существующем PreparedQuestion и форме записи."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0dbd06239e17144d",
       "source": "project-architecture",
       "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Обязательный guard недоступен в sandbox/never, а безадресный вопрос draft не связан с as-ID. Подтверждено двумя независимыми probe, замечания 1 и 2.",
+      "result": "checked",
+      "reason": "Neutral ID и AskPanel связывают реальный taskctl PreparedQuestion с as-разговором. Fake API проверяет показ/согласие/comment/form/chat/delivery retry; проверка готовности/квитанции остаётся taskctl.",
       "evidence": [
         {
-          "object": "groom guard",
-          "location": "tools/dashboard/appchat.go:224-227",
-          "observation": "Живой app-server probe диспетчера: taskctl guard DK-1536 -> exit1 chmod common .git/devkit/draft-tx operation not permitted. Замечание 1."
-        },
-        {
-          "object": "groom Ask identity",
-          "location": "tools/dashboard/appchat.go:181-188; tools/dashboard/waiting.go:147-156; tools/taskctl/ask.go:158-171",
-          "observation": "Изолированный API probe e1a12793d: POST foreign groom XR-77, chat.WriteAsk(Task=XR-77, Session пустой), GET /chats/as.../ask возвращает note без ask. Замечание 2."
+          "object": "block-0dbd06239e17144d",
+          "location": "tools/taskctl/ask.go:AskPanel,askSession; tools/dashboard/appchat_test.go:TestAppGroomPreparedAgreement; /tmp/dk1711-live-built-runtime.log",
+          "observation": "Neutral ID и AskPanel связывают реальный taskctl PreparedQuestion с as-разговором. Fake API проверяет показ/согласие/comment/form/chat/delivery retry; проверка готовности/квитанции остаётся taskctl."
         }
       ]
     },
@@ -722,253 +1046,421 @@
       "id": "project-architecture:block-5de64d5a648b5902",
       "source": "project-architecture",
       "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общая taskForm и структура карточек неизменны; prepared/add использует прежнюю форму и taskctl. Integration проверяет реальное создание после typed consent, без новой отдельной формы.",
+      "evidence": [
+        {
+          "object": "block-5de64d5a648b5902",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Общая taskForm и структура карточек неизменны; prepared/add использует прежнюю форму и taskctl. Integration проверяет реальное создание после typed consent, без новой отдельной формы."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-0bf4f9875e4b3d7e",
       "source": "project-architecture",
       "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Разметка формы, formContentBlock и HasGroomResult не меняются; до результата мысль доступна прежним путём. Изменяется только запуск и доставка ответа.",
+      "evidence": [
+        {
+          "object": "block-0bf4f9875e4b3d7e",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Разметка формы, formContentBlock и HasGroomResult не меняются; до результата мысль доступна прежним путём. Изменяется только запуск и доставка ответа."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-476dd1b8dd952be1",
       "source": "project-architecture",
       "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "groomStartMu защищает busy-check+старт, порядок appMu прокомментирован; appChats/c.busy/effort под прежними mutex. Нового memo нет.",
+      "evidence": [
+        {
+          "object": "block-476dd1b8dd952be1",
+          "location": "tools/dashboard/server.go:groomStartMu; appchat.go:appTurn,appLive",
+          "observation": "groomStartMu защищает busy-check+старт, порядок appMu прокомментирован; appChats/c.busy/effort под прежними mutex. Нового memo нет."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-3b1e41ceae5295a7",
       "source": "project-architecture",
       "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Foreign groom использует appServerStart -> agentctl exec --harness выбранный -- client app-server --stdio; авторизация остаётся штатной, значения секретов не копируются.",
+      "evidence": [
+        {
+          "object": "block-3b1e41ceae5295a7",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Foreign groom использует appServerStart -> agentctl exec --harness выбранный -- client app-server --stdio; авторизация остаётся штатной, значения секретов не копируются."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-91fb2123abfa64cb",
       "source": "project-architecture",
       "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Занятость хода открывается до отправки реплики и гасится\n  уведомлением конца хода, смерть процесса записывается в ленту словами.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Foreign protocol идёт app-server без tmux; busy открывается до turn/start и закрывается appNote/appDead. Реестр/лента/stop/drop повторно используются, tests проверяют отсутствие terminal input.",
+      "evidence": [
+        {
+          "object": "block-91fb2123abfa64cb",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Foreign protocol идёт app-server без tmux; busy открывается до turn/start и закрывается appNote/appDead. Реестр/лента/stop/drop повторно используются, tests проверяют отсутствие terminal input."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-71784a34afa7d0ad",
       "source": "project-architecture",
       "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новых сетевых функций server не получает: клиент общается через существующий JSONL stdio, git fetch/push/catchup не изменены.",
+      "evidence": [
+        {
+          "object": "block-71784a34afa7d0ad",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новых сетевых функций server не получает: клиент общается через существующий JSONL stdio, git fetch/push/catchup не изменены."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-9c814a6998496b37",
       "source": "project-architecture",
       "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "AppServerStart задаёт cmd.Dir=GroomTree, resume/carrier выбирают тот же persisted tree; Claude managed launch не меняет cwd. Процесс не наследует launchd root.",
+      "evidence": [
+        {
+          "object": "block-9c814a6998496b37",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "AppServerStart задаёт cmd.Dir=GroomTree, resume/carrier выбирают тот же persisted tree; Claude managed launch не меняет cwd. Процесс не наследует launchd root."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-3fe8e64fa2671774",
       "source": "project-architecture",
       "text": "## Куда кладётся новое",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-3fe8e64fa2671774",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-e81a11204b6858d1",
       "source": "project-architecture",
       "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "README «Раскладка» прочитан: код остаётся Go в tools/dashboard/taskctl/agentctl, JS fixture в dashboard/testdata, задача/audit в docs/tasks. Нового инструмента/верхнего каталога нет.",
+      "evidence": [
+        {
+          "object": "block-e81a11204b6858d1",
+          "location": "README.md:320-365; git diff 2fc7cf565 HEAD --stat",
+          "observation": "README «Раскладка» прочитан: код остаётся Go в tools/dashboard/taskctl/agentctl, JS fixture в dashboard/testdata, задача/audit в docs/tasks. Нового инструмента/верхнего каталога нет."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-20ac10a7a0b37556",
       "source": "project-architecture",
       "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Правятся существующие семьи drafts/appchat/board/chatproposal до их переноса; новый домен не добавлен. Внутренние generic пакеты не копируются.",
+      "evidence": [
+        {
+          "object": "block-20ac10a7a0b37556",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Правятся существующие семьи drafts/appchat/board/chatproposal до их переноса; новый домен не добавлен. Внутренние generic пакеты не копируются."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-ff0f6ffb10430dcc",
       "source": "project-architecture",
       "text": "## Восстановление исчезнувшего конвейера",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-ff0f6ffb10430dcc",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-414cfee6ece27659",
       "source": "project-architecture",
       "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены.",
+      "evidence": [
+        {
+          "object": "block-414cfee6ece27659",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-2896dde8774e1968",
       "source": "project-architecture",
       "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены.",
+      "evidence": [
+        {
+          "object": "block-2896dde8774e1968",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены."
+        }
+      ]
     },
     {
       "id": "project-architecture:block-2ec33a7fa97caf04",
       "source": "project-architecture",
       "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены.",
+      "evidence": [
+        {
+          "object": "block-2ec33a7fa97caf04",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Блок относится к recovery task-конвейера/PID/attempt state. Groom conversation не вызывает Raise/recovery, их файлы и контракты не изменены."
+        }
+      ]
     },
     {
       "id": "project-style:block-8bfebc193cc45790",
       "source": "project-style",
       "text": "# Стиль devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-8bfebc193cc45790",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-style:block-2f21840e1463a01e",
       "source": "project-style",
       "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общие ARCH/STYLE/TEST и оба проектных документа проверяются совместно; все 94 строки сохранены в отчёте.",
+      "evidence": [
+        {
+          "object": "block-2f21840e1463a01e",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Общие ARCH/STYLE/TEST и оба проектных документа проверяются совместно; все 94 строки сохранены в отчёте."
+        }
+      ]
     },
     {
       "id": "project-style:block-9c4dd47968139c01",
       "source": "project-style",
       "text": "## Ошибки и отказы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-9c4dd47968139c01",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-style:block-88e50c4f780c246c",
       "source": "project-style",
       "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новой проверочной CLI-утилиты/hook нет; HTTP обработчики используют status+writeJSON. Изменённые ask/plan сохраняют прежний CLI контракт вывода/ошибок.",
+      "evidence": [
+        {
+          "object": "block-88e50c4f780c246c",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новой проверочной CLI-утилиты/hook нет; HTTP обработчики используют status+writeJSON. Изменённые ask/plan сохраняют прежний CLI контракт вывода/ошибок."
+        }
+      ]
     },
     {
       "id": "project-style:block-2212761035e243fb",
       "source": "project-style",
       "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новой проверочной CLI-утилиты/hook нет; HTTP обработчики используют status+writeJSON. Изменённые ask/plan сохраняют прежний CLI контракт вывода/ошибок.",
+      "evidence": [
+        {
+          "object": "block-2212761035e243fb",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новой проверочной CLI-утилиты/hook нет; HTTP обработчики используют status+writeJSON. Изменённые ask/plan сохраняют прежний CLI контракт вывода/ошибок."
+        }
+      ]
     },
     {
       "id": "project-style:block-41b95475184c2aef",
       "source": "project-style",
       "text": "## Раскладка тестов",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-41b95475184c2aef",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-style:block-519646d7d9f951be",
       "source": "project-style",
       "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые Go тесты рядом с appchat/drafts/ask/plan, JS fixture в существующем dashboard/testdata. Общего нового tests файла для несвязанных модулей нет.",
+      "evidence": [
+        {
+          "object": "block-519646d7d9f951be",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Новые Go тесты рядом с appchat/drafts/ask/plan, JS fixture в существующем dashboard/testdata. Общего нового tests файла для несвязанных модулей нет."
+        }
+      ]
     },
     {
       "id": "project-style:block-9573ef33db114342",
       "source": "project-style",
       "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appEnv/newTestEnv/setup дают временные HOME/bin/project и fake subprocess; CLI prepared тест использует настоящий built taskctl поверх этих fixtures. Рабочие проекты не используются.",
+      "evidence": [
+        {
+          "object": "block-9573ef33db114342",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "appEnv/newTestEnv/setup дают временные HOME/bin/project и fake subprocess; CLI prepared тест использует настоящий built taskctl поверх этих fixtures. Рабочие проекты не используются."
+        }
+      ]
     },
     {
       "id": "project-style:block-f4f0c16e8ec594dc",
       "source": "project-style",
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Regcheck на 2fc7cf565 подтвердил routing/panel, на e1a12793d это permission/identity, на 91d6ab187 это AskPanel delivery. Команды/версии/исходы записаны в задаче; новые тесты различают прежний неверный путь.",
+      "evidence": [
+        {
+          "object": "block-f4f0c16e8ec594dc",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Regcheck на 2fc7cf565 подтвердил routing/panel, на e1a12793d это permission/identity, на 91d6ab187 это AskPanel delivery. Команды/версии/исходы записаны в задаче; новые тесты различают прежний неверный путь."
+        }
+      ]
     },
     {
       "id": "project-style:block-7af95a66ad4ad21b",
       "source": "project-style",
       "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appEnv/newTestEnv/setup дают временные HOME/bin/project и fake subprocess; CLI prepared тест использует настоящий built taskctl поверх этих fixtures. Рабочие проекты не используются.",
+      "evidence": [
+        {
+          "object": "block-7af95a66ad4ad21b",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "appEnv/newTestEnv/setup дают временные HOME/bin/project и fake subprocess; CLI prepared тест использует настоящий built taskctl поверх этих fixtures. Рабочие проекты не используются."
+        }
+      ]
     },
     {
       "id": "project-style:block-b03ef741121d44a0",
       "source": "project-style",
       "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Постоянные tests зовут fake app/Node sandbox, не живую подписку. Отдельный реальный Sol probe явно поручен пользователем для premerge approval риска, изолирует synthetic проект и не запускает cmdServe.",
+      "evidence": [
+        {
+          "object": "block-b03ef741121d44a0",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Постоянные tests зовут fake app/Node sandbox, не живую подписку. Отдельный реальный Sol probe явно поручен пользователем для premerge approval риска, изолирует synthetic проект и не запускает cmdServe."
+        }
+      ]
     },
     {
       "id": "project-style:block-a969903cd6ddc137",
       "source": "project-style",
       "text": "## Имена",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны.",
+      "evidence": [
+        {
+          "object": "block-a969903cd6ddc137",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Заголовок области стандарта, самостоятельного требования сверх дочерних блоков не добавляет. Дочерние правила отдельно разобраны."
+        }
+      ]
     },
     {
       "id": "project-style:block-c785ad31965daade",
       "source": "project-style",
       "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Доменные appchat/drafts/chatproposal/board файлы сохраняют семейства имён, HTTP хендлеры handle*. План/ask тесты остаются в своих инструментах.",
+      "evidence": [
+        {
+          "object": "block-c785ad31965daade",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Доменные appchat/drafts/chatproposal/board файлы сохраняют семейства имён, HTTP хендлеры handle*. План/ask тесты остаются в своих инструментах."
+        }
+      ]
     },
     {
       "id": "project-style:block-b3298c360a523f07",
       "source": "project-style",
       "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "Проход остановлен двумя подтверждёнными блокерами; итог по этому правилу будет заполнен на исправленной версии. Чистый вердикт не записывался.",
-      "evidence": []
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Файл задачи и согласованные изменённые разделы трёх README вычитаны свежим контекстом; машинные строки/команды/факты сохранены. След вычитки внесён в задачу.",
+      "evidence": [
+        {
+          "object": "block-b3298c360a523f07",
+          "location": "git diff 2fc7cf565 HEAD; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Файл задачи и согласованные изменённые разделы трёх README вычитаны свежим контекстом; машинные строки/команды/факты сохранены. След вычитки внесён в задачу."
+        }
+      ]
     }
   ]
 }

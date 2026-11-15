@@ -239,7 +239,7 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string) (strin
 			from = row.Sect
 		}
 	}
-	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, From: from, Questions: qs}); err != nil {
+	if err := chat.WriteAsk(main, name, chat.Ask{Tree: root, Session: sid, Task: p.ID, From: from, Questions: qs}); err != nil {
 		return "", err
 	}
 	// Уведомитель зовётся сразу: человек узнаёт про вопрос немедленно, а не

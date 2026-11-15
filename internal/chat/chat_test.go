@@ -296,3 +296,18 @@ func mustPut(t *testing.T, tree, name, line string) {
 		t.Fatal(err)
 	}
 }
+
+func TestAskDocumentTreeRoundTrip(t *testing.T) {
+	want := Ask{Tree: "/tmp/project-branch", Session: "source-session", Task: "XR-4", Questions: []Question{{Text: "вопрос"}}}
+	got, ok := ParseAsk(want.Text())
+	if !ok || got.Tree != want.Tree || got.Session != want.Session || len(got.Questions) != 1 {
+		t.Fatalf("source lost: %+v", got)
+	}
+	if QuestionSnapshot(got.Questions[0]) != QuestionSnapshot(want.Questions[0]) {
+		t.Fatal("document tree changed question snapshot")
+	}
+	old, ok := ParseAsk("-\nсессия source-session\nзадача XR-4\n")
+	if !ok || old.Tree != "" {
+		t.Fatalf("legacy ask: %+v", old)
+	}
+}

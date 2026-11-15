@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -14,9 +16,12 @@ import (
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/sessions"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 type selectionDeliveryContext struct {
+	Delivered bool           `json:"delivered,omitempty"`
+	Transport string         `json:"transport,omitempty"`
 	Reply     string         `json:"reply"`
 	TextKey   string         `json:"textKey"`
 	Selection chat.Selection `json:"selection"`
@@ -29,6 +34,9 @@ func selectionMatches(h handedAsk, answer *chat.Selection) bool {
 		return false
 	}
 	tree := h.Tree
+	if h.Ask.Tree != "" {
+		tree = h.Ask.Tree
+	}
 	for _, q := range h.Ask.Questions {
 		if q.Scenario != nil && q.Scenario.Tree != "" {
 			tree = q.Scenario.Tree
@@ -102,6 +110,54 @@ func selectionIdentity(a chat.Selection) chat.Selection {
 	return a
 }
 
+func selectionContextMigrates(old, current selectionDeliveryContext) bool {
+	if old.Delivered || current.Transport == "" || old.Transport != "" || old.Selection.Tree != current.Transport || old.Reply != current.Reply || old.TextKey != current.TextKey || old.Name != current.Name || old.Session != current.Session {
+		return false
+	}
+	previous := old.Selection
+	previous.Tree = current.Selection.Tree
+	return reflect.DeepEqual(selectionIdentity(previous), selectionIdentity(current.Selection))
+}
+
+func selectionMigrationApplied(old selectionDeliveryContext) (bool, error) {
+	taskRoot := filepath.Join(old.Selection.Tree, "docs", "tasks")
+	paths := []string{filepath.Join(taskRoot, old.Selection.Task+".md"), filepath.Join(taskRoot, "drafts", old.Selection.Task+".md")}
+	archive := filepath.Join(taskRoot, "archive")
+	years, err := os.ReadDir(archive)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	for _, year := range years {
+		if year.IsDir() {
+			paths = append(paths, filepath.Join(archive, year.Name(), old.Selection.Task+".md"))
+		}
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, fork := range taskform.ParseForks(string(data)) {
+			for _, sub := range fork.Sub {
+				const prefix = "вложение ответа: "
+				if !strings.HasPrefix(sub, prefix) {
+					continue
+				}
+				var receipt struct {
+					Reply string `json:"reply"`
+				}
+				if json.Unmarshal([]byte(strings.TrimPrefix(sub, prefix)), &receipt) == nil && receipt.Reply == old.Reply {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 func (s *server) selectionTextKey(sid, claim, text string, answer chat.Selection) (string, error) {
 	sum := sha256.Sum256([]byte(text))
 	key := hex.EncodeToString(sum[:])
@@ -118,19 +174,36 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нужны дерево и задача показанного вопроса"})
 		return
 	}
-	textKey, err := s.selectionTextKey(sid, claim, text, answer)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
+	sum := sha256.Sum256([]byte(text))
+	textKey := hex.EncodeToString(sum[:])
 
 	context := selectionDeliveryContext{}
 	matched := false
 	for _, h := range s.handedAsks(sid, s.binds(), s.now()) {
 		if selectionMatches(h, &answer) {
-			context = selectionDeliveryContext{Reply: claim, TextKey: textKey, Selection: answer, Name: h.Name, Session: h.Ask.Session}
+			context = selectionDeliveryContext{Reply: claim, TextKey: textKey, Selection: answer, Name: h.Name, Session: h.Ask.Session, Transport: h.Tree}
 			matched = true
 			break
+		}
+	}
+	for _, old := range s.chatStoreRead(sid).SelectionContexts {
+		if old.Reply != claim {
+			continue
+		}
+		previous := old.Selection
+		if matched && selectionContextMigrates(old, context) {
+			applied, err := selectionMigrationApplied(old)
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "проверка прежнего ответа: " + err.Error()})
+				return
+			}
+			if !applied {
+				previous.Tree = answer.Tree
+			}
+		}
+		if old.TextKey != textKey || !reflect.DeepEqual(selectionIdentity(previous), selectionIdentity(answer)) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ключ сообщения уже использован для другого ответа"})
+			return
 		}
 	}
 	if !matched {
@@ -141,8 +214,18 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 			}
 		}
 	}
+	for _, old := range s.chatStoreRead(sid).SelectionContexts {
+		if old.Reply == claim && old.Delivered {
+			context.Delivered = true
+		}
+	}
 	if context.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос, снимок или ID выбора не найден"})
+		return
+	}
+	if context.Delivered {
+		s.chatSayDone(sid, claim, "ask")
+		writeJSON(w, http.StatusOK, map[string]any{"way": "dup", "task": answer.Task})
 		return
 	}
 	if err := draftmeta.GuardRecord(answer.Tree, answer.Task); err != nil {
@@ -152,17 +235,18 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 	if matched {
 		st := s.chatStoreRead(sid)
 		exists := false
-		for _, old := range st.SelectionContexts {
-			if reflect.DeepEqual(old, context) {
+		for i, old := range st.SelectionContexts {
+			if old.Reply == claim {
+				st.SelectionContexts[i] = context
 				exists = true
 			}
 		}
 		if !exists {
 			st.SelectionContexts = append(st.SelectionContexts, context)
-			if err := s.chatStoreWrite(sid, st); err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-				return
-			}
+		}
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
 		}
 	}
 	data, _ := json.Marshal(answer)
@@ -180,9 +264,23 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "выбор сохранён; доставка агенту: " + procErr(err)})
 		return
 	}
+	context.Delivered = true
+	store := s.chatStoreRead(sid)
+	store.SelectionContexts = append(store.SelectionContexts, context)
+	if err := s.chatStoreWrite(sid, store); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "выбор доставлен; сохранение доставки: " + err.Error()})
+		return
+	}
 	s.chatSayDone(sid, claim, "ask")
 	s.saidSay(saidSessionKey(sid), wire, "ask")
 	writeJSON(w, http.StatusOK, map[string]any{"way": "ask", "task": answer.Task, "wire": wire})
+}
+
+func selectionTransport(context selectionDeliveryContext) string {
+	if context.Transport != "" {
+		return context.Transport
+	}
+	return context.Selection.Tree
 }
 
 func (s *server) deliverSelection(p *Project, sid string, context selectionDeliveryContext, wire string) error {
@@ -205,7 +303,7 @@ func (s *server) deliverSelection(p *Project, sid string, context selectionDeliv
 	// Запасной путь безадресен: безадресную строку сторожок считает ответом и
 	// будит припаркованную строку тиком, адресная в мёртвом входе лежала бы
 	// молча (DK-1569).
-	_, _, err := putChat(answer.Tree, context.Name, wire, chat.TaskLine(s.now(), wire))
+	_, _, err := putChat(selectionTransport(context), context.Name, wire, chat.TaskLine(s.now(), wire))
 	return err
 }
 
@@ -276,8 +374,18 @@ func mergeSelectionContexts(groups ...[]selectionDeliveryContext) []selectionDel
 	for _, group := range groups {
 		for _, context := range group {
 			found := false
-			for _, old := range out {
-				if reflect.DeepEqual(old, context) {
+			for i, old := range out {
+				if selectionContextMigrates(old, context) {
+					out[i] = context
+					found = true
+					break
+				}
+				previous := old
+				previous.Delivered = context.Delivered
+				if reflect.DeepEqual(previous, context) {
+					if context.Delivered {
+						out[i].Delivered = true
+					}
 					found = true
 					break
 				}

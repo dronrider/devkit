@@ -65,8 +65,8 @@ func (c *appChat) effortNow() string {
 // висит, и состояние чата обязано это назвать, а не молчать часами.
 const appBusyCap = 30 * time.Minute
 
-func appAutomaticReview(st chatStore) bool {
-	return st.GroomSource != "" || st.TaskRun
+func (s *server) appAutomaticReview(sid string, st chatStore) bool {
+	return st.GroomSource != "" || s.appTaskOwns(sid, st)
 }
 
 // appFeedDir это каталог лент дороги app-server, рядом с записями разговоров.
@@ -181,14 +181,14 @@ func (s *server) appDead(sid string) {
 // appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
 // продолжением. Отказ на любом шаге убивает процесс и называется словами с
 // хвостом stderr, потому что причины входа клиент пишет именно туда.
-func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string) (*appChat, error) {
+func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
 	toolEnv := map[string]string{"DEVKIT_CHAT_SESSION_ID": sid, "DEVKIT_HARNESS": h.Name}
 	if st.GroomSource != "" {
 		toolEnv["DEVKIT_TASK"], toolEnv["DEVKIT_GROOM_SOURCE"], toolEnv["DEVKIT_GROOM_MODE"] = st.GroomSource, st.GroomSource, st.GroomMode
 	}
-	s.appTaskToolEnv(st, toolEnv)
+	s.appTaskToolEnv(sid, st, toolEnv)
 	var env []string
 	for key, value := range toolEnv {
 		env = append(env, key+"="+value)
@@ -200,6 +200,15 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		return nil, err
 	}
 	c.proc = proc
+	if len(cancelled) > 0 && cancelled[0] != nil {
+		go func() {
+			select {
+			case <-cancelled[0]:
+				proc.kill()
+			case <-proc.dead:
+			}
+		}()
+	}
 	fail := func(err error) (*appChat, error) {
 		proc.kill()
 		// Хвост stderr читается после смерти процесса: клиент пишет причину
@@ -224,7 +233,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		config["shell_environment_policy.set."+key] = value
 	}
 	policy := map[string]any{"approvalPolicy": "never", "config": config}
-	if appAutomaticReview(st) {
+	if s.appAutomaticReview(sid, st) {
 		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
 	}
 	var configured json.RawMessage
@@ -251,7 +260,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		}
 		c.thread = got.Thread.ID
 	}
-	if appAutomaticReview(st) {
+	if s.appAutomaticReview(sid, st) {
 		var actual struct {
 			ApprovalPolicy string `json:"approvalPolicy"`
 			Reviewer       string `json:"approvalsReviewer"`
@@ -340,7 +349,9 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		s.appMu.Lock()
 		if c := s.appChats[sid]; c != nil {
 			c.mu.Lock()
-			c.busy = false
+			if c.taskNotes == nil {
+				c.busy = false
+			}
 			c.mu.Unlock()
 		}
 		s.appMu.Unlock()
@@ -412,6 +423,13 @@ func (s *server) appSayRecord(sid, text string) {
 // называются словами, молчания тут не бывает.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
+	if st.TaskRun && !s.appTaskOwns(sid, st) {
+		st.TaskRun = false
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "состояние конвейера не обновилось: " + err.Error()})
+			return
+		}
+	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
 		return
@@ -554,6 +572,9 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 // остаётся вечным ни в одном исходе, и лента называет случившееся словами.
 func (s *server) appStop(w http.ResponseWriter, sid string) {
 	if a := s.appTaskFind(sid, "", ""); a != nil {
+		if !s.recoveryStopped(w, a.root, a.task, true) {
+			return
+		}
 		s.appTaskClose(a)
 		writeJSON(w, http.StatusOK, map[string]string{"way": "stopped", "message": "конвейер задачи остановлен"})
 		return

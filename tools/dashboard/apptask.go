@@ -23,18 +23,19 @@ type appTaskNote struct {
 }
 
 type appTask struct {
-	sid      string
-	root     string
-	task     string
-	home     string
-	dir      string
-	listener net.Listener
-	token    string
-	launched chan struct{}
-	ready    chan error
-	stop     chan struct{}
-	once     sync.Once
-	pid      int
+	sid       string
+	root      string
+	task      string
+	home      string
+	dir       string
+	listener  net.Listener
+	token     string
+	launched  chan struct{}
+	ready     chan error
+	stop      chan struct{}
+	once      sync.Once
+	lifecycle sync.Mutex
+	pid       int
 }
 
 func (s *server) appTaskClose(a *appTask) {
@@ -45,6 +46,8 @@ func (s *server) appTaskClose(a *appTask) {
 		if a.pid > 0 && taskhead.Owner(taskhead.LockPath(a.home, a.task)) == a.pid {
 			syscall.Kill(-a.pid, syscall.SIGTERM)
 		}
+		a.lifecycle.Lock()
+		defer a.lifecycle.Unlock()
 		s.appDrop(a.sid, "конвейер задачи остановлен")
 		st := s.chatStoreRead(a.sid)
 		st.TaskRun = false
@@ -129,6 +132,19 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	if taskhead.Owner(taskhead.LockPath(a.home, a.task)) != a.pid {
 		return errors.New("замок конвейера задачи сменился")
 	}
+	a.lifecycle.Lock()
+	select {
+	case <-a.stop:
+		a.lifecycle.Unlock()
+		return errors.New("конвейер задачи остановлен")
+	default:
+	}
+	locked := true
+	defer func() {
+		if locked {
+			a.lifecycle.Unlock()
+		}
+	}()
 	st := s.chatStoreRead(a.sid)
 	c := s.appLive(a.sid)
 	if c == nil {
@@ -136,9 +152,14 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		if h == nil || h.Protocol != "codex" {
 			return errors.New("подписка конвейера Codex не определилась")
 		}
-		c, err = s.appSpawn(a.sid, h, st.Model, chatTree(p.Path, st.Task), p.Name, st.Thread)
+		c, err = s.appSpawn(a.sid, h, st.Model, chatTree(p.Path, st.Task), p.Name, st.Thread, a.stop)
 		if err != nil {
 			return err
+		}
+		select {
+		case <-a.stop:
+			return errors.New("конвейер задачи остановлен")
+		default:
 		}
 		st.Thread = c.thread
 		if err = s.chatStoreWrite(a.sid, st); err != nil {
@@ -164,6 +185,8 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	if json.Unmarshal(raw, &started) != nil || started.Turn.ID == "" {
 		return errors.New("клиент не назвал ID хода конвейера")
 	}
+	a.lifecycle.Unlock()
+	locked = false
 	select {
 	case a.ready <- nil:
 	default:
@@ -184,6 +207,9 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 			}
 			complete, err := appTaskCompletion(n.Params, c.thread, started.Turn.ID)
 			if complete {
+				c.mu.Lock()
+				c.busy = false
+				c.mu.Unlock()
 				return err
 			}
 		}
@@ -298,8 +324,8 @@ func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *H
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
 }
 
-func (s *server) appTaskToolEnv(st chatStore, env map[string]string) {
-	if !st.TaskRun {
+func (s *server) appTaskToolEnv(sid string, st chatStore, env map[string]string) {
+	if !s.appTaskOwns(sid, st) {
 		if st.TaskRunPID > 0 {
 			env[taskhead.LockFromEnv], env["DEVKIT_HEADLESS"], env["DEVKIT_EFFORT"] = "", "", ""
 		}
@@ -327,4 +353,20 @@ func appTaskCompletion(params json.RawMessage, thread, turn string) (bool, error
 		return true, fmt.Errorf("ход %s завершился состоянием %s: %s", end.Turn.ID, end.Turn.Status, end.Turn.Error)
 	}
 	return true, nil
+}
+
+func (s *server) appTaskOwns(sid string, st chatStore) bool {
+	if !st.TaskRun {
+		return false
+	}
+	a := s.appTaskFind(sid, "", "")
+	if a == nil {
+		return false
+	}
+	select {
+	case <-a.launched:
+	default:
+		return false
+	}
+	return st.Task == a.task && st.TaskRunPID > 0 && st.TaskRunPID == a.pid && taskhead.Owner(taskhead.LockPath(a.home, a.task)) == a.pid && taskhead.Working(taskhead.LockPath(a.home, a.task))
 }

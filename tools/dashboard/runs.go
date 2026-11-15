@@ -1059,6 +1059,11 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	if !s.recoveryStopped(w, found.Path, id, true) {
 		return
 	}
+	if a := s.appTaskFind("", found.Path, id); a != nil {
+		s.appTaskClose(a)
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "state": "стоп", "session": a.sid})
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		s.logf("стоп %s отклонён: tmux не нашёлся 502", id)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
@@ -1081,11 +1086,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// правило DK-217), а не в общем списке сессий машины. Иначе стоп на
 	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
 	// в чужом корне.
-	if a := s.appTaskFind("", found.Path, id); a != nil {
-		s.appTaskClose(a)
-		writeJSON(w, http.StatusOK, map[string]string{"id": id, "state": "стоп", "session": a.sid})
-		return
-	}
+
 	// Работы строки ищутся по её признаку, а не по одному полю ID: рабочих
 	// сессий у задачи бывает несколько, и стоп обязан видеть их все (DK-716).
 	rowed := rowWorks(s.liveWorks(found.Path, view.Prefix, raw), id)

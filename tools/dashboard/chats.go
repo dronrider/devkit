@@ -3065,6 +3065,14 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
+	if a := s.appTaskFind(sid, "", ""); a != nil {
+		if !s.recoveryChatStopped(w, found, sid, "stop") {
+			return
+		}
+		s.appTaskClose(a)
+		writeJSON(w, http.StatusOK, map[string]string{"way": "stopped", "message": "конвейер задачи остановлен"})
+		return
+	}
 	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
 	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {

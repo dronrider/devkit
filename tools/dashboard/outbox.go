@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Журнал отправленных реплик (пункт 1 второго круга POC DK-397). Реплика
@@ -181,6 +183,38 @@ func saidKeys(sid, task string, onBoard bool) []string {
 		keys = append(keys, saidTaskKey(task))
 	}
 	return keys
+}
+
+// saidTaskFrom отделяет жизнь разговора от окна чтения. Since принадлежит
+// нынешнему жильцу tmux; старый разговор с тем же именем его не наследует.
+// При резюме той же сессии и без памяти окна начало берётся из
+// транскриптов разрешённых заходов.
+func (s *server) saidTaskFrom(sid, born, project string) time.Time {
+	last := sessions.Last(s.bindsAll()[sid])
+	name := strings.SplitN(last.Tmux, ":", 2)[0]
+	if name != "" {
+		st := s.chatStoreRead("tmux-" + name)
+		if st.Since > 0 && st.From != sid && last.Time >= bindTimeSince(st.Since) {
+			return time.Unix(st.Since, 0)
+		}
+	}
+	from, _ := time.Parse(time.RFC3339, born)
+	for _, pass := range s.chatPasses(sid) {
+		if info, ok := findSession(s.transcriptRoots(), project, pass.ID); ok {
+			born, err := time.Parse(time.RFC3339, s.sessionHeadCached(info.path, info.stamp).Born)
+			if err == nil && (from.IsZero() || born.Before(from)) {
+				from = born
+			}
+		}
+	}
+	return from
+}
+
+func saidForKey(items []reply, key string, window, born time.Time) []reply {
+	if strings.HasPrefix(key, "task-") && born.After(window) {
+		window = born
+	}
+	return saidCut(items, window)
 }
 
 // saidCut оставляет от журнала разговора только то, что попадает в открытое

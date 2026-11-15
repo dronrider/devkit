@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1716",
   "base_sha": "ce84b5981cc19ef15690613fb48bbbfa5cc19c60",
-  "head_sha": "5eb73d30eeffba716bc3667448eff5c1466f2897",
+  "head_sha": "0e2aa63dcdb75c32c9e2283edf12d5fb62330078",
   "code_hash": "b804729ff3be43f270bcc52106b4e2d22b2e7d6f51d261751294fc0401c43a63",
-  "task_hash": "bc1a1ee115df53b73ddd9952a14aecc660cfd12b6f04e567caae54b874a94faf",
+  "task_hash": "a586a419382a8c7c69ee265c2c5b4748fcc79691096c5e2e492c7f25d7c9fa70",
   "sources": [
     {
       "name": "common-architecture",
@@ -49,7 +49,8 @@
       "Carrier и ответственность; tools/dashboard/apptask.go; internal/taskhead/raise.go; kit/skills/board-task/task-run.py; Носитель только доставляет order/result; общий lock/state/pass loop сохранены.",
       "Жизненный цикл/видимость; tools/dashboard/apptask_test.go; appchat_test.go; runs.go; chats.go; Проверки exactcompletion, active/stale rights, cancelstartup, stop/manualstate и cleanup закрывают найденные ревью риски.",
       "Внешний путь; apptask_regression_test.go; apptask_artifact_test.go; docs/tasks/DK-1716.md:Сценарий проверки; Один HTTP API формы проверен против old/new и отдельного бинаря в synthetic HOME, без настоящего modelвызова.",
-      "Граница агентской процедуры; kit/skills/board-task/task-run.py, docs/ARCHITECTURE.md, git diff ce84b5981..5eb73d30e; изменен программный носитель и описание протокола, шаги SKILL.md/определений агентов не менялись; живой obeycheck не заявлен."
+      "Граница агентской процедуры; kit/skills/board-task/task-run.py, docs/ARCHITECTURE.md, git diff ce84b5981..5eb73d30e; изменен программный носитель и описание протокола, шаги SKILL.md/определений агентов не менялись; живой obeycheck не заявлен.",
+      "Сценарий после неудачной обкатки; docs/tasks/DK-1716.md, 0e2aa63dc; изменена только shell-группа в одном шаге, guard пустого/неисполняемого бинаря проверен изолированно; программный код и95 источников правил неизменны, прежние доказательства применимы."
     ]
   },
   "rules": [
@@ -470,6 +471,11 @@
           "object": "Запуск задачи Codex",
           "location": "tools/dashboard/README.md:Первый запуск Codex; docs/tasks/DK-1716.md:Сценарий проверки; apptask_regression_test.go; apptask_artifact_test.go",
           "observation": "HTTP запуск fixture с high/модель-codex, duplicate409, binding и stop200; обычная реплика и неподдерживаемый reviewer проверяются отдельно."
+        },
+        {
+          "object": "Один шаг сценария проверки артефакта",
+          "location": "docs/tasks/DK-1716.md:Сценарий проверки; commit0e2aa63dc",
+          "observation": "Команда занимает одну физическую строку: выбор probe_binary && test-x && DEVKIT_DASHBOARD_BIN=... devkitctl test. sh-n GREEN. Изолированный shell с mockdevkitctl: пустой/несуществующий путь завершается до теста, исполняемый путь передается неизменным. Это проверка команды, повторный настоящий artifactrehearse остается диспетчеру."
         }
       ]
     },
@@ -790,6 +796,11 @@
           "object": "Запуск задачи Codex",
           "location": "apptask_regression_test.go:TestAppTaskRunFromForm; apptask_test.go; task_run_test.py:AppTurnClientTests",
           "observation": "Ожидания HTTP200/409, строка model/effort high, exact mainthread/turn, manualstop/lock и never заданы независимо; JSONL форма наследует проверенный app-server протокол."
+        },
+        {
+          "object": "Один шаг сценария проверки артефакта",
+          "location": "docs/tasks/DK-1716.md:Сценарий проверки; commit0e2aa63dc",
+          "observation": "Команда занимает одну физическую строку: выбор probe_binary && test-x && DEVKIT_DASHBOARD_BIN=... devkitctl test. sh-n GREEN. Изолированный shell с mockdevkitctl: пустой/несуществующий путь завершается до теста, исполняемый путь передается неизменным. Это проверка команды, повторный настоящий artifactrehearse остается диспетчеру."
         }
       ]
     },

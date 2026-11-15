@@ -817,7 +817,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own == nil {
 		own = s.harnesses().byDefault()
 	}
-	if own == nil || kind != "task" || own.Protocol != "codex" {
+	if own == nil || kind != "task" || !own.foreign() {
 		if m := tmuxMissingCheck(); m != "" {
 			s.logf("запуск %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
@@ -844,7 +844,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if kind == "task" && own.Protocol == "codex" {
+	if kind == "task" && own.foreign() {
 		view, err := parseBoardView(raw)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})

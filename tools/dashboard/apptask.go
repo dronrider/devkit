@@ -149,7 +149,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	c := s.appLive(a.sid)
 	if c == nil {
 		h := s.chatHarnessOf(st.Model, st.Harness)
-		if h == nil || h.Protocol != "codex" {
+		if !h.foreign() {
 			return errors.New("подписка конвейера Codex не определилась")
 		}
 		c, err = s.appSpawn(a.sid, h, st.Model, chatTree(p.Path, st.Task), p.Name, st.Thread, a.stop)

@@ -351,3 +351,31 @@ func TestAppTaskStaleRecordCannotGrantTaskRights(t *testing.T) {
 		t.Fatal("stale TaskRun сохранился после обычной реплики")
 	}
 }
+
+func TestAppTaskRenamedHarness(t *testing.T) {
+	e, c := appTaskEnv(t, "task-done")
+	name := "customtask"
+	profileDir := filepath.Join(filepath.Dir(e.proj), "devkit", "kit", "harness")
+	if err := os.Rename(filepath.Join(profileDir, "codextest.toml"), filepath.Join(profileDir, name+".toml")); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := strings.ReplaceAll(appHarnessJSON, `"codextest"`, `"`+name+`"`)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+ exec) shift 4; exec "$@" ;;
+ *) printf '%s' '`+snapshot+`' ;;
+esac`)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"customtask","tier":"pro","effort":"high"}`)
+	raw := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("имя профиля определило транспорт: %d %s", resp.StatusCode, raw)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	st := e.s.chatStoreRead(got["session"])
+	if got["harness"] != name || st.Harness != name || st.Task != "XR-002" || st.Thread == "" {
+		t.Fatalf("переименованный профиль не сохранился: %+v %+v", got, st)
+	}
+	waitTaskStopped(t, e, got["session"])
+}

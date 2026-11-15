@@ -1,0 +1,122 @@
+package main
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func TestAppTaskInstalledArtifact(t *testing.T) {
+	binary := os.Getenv("DEVKIT_DASHBOARD_BIN")
+	if binary == "" {
+		t.Skip("DEVKIT_DASHBOARD_BIN не назван: проверка выкаченного бинаря")
+	}
+	if !filepath.IsAbs(binary) {
+		t.Fatal("DEVKIT_DASHBOARD_BIN должен быть абсолютным путём")
+	}
+	raw, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("artifact %s sha256 %x", binary, sha256.Sum256(raw))
+	e, c := appTaskEnv(t, "mute")
+	copyDir := filepath.Join(e.home, "artifact")
+	if err = os.MkdirAll(copyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(copyDir, "dashboard")
+	if err = os.WriteFile(copyPath, raw, 0755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	config := fmt.Sprintf("root = %s\naddr = 127.0.0.1\nport = %d\ntoken = test-token\ncatchup_interval = 24h\n", filepath.Dir(e.proj), port)
+	if err = os.WriteFile(filepath.Join(e.home, ".devkit", "dashboard.local"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
+	logFile, err := os.Create(filepath.Join(e.home, "artifact.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+	cmd := exec.Command(copyPath, "serve")
+	cmd.Dir = e.home
+	cmd.Env = standSpawnEnv("HOME="+e.home, "DEVKIT_DASH_HOME="+e.home, "DEVKIT_HOME="+kit, "DEVKIT_NOTIFY_OFF=1", "CLAUDE_CODE_SESSION_ID=", "CODEX_THREAD_ID=", "CLAUDE_CONFIG_DIR=", "DEVKIT_TMUX=", "DEVKIT_TASK=")
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var processErr error
+	go func() { processErr = cmd.Wait(); close(done) }()
+	t.Cleanup(func() {
+		cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			cmd.Process.Kill()
+			<-done
+		}
+	})
+	e.srv.Close()
+	e.srv.URL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	until := time.After(10 * time.Second)
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	ready := false
+	for !ready {
+		resp, err := http.Get(e.srv.URL + "/healthz")
+		if err == nil {
+			ready = resp.StatusCode == http.StatusOK
+			resp.Body.Close()
+		}
+		if ready {
+			break
+		}
+		select {
+		case <-done:
+			t.Fatalf("artifact вышел: %v\n%s", processErr, readFile(t, logFile.Name()))
+		case <-until:
+			t.Fatalf("artifact не поднялся:\n%s", readFile(t, logFile.Name()))
+		case <-tick.C:
+		}
+	}
+	c = e.loggedClient(t)
+	code, got := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("artifact start: %d %+v\n%s", code, got, readFile(t, filepath.Join(e.home, ".devkit", "heads", "XR-002.log"))+readFile(t, filepath.Join(e.home, ".devkit", "dashboard.log")))
+	}
+	sid := got["session"]
+	st := e.s.chatStoreRead(sid)
+	if got["model"] != "модель-codex" || got["effort"] != "high" || st.Task != "XR-002" || st.Thread == "" {
+		t.Fatalf("artifact потерял выбор/привязку: %+v %+v", got, st)
+	}
+	code, again := appTaskStart(t, e, c)
+	if code != http.StatusConflict {
+		t.Fatalf("artifact duplicate: %d %+v", code, again)
+	}
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	said := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("artifact stop: %d %s", resp.StatusCode, said)
+	}
+	waitAppTaskLockGone(t, e)
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if !strings.Contains(log, "turn high") || !strings.Contains(log, `"approvalsReviewer": "auto_review"`) {
+		t.Fatalf("artifact не передал выбор/политику: %s", log)
+	}
+	t.Log("artifact: HTTP start, task binding, model/effort, duplicate refusal and stop passed")
+}

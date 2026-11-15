@@ -89,6 +89,10 @@ for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
   if (rows.length !== 4) {
     fail("в меню строки " + id + " строк лестницы " + rows.length + ", а на машине четыре");
   }
+  const grows = allByClass(box, "grow");
+  if (grows.length !== 2) {
+    fail("в меню строки " + id + " групп подписок " + grows.length + ", а на машине две");
+  }
   if (allByClass(box, "tpick").length) {
     fail("в меню строки " + id + " осталась полоса отдельных уровней: " + dump(box));
   }
@@ -108,7 +112,7 @@ if (JSON.stringify(backMarks) !== JSON.stringify(["low", "medium", "high", "xhig
 const lit = (box) => allByClass(box, "hrow")
   .filter((r) => String(r.className).split(" ").includes("on"))
   .map((r) => dump(r).replace(/\s+/g, " ").trim());
-if (lit(check).join(",") !== "glm-5.3 pro, подписка-два") {
+if (lit(check).join(",") !== "glm-5.3 pro") {
   fail("у строки Check подсвечена не своя подписка: " + lit(check).join(",") +
     ", задачу вели на " + harnessTwo.name);
 }
@@ -129,21 +133,28 @@ for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
   }
 }
 
-// --- строка модели: имя, чип и полоски остатка, возраст в подсказке ---
+// --- строка модели это имя и чип яруса, полоски остатка стоят на группе ---
 {
   const first = allByClass(back, "hrow")[0];
-  if (dump(first).replace(/\s+/g, " ").trim() !== "sonnet base, подписка-раз нед") {
-    fail("строка модели не «имя, чип и полоски»: " + dump(first));
+  if (dump(first).replace(/\s+/g, " ").trim() !== "sonnet base") {
+    fail("строка модели не «имя и чип яруса»: " + dump(first));
   }
-  const widths = allByClass(first, "meter").map((m) => m.children[0].style.width);
+  if (allByClass(first, "meter").length) {
+    fail("полоски остатка вернулись на строку модели: " + dump(first));
+  }
+  // Группа подписки несёт имя и обе полоски её квот, возраст снимка стоит
+  // подсказкой (DK-1570, свёртка меню).
+  const grows = allByClass(back, "grow");
+  const rich = grows.find((r) => dump(r).includes("подписка-раз"));
+  const widths = allByClass(rich, "meter").map((m) => m.children[0].style.width);
   if (JSON.stringify(widths) !== JSON.stringify(["52%"])) {
-    fail("недельная полоска не доехала до строки: " + JSON.stringify(widths));
+    fail("недельная полоска не доехала до строки группы: " + JSON.stringify(widths));
   }
-  if (!String(first.title || "").includes("снимок 3м назад")) {
-    fail("подсказка строки потеряла возраст снимка: " + first.title);
+  if (!String(rich.title || "").includes("снимок 3м назад")) {
+    fail("подсказка группы потеряла возраст снимка: " + rich.title);
   }
   // Вторая подписка без снимка: полосок нет, а подсказка говорит почему.
-  const bare = allByClass(back, "hrow").find((r) => dump(r).includes("подписка-два"));
+  const bare = grows.find((r) => dump(r).includes("подписка-два"));
   if (allByClass(bare, "meter").length) {
     fail("подписка без снимка рисует полоски: " + dump(bare));
   }
@@ -153,4 +164,4 @@ for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
 }
 
 console.log("выбор запуска: разделы те же в Check и в очереди, подсвечена подписка запуска, " +
-  "строка модели называет ярус и подписку");
+  "строка группы называет подписку и несёт её квоты");

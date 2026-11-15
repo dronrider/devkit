@@ -14,23 +14,37 @@ const params = new URLSearchParams(location.search);
 // кнопкой есть место, вверх на телефоне, где под ней нижние вкладки.
 const up = params.get("bar") === "up";
 
-// Строка меню это модель с чипом яруса и подписки и двумя полосками остатка
-// (DK-1570): подписку выбирают по остатку, окно и неделя стоят в самой строке,
-// а возраст снимка подсказкой. Ниже ползунок глубины размышления.
+// Состав сворачивается по подписке (DK-1570, макет свёртки): строка группы
+// называет подписку и несёт её полоски остатка с подсказкой возраста снимка,
+// модели стоят внутри группы именем и чипом яруса, развёрнутая группа одна.
+// Ниже ползунок глубины размышления.
 const POP = `
       <div class="hpop${up ? " up" : ""}">
         <span class="hph">Модель</span>
-        <div class="hrow mrow on" title="ярус base, подписка claude-code, снимок 2 ч назад">
-          <span class="hname">sonnet</span>
-          <span class="hchip">base, claude-code</span>
+        <div class="grow open hold" title="подписка claude-code, снимок 2 ч назад">
+          <span class="gcar"></span><span class="gdot"></span>
+          <span class="gname">claude-code</span>
           <span class="hmeters">
             <span class="hmt">5ч<span class="meter"><i class="ok" style="width:38%"></i></span></span>
             <span class="hmt">нед<span class="meter"><i class="ok" style="width:18%"></i></span></span>
           </span>
         </div>
-        <div class="hrow mrow">
-          <span class="hname">glm-5.3</span>
-          <span class="hchip">pro, glm-code</span>
+        <div class="gkids">
+          <div class="hrow mrow on">
+            <span class="hname">sonnet</span>
+            <span class="hchip">base</span>
+          </div>
+        </div>
+        <div class="grow">
+          <span class="gcar"></span><span class="gdot"></span>
+          <span class="gname">glm-code</span>
+          <span class="hmeters"></span>
+        </div>
+        <div class="gkids">
+          <div class="hrow mrow">
+            <span class="hname">glm-5.3</span>
+            <span class="hchip">pro</span>
+          </div>
         </div>
         <span class="hph gap">Глубина размышления</span>
         <div class="eff">

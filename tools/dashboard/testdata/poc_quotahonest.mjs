@@ -132,13 +132,20 @@ function byTag(node) {
 
 // --- выбор подписки при запуске опирается на ту же картину ---
 {
-  const row = sandbox.modelMenuRow({ model: "glm-5.3", tier: "pro", harness: "glm-code" });
+  const row = sandbox.modelGroupRow("glm-code");
   const text = dump(row).replace(/\s+/g, " ");
   // Подписки без снимка полосок не рисует вовсе: пустая полоска читалась бы
   // нулём, а ноль у остатка это «лимит исчерпан».
-  if (byClass(row, "meter")) fail("строка без снимка рисует полоски: " + text);
+  if (byClass(row, "meter")) fail("строка группы без снимка рисует полоски: " + text);
   if (!String(row.title || "").includes("снимка нет")) {
-    fail("строка выбора подписки не говорит про снимок: " + row.title);
+    fail("строка группы не говорит про снимок: " + row.title);
+  }
+  // Полоски живут на строке группы, а не на строке модели: у подписки они
+  // одни, и повторять их у каждой модели значило бы читать одну картину
+  // четырежды (DK-1570, свёртка меню).
+  const modelRow = sandbox.modelMenuRow({ model: "glm-5.3", tier: "pro", harness: "glm-code" });
+  if (allByClass(modelRow, "meter").length) {
+    fail("полоски вернулись на строку модели: " + dump(modelRow));
   }
 
   // В списке выбора та же мера: давность цифрой в подсказке, слов о разъезде нет.
@@ -146,14 +153,14 @@ function byTag(node) {
     buckets: [{ name: "window5h_all", used_pct: 7 }] }];
   await sandbox.refreshQuota();
   await settle();
-  const node = sandbox.modelMenuRow({ model: "glm-5.3", tier: "pro", harness: "glm-code" });
+  const node = sandbox.modelGroupRow("glm-code");
   const second = dump(node).replace(/\s+/g, " ");
   if (second.includes("раньше остальных") || second.includes("разное время")) {
-    fail("список выбора подписки заговорил о разъезде: " + second);
+    fail("строка группы заговорила о разъезде: " + second);
   }
-  // Возраст снимка стоит подсказкой строки, а не её текстом: строка держит
-  // имя, чип и полоски, и место на ней тратится на выбор. Пропасть возраст не
-  // имеет права, подписку выбирают по свежему остатку.
+  // Возраст снимка стоит подсказкой группы, а не её текстом: строка держит
+  // имя подписки и полоски, и место на ней тратится на выбор. Пропасть возраст
+  // не имеет права, подписку выбирают по свежему остатку.
   if (!String(node.title || "").includes("снимок 3 ч назад")) {
     fail("возраст снимка в списке выбора пропал: " + node.title);
   }

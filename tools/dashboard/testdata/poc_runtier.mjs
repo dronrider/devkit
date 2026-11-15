@@ -87,6 +87,17 @@ const last = () => posted[posted.length - 1];
   if (on.length !== 1 || !on[0].includes("sonnet")) {
     fail("пара машины не подсвечена в строках меню: " + JSON.stringify(on));
   }
+  // Развёрнута группа пары машины, и она одна: состав меню сворачивается по
+  // подписке (DK-1570, макет свёртки).
+  const grows = allByClass(pop, "grow");
+  if (grows.length !== 2) fail("групп подписок в меню не две: " + grows.length);
+  const opened = grows.filter((g) => String(g.className).includes("open"));
+  if (opened.length !== 1 || !dump(opened[0]).includes("claude-code")) {
+    fail("развёрнута не группа пары машины: " + JSON.stringify(grows.map((g) => dump(g))));
+  }
+  if (!String(opened[0].className).includes("verdgrp")) {
+    fail("группа пары машины не осталась яркой при погашенных: " + opened[0].className);
+  }
 }
 
 // --- вердикт вне набора ступеней поднимается до ближайшей сверху (шкала v4) ---
@@ -95,7 +106,9 @@ const last = () => posted[posted.length - 1];
   const pop = openMenu(box);
   await settle();
   autoSet(pop, false);
-  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   // У glm набора low, high, max, а вердикт medium: кольцо и бегунок встают на
   // high, ближайшую ступень сверху по общему порядку уровней.
@@ -129,6 +142,8 @@ const last = () => posted[posted.length - 1];
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
   autoSet(pop, false);
+  allByClass(pop, "grow").find((h) => dump(h).includes("claude-code"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("sonnet"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
@@ -173,7 +188,9 @@ const last = () => posted[posted.length - 1];
   const box = sandbox.rowAction("demo", task, "backlog");
   const pop = openMenu(box);
   autoSet(pop, false);
-  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
   runBtn(box).handlers.click({ stopPropagation: () => {} });
@@ -193,7 +210,9 @@ const last = () => posted[posted.length - 1];
   };
   const pop = openMenu(box);
   autoSet(pop, false);
-  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   await run();
   if (!last().body || last().body.harness !== "glm-code") {

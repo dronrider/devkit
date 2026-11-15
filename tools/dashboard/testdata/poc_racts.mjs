@@ -26,7 +26,8 @@
 //
 // Зовётся: node testdata/poc_racts.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg,
+  autoSet }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -54,7 +55,8 @@ await sandbox.loadHarnesses();
 const fresh = { id: "XR-1", title: "нетронутая очередь", sect: "backlog" };
 const talked = { id: "XR-2", title: "наша сессия кончилась", sect: "in-progress", run: "gone" };
 const living = { id: "XR-3", title: "живой чат задачи", sect: "in-progress", run: "session" };
-const busy = { id: "XR-4", title: "идёт конвейером", sect: "in-progress", run: "tmux" };
+const busy = { id: "XR-4", title: "идёт конвейером", sect: "in-progress",
+  run: "tmux", run_busy: true };
 const check = { id: "XR-7", title: "на приёмке", sect: "check", accept: "human" };
 
 const main = (box) => byClass(box, "rmain");
@@ -228,13 +230,14 @@ const last = () => calls[calls.length - 1];
   press(btn);
   sandbox.document.handlers.keydown({ key: "Escape", stopPropagation: () => {} });
   if (!menu(box).hidden) fail("Escape меню не закрыл");
-  // Клик внутри меню его не закрывает: человек выбирает ярус и подписку подряд.
+  // Клик внутри меню его не закрывает: человек выбирает модель и глубину
+  // подряд, и свёртка групп тому же правилу не исключение (DK-1570).
   press(btn);
-  const tier = allByClass(menu(box), "tpick").find((t) => dump(t).trim() === "base");
-  if (!tier) fail("выбора яруса в меню нет: " + dump(menu(box)));
-  press(tier);
-  sandbox.document.handlers.click({ target: tier });
-  if (menu(box).hidden) fail("выбор яруса закрыл меню, а человек выбирает два ответа подряд");
+  const grow = allByClass(menu(box), "grow").find((g) => dump(g).includes("claude-code"));
+  if (!grow) fail("групп подписок в меню нет: " + dump(menu(box)));
+  press(grow);
+  sandbox.document.handlers.click({ target: grow });
+  if (menu(box).hidden) fail("клик по группе закрыл меню, а человек выбирает два ответа подряд");
 }
 
 // --- ни одно действие со строки не пропало ---
@@ -262,18 +265,25 @@ const last = () => calls[calls.length - 1];
   if (!sandbox.location.hash.includes("chat/") || !sandbox.location.hash.includes("XR-1")) {
     fail("кнопка разговора открыла не тот чат: " + sandbox.location.hash);
   }
-  // Подписка с ярусом: выбор яруса, потом строка подписки, и запуск уезжает
-  // обоими ответами разом.
+  // Подписка с ярусом: строка модели называет пару разом, и запуск уезжает
+  // обоими полями. Выбор строки работу не поднимает: следом в том же меню
+  // выбирают глубину, и тратит пару только кнопка запуска (DK-1570).
   const two = sandbox.rowAction("demo", fresh, "backlog");
   press(dots(two));
-  press(allByClass(menu(two), "tpick").find((t) => dump(t).trim() === "max"));
+  autoSet(menu(two), false);
+  press(allByClass(menu(two), "grow").find((h) => dump(h).includes("glm-code")));
   calls.length = 0;
-  press(allByClass(menu(two), "hrow").find((h) => dump(h).includes("glm-code")));
+  press(allByClass(menu(two), "hrow").find((h) => dump(h).includes("glm-5.3")));
   await settle();
-  if (!last() || last().body.harness !== "glm-code" || last().body.tier !== "max") {
+  if (calls.some((c) => c.path.endsWith("/runs"))) {
+    fail("выбор строки сам поднял работу: " + JSON.stringify(calls));
+  }
+  if (menu(two).hidden) fail("выбор модели закрыл меню до выбора глубины");
+  press(main(two));
+  await settle();
+  if (!last() || last().body.harness !== "glm-code" || last().body.tier !== "pro") {
     fail("подписка с ярусом из меню не доехали до заказа: " + JSON.stringify(calls));
   }
-  if (!menu(two).hidden) fail("запуск из меню его не закрыл");
 
   // Разговор открывается со всякой строки, чем бы она ни была занята: правило
   // «чат есть у каждой задачи» объясняется одной фразой.
@@ -314,7 +324,7 @@ const last = () => calls[calls.length - 1];
 // --- строка, ждущая чужую задачу: кнопка гаснет с причиной, чат остаётся ---
 {
   const box = sandbox.rowAction("demo",
-    { id: "XR-5", title: "ждёт соседа", sect: "backlog", after: ["XR-1"] }, "backlog");
+    { id: "XR-5", title: "ждёт соседа", sect: "backlog", held_by: ["XR-1"] }, "backlog");
   const btn = main(box);
   if (!btn || !btn.disabled) fail("запуск заблокированной строки не погашен: " + dump(box));
   if (!String(btn.title || "").includes("сначала XR-1")) {
@@ -349,15 +359,25 @@ const last = () => calls[calls.length - 1];
   press(dots(box));
   // Прежде список подписок у строки Check снимался целиком, и меню отвечало на
   // один вопрос вместо двух: «выбор яруса и подписки различается по секциям»
-  // (замечание пользователя). Прикрепление осталось умолчанием, а не запретом,
-  // и подсвечена в списке та подписка, которой задачу вели.
+  // (замечание пользователя). Прикрепление осталось умолчанием, а не запретом:
+  // состав тот же, что у прочих строк, и подсвечена модель прикреплённой
+  // подписки. Список сворачивается по подписке, и развёрнута группа пары
+  // строки (DK-1570, макет свёртки).
   const list = allByClass(menu(box), "hrow");
-  if (list.length !== 2) {
-    fail("у строки Check список подписок не собрался: " + dump(menu(box)));
+  if (list.length !== 5) {
+    fail("у строки Check список моделей не собрался: " + dump(menu(box)));
+  }
+  const grows = allByClass(menu(box), "grow");
+  if (grows.length !== 2) {
+    fail("у строки Check групп подписок не две: " + dump(menu(box)));
+  }
+  const opened = grows.filter((g) => String(g.className).includes("open"));
+  if (opened.length !== 1 || !dump(opened[0]).includes("glm-code")) {
+    fail("у строки Check развёрнута не группа прикреплённой подписки: " + dump(menu(box)));
   }
   const lit = list.filter((r) => String(r.className).split(" ").includes("on"))
     .map((r) => dump(byClass(r, "hname")).trim());
-  if (lit.join(",") !== "glm-code") {
+  if (lit.join(",") !== "glm-5.3") {
     fail("у строки Check подсвечена не своя подписка: " + lit.join(","));
   }
 }

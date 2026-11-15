@@ -1125,17 +1125,30 @@ const hrows = allByClass(pop, "hrow");
 if (hrows.length !== 2) {
   fail("в списке моделей " + hrows.length + " строк, ждал две: " + dump(pop));
 }
+// Состав сворачивается по подписке: групп две, развёрнута группа умолчания
+// лестницы до ответа вердикта, и группа одна (DK-1570, макет свёртки).
+const grows = allByClass(pop, "grow");
+if (grows.length !== 2) {
+  fail("в списке моделей " + grows.length + " групп подписок, ждал две: " + dump(pop));
+}
+const openedGrow = grows.filter((g) => String(g.className).includes("open"));
+if (openedGrow.length !== 1 || !dump(openedGrow[0]).includes("подписка-раз")) {
+  fail("до вердикта развёрнута не группа умолчания: " + dump(pop));
+}
 // Умолчание задачи называет вердикт, и строки стоят без подсветки: своя пара
 // подсвечивается только выбором человека (DK-1570).
 if (hrows.some((h) => String(h.className).includes("on"))) {
   fail("без выбора человека подсвечена строка моделей: " + dump(pop));
 }
-// Строка меню это модель, чип «ярус, подписка» и две полоски остатка, окна и
-// недели. Возраст снимка стоит подсказкой, а не текстом строки.
-if (!byClass(hrows[0], "hchip")) fail("у строки модели нет чипа яруса и подписки: " + dump(hrows[0]));
-const meters = allByClass(hrows[0], "hmt");
+// Строка модели это имя и чип яруса, полоски остатка уехали на строку группы
+// подписки. Возраст снимка стоит подсказкой группы, а не текстом строки.
+if (!byClass(hrows[0], "hchip")) fail("у строки модели нет чипа яруса: " + dump(hrows[0]));
+if (allByClass(hrows[0], "hmt").length) {
+  fail("полоски остатка вернулись на строку модели: " + dump(hrows[0]));
+}
+const meters = allByClass(grows[0], "hmt");
 if (meters.length !== 2) {
-  fail("в строке модели не две полоски остатка: " + dump(hrows[0]));
+  fail("в строке группы не две полоски остатка: " + dump(grows[0]));
 }
 // Проценты со строки ушли в ширину полосок: текстом в строке только подписи
 // окон, а заполнение считается по данным снимка.
@@ -1145,32 +1158,48 @@ for (const m of meters) {
 }
 const weekFill = meters[1] && byClass(meters[1], "meter");
 if (!weekFill || String(weekFill.children[0].style.width) !== "52%") {
-  fail("заполнение недели не приехало из снимка: " + dump(hrows[0]));
+  fail("заполнение недели не приехало из снимка: " + dump(grows[0]));
 }
-if (dump(hrows[0]).includes("снимок 3м назад")) {
-  fail("возраст снимка вернулся текстом в строку: " + dump(hrows[0]));
+if (dump(grows[0]).includes("снимок 3м назад")) {
+  fail("возраст снимка вернулся текстом в строку: " + dump(grows[0]));
 }
 // Подсказка везёт то, что текстом в строку не идёт: возраст снимка и подписку.
-if (!String(hrows[0].title || "").includes("снимок 3м назад")) {
-  fail("подсказка строки потеряла возраст снимка: " + hrows[0].title);
+if (!String(grows[0].title || "").includes("снимок 3м назад")) {
+  fail("подсказка группы потеряла возраст снимка: " + grows[0].title);
 }
 // Строка без снимка полосок не рисует, а причина стоит в подсказке словами.
-if (allByClass(hrows[1], "hmt").length) {
-  fail("без снимка строка рисует полоски остатка: " + dump(hrows[1]));
+if (allByClass(grows[1], "hmt").length) {
+  fail("без снимка группа рисует полоски остатка: " + dump(grows[1]));
 }
-if (!String(hrows[1].title || "").includes("снимка нет")) {
-  fail("строка без снимка квоты молчит о причине: " + hrows[1].title);
+if (!String(grows[1].title || "").includes("снимка нет")) {
+  fail("группа без снимка квоты молчит о причине: " + grows[1].title);
 }
 if (!dump(pop).includes("модель-раз") || !dump(pop).includes(harnessTwo.name)) {
   fail("список не называет ни моделей, ни подписок: " + dump(pop));
 }
 // Выбор строки не запускает работу и не закрывает меню: следом выбирают
-// глубину, и только запуск тратит обе пары (DK-1570).
+// глубину, и только запуск тратит обе пары (DK-1570). Ручной выбор идёт при
+// снятом переключателе: включённый гасит строки, и клик по ним не берётся.
 const was = started.length;
+const swLabel = byClass(pop, "auto");
+const swInput = swLabel && (swLabel.children || []).find((c) => c.tagName === "INPUT");
+if (!swInput || !swInput.checked) fail("у меню задачи нет включённого переключателя");
+swInput.checked = false;
+swInput.handlers.change();
+grows[1].handlers.click({ stopPropagation: () => {} });
 hrows[1].handlers.click({ stopPropagation: () => {} });
 await settle();
 if (started.length !== was) {
   fail("выбор строки сам поднял работу: " + JSON.stringify(started.slice(was)));
+}
+// Точка текущей пары переехала на группу выбора, и развёрнута она же: состав
+// держит человека на его паре (DK-1570, макет свёртки).
+const after = grows.filter((g) => String(g.className).includes("open"));
+if (after.length !== 1 || !dump(after[0]).includes(harnessTwo.name)) {
+  fail("после выбора развёрнута не группа выбранной пары: " + dump(pop));
+}
+if (!String(grows[1].className).includes("hold")) {
+  fail("точка группы не переехала на выбранную пару: " + grows[1].className);
 }
 if (pop.hidden) fail("меню закрылось после выбора модели: дальше выбирают глубину");
 allByClass(pop, "effmark").find((b) => dump(b).trim() === "xhigh")

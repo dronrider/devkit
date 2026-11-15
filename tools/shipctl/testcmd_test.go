@@ -14,6 +14,7 @@ func writeDeployCfg(t *testing.T, root, body string) {
 }
 
 func TestResolveTest(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// Ни флага, ни файла: команды нет, merge на этом отказывает.
 	if cmd, fromCfg, err := resolveTest(root, ""); err != nil || cmd != "" || fromCfg {
@@ -38,6 +39,7 @@ func TestResolveTest(t *testing.T) {
 // TestMergeTestFromConfig: без --test команда тестов берётся из
 // .devkit/deploy.local, реально гоняется, и отчёт называет её источник.
 func TestMergeTestFromConfig(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	// Путь абсолютный: тесты слияния идут в свежем дереве, и относительный
 	// маркер остался бы в нём и умер вместе с уборкой.
@@ -66,6 +68,7 @@ func TestMergeTestFromConfig(t *testing.T) {
 
 // TestMergeTestFlagBeatsConfig: явный --test сильнее ключа в конфиге.
 func TestMergeTestFlagBeatsConfig(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, "test = touch "+filepath.Join(root, "fromconfig.marker")+"\n")
 	branchWithFix(t, root)
@@ -87,6 +90,7 @@ func TestMergeTestFlagBeatsConfig(t *testing.T) {
 // TestMergeWithoutTestAnywhere: нет ни флага, ни ключа значит прежний отказ, и
 // он называет оба способа задать команду.
 func TestMergeWithoutTestAnywhere(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001"})
@@ -103,6 +107,7 @@ func TestMergeWithoutTestAnywhere(t *testing.T) {
 // значит «без прогона»: откат чинит прод и должен быть быстрым, а прогон
 // тестов на нём остаётся решением того, кто откатывает.
 func TestRevertIgnoresTestKey(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	// Конфиг кладётся после коммита кода: попади он в тот же коммит, откат
 	// снёс бы его и тест зеленел бы сам собой.

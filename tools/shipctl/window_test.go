@@ -62,6 +62,7 @@ func TestMergeKeepsWindowAlive(t *testing.T) {
 // main тут не только слитый код, но и коммит доски: подтяжка идёт после него,
 // а не сразу за fast-forward, иначе копия отставала бы заново.
 func TestMergeSyncsWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	tree := windowTree(root)
@@ -93,6 +94,7 @@ func TestMergeSyncsWindowTree(t *testing.T) {
 // трогается, причина уходит строкой отчёта. Молчание тут неотличимо от
 // штатной работы (DoD DK-214), поэтому строка обязана называть причину прямо.
 func TestMergeLeavesBranchedWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	startTask(t, root, "XR-001", "code.txt")
 	tree := windowTree(root)
@@ -117,6 +119,7 @@ func TestMergeLeavesBranchedWindowTree(t *testing.T) {
 // TestMergeLeavesDirtyWindowTree: копия с незакоммиченной правкой не
 // трогается, причина уходит строкой отчёта, а сама правка не теряется.
 func TestMergeLeavesDirtyWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	startTask(t, root, "XR-001", "code.txt")
 	tree := windowTree(root)
@@ -143,6 +146,7 @@ func TestMergeLeavesDirtyWindowTree(t *testing.T) {
 // и merge про неё молчит -- строка о подтяжке тут была бы поломкой, а не
 // подсказкой (проекту без копии подтягивать нечего).
 func TestMergeSilentWithoutWindowTree(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -161,6 +165,7 @@ func TestMergeSilentWithoutWindowTree(t *testing.T) {
 // переводит в Check сам, без ship, и подтяжка копии обязана сработать в этой
 // же ветке кода, а не только на общем хвосте с deploy-веткой cmdMerge.
 func TestTrainDocsOnlySyncsWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	tree := windowTree(root)
 	gitT(t, root, "worktree", "add", "--detach", tree, "main")
@@ -189,6 +194,7 @@ func TestTrainDocsOnlySyncsWindowTree(t *testing.T) {
 // fast-forward, а main уехал бы вперёд выкатом и переводом поезда в Check.
 
 func TestShipSyncsWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -220,6 +226,7 @@ func TestShipSyncsWindowTree(t *testing.T) {
 // и здесь, тем же правилом, что в merge и ship: в самом конце, когда main
 // дописан всеми коммитами revert.
 func TestRevertSyncsWindowTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", rowInProg) // задача уже в Check
 	write(t, root, "code.txt", "broken\n")
 	gitT(t, root, "add", ".")

@@ -45,6 +45,24 @@ func TestEnv(t *testing.T) {
 	}
 }
 
+// TestEnvDropsPipelineTail: хвост конвейера DEVKIT_* уносится из окружения
+// прогона целиком. Ручной merge и обкатка из живой сессии задачи иначе дарят
+// её окружение дочерним тестам, официальному тику хвост не задан с рождения
+// (DK-1694, замечание 4 ревью).
+func TestEnvDropsPipelineTail(t *testing.T) {
+	t.Setenv("DEVKIT_TASK", "DK-1")
+	t.Setenv("DEVKIT_RUN_DEPTH", "2")
+	t.Setenv("FRESHTREE_KEEP_ME", "yes")
+	env := Env("/fake/home", "/tmp/newhome", "")
+	joined := "\n" + strings.Join(env, "\n") + "\n"
+	if strings.Contains(joined, "DEVKIT_") {
+		t.Fatalf("хвост конвейера протёк:\n%s", joined)
+	}
+	if !strings.Contains(joined, "\nFRESHTREE_KEEP_ME=yes\n") {
+		t.Fatalf("обычная переменная потеряна:\n%s", joined)
+	}
+}
+
 func TestTrimHomePath(t *testing.T) {
 	if got := TrimHomePath("/a:/b", ""); got != "/a:/b" {
 		t.Fatalf("пустой home не должен резать PATH: %q", got)

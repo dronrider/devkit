@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -313,5 +314,76 @@ func TestAskNeedsAnID(t *testing.T) {
 	st := newAskStand(t)
 	if _, err := st.run(root, AskParams{Question: "как быть"}); err == nil {
 		t.Fatal("пустой ID принят")
+	}
+}
+
+func TestAskUsesDashboardSession(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	st.env["DEVKIT_CHAT_SESSION_ID"] = "as-dashboard"
+	st.env[askSessionEnv] = "parent-client"
+	writeDraft(t, root, "XR-77", "мысль")
+	if _, err := st.run(root, AskParams{ID: "XR-77", Draft: true, Question: "что выбрать"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-77")))
+	if !ok || got.Session != "as-dashboard" {
+		t.Fatalf("вопрос не связан с панелью: %+v", got)
+	}
+	sid, _ := askSession(AskParams{Session: "explicit"}, "", func(k string) string { return st.env[k] })
+	if sid != "explicit" {
+		t.Fatalf("явный адрес потерян: %q", sid)
+	}
+}
+
+func TestAskPanelPreparedDelivery(t *testing.T) {
+	root := setup(t)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	if _, err := cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftPrepared(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view preparedView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"complete":true,"proposals":[{"id":"p1","revision":1,"outcome":"drop","reason":"устарело"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name     string
+		env      map[string]string
+		delivery string
+	}{
+		{"app-server", map[string]string{"DEVKIT_CHAT_SESSION_ID": " as-panel "}, "panel"},
+		{"tmux", map[string]string{askTmuxEnv: "task-XR-008", askSessionEnv: "claude-session"}, "panel"},
+		{"claude-terminal", map[string]string{askSessionEnv: "claude-session"}, "dialog"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := cmdPreparedChatAsk(root, "XR-008", nil, askDeps{Main: root}, func(k string) string { return tt.env[k] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				chat.Question
+				Delivery string `json:"delivery"`
+			}
+			if err := json.Unmarshal([]byte(raw), &got); err != nil || got.Delivery != tt.delivery || got.Prepared == nil {
+				t.Fatalf("delivery: %s %v", raw, err)
+			}
+			if tt.name == "app-server" {
+				a, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008")))
+				if !ok || a.Session != "as-panel" {
+					t.Fatalf("адрес панели потерян: %+v", a)
+				}
+			}
+		})
 	}
 }

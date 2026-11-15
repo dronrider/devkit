@@ -189,3 +189,58 @@ func WaitHandoff(path string, mine int, wait time.Duration, gone func() bool) in
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// DelegateHold это замок головы, снятый внешним исполнителем на время его
+// работы (DK-1692). Нил это делегирование из живой головы: замок уже держит
+// она, и снимать по выходу нечего.
+type DelegateHold struct {
+	path string
+	pid  int
+	stop chan struct{}
+}
+
+// HoldForDelegate занимает задачу тем же замком, каким её поднимает taskctl
+// run. Внешний исполнитель, поднятый через agentctl run, работает с деревом
+// задачи, и тик с дашбордом обязаны видеть занятость отказом замка, а не
+// вторым исполнителем в том же дереве. Токен fromEnv называет владельца
+// замка, которым голову подняли: пока такой владелец жив и держит замок, run
+// идёт внутри живой головы, и своего замка он не берёт и не отбивает.
+func HoldForDelegate(home, id, fromEnv string) (*DelegateHold, error) {
+	path := LockPath(home, id)
+	if pid, err := strconv.Atoi(strings.TrimSpace(fromEnv)); err == nil && pid > 0 && Owner(path) == pid && Alive(pid) {
+		return nil, nil
+	}
+	me := os.Getpid()
+	if err := Take(path, me); err != nil {
+		return nil, err
+	}
+	hold := &DelegateHold{path: path, pid: me, stop: make(chan struct{})}
+	go hold.keepBeat()
+	return hold, nil
+}
+
+// keepBeat заявляет признаки жизни замка, пока идёт внешний исполнитель:
+// живой pid без свежей отметки считается замерзшим и замок снимается как
+// брошенный, а долгий исполнитель работает дольше порога.
+func (h *DelegateHold) keepBeat() {
+	tick := time.NewTicker(lockStale / 4)
+	defer tick.Stop()
+	for {
+		select {
+		case <-h.stop:
+			return
+		case <-tick.C:
+			touchBeat(h.path)
+		}
+	}
+}
+
+// Release снимает замок делегата. Нил снимает молча: чужой замок головы не
+// трогается.
+func (h *DelegateHold) Release() {
+	if h == nil {
+		return
+	}
+	close(h.stop)
+	Release(h.path, h.pid)
+}

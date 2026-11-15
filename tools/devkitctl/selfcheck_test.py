@@ -41,13 +41,14 @@ class SelfcheckTest(SandboxCase):
         import selfcheck
         lines = []
 
-        def cmd_run(args, cwd=None):
+        def cmd_run(args, cwd=None, env=None):
             if sabotage:
                 sabotage(args, cwd)
-            return testenv.run(args, cwd=cwd, path=path or self.path,
+            return testenv.run(args, cwd=cwd, env=env, path=path or self.path,
                                home=self.box.home)
 
-        rc = selfcheck.main(cmd_run=cmd_run, where=where, log=lines.append)
+        rc = selfcheck.main(cmd_run=cmd_run, where=where, log=lines.append,
+                            standards=self.box.dk)
         return rc, "\n".join(lines)
 
     def test_live_circle_passes_and_cleans_up(self):
@@ -61,8 +62,9 @@ class SelfcheckTest(SandboxCase):
         # реальной машине после установки одна и есть.
         self.assertIn("доктор:", out, "шаг доктора не назван в отчёте")
         for step in ("подключение", "строка на доске", "вердикт pick",
-                     "ветка задачи", "сценарий задачи", "обкатка сценария",
-                     "уровень ревью", "слияние с выкатом", "отметка smoke",
+                     "ветка задачи", "сценарий задачи", "отчёт аудита ревью",
+                     "обкатка сценария", "уровень ревью",
+                     "слияние с выкатом", "отметка smoke",
                      "разбор долга", "закрытие задачи"):
             self.assertIn("%s: ок" % step, out, "шаг «%s» не назван в отчёте" % step)
         self.assertIn("связка жива", out, "отчёт не назвал итог")
@@ -168,6 +170,36 @@ class SelfcheckTest(SandboxCase):
         rc, out = self.run_selfcheck(where, sabotage=plant_extra_branch)
         self.assertIn("за кругом осталась ветка задачи", out,
                       "лишняя ветка не названа в отчёте: %s" % out)
+
+
+class RunDropsPipelineTail(unittest.TestCase):
+    """run снимает хвост конвейера вызывающей сессии со стендовых команд."""
+
+    def test_pipeline_tail_dropped(self):
+        # Иностранный DEVKIT_TASK_RUN_ID из живой сессии ломал стендовому
+        # task-run подтверждение запуска: запись восстановления не находилась,
+        # и воронка снимала голову кодом 2 (DK-1694). Хвост снимается с
+        # окружения команды целиком, стенд заводит собственные записи.
+        import os
+        import sys
+        names = ("DEVKIT_TASK", "DEVKIT_RUN_DEPTH", "DEVKIT_TASK_LOCK_FROM",
+                 "DEVKIT_TASK_HEAD_SESSION", "DEVKIT_TASK_HEAD_SESSION_ARGS",
+                 "DEVKIT_TASK_RUN_ID", "DEVKIT_TASK_RUN_MODEL",
+                 "DEVKIT_RECOVERY_ATTEMPT")
+        for name in names:
+            os.environ[name] = "foreign"
+        try:
+            rc, out = selfcheck.run(
+                [sys.executable, "-c",
+                 "import os; print(','.join(n for n in %r if n in os.environ))"
+                 % (names,)])
+        finally:
+            for name in names:
+                del os.environ[name]
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "", "хвост конвейера доехал до команды стенда")
+        self.assertEqual(sorted(names), sorted(selfcheck.PIPE_ENV_DROP),
+                         "список хвоста разъехался с константой стенда")
 
 
 if __name__ == "__main__":

@@ -80,10 +80,15 @@ func cmdQuotaJSON(q *quotaSpec, now time.Time) (string, error) {
 }
 
 // missingQuotaBuckets это объявленные профилем бакеты, которых в снимке нет:
-// по ним считается полнота, имена идут в порядке объявления.
+// по ним считается полнота, имена идут в порядке объявления. Необязательные
+// пропускаются: их отсутствие в снимке штатно и полнотой не считается, без
+// этого подписка с перерывистым окном выглядела бы навсегда неполной.
 func missingQuotaBuckets(q *quotaSpec, s snapshot) []string {
 	var missing []string
 	for _, name := range q.Buckets {
+		if contains(q.Optional, name) {
+			continue
+		}
 		if _, ok := s.bucket(name); !ok {
 			missing = append(missing, name)
 		}

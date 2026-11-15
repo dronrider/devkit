@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -150,6 +153,86 @@ func TestLockRetriesWhenFileReplacedMidAcquire(t *testing.T) {
 	if !strings.Contains(err.Error(), "конвейер занят") {
 		t.Fatalf("ожидался отказ по занятости, а не иная ошибка: %v", err)
 	}
+}
+
+func TestUnlockReleasesInheritedDescriptor(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	lockRaceHook = func() {
+		lockRaceHook = nil
+		locked, err := os.Stat(filepath.Join(root, lockPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir, err := os.Open("/dev/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fds, err := dir.Readdirnames(-1)
+		dir.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var file *os.File
+		identity := locked.Sys().(*syscall.Stat_t)
+		for _, name := range fds {
+			fd, err := strconv.Atoi(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var info syscall.Stat_t
+			if err := syscall.Fstat(fd, &info); err != nil || info.Dev != identity.Dev || info.Ino != identity.Ino {
+				continue
+			}
+			duplicate, err := syscall.Dup(fd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file = os.NewFile(uintptr(duplicate), "inherited-lock")
+			break
+		}
+		if file == nil {
+			t.Fatal("открытый дескриптор замка не найден")
+		}
+		defer file.Close()
+		child := exec.Command("sh", "-c", ": <&3 || exit 1; printf ready; read -r done; exit 0")
+		child.ExtraFiles = []*os.File{file}
+		input, err := child.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err := child.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			input.Close()
+			if err := child.Wait(); err != nil {
+				t.Errorf("дочерний процесс: %v", err)
+			}
+		})
+		ready := make([]byte, len("ready"))
+		if _, err := io.ReadFull(output, ready); err != nil || string(ready) != "ready" {
+			t.Fatalf("дочерний процесс не принял дескриптор: %q, %v", ready, err)
+		}
+	}
+	t.Cleanup(func() { lockRaceHook = nil })
+	unlock, err := acquireLock(root, "merge XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if _, err := os.Stat(filepath.Join(root, lockOwnerPath)); !os.IsNotExist(err) {
+		t.Fatalf("после освобождения остался держатель: %v", err)
+	}
+	unlock, err = acquireLock(root, "merge XR-007")
+	if err != nil {
+		t.Fatalf("унаследованный дескриптор удержал освобождённый замок: %v", err)
+	}
+	unlock()
 }
 
 // TestLockSkippedWithoutDevkit: без директории .devkit замок не берётся, и

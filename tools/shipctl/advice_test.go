@@ -15,6 +15,7 @@ import (
 // каталога .devkit мало (его кладёт обвязка выката и start задолго до прогонов),
 // а без самого журнала считать нечего.
 func TestMergeRegcheckGate(t *testing.T) {
+	t.Parallel()
 	// Журнала нет: ворот не работает, слияние проходит.
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
@@ -78,6 +79,7 @@ func TestMergeRegcheckGate(t *testing.T) {
 // ограждённый блок, это чужой вывод, а не свой раздел. Считая его своим, ворот
 // молчал бы ровно там, где задача уезжает в слияние без сценария.
 func TestScenarioGateSkipsFenced(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: заголовок\n\n## Ход работы\n\n" +
 		"Вывод merge на синтетической доске:\n\n" +
 		"```\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n```\n"
@@ -98,6 +100,7 @@ func TestScenarioGateSkipsFenced(t *testing.T) {
 // пишут и подразделом внутри хода работы, и первым уровнем в старых файлах.
 // Признаком остаётся текст заголовка вне ограждённых блоков.
 func TestScenarioGateHeadingLevel(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: заголовок\n\n## Ход работы\n\n### Сценарий проверки\n\nАгентский: `shipctl status`.\n"
 	if err := scenarioGate("XR-001", false, doc); err != nil {
 		t.Fatalf("заголовок третьего уровня не признан разделом: %v", err)
@@ -114,6 +117,7 @@ func TestScenarioGateHeadingLevel(t *testing.T) {
 // прочитается, очередь посчитается без неё, а merge допишет свою строку туда,
 // откуда её потом никто не увидит.
 func TestUnterminatedFenceSpeaksUp(t *testing.T) {
+	t.Parallel()
 	doc := "# XR-001: задача\n\n## Ход работы\n\nВывод merge:\n\n```\nдоска: XR-001 в Check\n\n" +
 		"## Выкат\n\n- 2026-08-01 слито: 1111111\n"
 	if at := openFenceLine(doc); at != 7 {
@@ -150,6 +154,7 @@ func TestUnterminatedFenceSpeaksUp(t *testing.T) {
 // файл из main, merge пропустил бы оборванный хвост и дописал бы в него
 // запись, а status молчал бы ровно в типовом случае In progress.
 func TestUnterminatedFenceInWorktree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	wt := startTask(t, root, "XR-001", "code.txt")
 	write(t, wt, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n## Ход работы\n\nВывод merge:\n\n"+
@@ -206,6 +211,7 @@ func setBoard7(t *testing.T, root string) {
 // merge --train: цена не S/M, пересечение файлов с задачами поезда, перебор
 // размера. Слияние при этом проходит.
 func TestTrainCriteriaWarnings(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	setBoard7(t, root)
 	taskWithScenario(t, root, "XR-003")
@@ -249,6 +255,7 @@ func TestTrainCriteriaWarnings(t *testing.T) {
 // конвейера, и порядок веток это порядок срочности. Юнит на голой логике,
 // без репозитория: репозиторий проверяется отдельно, в TestStatusNextStep.
 func TestNextStep(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		st   pipelineState
@@ -293,6 +300,7 @@ func TestNextStep(t *testing.T) {
 // флаг автономии из живого .devkit/deploy.local, а не из головы. Именно этот
 // вывод читают перед решением «сливать или ждать» (DK-205).
 func TestStatusNextStep(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, ".devkit/deploy.local", "deploy = echo катим\nautonomous = true\n")
 	msg, err := cmdStatus(root)
@@ -328,6 +336,7 @@ func TestStatusNextStep(t *testing.T) {
 // пользовательскую ветку. На старом коде (обе ветки сразу) совет содержал
 // слово «пользовательский», и проверка его отсутствия падает.
 func TestMergeNextStep(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -350,6 +359,7 @@ func TestMergeNextStep(t *testing.T) {
 // один шаг на вид. Агентский прогоняет сценарий и закрывает, смешанный
 // прогоняет агентскую часть, пользовательский ждёт человека.
 func TestNextAfterMerge(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		title string
@@ -381,6 +391,7 @@ func TestNextAfterMerge(t *testing.T) {
 // nextAfterMerge и README, но без этого утверждения регрессия ловится только
 // глазами: TestNextAfterMerge гоняет каждый вид по одной задаче.
 func TestNextAfterMergeTrain(t *testing.T) {
+	t.Parallel()
 	b := &board{sects: map[string][]row{"check": {
 		{ID: "XR-1", Title: "Агентская раз"},
 		{ID: "XR-2", Title: "Агентская два"},

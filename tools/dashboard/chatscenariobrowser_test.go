@@ -43,9 +43,9 @@ func scenarioBrowser(t *testing.T, script string, realQuestion bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
-			t.Fatalf("playwright недоступен; задать NODE_PATH: %s", out)
+			t.Fatal("playwright недоступен; задать NODE_PATH")
 		}
 		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
@@ -69,13 +69,18 @@ func scenarioBrowser(t *testing.T, script string, realQuestion bool) {
 	if realQuestion {
 		writeQuestion(shown)
 	}
-	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(filepath.Dir(st.bin), "dashboard")
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("сборка dashboard: %v\n%s", err, out)
+	bin := buildDashboard(t)
+	if os.Getenv("DASHBOARD_ACCEPT_BIN") == "" {
+		// Сервер ищет настоящий taskctl рядом со своим бинарем, поэтому
+		// общая сборка ложится в каталог стенда жёсткой ссылкой.
+		seat := filepath.Join(filepath.Dir(st.bin), "dashboard")
+		if bin != seat {
+			if _, err := os.Lstat(seat); err != nil {
+				if err := os.Link(bin, seat); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bin = seat
 		}
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

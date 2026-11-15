@@ -2,14 +2,20 @@ import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 const { chromium } = createRequire(import.meta.url)("playwright");
-const [base, executablePath, token] = process.argv.slice(2);
+const [base, executablePath, token, boardNow, boardNext, flipMark] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext();
+await context.addInitScript(() => {
+  for (const [key, ms] of Object.entries({ ask: 250, groom: 250, pulse: 250 }))
+    localStorage.setItem("devkit.poll." + key, String(ms));
+});
+
 const proof = process.env.DASHBOARD_EFFORT_PROOF_DIR;
 if (proof) fs.mkdirSync(proof, { recursive: true });
 const results = [];
 const focus = process.env.DASHBOARD_EFFORT_CASE || "";
 const levelsOnly = process.env.DASHBOARD_EFFORT_LEVELS_ONLY === "1";
+let flipped = false;
 try {
   assert.equal((await context.request.post(base + "/api/login", { data: { token } })).status(), 200);
   // Оболочка открывает функции компонента тесту. Сами app.js и style.css
@@ -23,6 +29,9 @@ try {
   page.on("pageerror", (error) => console.error("pageerror", String(error)));
   page.on("requestfailed", (request) => console.error("requestfailed", request.url(), request.failure()?.errorText));
   for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+    // Фокус называет сочетание целиком, и вьюпорты без назначенных сочетаний
+    // страницу не грузят: загрузка и две выдержки тут дороже самих проверок.
+    if (focus && ![8, 24].some((count) => ["run", "chat"].some((kind) => ["top", "bottom"].some((side) => focus === `${viewport.width}/${count}/${kind}/${side}`)))) continue;
     await page.setViewportSize(viewport);
     await page.goto(base + "/#demo");
     await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 }).catch(async (error) => { throw new Error(String(error) + " " + await page.locator("body").innerText() + " scripts=" + await page.locator("script").evaluateAll((nodes) => nodes.map((n) => n.outerHTML).join("|"))); });
@@ -33,6 +42,7 @@ try {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
         document.querySelector("#effort-geometry")?.remove();
         document.querySelector("#effort-clip")?.remove();
+        document.querySelector("#effort-own")?.remove();
         const models = Array.from({ length: count }, (_, i) => ({
           model: "детерминированная-модель-" + i,
           tier: ["mini", "base", "pro", "max"][i % 4], harness: "stand-" + Math.floor(i / 4),
@@ -65,11 +75,35 @@ try {
           panel.append(pin);
           document.body.append(panel);
         } else {
-          const groups = document.querySelector("#groups");
-          groups.replaceChildren(stage);
-          groups.scrollTop = 0;
+          // Стенд не занимает чужой #groups: группа принадлежит приложению, и
+          // его перерисовка заменяет дочерние узлы #groups. Собственный
+          // контейнер повторяет размеры и положение настоящей группы:
+          // компонент меряет границы раскрытого списка по прокручиваемому
+          // предку, и те же размеры с тем же overflow дают ему те же
+          // границы. Контейнер не участвует в раскладке приложения и
+          // переживает любую перерисовку доски.
+          const board = document.querySelector("#groups");
+          const own = el("div");
+          own.id = "effort-own";
+          own.style.cssText = "position:fixed;overflow-y:auto;z-index:30";
+          const fit = () => {
+            const r = board.getBoundingClientRect();
+            own.style.left = r.left + "px";
+            own.style.top = r.top + "px";
+            own.style.width = r.width + "px";
+            own.style.height = r.height + "px";
+          };
+          fit();
+          new ResizeObserver(fit).observe(board);
+          own.append(stage);
+          own.scrollTop = 0;
+          document.body.append(own);
+          window.__stand_fit = fit;
         }
+        window.__stand_stage = stage;
+        window.__stand_host = host;
       }, { count, kind, side });
+      const label = JSON.stringify({ viewport, count, kind, side });
       const host = page.locator("#effort-geometry");
       const menu = host.locator(kind === "run" ? ".hpop" : ".menu");
       const anchor = host.locator(kind === "run" ? ".more2" : "select");
@@ -105,7 +139,46 @@ try {
         if (proof && !(await menu.isVisible())) await page.screenshot({ path: proof + "/failed-open.png" });
         assert(await menu.isVisible(), "полный click закрыл меню модели " + JSON.stringify({ viewport, count, kind, side, click: clicks.at(-1) }));
       };
+      const boxState = () => page.evaluate(() => {
+        const own = document.querySelector("#effort-own"), board = document.querySelector("#groups");
+        const r = (n) => n ? n.getBoundingClientRect().toJSON() : null;
+        const a = r(own), b = r(board);
+        return {
+          match: Boolean(a && b) &&
+            Math.abs(a.left - b.left) <= 1 && Math.abs(a.top - b.top) <= 1 &&
+            Math.abs(a.width - b.width) <= 1 && Math.abs(a.height - b.height) <= 1,
+          stand: a, board: b,
+        };
+      });
       await open();
+      if (!flipped && boardNext) {
+        // Известная точка сценария: подменяем ответ доски и зовём настоящий
+        // refresh, пока перерисовка не покажет новую строку. Контейнер стенда
+        // доске не принадлежит, и перерисовка обязана пройти мимо него, не
+        // тронув ни узла, ни меню.
+        flipped = true;
+        fs.copyFileSync(boardNext, boardNow);
+        let painted = false;
+        for (let i = 0; i < 60 && !painted; i++) {
+          painted = await page.evaluate((m) => document.querySelector("#groups").textContent.includes(m), flipMark);
+          if (!painted) {
+            await page.evaluate(() => refresh().catch(() => {}));
+            await page.waitForTimeout(200);
+          }
+        }
+        assert(painted, "принудительное обновление доски не прошло " + label);
+        assert(await page.evaluate(() => window.__stand_stage.isConnected &&
+          document.querySelector("#effort-geometry") === window.__stand_host),
+          "перерисовка доски сняла тестовый узел проверки геометрии " + label);
+        assert(await page.evaluate(() => !window.__stand_stage.closest("#groups")),
+          "контейнер стенда стоит внутри перерисовываемой доски " + label);
+        if (kind !== "chat") {
+          const boxes = await boxState();
+          assert(boxes.match, "коробка контейнера стенда разошлась с коробкой доски " +
+            label + " стенд=" + JSON.stringify(boxes.stand) + " доска=" + JSON.stringify(boxes.board));
+        }
+        assert(await menu.isVisible(), "перерисовка доски закрыла меню " + label);
+      }
       await nativeClick(anchor, "toggle");
       assert(!(await menu.isVisible()), "повторный click не закрыл меню");
       await open();
@@ -136,16 +209,15 @@ try {
           quotaPerRow: [...menu.querySelectorAll(".mrow")].map((n) => n.querySelectorAll(".hmt").length),
           navigation: rect(document.querySelector(".ptabs")),
           inPanel: Boolean(menu.closest(".cpanel .cpin")),
-          inGroups: Boolean(menu.closest("#groups")),
+          inOwn: Boolean(menu.closest("#effort-own")),
         };
       });
-      const label = JSON.stringify({ viewport, count, kind, side });
       results.push({ viewport, count, kind, side, geometry, clicks });
       if (proof) {
         fs.writeFileSync(proof + "/rects.json", JSON.stringify(results, null, 2));
         await page.screenshot({ path: `${proof}/${viewport.width}-${count}-${kind}-${side}.png` });
       }
-      assert(kind === "chat" ? geometry.inPanel : geometry.inGroups, "настоящие предки меню " + label);
+      assert(kind === "chat" ? geometry.inPanel : geometry.inOwn, "меню вне своего контейнера " + label);
       assert.equal(geometry.rowCount, count, "состав лестницы " + label);
       assert(geometry.quotaPerRow.every((n) => n === 2), "у каждой подписки две квоты " + label);
       assert(geometry.menu.left >= 0 && geometry.menu.right <= viewport.width + 1, "ширина меню " + label);
@@ -173,6 +245,16 @@ try {
         for (const resized of [{ width: 390, height: 844 }, viewport]) {
           await page.keyboard.press("Escape");
           await page.setViewportSize(resized);
+          // Барьер готовой геометрии: наблюдатель своей коробки асинхронный,
+          // и клик по старой коробке уходил за край нового окна. Размеры и
+          // положение контейнера обновляются синхронно, до первого клика,
+          // без ожидания кадра.
+          await page.evaluate(() => window.__stand_fit?.());
+          if (kind !== "chat") {
+            const boxes = await boxState();
+            assert(boxes.match, "после смены окна коробка стенда разошлась с коробкой доски " +
+              label + " стенд=" + JSON.stringify(boxes.stand) + " доска=" + JSON.stringify(boxes.board));
+          }
           await open();
           await checkLevels("resize-" + resized.width);
         }

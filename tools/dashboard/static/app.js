@@ -325,6 +325,16 @@ function pollOnce(ms, run, eager) {
   };
 }
 
+// Каденция опроса по ключу стенда. Человеку остаются умолчания из кода, а
+// браузерному тесту нужен свой темп: он кладёт число миллисекунд в localStorage
+// до старта страницы, и каждый круг опроса приходит быстрее. Записано нечислом
+// или короче десятой доли секунды, и стоит умолчание, поэтому случайная запись
+// в хранилище темп человеку не меняет.
+const pollRate = (key, def) => {
+  const raw = Number(localStorage.getItem("devkit.poll." + key));
+  return raw >= 100 ? raw : def;
+};
+
 document.addEventListener("visibilitychange", () => {
   // Недобуженные ступеньки снимаются в обе стороны. Уход в фон гасит их
   // вместе с кругами, а возврат заводит лесенку заново, и ступеньки прошлого
@@ -11655,7 +11665,7 @@ function fillPop(pop, project, p) {
 // Пульс опрашивается сам: шапка панели собирается один раз на открытие
 // разговора, и перерисовка экрана её не трогает, поэтому кольцо ходит за своей
 // ручкой по таймеру и меняет только себя.
-const PULSE_POLL = 5000;
+const PULSE_POLL = pollRate("pulse", 5000);
 
 // Ручка спрашивается и про задачу, и про открытый разговор разом: кольцо
 // считает задачу целиком, а слова под названием отвечают за тот чат, который
@@ -12764,7 +12774,16 @@ async function chatRaise(project, st, text, pick, onTmux) {
   // и продолжения работы.
   const liftWay = String(r.body.way || "");
   if (liftWay === "start" || liftWay === "new" || liftWay === "resume" ||
-      liftWay === "fresh") chatEffortSpend(project, st.task || st.addr);
+      liftWay === "fresh" || liftWay === "appserver") chatEffortSpend(project, st.task || st.addr);
+  // Разговор чужого протокола называет свой адрес сразу: процесс у него не
+  // терминальный, реестра ждать нечего, и панель переезжает на ленту тем же
+  // ходом, каким переезжала на родившуюся сессию.
+  if (liftWay === "appserver" && r.body.session) {
+    chatLiftDrop(project, st.addr);
+    echoMove(project, st.addr, r.body.session);
+    switchChat(r.body.session);
+    return true;
+  }
   // Имя tmux уезжает вызвавшему сразу: он кладёт его в персист реплики, и
   // дорога к родившемуся диалогу переживает закрытие вкладки.
   if (onTmux) onTmux(r.body.tmux);
@@ -14805,6 +14824,12 @@ function chatPanel(project, st) {
           } else if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else echo.sent(m);
+          // Дорога сервера приложения отвечает словами сразу, а ответ клиента
+          // приходит в ленту ходом: слово уходит в панель, чтобы отправка не
+          // читалась молчанием до первого хода.
+          if (r.body.way === "appserver" && r.body.message) {
+            sayResult(r.body.message, false);
+          }
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
           // Подъём тратит и ручную глубину: она уехала с этим подъёмом.
@@ -15095,7 +15120,7 @@ function chatPanel(project, st) {
 // Как часто панель переспрашивает клиента о вопросе, на котором он стоит.
 // Вопрос приходит не мгновенно: клиент рисует его через секунду-другую после
 // подъёма, и без опроса человек снова остался бы перед пустой лентой.
-const ASK_POLL = 3000;
+const ASK_POLL = pollRate("ask", 3000);
 
 // Через сколько панель перечитывает снимок после своего же хода. Клиент рисует
 // новый экран не мгновенно, а ждать целый шаг опроса (ASK_POLL) значит держать
@@ -16039,7 +16064,11 @@ async function groomDraft(project, id, afterOk, harness, tier, mode, effort) {
   // панель молчала до перезагрузки страницы (живой случай пользователя).
   if (r.ok && r.body.session) {
     markRunLive(project, id, r.body.session);
-    chatSewHere(project, id, r.body.session);
+    if (r.body.way === "appserver") {
+      if (chatHere(project, id)) switchChat(r.body.session);
+    } else {
+      chatSewHere(project, id, r.body.session);
+    }
   }
   if (r.ok && afterOk) {
     await goKeepingResult(afterOk);
@@ -17168,7 +17197,7 @@ function draftGrooming(works, id) {
 // бы под «Стопом» до перезагрузки страницы (замечание пользователя). Таймер один: следующий заводит очередная перерисовка, пока
 // работа жива, а её конец круг обрывает сам, без своего таймера. Уход с экрана
 // снимает опрос вместе с остальными живыми потоками (agentLive).
-const DRAFT_GROOM_POLL = 3000;
+const DRAFT_GROOM_POLL = pollRate("groom", 3000);
 let draftPoll = null;
 let draftPollWired = false;
 function watchRunning() {

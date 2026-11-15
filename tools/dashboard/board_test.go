@@ -1702,35 +1702,39 @@ func TestBoardNarrowNoSideScroll(t *testing.T) {
 		t.Skip("движка нет: замер ширины пропущен")
 	}
 	dir, page := chromeStand(t, "narrow_scroll.js", tblColsJSON(t))
-	for _, tab := range []struct{ key, word string }{
-		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
-		{"lld", "список LLD"},
-		{"ask", "вопрос клиента"}, {"chat", "шапка разговора"},
-	} {
-		for _, win := range []string{"320,568", "360,740", "390,844", "430,932"} {
-			got := chromeMeasure(t, chrome, dir, page, win, tab.key)
-			if got["gclient"] <= 0 {
+	// Все шесть разделов меряются одной загрузкой браузера на окно: подъём
+	// движка стоит дороже отрисовки, а замеры едут из стенда с именем раздела
+	// в префиксе поля.
+	for _, win := range []string{"320,568", "360,740", "390,844", "430,932"} {
+		got := chromeMeasure(t, chrome, dir, page, win, "all")
+		for _, tab := range []struct{ key, word string }{
+			{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
+			{"lld", "список LLD"},
+			{"ask", "вопрос клиента"}, {"chat", "шапка разговора"},
+		} {
+			if got[tab.key+".gclient"] <= 0 {
 				t.Fatalf("замер %s на %s не собрался: %v", tab.word, win, got)
 			}
-			if got["barover"] > 0 {
+			if got[tab.key+".barover"] > 0 {
 				t.Errorf("на экране %s полоса четырёх табов доски шире раздела на %d точек: "+
 					"на узкой ширине сужается зазор табов и поля баджа",
-					win, got["barover"])
+					win, got[tab.key+".barover"])
 			}
-			if got["over"] > 0 {
+			if got[tab.key+".over"] > 0 {
 				// widest это на сколько дальше правой кромки раздела уехала
 				// самая широкая коробка: по нему видно, что ужимать. Имя
 				// виноватого стенд кладёт в заголовок окна полем who, его
 				// читают глазами при разборе.
 				t.Errorf("на экране %s раздел «%s» ездит вбок на %d точек "+
 					"(самая широкая коробка за кромкой на %d): содержимое обязано "+
-					"ужиматься внутри своего места", win, tab.word, got["over"], got["widest"])
+					"ужиматься внутри своего места", win, tab.word,
+					got[tab.key+".over"], got[tab.key+".widest"])
 			}
 			// Кружок состояния не прижат к тексту вплотную: на узком экране
 			// он стоит слева от заголовка, и слипшаяся пара читается опечаткой.
 			// Ширина в ноль это инлайновый span, которому ширина не указ: так
 			// кружок пропадал с экрана вовсе.
-			if gap, ok := got["dotgap"]; ok && gap != -1000 {
+			if gap, ok := got[tab.key+".dotgap"]; ok && gap != -1000 {
 				if gap == -2000 {
 					t.Errorf("на экране %s (%s) кружок состояния нулевой ширины: "+
 						"инлайновому узлу ширина не указ", win, tab.word)
@@ -1740,9 +1744,9 @@ func TestBoardNarrowNoSideScroll(t *testing.T) {
 				}
 			}
 			// Тело страницы не ездит вбок ни при каких условиях.
-			if got["doc"] > got["screen"] {
+			if got[tab.key+".doc"] > got["screen"] {
 				t.Errorf("на экране %s (%s) вбок поехала сама страница: %d при окне %d",
-					win, tab.word, got["doc"], got["screen"])
+					win, tab.word, got[tab.key+".doc"], got["screen"])
 			}
 		}
 	}
@@ -1763,27 +1767,29 @@ func TestBoardBlockChipFits(t *testing.T) {
 		t.Skip("движка нет: замер чипа причины пропущен")
 	}
 	dir, page := chromeStand(t, "narrow_scroll.js", tblColsJSON(t))
-	for _, tab := range []struct{ key, word string }{
-		{"tasks", "строка списка"}, {"chat", "шапка разговора"},
-	} {
-		for _, win := range []string{"1280,900", "390,844"} {
-			got := chromeMeasure(t, chrome, dir, page, win, tab.key)
-			if got["chip"] <= 0 {
+	// Оба раздела меряются одной загрузкой браузера на окно, как и в тесте
+	// узкой доски: префикс поля называет раздел.
+	for _, win := range []string{"1280,900", "390,844"} {
+		got := chromeMeasure(t, chrome, dir, page, win, "all")
+		for _, tab := range []struct{ key, word string }{
+			{"tasks", "строка списка"}, {"chat", "шапка разговора"},
+		} {
+			if got[tab.key+".chip"] <= 0 {
 				t.Fatalf("замер чипа причины в разделе «%s» на %s не собрался: %v",
 					tab.word, win, got)
 			}
-			if got["chip"] > chipWhyMax {
+			if got[tab.key+".chip"] > chipWhyMax {
 				t.Errorf("на экране %s чип причины в разделе «%s» шириной %d точек при кромке %d: "+
 					"фразой человека он ломает место, в котором стоит",
-					win, tab.word, got["chip"], chipWhyMax)
+					win, tab.word, got[tab.key+".chip"], chipWhyMax)
 			}
-			if tab.key == "chat" && got["pick"] < chatPickMin {
+			if tab.key == "chat" && got["chat.pick"] < chatPickMin {
 				t.Errorf("на экране %s чип причины сжал меню выбора чатов до %d точек "+
-					"(меньше %d): работать с ним нечем", win, got["pick"], chatPickMin)
+					"(меньше %d): работать с ним нечем", win, got["chat.pick"], chatPickMin)
 			}
-			if tab.key == "tasks" && got["tap"] < 24 {
+			if tab.key == "tasks" && got["tasks.tap"] < 24 {
 				t.Errorf("на экране %s цель касания пометки ожидания %d точек: "+
-					"пальцем в неё не попасть", win, got["tap"])
+					"пальцем в неё не попасть", win, got["tasks.tap"])
 			}
 		}
 	}

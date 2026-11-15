@@ -13,6 +13,7 @@ import (
 )
 
 func TestQueueResumesOnFreshRegcheckWithoutNewCommit(t *testing.T) {
+	t.Parallel()
 	root := queueSetup(t)
 	wt, err := taskWorktree(root, "XR-001")
 	if err != nil || wt == nil {

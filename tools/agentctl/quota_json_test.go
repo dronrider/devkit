@@ -11,7 +11,7 @@ import (
 )
 
 func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
-	for _, name := range []string{"healthy", "missing", "stale", "future", "incomplete", "partial", "borrowed", "spent", "expired", "no-reset", "no-buckets"} {
+	for _, name := range []string{"healthy", "optional-gap", "missing", "stale", "future", "incomplete", "partial", "borrowed", "spent", "expired", "no-reset", "no-buckets"} {
 		t.Run(name, func(t *testing.T) {
 			q := glmSpec(t, filepath.Join(t.TempDir(), "quota.local"))
 			q.Buckets = []string{"week_all", "window5h_all"}
@@ -22,6 +22,11 @@ func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
 			case "future":
 				s.Taken = testNow.Add(time.Minute)
 			case "incomplete":
+				s.Buckets = s.Buckets[:1]
+			case "optional-gap":
+				// Пропавшее необязательное окно не пробел: у обязательных
+				// бакетов цифры на месте, и вердикт остаётся доступным.
+				q.Optional = []string{"window5h_all"}
 				s.Buckets = s.Buckets[:1]
 			case "partial":
 				s.Partial = map[string]string{"week_all": "нет ответа"}
@@ -53,7 +58,7 @@ func TestQuotaJSONReadOnlyRefusals(t *testing.T) {
 			if got.Schema != "agentctl/quota" || got.Version != 1 || got.Harness != q.Harness {
 				t.Fatal(out)
 			}
-			if got.Available != (name == "healthy") {
+			if got.Available != (name == "healthy" || name == "optional-gap") {
 				t.Fatalf("%s: %s", name, out)
 			}
 			if !got.Available && got.Reason == "" {
@@ -73,6 +78,70 @@ func TestQuotaJSONRefusesParserWarnings(t *testing.T) {
 	s.Warns = []string{"проверка"}
 	if got := quotaRefusal(q, s, testNow, nil); !strings.Contains(got, "проверка") {
 		t.Fatal(got)
+	}
+}
+
+// TestQuotaJSONCodexWindows: у Codex недельное окно обязательное, а
+// пятичасовое живёт в подписке с перерывами и объявлено необязательным.
+// Снимок без пятичасового окна это полноценный снимок: полноту и доступность
+// из quota --json читает восстановитель конвейера, и пробел в перерывистом
+// окне закрывал бы запуск по подписке навсегда. Профилю без optional та же
+// строгость сохраняется: его исчезнувшее окно остаётся пробелом.
+func TestQuotaJSONCodexWindows(t *testing.T) {
+	cases := []struct {
+		name    string
+		windows []bucket
+	}{
+		{"week-only", []bucket{bucketAt("week_all", 46, 72*time.Hour)}},
+		{"both", []bucket{bucketAt("week_all", 46, 72*time.Hour), bucketAt("window5h_all", 12, time.Hour)}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			q := codexSpec(t, filepath.Join(t.TempDir(), "codex.local"))
+			if err := q.write(snapOf(time.Minute, tt.windows...)); err != nil {
+				t.Fatal(err)
+			}
+			out, err := cmdQuotaJSON(q, testNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got quotaJSON
+			if err = json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !got.Complete || !got.Available || got.Reason != "" {
+				t.Fatalf("снимок %s не прошёл целиком: %s", tt.name, out)
+			}
+			if len(got.Buckets) != len(tt.windows) {
+				t.Fatalf("в ответе %d бакетов, жду %d: %s", len(got.Buckets), len(tt.windows), out)
+			}
+			for _, w := range tt.windows {
+				found := false
+				for _, b := range got.Buckets {
+					if b.Name == w.Name {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("в ответе нет окна %s: %s", w.Name, out)
+				}
+			}
+		})
+	}
+	glm := glmSpec(t, filepath.Join(t.TempDir(), "glm-code.local"))
+	if err := glm.write(snapOf(time.Minute, bucketAt("week_all", 46, 72*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdQuotaJSON(glm, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got quotaJSON
+	if err = json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Complete || got.Available || !strings.Contains(got.Reason, "window5h_all") {
+		t.Fatalf("профиль без optional потерял строгость: %s", out)
 	}
 }
 

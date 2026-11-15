@@ -116,8 +116,9 @@ var profileSchema = []sectionSpec{
 	{"hooks", []keySpec{{"protocol", subtoml.KindStr}, {"config", subtoml.KindStr}, {"events", subtoml.KindArr},
 		{"memory_index", subtoml.KindStr}}},
 	{"quota", []keySpec{{"snap", subtoml.KindStr}, {"script", subtoml.KindStr}, {"buckets", subtoml.KindArr},
-		{"required", subtoml.KindStr}, {"spend_mini", subtoml.KindArr}, {"spend_base", subtoml.KindArr},
-		{"spend_pro", subtoml.KindArr}, {"spend_max", subtoml.KindArr}, {"budget_based", subtoml.KindBool}}},
+		{"required", subtoml.KindStr}, {"optional", subtoml.KindArr}, {"spend_mini", subtoml.KindArr},
+		{"spend_base", subtoml.KindArr}, {"spend_pro", subtoml.KindArr}, {"spend_max", subtoml.KindArr},
+		{"budget_based", subtoml.KindBool}}},
 }
 
 // Шестая секция, ось скиллов (docs/lld/DK-100-context-tree.md, раздел «Харнесы
@@ -470,6 +471,17 @@ func validateQuota(d *subtoml.Doc) error {
 	if req := t.Str("required"); !inList(buckets, req) {
 		return fmt.Errorf("%s: [quota] required = %s, такого бакета нет в buckets", d.Name, subtoml.Quote(req))
 	}
+	// Необязательный бакет живёт в подписке с перерывами: окна нет на снимке
+	// это штатное состояние, а не пробел. Обязательным такой бакет быть не
+	// может, и ссылаться ему мимо buckets тоже.
+	for _, b := range t.Arr("optional") {
+		if !inList(buckets, b) {
+			return fmt.Errorf("%s: [quota] optional ссылается на бакет %s, которого нет в buckets", d.Name, subtoml.Quote(b))
+		}
+		if b == t.Str("required") {
+			return fmt.Errorf("%s: [quota] optional называет обязательный бакет %s", d.Name, subtoml.Quote(b))
+		}
+	}
 	for _, key := range spend {
 		for _, b := range t.Arr(key) {
 			if !inList(buckets, b) {
@@ -665,7 +677,7 @@ type layers struct {
 	// Ноль значит ключ не задан или бит, умолчание ставит
 	// dispatcherRotate; слой тут только транспорт.
 	DispatcherRotateTokens int
-	Warns                 []string
+	Warns                  []string
 }
 
 func readConfig(path string) (*subtoml.Doc, error) {
@@ -1191,6 +1203,7 @@ func quotaSpecOf(l *layers, name string) *quotaSpec {
 		Script:   t.Str("script"),
 		Buckets:  t.Arr("buckets"),
 		Required: t.Str("required"),
+		Optional: t.Arr("optional"),
 		Spend:    map[string][]string{},
 	}
 	for _, tier := range tierNames {
@@ -1341,6 +1354,10 @@ type harnessJSON struct {
 	// devkit; пусто, когда обвязка на месте. Поднимать на таком харнесе нечего,
 	// и потребитель (дашборд) отказывает подъёму до запуска клиента.
 	HooksGap string `json:"hooks_gap,omitempty"`
+	// Protocol это протокол клиента из ключа protocol секции [hooks] профиля.
+	// Пустое значение значит семейство claude-code, иные значения это чужие
+	// протоколы со своей дорогой чата (у codex это app-server).
+	Protocol string `json:"protocol,omitempty"`
 	// Auto это допуск к автоматическим назначениям: ключ auto машинного
 	// конфига, а без него подписка по умолчанию. Ручной выбор подписки и
 	// модели признак не ограничивает, по нему отбираются только подъёмы без
@@ -1436,6 +1453,9 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
 		h.HooksGap = hooksGap(l, name)
+		if p := l.Profiles[name]; p != nil {
+			h.Protocol = p.section("hooks").Str("protocol")
+		}
 		for _, tier := range tierNames {
 			if m := l.Setup[name].mapOf(tier); m != "" {
 				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})

@@ -181,3 +181,62 @@ func TestChatModelRefusesStalePair(t *testing.T) {
 		t.Fatalf("отказ не назвал причину: %s", body(t, resp))
 	}
 }
+
+// Смена модели не переносит разговор к другому клиенту: отказ приходит словами
+// до продолжения, протокол и нить остаются на месте, и лента достижима прежним
+// клиентом (DoD 4). Подписку семейства claude это бережёт так же, как чужой
+// протокол. Незачатая запись выбирает подписку свободно: клиента у неё ещё нет.
+func TestChatModelForeignRefused(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "первый вопрос")
+	appWaitFeed(t, e, sid, "ответ на реплику")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+		`{"model": "модель-pro", "harness": "перваяtest"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("кросс-протокольная смена модели не отказала: %d %s", resp.StatusCode, body(t, resp))
+	}
+	got := body(t, resp)
+	for _, want := range []string{"другому клиенту", "заведите новый разговор"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("в отказе нет %q: %s", want, got)
+		}
+	}
+	st := e.s.chatStoreRead(sid)
+	if st.Protocol != "codex" || st.Thread != "th-1" || st.Model != "модель-codex" || st.Harness != "codextest" {
+		t.Fatalf("отказ тронул запись разговора: %+v", st)
+	}
+	if e.s.appLive(sid) == nil {
+		t.Fatal("отказ снял живой процесс разговора")
+	}
+
+	// Разговор семейства claude не переходит на модель чужого клиента тем же
+	// отказом: его транскрипт остаётся за своим клиентом.
+	e.s.chatStoreWrite("tmux-chat-demo-1", chatStore{Model: "модель-pro", Harness: "перваяtest"})
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/tmux-chat-demo-1/model",
+		`{"model": "модель-codex", "harness": "codextest"}`)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body(t, resp), "другому клиенту") {
+		t.Fatalf("переход claude-разговора на чужого клиента не отказал: %d %s",
+			resp.StatusCode, body(t, resp))
+	}
+	st = e.s.chatStoreRead("tmux-chat-demo-1")
+	if st.Model != "модель-pro" || st.Harness != "перваяtest" {
+		t.Fatalf("отказ тронул запись claude-разговора: %+v", st)
+	}
+
+	// Незачатая запись меняет подписку свободно: первая реплика зачнёт её
+	// выбранным клиентом.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/blank",
+		`{"id": "", "model": "модель-pro", "harness": "перваяtest"}`)
+	var blank struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &blank); err != nil || blank.ID == "" {
+		t.Fatalf("незачатая запись не завелась: %s", body(t, resp))
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+blank.ID+"/model",
+		`{"model": "модель-codex", "harness": "codextest"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("незачатая запись не сменила подписку: %d %s", resp.StatusCode, body(t, resp))
+	}
+}

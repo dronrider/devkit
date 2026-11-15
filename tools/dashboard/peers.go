@@ -333,8 +333,14 @@ func peerListen(logf func(string, ...any)) func() {
 // поднятый оттуда, считает домом его: хуки харнеса раскрывают в нём тильду и
 // не находят себя, а состояние логина ищется там же, и клиент отвечает
 // «Not logged in». Дом берётся от uid через getpwuid, поэтому подложный HOME на
-// него не влияет вовсе.
+// него не влияет вовсе. Стенду эту цепочку не повернуть, и свой дом он называет
+// переменной DEVKIT_DASH_HOME: без неё читается машина как есть. Ключ отдельный
+// от DEVKIT_HOME: та называет дерево devkit, от которого берутся профили
+// (runs.go), и стенду нужны обе переменные разом.
 func realHome() string {
+	if h := strings.TrimSpace(os.Getenv("DEVKIT_DASH_HOME")); h != "" {
+		return h
+	}
 	if u, err := user.Current(); err == nil && u.HomeDir != "" {
 		return u.HomeDir
 	}
@@ -396,6 +402,16 @@ func homeEnvAt(home string, silent bool) []string {
 	// Events, а разрешение на это macOS просит у дашборда и заново после каждой
 	// пересборки (находка одиннадцатого круга POC).
 	return append(out, noFocusEnv)
+}
+
+// procHomeEnv собирает окружение подпроцесса под домом дашборда: утилиты доски
+// читают реестр и журнал из ~/.devkit того же дома, что и сам дашборд (DK-910).
+// Пустой дом оставляет окружение процесса как есть.
+func procHomeEnv(home string) []string {
+	if home == "" {
+		return nil
+	}
+	return homeEnvAt(home, false)
 }
 
 // runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что

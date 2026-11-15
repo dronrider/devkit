@@ -39,6 +39,7 @@ func racer(t *testing.T, root, file, subject string) string {
 // валит слияние. Оно проходит одним вызовом, тесты гонятся один раз, добор
 // назван в отчёте, а в файл задачи записан только коммит ветки.
 func TestMergeCatchUpBoardCommit(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	race := racer(t, root, "docs/TASKS.md", "docs(tasks): XR-002 в работу")
@@ -84,6 +85,7 @@ func TestMergeCatchUpBoardCommit(t *testing.T) {
 // считается, слияние отказывает прежним отказом. Такой код обязан пройти тесты
 // вместе с веткой.
 func TestMergeCatchUpCodeRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	race := racer(t, root, "other.txt", "fix: XR-002 соседняя правка")
@@ -102,6 +104,7 @@ func TestMergeCatchUpCodeRefused(t *testing.T) {
 // TestMergeCatchUpLimit: main, уезжающий после каждого ребейза, упирается в
 // потолок доборов, и отказ говорит, что main меняется быстрее слияния.
 func TestMergeCatchUpLimit(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	// Первый коммит доски кладёт прогон, дальше их кладёт хук post-rewrite после

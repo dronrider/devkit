@@ -180,7 +180,7 @@ func (s *server) scenarioContinuation(root, sid string) string {
 			continue
 		}
 		seen[item] = true
-		out, _, err := taskctlDo(root, "decide", id, "--open")
+		out, _, err := s.taskctlDo(root, "decide", id, "--open")
 		if err != nil {
 			blocks = append(blocks, fmt.Sprintf("Продолжение %s не прочитано: %s", id, err))
 			continue

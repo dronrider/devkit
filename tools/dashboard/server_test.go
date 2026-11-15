@@ -165,7 +165,17 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	cfg := &Config{Home: home, Roots: []string{root}, Port: defaultPort, Token: "test-token"}
+	return newTestEnvAt(t, home, proj, bin)
+}
+
+// newTestEnvAt достраивает сервер стенда на готовом доме и проекте: цель, конфиг
+// и сам сервер с молчаливым зондом. Общих процессу швов тут нет, ими заведует
+// звавший: последовательный стенд уже поставил свои, а параллельные проходы
+// берут один набор на процесс, потому что t.Setenv в параллельном проходе
+// запрещён.
+func newTestEnvAt(t *testing.T, home, proj, bin string) *testEnv {
+	t.Helper()
+	cfg := &Config{Home: home, Roots: []string{filepath.Dir(proj)}, Port: defaultPort, Token: "test-token"}
 	s := newServer(cfg, os.DirFS("static"), nil)
 	// Зонд канала в тестах молчаливо здоров: настоящих сокетов у синтетических
 	// сессий нет, и без шва каждый тест со старым транскриптом ловил бы клин.

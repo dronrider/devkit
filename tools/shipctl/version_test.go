@@ -16,6 +16,7 @@ import (
 var versionLineRe = regexp.MustCompile(`^` + toolName + ` \S+ \(\S+\)\n$`)
 
 func TestPrintVersionLine(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	if !printVersion([]string{"--version"}, &b) {
 		t.Fatal("--version не разобран")
@@ -28,6 +29,7 @@ func TestPrintVersionLine(t *testing.T) {
 // Флаг ищется по всей строке аргументов, а не в первой позиции: -C ставится и
 // до команды, и после, и версию он перебивать не должен.
 func TestPrintVersionAfterGlobalFlag(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	if !printVersion([]string{"-C", "/tmp", "--version"}, &b) {
 		t.Fatal("--version после глобального флага не разобран")
@@ -38,6 +40,7 @@ func TestPrintVersionAfterGlobalFlag(t *testing.T) {
 }
 
 func TestPrintVersionLeavesOtherArgs(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	if printVersion([]string{"--help"}, &b) || b.Len() > 0 {
 		t.Fatalf("чужой аргумент принят за --version: %q", b.String())
@@ -52,6 +55,7 @@ func TestPrintVersionLeavesOtherArgs(t *testing.T) {
 // обвязкой как «тест прошёл». Утилиты, которые «--» не режут, ведут себя тут
 // так же: правило одно на шесть.
 func TestPrintVersionStopsAtSeparator(t *testing.T) {
+	t.Parallel()
 	var b bytes.Buffer
 	if printVersion([]string{"--tests", "foo.go", "--", "echo", "--version"}, &b) || b.Len() > 0 {
 		t.Fatalf("--version из чужой команды после «--» принят за свой флаг: %q", b.String())
@@ -69,6 +73,7 @@ func TestPrintVersionStopsAtSeparator(t *testing.T) {
 // правки по замечанию ревью «-C dir --version» отвечало неизвестной командой
 // либо неизвестным флагом, а не версией.
 func TestVersionFlagOnTheBinary(t *testing.T) {
+	t.Parallel()
 	bin := filepath.Join(t.TempDir(), toolName)
 	// GOWORK=off: чужой go.work на машине увёл бы сборку из модуля утилиты.
 	build := exec.Command("go", "build", "-o", bin, ".")

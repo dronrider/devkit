@@ -113,6 +113,13 @@ func (s *server) liftChat(o liftOrder) (liftDone, error) {
 // дорога не справилась и ответу нужен запасной путь: безадресная строка, её
 // сторожок считает ответом и будит припаркованную строку тиком.
 func (s *server) deliverToCarrier(p *Project, sid, task, wire string) bool {
+	if s.chatStoreRead(sid).Protocol != "" {
+		if err := s.appCarrierTurn(p, sid, wire); err != nil {
+			s.logf("ответ не доставлен в app-server %s: %v", sid, err)
+			return false
+		}
+		return true
+	}
 	recs := s.bindsAll()
 	if term := s.sayTermOf(sid, recs); term != "" {
 		if err := chatSend(term, wire); err != nil {

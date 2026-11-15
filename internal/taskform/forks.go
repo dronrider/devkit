@@ -87,9 +87,12 @@ func (f Fork) HoldsStart() bool { return !f.Decided() && f.Who != ForkExecutor }
 
 // Формы строк перечня. Голова идёт элементом списка без отступа, подстроки с
 // отступом. Хвост головы после двоеточия это свободный текст вопроса.
+// Длинный вопрос и длинная подстрока переносятся на следующую строку отступом
+// без маркера, и разбор обязан читать такой блок целиком (DK-1663).
 var (
 	forkHeadRe  = regexp.MustCompile(`^-\s+«([^»]+)»:\s*(.*)$`)
 	forkSubRe   = regexp.MustCompile(`^\s+-\s+(.*)$`)
+	forkContRe  = regexp.MustCompile(`^\s+\S`)
 	forkWhoRe   = regexp.MustCompile(`^решает:\s*(человек|исполнитель)$`)
 	forkHintRe  = regexp.MustCompile(`^рекомендация:\s*(\S.*)$`)
 	forkTieRe   = regexp.MustCompile(`^равенство:\s*(\S.*)$`)
@@ -122,16 +125,10 @@ func ParseForks(doc string) []Fork {
 			continue
 		}
 		f := Fork{Name: strings.TrimSpace(m[1]), Question: strings.TrimSpace(m[2]), Who: ForkHuman, Line: i + 1}
-		for j := i + 1; j < to && !mask[j]; j++ {
-			sub := forkSubRe.FindStringSubmatch(lines[j])
-			if sub == nil {
-				if strings.TrimSpace(lines[j]) == "" {
-					continue
-				}
-				break
-			}
-			applyForkSub(&f, strings.TrimSpace(sub[1]))
-		}
+		forkBlock(lines, mask, i+1, to,
+			func(text string) { f.Question = strings.TrimSpace(f.Question + " " + text) },
+			func(text string, _ int) { applyForkSub(&f, text) },
+		)
 		if f.Mode == ScenarioMode {
 			f.Cards = ScenarioCards(doc)
 		}
@@ -176,6 +173,69 @@ func applyForkSub(f *Fork, text string) {
 			f.Left = "причина не названа"
 		}
 	}
+}
+
+// ForkContinuation говорит, что строка продолжает прозу развилки: отступ без
+// маркера подстроки. Перенос вопроса головы и перенос длинной подстроки
+// пишутся так.
+func ForkContinuation(line string) bool {
+	return forkContRe.MatchString(line) && !forkSubRe.MatchString(line)
+}
+
+// forkBlock обходит блок развилки от строки после головы и раздаёт
+// накопленный текст. Подстрока это строка с маркером и её продолжения без
+// маркера, вопрос головы собирает свои продолжения тем же обходом. Проза с
+// отступом после пустой строки становится самостоятельной подстрокой: разбор
+// сохраняет её, не угадывая, чей это перенос. Край блока это первая строка
+// без отступа: следующая голова или проза раздела.
+func forkBlock(lines []string, mask []bool, from, to int, onQuestion func(string), onSub func(text string, line int)) {
+	var (
+		cur     string
+		curLine int
+		seenSub bool
+	)
+	flush := func() {
+		if cur != "" {
+			onSub(cur, curLine)
+			cur, curLine = "", 0
+		}
+	}
+	for j := from; j < to && !mask[j]; j++ {
+		ln := lines[j]
+		if s := forkSubRe.FindStringSubmatch(ln); s != nil {
+			flush()
+			cur, curLine, seenSub = strings.TrimSpace(s[1]), j+1, true
+			continue
+		}
+		if strings.TrimSpace(ln) == "" {
+			flush()
+			continue
+		}
+		if !forkContRe.MatchString(ln) {
+			break
+		}
+		text := strings.TrimSpace(ln)
+		switch {
+		case cur != "":
+			cur += " " + text
+		case !seenSub:
+			onQuestion(text)
+		default:
+			cur, curLine = text, j+1
+		}
+	}
+	flush()
+}
+
+// forkQuestionEnd отдаёт индекс строки за вопросом развилки: за головой и её
+// продолжениями без маркера. Вставка первой подстроки идёт сюда, иначе
+// двухстрочный вопрос разрезается пополам.
+func forkQuestionEnd(lines []string, head int) int {
+	end := head + 1
+	for end < len(lines) && ForkContinuation(lines[end]) {
+		end++
+	}
+	return end
 }
 
 // forkSection отдаёт границы тела раздела «Развилки»: первую строку после
@@ -232,21 +292,16 @@ func ForkFinds(doc string) []ForkFind {
 			seen[name] = i + 1
 		}
 		f := Fork{Name: name, Who: ForkHuman}
-		for j := i + 1; j < to && !mask[j]; j++ {
-			sub := forkSubRe.FindStringSubmatch(lines[j])
-			if sub == nil {
-				if strings.TrimSpace(lines[j]) == "" {
-					continue
+		forkBlock(lines, mask, i+1, to,
+			func(string) {},
+			func(text string, line int) {
+				if word, bad := forkOffForm(text); bad {
+					finds = append(finds, ForkFind{line, fmt.Sprintf("подстрока развилки «%s» начата словом «%s», а формы не держит: %s", name, word, ForkFormHint(word))})
+					return
 				}
-				break
-			}
-			text := strings.TrimSpace(sub[1])
-			if word, bad := forkOffForm(text); bad {
-				finds = append(finds, ForkFind{j + 1, fmt.Sprintf("подстрока развилки «%s» начата словом «%s», а формы не держит: %s", name, word, ForkFormHint(word))})
-				continue
-			}
-			applyForkSub(&f, text)
-		}
+				applyForkSub(&f, text)
+			},
+		)
 		if f.Mode != "" {
 			if _, _, err := f.Scenarios(); err != nil {
 				finds = append(finds, ForkFind{i + 1, err.Error()})
@@ -446,9 +501,9 @@ func AppendToFork(doc, name, sub string) (string, error) {
 		if m == nil || strings.TrimSpace(m[1]) != name {
 			continue
 		}
-		end := i + 1
-		for j := i + 1; j < to && !mask[j]; j++ {
-			if forkSubRe.MatchString(lines[j]) {
+		end := forkQuestionEnd(lines, i)
+		for j := end; j < to && !mask[j]; j++ {
+			if forkContRe.MatchString(lines[j]) {
 				end = j + 1
 				continue
 			}
@@ -553,17 +608,20 @@ func AddForkOption(doc, name, text string) (string, error) {
 		if m == nil || strings.TrimSpace(m[1]) != name {
 			continue
 		}
-		at := i + 1
-		for j := i + 1; j < to && !mask[j]; j++ {
-			sub := forkSubRe.FindStringSubmatch(lines[j])
-			if sub == nil {
-				if strings.TrimSpace(lines[j]) == "" {
-					continue
-				}
+		at := forkQuestionEnd(lines, i)
+		hold := false
+		for j := at; j < to && !mask[j]; j++ {
+			ln := lines[j]
+			if strings.TrimSpace(ln) == "" {
+				continue
+			}
+			if s := forkSubRe.FindStringSubmatch(ln); s != nil {
+				t := strings.TrimSpace(s[1])
+				hold = forkWhoRe.MatchString(t) || forkHintRe.MatchString(t) || forkOptRe.MatchString(t)
+			} else if !forkContRe.MatchString(ln) {
 				break
 			}
-			t := strings.TrimSpace(sub[1])
-			if forkWhoRe.MatchString(t) || forkHintRe.MatchString(t) || forkOptRe.MatchString(t) {
+			if hold {
 				at = j + 1
 			}
 		}

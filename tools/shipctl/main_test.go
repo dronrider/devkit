@@ -38,6 +38,7 @@ func TestRunLog(t *testing.T) {
 // TestHelpAfterSubcommand: -h/--help работает у любой подкоманды, до поиска
 // корня и доски: «merge --help» раньше отбивался как merge без ID.
 func TestHelpAfterSubcommand(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		{"merge", "--help"},
 		{"revert", "-h"},

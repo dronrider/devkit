@@ -15,6 +15,7 @@ const rowInProg4 = "| XR-004 | Третья мелочь | task | P3 | 8 (0+3+0+
 // Check только поезд. Теперь её переводит сам merge, коммитом доски и без
 // выката, а отчёт говорит, что поезд её не везёт.
 func TestTrainDocsOnlyGoesToCheck(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	gitT(t, root, "checkout", "-qb", "xr-001-docs", "main")
 	write(t, root, "docs/lld/train.md", "# LLD\n")
@@ -52,6 +53,7 @@ func TestTrainDocsOnlyGoesToCheck(t *testing.T) {
 // про это отдельной строкой, а не молчит.
 
 func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
 	write(t, root, "a.txt", "новое\n")
@@ -84,6 +86,7 @@ func TestTrainCodeMissingFromTrainWarns(t *testing.T) {
 // уезжала бы в Check как сделанная правка доки.
 
 func TestTrainEmptyBranchIsNotDocsOnly(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	if _, err := cmdStart(root, StartParams{ID: "XR-001", Slug: "fix"}); err != nil {
 		t.Fatal(err)
@@ -109,6 +112,7 @@ func TestTrainEmptyBranchIsNotDocsOnly(t *testing.T) {
 // выката, поэтому ворот сценария отказывает до слияния, если у задачи нет
 // раздела «Сценарий проверки». Признак это заголовок вне ограждённых блоков.
 func TestTrainScenarioGate(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 
 	// У XR-003 файла задачи нет вовсе: сценария нет, ворот отказывает.
@@ -134,6 +138,7 @@ func TestTrainScenarioGate(t *testing.T) {
 // не повтор проверки прода. Отказ называет того, кто задачу переводит (этот
 // merge, без выката), а не ship, который бескодовую задачу не везёт.
 func TestTrainDocsOnlyScenarioGate(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	gitT(t, root, "checkout", "-qb", "xr-003-docs", "main")
 	write(t, root, "docs/lld/train.md", "# LLD\n")
@@ -153,6 +158,7 @@ func TestTrainDocsOnlyScenarioGate(t *testing.T) {
 // проверки напишу после выката») разделом не считается, и ворот отбивается:
 // признак это заголовок.
 func TestTrainScenarioProseIsNotScenario(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\nСценарий проверки напишу после выката.\n")
@@ -167,6 +173,7 @@ func TestTrainScenarioProseIsNotScenario(t *testing.T) {
 // TestTrainScenarioWarningReadsBranch: сценарий пишется в дереве задачи, и
 // читать его merge обязан там: в основном чекауте на main файла ещё нет.
 func TestTrainScenarioWarningReadsBranch(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	wt := startTask(t, root, "XR-003", "b.txt")
 	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n"+fixtureRehearsal+fixtureReviewLevel)
@@ -188,6 +195,7 @@ func TestTrainScenarioWarningReadsBranch(t *testing.T) {
 // выкатом. Проверяется, что предусловия не сработали ложно, состав поезда
 // полный и все три ушли в Check.
 func TestTrainPipelineThreeTasks(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg+rowInProg3+rowInProg4, "")
 	taskWithScenario(t, root, "XR-003")
 	taskWithScenario(t, root, "XR-004")
@@ -246,6 +254,7 @@ func TestTrainPipelineThreeTasks(t *testing.T) {
 // правилу «ID словом где угодно» коммит записывался в код соседки, та приходила
 // осиротевшей и наглухо отбивала слияние чужой задачи.
 func TestTrainNeighbourMentionIsNotOwnership(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix", "main")
 	write(t, root, "a.txt", "новое\n")
@@ -278,6 +287,7 @@ func TestTrainNeighbourMentionIsNotOwnership(t *testing.T) {
 // не берётся: revert вернул бы чужую правку.
 
 func TestRevertSkipsNeighbourMention(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", rowInProg) // XR-001 уже в Check
 	write(t, root, "code.txt", "broken\n")
 	gitT(t, root, "add", ".")

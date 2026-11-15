@@ -128,11 +128,18 @@ func TestProfileCodex(t *testing.T) {
 	if got := p.section("rules").Str("file"); got != "" {
 		t.Fatalf("[rules] file = %q, у embed-харнеса тонкого файла нет", got)
 	}
-	if !p.section("hooks").Empty() {
-		t.Fatalf("[hooks] непуст, а протокол хуков Claude Code Codex не приписан")
+	// Секция [hooks] у Codex называет чужой протокол: настроек хуков формата
+	// claude-code у клиента нет, но по ключу дашборд узнаёт дорогу чата.
+	if got := p.section("hooks").Str("protocol"); got != "codex" {
+		t.Fatalf("[hooks] protocol = %q, жду codex", got)
 	}
-	if !p.section("quota").Empty() {
-		t.Fatalf("[quota] непуста, а съёмщика остатка у профиля нет")
+	// Остаток снимает съёмщик из snap/codex.sh (DK-1706), объявление квоты
+	// в профиле и законно, и обязательно для сборщика.
+	if p.section("quota").Empty() {
+		t.Fatal("[quota] пуста, а остаток снимает snap/codex.sh")
+	}
+	if got := p.section("quota").Str("script"); got != "snap/codex.sh" {
+		t.Fatalf("[quota] script = %q, жду snap/codex.sh", got)
 	}
 	if p.Doc.Has("head") {
 		t.Fatalf("секция [head] есть, а интерактивная голова без хука конца хода профилю не положена")

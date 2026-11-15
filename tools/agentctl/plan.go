@@ -96,6 +96,9 @@ func planResolve(home, sid, label string, env func(string) string) (planAddr, er
 	var a planAddr
 	a.sid = sid
 	if a.sid == "" {
+		a.sid = strings.TrimSpace(env("DEVKIT_CHAT_SESSION_ID"))
+	}
+	if a.sid == "" {
 		a.sid = strings.TrimSpace(env(planEnvSession))
 	}
 	if a.sid == "" {
@@ -103,7 +106,7 @@ func planResolve(home, sid, label string, env func(string) string) (planAddr, er
 		a.tmux = a.sid != ""
 	}
 	if a.sid == "" {
-		return a, fmt.Errorf("не видно, чей это план: пусты %s и %s, назови сессию флагом --sid",
+		return a, fmt.Errorf("не видно, чей это план: пусты DEVKIT_CHAT_SESSION_ID, %s и %s, назови сессию флагом --sid",
 			planEnvSession, planEnvTmux)
 	}
 	a.label = label
@@ -358,6 +361,7 @@ func planSubFiles(home, sid string) []string {
 	sort.Strings(out)
 	return out
 }
+
 // cmdPlan это все четыре действия над планом одной командой: положить, начать
 // пункт, закрыть пункт, показать. Ключи --force и --template со стартовой
 // точкой живут у planRun: без них команда работает планом «без шаблона» там,

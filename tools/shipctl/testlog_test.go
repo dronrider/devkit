@@ -9,6 +9,7 @@ import (
 )
 
 func TestParseComponentOutcomes(t *testing.T) {
+	t.Parallel()
 	out := "бюджет параллельности: ядра=8\n" +
 		"go:shipctl        3.5s ok\n" +
 		"hooks              0.9s FAIL\n" +
@@ -31,6 +32,7 @@ func TestParseComponentOutcomes(t *testing.T) {
 // именем и длительностью, тем же приёмом, каким его уже печатает --list
 // parallel.py. Строка без скобок разбирается как раньше, Root пустой.
 func TestParseComponentOutcomesWithRoot(t *testing.T) {
+	t.Parallel()
 	out := "skills          (kit/skills)  4.2s FAIL\n" +
 		"go:shipctl        3.5s ok\n"
 	got := parseComponentOutcomes(out)
@@ -46,6 +48,7 @@ func TestParseComponentOutcomesWithRoot(t *testing.T) {
 }
 
 func TestParseComponentOutcomesEmpty(t *testing.T) {
+	t.Parallel()
 	// Одиночная команда без построчного разбора (обычный go test ./... или
 	// make check) не даёт ни одной строки компонента, и вызывающий заводит
 	// синтетический компонент сам.
@@ -60,6 +63,7 @@ func TestParseComponentOutcomesEmpty(t *testing.T) {
 // диффа касается путь, который совпал бы с именем по старой (снятой)
 // эвристике сегмента.
 func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{}
 	diff := []string{"compA/thing.txt"}
 	resolved, own, undetermined := resolveOwnership(cfg, "compA", "", diff)
@@ -73,6 +77,7 @@ func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
 // команда test назвала корень компонента прямо в строке итога. Own
 // определяется этим корнем, а не молчаливым отказом.
 func TestResolveOwnershipRootWithoutLayout(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{}
 	own := []string{"compA/thing.txt"}
 	if resolved, isOwn, undetermined := resolveOwnership(cfg, "compA", "compA", own); !resolved || !isOwn || undetermined {
@@ -89,6 +94,7 @@ func TestResolveOwnershipRootWithoutLayout(t *testing.T) {
 // уже (один файл скрипта), и диффа касается только бакет, а не файл из
 // раскладки: своим признаётся ответ раскладки, а не более широкого Root.
 func TestResolveOwnershipLayoutOverridesRoot(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{Components: []deployComponent{
 		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
 	}}
@@ -108,6 +114,7 @@ func TestResolveOwnershipLayoutOverridesRoot(t *testing.T) {
 // true, отдельно и от own=false (диффа не касается), и от resolved=false
 // (границы нет вовсе).
 func TestResolveOwnershipWholeRepoRootUndetermined(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{}
 	diff := []string{"tools/devkitctl/devkitctl.py"}
 	resolved, own, undetermined := resolveOwnership(cfg, "doctor", ".", diff)
@@ -124,6 +131,7 @@ func TestResolveOwnershipWholeRepoRootUndetermined(t *testing.T) {
 // срабатывает раньше Root. Теперь недоделанная раскладка приравнена к
 // отсутствующей, и резолв падает дальше к Root.
 func TestResolveOwnershipLayoutWithoutPathsFallsBackToRoot(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{Components: []deployComponent{
 		{Name: "partial", Command: "true"},
 	}}
@@ -142,6 +150,7 @@ func TestResolveOwnershipLayoutWithoutPathsFallsBackToRoot(t *testing.T) {
 // компонента «check-skills» без расширения): путь matching, а не имя,
 // поэтому расширение больше не мешает.
 func TestResolveOwnershipExactPathMatch(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{Components: []deployComponent{
 		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
 	}}
@@ -162,6 +171,7 @@ func TestResolveOwnershipExactPathMatch(t *testing.T) {
 // тут решает раскладка проекта, а не шипctl: заведи её проект уже (paths на
 // каждый скилл отдельно), точнее станет и разбор.
 func TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{Components: []deployComponent{
 		{Name: "skills", Paths: []string{"kit/skills/"}},
 	}}
@@ -175,6 +185,7 @@ func TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary(t *testing.T) {
 // TestResolveOwnershipDeclaredButNotTouched: раскладка заведена, но дифф
 // её область не касается. Компонент опознан и не свой, чужая краснота.
 func TestResolveOwnershipDeclaredButNotTouched(t *testing.T) {
+	t.Parallel()
 	cfg := deployConfig{Components: []deployComponent{
 		{Name: "compB", Paths: []string{"compB/"}},
 	}}
@@ -186,6 +197,7 @@ func TestResolveOwnershipDeclaredButNotTouched(t *testing.T) {
 }
 
 func TestParseSince(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want time.Duration
@@ -210,6 +222,7 @@ func TestParseSince(t *testing.T) {
 }
 
 func TestWriteTestLogSkipsWithoutDevkitDir(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	// .devkit не заведён: писать журналу некуда, как у logRun.
 	writeTestLog(root, "XR-001", []string{"a.go"}, "ok\n", true, time.Second)
@@ -219,6 +232,7 @@ func TestWriteTestLogSkipsWithoutDevkitDir(t *testing.T) {
 }
 
 func TestReadTestLogWindowAndBrokenLines(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -244,6 +258,7 @@ func TestReadTestLogWindowAndBrokenLines(t *testing.T) {
 // сам по себе, и это своя краснота: слияние отбито честно, а команда счёта
 // такое слияние не берёт.
 func TestMergeForeignFailsOwnRedNotCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -276,6 +291,7 @@ func TestMergeForeignFailsOwnRedNotCounted(t *testing.T) {
 // стенде. Красный компонент, чьё имя дифф задачи не задевает: слияние тоже
 // отбито, но команда счёта должна взять его в число.
 func TestMergeForeignFailsForeignRedCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -315,6 +331,7 @@ func TestMergeForeignFailsForeignRedCounted(t *testing.T) {
 // foreign-fails в ложном нуле. Без заведённой границы компонент неопознан, и
 // его краснота идёт в счёт: ложный ноль опаснее ложной единицы.
 func TestMergeForeignFailsUnresolvedComponentCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -347,6 +364,7 @@ func TestMergeForeignFailsUnresolvedComponentCounted(t *testing.T) {
 // красное слияние проекта без раскладки садилось бы в счёт как чужое,
 // включая своё.
 func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -378,6 +396,7 @@ func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
 // запись остаётся вне foreign-fails не потому, что доктор «свой», а потому,
 // что граница не установлена ни в одну сторону.
 func TestMergeForeignFailsWholeRepoRootAloneNotCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -409,6 +428,7 @@ func TestMergeForeignFailsWholeRepoRootAloneNotCounted(t *testing.T) {
 // счёт по слияниям, а не по отдельным компонентам, и хотя бы один точно
 // чужой компонент обязан довести запись до счёта.
 func TestMergeForeignFailsWholeRepoRootBesideForeignCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -438,6 +458,7 @@ func TestMergeForeignFailsWholeRepoRootBesideForeignCounted(t *testing.T) {
 // deploy.compA.paths строки (недоделанная раскладка), и own обязан
 // решаться через Root, а не застревать в false навсегда.
 func TestMergeForeignFailsOwnRedFromPartialLayoutFallsBackToRootNotCounted(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -467,6 +488,7 @@ func TestMergeForeignFailsOwnRedFromPartialLayoutFallsBackToRootNotCounted(t *te
 // после отката (он вне git и revert её не видит), а повторное слияние
 // дописывает вторую запись рядом, не затирая первую.
 func TestJournalSurvivesRevertAndRemerge(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -531,6 +553,7 @@ const loadRunOut = "dashboard       (tools/dashboard)  74.1s FAIL\n" +
 	"Ran 2 of 2 components in 1m20s\n"
 
 func TestWriteTestLogMarksLoadFailureForeign(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	rec := writeTestLog(root, "XR-001", []string{"tools/dashboard/app.js"}, loadRunOut, false, time.Minute)
@@ -566,6 +589,7 @@ func TestWriteTestLogMarksLoadFailureForeign(t *testing.T) {
 // WaitDelay expired это тот же класс: подпроцесс не успел ответить, и стенное
 // время кончилось у него, а не у кода ветки.
 func TestWriteTestLogMarksWaitDelayForeign(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := "dashboard       (tools/dashboard)  31.0s FAIL\n" +
@@ -585,6 +609,7 @@ func TestWriteTestLogMarksWaitDelayForeign(t *testing.T) {
 // (DK-1230). Здесь ровно такой блок, головой unittest и признанием в тексте
 // AssertionError.
 func TestWriteTestLogMarksPythonAssertionForeign(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := "board-task      (kit/skills/board-task)  12.0s FAIL\n" +
@@ -610,6 +635,7 @@ func TestWriteTestLogMarksPythonAssertionForeign(t *testing.T) {
 // AssertionError с упоминанием факта (а не срока) не даёт shipctl права
 // списать провал на нагрузку.
 func TestWriteTestLogPythonAssertionWithoutMarkStaysOwn(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := "board-task      (kit/skills/board-task)  12.0s FAIL\n" +
@@ -627,6 +653,7 @@ func TestWriteTestLogPythonAssertionWithoutMarkStaysOwn(t *testing.T) {
 // Настоящая поломка в диффе остаётся своей, и вердикт зовёт её своей: иначе
 // очередь гоняла бы повторы по сломанному коду.
 func TestWriteTestLogKeepsOwnFailureOwn(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := "dashboard       (tools/dashboard)  1.0s FAIL\n" +
@@ -647,6 +674,7 @@ func TestWriteTestLogKeepsOwnFailureOwn(t *testing.T) {
 // Признание одного компонента не прощает соседа: пока в том же прогоне
 // краснеет задетый диффом компонент без признака, краснота своя.
 func TestRedVerdictOwnBeatsLoad(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := loadRunOut[:strings.Index(loadRunOut, "Ran 2")] +
@@ -668,6 +696,7 @@ func TestRedVerdictOwnBeatsLoad(t *testing.T) {
 // Команда без разбора на компоненты судится по всему выводу: синтетический
 // компонент и есть весь прогон.
 func TestWriteTestLogJudgesWholeOutputWithoutComponents(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	devkitDir(t, root)
 	out := "panic: test timed out after 10m0s\n\ngoroutine 1 [running]:\n"
@@ -680,6 +709,7 @@ func TestWriteTestLogJudgesWholeOutputWithoutComponents(t *testing.T) {
 // Блок компонента берётся свой: признание одного компонента не должно
 // перетекать в блок другого.
 func TestComponentBlocksSplitByName(t *testing.T) {
+	t.Parallel()
 	out := "a (x) 1.0s FAIL\nb (y) 2.0s FAIL\n" +
 		"FAIL a\nвывод a, FAIL	github.com/x	1.0s\n" +
 		"FAIL b\nвывод b\n" +
@@ -699,6 +729,7 @@ func TestComponentBlocksSplitByName(t *testing.T) {
 // слияния такая запись не отбивала. Полная запись рядом в счёт идёт, иначе
 // тест проходил бы и на пустом счётчике.
 func TestForeignFailsSkipsPartialRuns(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -724,6 +755,7 @@ func TestForeignFailsSkipsPartialRuns(t *testing.T) {
 // есть. Пишет запись обёртка на питоне (tools/devkitctl/testrun.py), и читает
 // её этот разбор, поэтому имя поля проверяется разбором живой строки.
 func TestPartialRunRecordKeepsScope(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)

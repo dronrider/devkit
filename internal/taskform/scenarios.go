@@ -293,7 +293,7 @@ func SetForkField(doc, name, field, value string) (string, error) {
 	for i := f.Line; i < len(lines); i++ {
 		sub := forkSubRe.FindStringSubmatch(lines[i])
 		if sub == nil {
-			if strings.TrimSpace(lines[i]) == "" {
+			if strings.TrimSpace(lines[i]) == "" || forkContRe.MatchString(lines[i]) {
 				continue
 			}
 			break

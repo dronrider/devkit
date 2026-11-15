@@ -278,6 +278,27 @@ func smokeWrite(path, body string, mode os.FileMode) error {
 	return os.WriteFile(path, []byte(body), mode)
 }
 
+// Первый запуск исполняемого файла на macOS платит проверкой службы
+// безопасности до секунды, и привязана эта уплата к самому файлу: файл,
+// перезаписанный на прежнем месте, запускается без неё. Прогоны смока идут
+// друг за другом, и каталог фикстур на каждый прогон заново платил бы за
+// taskctl, tmux и клиентов по отдельности, поэтому фикстуры лежат в одном
+// каталоге на весь прогон пакета и перезаписываются на месте. Пути данных
+// (доска, журналы) остаются у каждого прогона свои, так что перезапись
+// ограничена оболочками.
+var (
+	smokeSharedBinOnce sync.Once
+	smokeSharedBinDir  string
+	smokeSharedBinErr  error
+)
+
+func smokeSharedBin() (string, error) {
+	smokeSharedBinOnce.Do(func() {
+		smokeSharedBinDir, smokeSharedBinErr = os.MkdirTemp("", "dashboard-smoke-bin-")
+	})
+	return smokeSharedBinDir, smokeSharedBinErr
+}
+
 // setEnv ставит переменные окружения на время прогона и отдаёт откат: смок
 // гоняется и в процессе теста, и оставлять за собой чужой HOME ему нельзя.
 // Пустое значение значит снять переменную.
@@ -524,8 +545,18 @@ else:
         f.write("%%s цикл цели %%s начат прогоном smoke\n" %% (stamp, gid))
     print("цикл цели %%s поднят в tmux-сессии goal-%%s" %% (gid, gid))
 `, pyQuote(sessions))
-	if err := smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "goal-loop", "goal-run.py"),
-		goalRun, 0o755); err != nil {
+	// Оболочка лежит в общем каталоге фикстур, а на своём месте в дереве кита
+	// стоит симлинк на неё: сервер ищет путь по корням конфига, а уплата за
+	// первый запуск привязана к файлу, и симлинк на прогретый файл её не платит.
+	goalShared := filepath.Join(s.bin, "goal-run.py")
+	if err := smokeWrite(goalShared, goalRun, 0o755); err != nil {
+		return err
+	}
+	goalLink := filepath.Join(s.root, "devkit", "kit", "skills", "goal-loop", "goal-run.py")
+	if err := os.MkdirAll(filepath.Dir(goalLink), 0o755); err != nil {
+		return err
+	}
+	if err := os.Symlink(goalShared, goalLink); err != nil {
 		return err
 	}
 	// Оболочка конвейера: на стенде она поднимает голову один раз и заказом
@@ -563,8 +594,15 @@ if owner and owner == os.environ.get("DEVKIT_TASK_LOCK_FROM"):
     os.replace(pid + ".tmp", pid)
 sys.exit(code)
 `
-	if err := smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "board-task", "task-run.py"),
-		taskRun, 0o755); err != nil {
+	taskShared := filepath.Join(s.bin, "task-run.py")
+	if err := smokeWrite(taskShared, taskRun, 0o755); err != nil {
+		return err
+	}
+	taskLink := filepath.Join(s.root, "devkit", "kit", "skills", "board-task", "task-run.py")
+	if err := os.MkdirAll(filepath.Dir(taskLink), 0o755); err != nil {
+		return err
+	}
+	if err := os.Symlink(taskShared, taskLink); err != nil {
 		return err
 	}
 	// Клиента головы собирает секция [head] профиля подписки: у первой это её
@@ -685,11 +723,15 @@ func pyQuote(s string) string {
 }
 
 func newSmoke(dir string) (_ *smoke, resultErr error) {
+	bin, err := smokeSharedBin()
+	if err != nil {
+		return nil, err
+	}
 	s := &smoke{
 		dir:  dir,
 		ctx:  context.Background(),
 		home: filepath.Join(dir, "home"),
-		bin:  filepath.Join(dir, "bin"),
+		bin:  bin,
 	}
 	defer func() {
 		if resultErr != nil {
@@ -788,6 +830,11 @@ func newSmoke(dir string) (_ *smoke, resultErr error) {
 	oldHome := realHomeFn
 	realHomeFn = func() string { return s.home }
 	s.restore = append(s.restore, func() { realHomeFn = oldHome })
+	// Живые потоки стенда тикают чаще продукта: шаги цепочки ждут событие из
+	// журнала, и секундный опрос растягивал бы каждое ожидание на полтакта.
+	oldTail := tailPoll
+	tailPoll = 10 * time.Millisecond
+	s.restore = append(s.restore, func() { tailPoll = oldTail })
 
 	static, err := fs.Sub(embedded, "static")
 	if err != nil {
@@ -2093,7 +2140,7 @@ func (s *smoke) stepNoLead() (string, error) {
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("оборванный конвейер %s прошёл молча: уведомления в ленте нет за 30с", smokeTask)
 		}
-		time.Sleep(time.Second)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

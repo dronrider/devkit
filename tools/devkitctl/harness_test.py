@@ -244,10 +244,48 @@ class CodexProfileTest(unittest.TestCase):
         self.assertEqual(self.prof.str_of("skills", "format"), "claude-code")
 
     def test_machine_axes_are_empty(self):
-        for name in ("hooks", "quota"):
-            self.assertFalse(self.prof.table(name), "секция [%s] непуста, а механики у Codex нет" % name)
+        # Секция [hooks] у Codex называет чужой протокол и пуста сверх него:
+        # настроек хуков формата claude-code у клиента нет, и по ключу дашборд
+        # узнаёт дорогу чата. Квоту снимает съёмщик из snap/codex.sh, и её
+        # объявление живёт в профиле (DK-1706). Головы задач у клиента нет.
+        self.assertEqual(self.prof.str_of("hooks", "protocol"), "codex",
+                         "протокол чата Codex профилем не назван")
+        quota = self.prof.table("quota")
+        self.assertTrue(quota, "секция [quota] пуста, а остаток снимает snap/codex.sh")
+        self.assertEqual(self.prof.str_of("quota", "snap"), "script")
+        self.assertEqual(self.prof.str_of("quota", "script"), "snap/codex.sh")
         self.assertIsNone(self.prof.table("head"),
                           "интерактивной головы без хука конца хода профилю не положено")
+
+
+class QuotaOptionalTest(unittest.TestCase):
+    """Ключ optional секции [quota] валидируется синтетическим профилем:
+    элементы обязаны стоять в buckets, а обязательный бакет необязательным
+    стать не может. Зеркальная валидация agentctl покрыта своими тестами.
+    """
+
+    def validate(self, quota):
+        text = ('[detect]\n[rules]\nmode = "embed"\n[delegate]\nmode = "none"\n'
+                '[hooks]\nprotocol = "codex"\n[quota]\n'
+                'snap = "script"\nscript = "snap/probe.sh"\n'
+                'buckets = ["week_all", "window5h_all"]\nrequired = "week_all"\n'
+                + quota +
+                'spend_mini = ["week_all"]\nspend_base = ["week_all"]\n'
+                'spend_pro = ["week_all"]\nspend_max = ["week_all"]\n')
+        harness.validate_profile(harness.parse("probe.toml", text))
+
+    def test_optional_bucket_passes(self):
+        self.validate('optional = ["window5h_all"]\n')
+
+    def test_optional_outside_buckets_refused(self):
+        with self.assertRaises(harness.ProfileError) as ctx:
+            self.validate('optional = ["month_plan"]\n')
+        self.assertIn("optional", str(ctx.exception))
+
+    def test_required_bucket_not_optional(self):
+        with self.assertRaises(harness.ProfileError) as ctx:
+            self.validate('optional = ["week_all", "window5h_all"]\n')
+        self.assertIn("обязательный", str(ctx.exception))
 
 
 class ProjectNarrowingTest(SandboxCase):

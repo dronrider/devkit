@@ -38,6 +38,7 @@ func holdLock(t *testing.T, root, who string) func() {
 // команда конвейера, которой отказали. Ради этого отказа задача и заводилась:
 // сессия получает «кто и с какого времени» из самой утилиты.
 func TestLockRefusalNamesHolderToCommands(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	branchWithFix(t, root)
@@ -59,6 +60,7 @@ func TestLockRefusalNamesHolderToCommands(t *testing.T) {
 // ручной захват в тесте. Проверяется изнутри живого слияния: команда тестов
 // снимает копию файла держателя, пока merge держит замок.
 func TestLockFileNamesLiveHolder(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	branchWithFix(t, root)
@@ -107,6 +109,7 @@ func trackLock(t *testing.T, root string) {
 // и ship с merge отбивали сами себя: у ship падала проверка чистоты, а merge
 // не мог сделать checkout поверх изменённого файла.
 func TestTrackedLockNotDirtyTree(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	trackLock(t, root)
 
@@ -134,6 +137,7 @@ func TestTrackedLockNotDirtyTree(t *testing.T) {
 // git, и в пути самого слияния. Ровно так сложилось в фикстурах: первый merge
 // создал файл, а git add . в ветке увёз его в коммит задачи.
 func TestMergeSurvivesTrackedLock(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	trackLock(t, root)
 

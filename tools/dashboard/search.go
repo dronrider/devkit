@@ -266,7 +266,7 @@ func searchBoard(raw json.RawMessage, q string) ([]searchRow, error) {
 // какими он рисуется своим экраном. Отказ утилиты остаётся при группе, а не
 // рушит весь поиск: доска с архивом читаются мимо неё.
 func (s *server) searchDrafts(dir, q string) ([]searchRow, string) {
-	out, _, err := taskctlDo(dir, "draft", "list", "--json")
+	out, _, err := s.taskctlDo(dir, "draft", "list", "--json")
 	if err != nil {
 		return nil, "накопитель черновиков не прочитался: " + err.Error()
 	}

@@ -82,6 +82,54 @@ func TestDecideWritesList(t *testing.T) {
 	}
 }
 
+// TestDecideLeaveWrappedQuestion: передача развилки с переносом вопроса
+// (DK-1663) дописывает след после целого блока и не режет прозу вопроса.
+// Развилке без поля «решает» поле встаёт первой подстрокой после вопроса.
+func TestDecideLeaveWrappedQuestion(t *testing.T) {
+	root := setup(t)
+	path := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	body := "# XR-005\n\n## Что происходит\n\nтекст\n\n## Развилки\n\n" +
+		"- «источники»: откуда отбор читает метки готовности строки без\n" +
+		"  распакованного дерева?\n" +
+		"  - рекомендация: из двух источников: распакованный файл и git show\n" +
+		"    ветки, иначе кандидат без дерева молча выглядит неготовым\n" +
+		"  - решает: человек\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := taskform.FindFork(readTask(t, root, "XR-005"), "источники"); !ok || !f.HoldsStart() {
+		t.Fatalf("до передачи развилка не держит старт: %+v", f)
+	}
+	decideRun(t, root, DecideParams{ID: "XR-005", Name: "источники", Leave: true, By: "агент", Text: "в постановке решает исполнитель"})
+	doc := readTask(t, root, "XR-005")
+	if !strings.Contains(doc, "строки без\n  распакованного дерева?\n") {
+		t.Fatalf("передача разрезала перенос вопроса:\n%s", doc)
+	}
+	f, ok := taskform.FindFork(doc, "источники")
+	if !ok || f.HoldsStart() || f.State() != taskform.StateLeft || f.Who != taskform.ForkExecutor {
+		t.Fatalf("после передачи развилка разобрана как %+v", f)
+	}
+	if !strings.Contains(doc, "  - решает: исполнитель\n  - оставлена агентом 2026-09-06: в постановке решает исполнитель\n") {
+		t.Fatalf("след передачи встал не после целого блока:\n%s", doc)
+	}
+
+	// Развилка без поля «решает»: вставка первой подстрокой не режет перенос.
+	noWho := "# XR-005\n\n## Развилки\n\n- «метки»: какие проверки едут в отбор\n" +
+		"  второй версии?\n" +
+		"  - рекомендация: файл задачи и открытые замечания\n"
+	if err := os.WriteFile(path, []byte(noWho), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decideRun(t, root, DecideParams{ID: "XR-005", Name: "метки", Leave: true, By: "агент", Text: "решает исполнитель"})
+	doc = readTask(t, root, "XR-005")
+	if !strings.Contains(doc, "отбор\n  второй версии?\n  - решает: исполнитель\n") {
+		t.Fatalf("поле «решает» разрезало перенос вопроса:\n%s", doc)
+	}
+	if f, ok := taskform.FindFork(doc, "метки"); !ok || f.HoldsStart() {
+		t.Fatalf("развилка без поля после передачи держит старт: %+v", f)
+	}
+}
+
 // TestDecideRefusals: отказы команды. Повтор имени, закрытие незаведённого
 // имени, архивный ID, чужой автор и заведение без вопроса.
 func TestDecideRefusals(t *testing.T) {

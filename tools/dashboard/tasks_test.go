@@ -69,6 +69,48 @@ func buildTaskctl(t *testing.T) string {
 	return realTaskctlPath
 }
 
+var (
+	dashboardOnce     sync.Once
+	dashboardPath     string
+	dashboardErr      error
+	dashboardBuildDir string
+)
+
+// buildDashboard собирает бинарь самого пакета один раз на прогон (DK-1691):
+// браузерные стенды поднимают настоящий сервер отдельным процессом, и сборка
+// внутри каждого теста повторяла одну и ту же работу по несколько секунд.
+// Готовый бинарь принимает DASHBOARD_ACCEPT_BIN, как taskctl свой путь.
+func buildDashboard(t *testing.T) string {
+	t.Helper()
+	if bin := os.Getenv("DASHBOARD_ACCEPT_BIN"); bin != "" {
+		if !filepath.IsAbs(bin) {
+			t.Fatal("DASHBOARD_ACCEPT_BIN должен быть абсолютным путём")
+		}
+		if _, err := os.Stat(bin); err != nil {
+			t.Fatal(err)
+		}
+		return bin
+	}
+	dashboardOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "dashboard-self")
+		if err != nil {
+			dashboardErr = err
+			return
+		}
+		dashboardBuildDir = dir
+		dashboardPath = filepath.Join(dir, "dashboard")
+		cmd := exec.Command("go", "build", "-o", dashboardPath, ".")
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			dashboardErr = fmt.Errorf("go build dashboard: %v\n%s", err, out)
+		}
+	})
+	if dashboardErr != nil {
+		t.Fatal(dashboardErr)
+	}
+	return dashboardPath
+}
+
 // TestMain снимает с прогона ID живой сессии и убирает за собой собранный
 // бинарь. ID тут не мелочь: стенды зовут настоящий taskctl, тот отмечает
 // работу сессии строкой в реестре (touchWork -> sessions.Touch), и берётся ID
@@ -114,6 +156,9 @@ func TestMain(m *testing.M) {
 	os.RemoveAll(spare)
 	if realTaskctlBuildDir != "" {
 		os.RemoveAll(realTaskctlBuildDir)
+	}
+	if dashboardBuildDir != "" {
+		os.RemoveAll(dashboardBuildDir)
 	}
 	os.Exit(code)
 }
@@ -162,10 +207,78 @@ func runTaskctl(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+var (
+	seedBoardOnce sync.Once
+	seedBoardDir  string
+	seedBoardErr  error
+)
+
+// seedBoardRows заводит доску настоящей утилитой. Набор команд один и тот же
+// для заготовки и для сторожа свежести, поэтому и живёт отдельной функцией.
+func seedBoardRows(t *testing.T, proj string) error {
+	t.Helper()
+	// Доска заводится настоящим git в PATH: taskctl init ищет корень
+	// репозитория через «rev-parse --show-toplevel», и подставленная фикстура
+	// git увела бы доску в текущий каталог. Фикстура встаёт после, когда
+	// стенду нужны молчаливые add, commit и push.
+	rows := [][]string{{"init", "--prefix", "XR", "--name", "demo"}}
+	for _, row := range [][]string{
+		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent"},
+		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M", "--accept", "agent"},
+		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
+		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
+	} {
+		rows = append(rows, append([]string{"add", "--body-file", taskBodyFixture(t)}, row...))
+	}
+	rows = append(rows,
+		[]string{"dep", "add", "XR-002", "XR-001"},
+		[]string{"dep", "add", "XR-003", "XR-002"})
+	for _, args := range rows {
+		cmd := exec.Command(realTaskctlPath, append(args, "-C", proj)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("taskctl %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	return nil
+}
+
+// seedBoard строит доску-заготовку один раз на прогон пакета. Стендов на этой
+// доске около сотни, и семь запусков утилиты на каждом стоили больше времени,
+// чем сами замеры, а результат у всех один: цепочка XR-001 -> XR-002 -> XR-003
+// и одиночная XR-004. Формат строки по-прежнему держит утилита: заготовку она
+// заводит сама, а TestTasksEnvSeedMatchesUtility сторожит копию против
+// свежего прогона тех же команд.
+func seedBoard(t *testing.T) string {
+	t.Helper()
+	seedBoardOnce.Do(func() {
+		home, err := os.MkdirTemp("", "dashboard-board-seed")
+		if err != nil {
+			seedBoardErr = err
+			return
+		}
+		proj := filepath.Join(home, "projects", "demo")
+		mkProject(t, proj)
+		if err := os.Remove(filepath.Join(proj, "docs", "TASKS.md")); err != nil {
+			seedBoardErr = err
+			return
+		}
+		buildTaskctl(t)
+		if err := seedBoardRows(t, proj); err != nil {
+			seedBoardErr = err
+			return
+		}
+		seedBoardDir = proj
+	})
+	if seedBoardErr != nil {
+		t.Fatal(seedBoardErr)
+	}
+	return seedBoardDir
+}
+
 // tasksEnv поднимает сервер на доске с цепочкой XR-001 -> XR-002 -> XR-003
-// («после» в эту сторону) и одиночной XR-004. Доску заводит сама утилита:
-// формат строки её, и переписывать его в тесте руками значит разойтись с ней
-// на первой же правке.
+// («после» в эту сторону) и одиночной XR-004. Доска ложится копией заготовки
+// утилиты: каждая правка формата строки проходит через неё и попадает в
+// заготовку вместе со сторожем свежести.
 func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
 	kit, err := filepath.Abs("../..")
@@ -176,27 +289,87 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Setenv("DEVKIT_HOME", kit)
 	taskctlFixture(t, e.bin)
 	sandboxRealNotifier(t, e)
-	if err := os.Remove(filepath.Join(e.proj, "docs", "TASKS.md")); err != nil {
+	if err := os.RemoveAll(e.proj); err != nil {
 		t.Fatal(err)
 	}
-	// Доска заводится настоящим git в PATH: taskctl init ищет корень
-	// репозитория через «rev-parse --show-toplevel», и подставленная фикстура
-	// git увела бы доску в текущий каталог. Фикстура встаёт после, когда
-	// стенду нужны молчаливые add, commit и push.
-	runTaskctl(t, e.proj, "init", "--prefix", "XR", "--name", "demo")
-	for _, row := range [][]string{
-		{"--id", "XR-001", "--title", "Первая", "--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent"},
-		{"--id", "XR-002", "--title", "Вторая", "--rank", "25+2+1+0+2", "--cost", "M", "--accept", "agent"},
-		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
-		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
-	} {
-		runTaskctl(t, e.proj, append([]string{"add", "--body-file", taskBodyFixture(t)}, row...)...)
+	if err := os.MkdirAll(e.proj, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "dep", "add", "XR-002", "XR-001")
-	runTaskctl(t, e.proj, "dep", "add", "XR-003", "XR-002")
+	if err := os.CopyFS(e.proj, os.DirFS(seedBoard(t))); err != nil {
+		t.Fatal(err)
+	}
 	gitLog := filepath.Join(e.home, "git.log")
 	writeScript(t, e.bin, "git", gitFakeOK(gitLog))
 	return e, e.loggedClient(t), gitLog
+}
+
+// boardTree снимает дерево доски в карту «путь -> содержимое». Каталог .git не
+// снимается: коммиты несут отметку времени и у двух честных прогонов разные, а
+// предмет сторожа это файлы доски.
+func boardTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		tree[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+// Заготовка равна свежему прогону утилиты. Стенды берут доску копией, и без
+// этого сторожа правка формата строки в утилите могла бы ехать в тестах
+// заготовкой вчерашней свежести, а формат строки держит утилита, не копия.
+func TestTasksEnvSeedMatchesUtility(t *testing.T) {
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	t.Setenv("HOME", t.TempDir())
+	proj := filepath.Join(t.TempDir(), "demo")
+	mkProject(t, proj)
+	if err := os.Remove(filepath.Join(proj, "docs", "TASKS.md")); err != nil {
+		t.Fatal(err)
+	}
+	buildTaskctl(t)
+	if err := seedBoardRows(t, proj); err != nil {
+		t.Fatal(err)
+	}
+	got := boardTree(t, proj)
+	want := boardTree(t, seedBoard(t))
+	if len(got) == 0 || len(want) == 0 {
+		t.Fatalf("доска не собралась: свежая %d файлов, заготовка %d", len(got), len(want))
+	}
+	for path, data := range want {
+		if got[path] != data {
+			t.Errorf("файл %s разошёлся: копия заготовки обязана быть байт в байт тем, что сейчас кладёт утилита", path)
+		}
+	}
+	for path := range got {
+		if _, ok := want[path]; !ok {
+			t.Errorf("в заготовке нет файла %s, который кладёт свежий прогон", path)
+		}
+	}
 }
 
 // regcheck:test-begin
@@ -1636,6 +1809,55 @@ func findChrome() string {
 		return found[len(found)-1]
 	}
 	return ""
+}
+
+// needPlaywright проверяет, что node видит модуль playwright, и когда окружение
+// его не несёт, дополняет NODE_PATH глобальными каталогами модулей машины.
+// Отдельный прогон пакета стартует без NODE_PATH, и без этой доводки браузерный
+// шаг молча превращался бы в пропуск, а пропуск неотличим от зелёного прогона.
+func needPlaywright(t *testing.T, node string) bool {
+	t.Helper()
+	path, ok := playwrightResolve(node)
+	if !ok {
+		return false
+	}
+	if path != "" {
+		t.Setenv("NODE_PATH", path)
+	}
+	return true
+}
+
+// playwrightResolve проверяет, видит ли node библиотеку playwright, и называет
+// NODE_PATH, которым её видно: пустая строка значит, что хватает и без него.
+// Проба чистая, переменных процесса не трогает: параллельный стенд ставит их
+// сам, последовательному хватает t.Setenv в needPlaywright.
+func playwrightResolve(node string) (string, bool) {
+	if playwrightResolvesWith(node, "") {
+		return "", true
+	}
+	current := os.Getenv("NODE_PATH")
+	for _, dir := range []string{"/opt/homebrew/lib/node_modules", "/usr/local/lib/node_modules"} {
+		if _, err := os.Stat(filepath.Join(dir, "playwright")); err != nil {
+			continue
+		}
+		joined := dir
+		if current != "" {
+			joined += string(os.PathListSeparator) + current
+		}
+		if playwrightResolvesWith(node, joined) {
+			return joined, true
+		}
+	}
+	return "", false
+}
+
+func playwrightResolvesWith(node, nodePath string) bool {
+	cmd := exec.Command(node, "-e", "require.resolve('playwright')")
+	if nodePath != "" {
+		cmd.Env = standSpawnEnv("NODE_PATH=" + nodePath)
+	}
+	_, err := cmd.CombinedOutput()
+	return err == nil
 }
 
 // chromeStand собирает страницу замера: настоящий index.html со своими стилями,

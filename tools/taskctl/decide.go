@@ -209,6 +209,10 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	if err := decideWrite(path, orig, doc); err != nil {
 		return "", err
 	}
+	carrier := ""
+	if p.Ask != "" && kind == "черновик" {
+		carrier = decideDraftCarrier(root, p, doc, env)
+	}
 	// Ответ человека снимает признак ожидания того же захода, и снимает уже
 	// после записи ответа в файл: снятый раньше записи признак будил бы
 	// строку без ответа. Прежде признак снимали только панель и wake, а ответ
@@ -244,6 +248,9 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return head + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 	case p.Ask != "":
 		head += fmt.Sprintf("развилка «%s» заведена, %s", decideName(p.Ask), decideWho(p.Who))
+		if carrier != "" {
+			head += "\n" + carrier
+		}
 	case len(p.Opts) > 0:
 		head += note
 	case p.Leave:
@@ -410,8 +417,9 @@ func decideLeave(doc, name string, p DecideParams) (string, error) {
 }
 
 // decideSetWho переписывает поле «решает» названной развилки. Строки нет,
-// значит она встаёт первой подстрокой: перечень, правленный руками, тоже
-// бывает без поля, и передача обязана оставить его читаемым.
+// значит она встаёт первой подстрокой после целого вопроса: перенос вопроса
+// отступом она не разрезает, а перечень, правленный руками, бывает и без
+// поля, и передача обязана оставить его читаемым.
 func decideSetWho(doc, name, who string) string {
 	lines := strings.Split(doc, "\n")
 	f, ok := taskform.FindFork(doc, name)
@@ -429,9 +437,13 @@ func decideSetWho(doc, name, who string) string {
 			break
 		}
 	}
-	out := append([]string{}, lines[:head+1]...)
+	end := head + 1
+	for end < len(lines) && taskform.ForkContinuation(lines[end]) {
+		end++
+	}
+	out := append([]string{}, lines[:end]...)
 	out = append(out, taskform.ForkWhoLine(who))
-	out = append(out, lines[head+1:]...)
+	out = append(out, lines[end:]...)
 	return strings.Join(out, "\n")
 }
 

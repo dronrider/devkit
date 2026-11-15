@@ -14,6 +14,7 @@ import (
 // убивается вместе с потомками. Пределы в тесте секундные, а не минутные:
 // прогон не должен зависеть от нагрузки машины и не должен её ждать.
 func TestRunShellLimit(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	out, timedOut, err := runShellLimit(root, "echo готово", 5*time.Second, nil)
 	if err != nil || timedOut || !strings.Contains(out, "готово") {
@@ -52,6 +53,7 @@ func TestRunShellLimit(t *testing.T) {
 // а не вечным молчанием. В тексте ошибки должно быть всё, по чему разбирают
 // инцидент: что предел, какая команда висела и сколько её ждали.
 func TestShipDeployTimeout(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
@@ -83,6 +85,7 @@ func TestShipDeployTimeout(t *testing.T) {
 // TestShipDeployWithinTimeout: предел не задевает штатный выкат, слов про него
 // в успешном отчёте нет.
 func TestShipDeployWithinTimeout(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
@@ -106,6 +109,7 @@ func TestShipDeployWithinTimeout(t *testing.T) {
 // TestDeployTimeoutConfig: без ключа действует умолчание, кривое значение это
 // громкая ошибка, а не молчаливый возврат к умолчанию.
 func TestDeployTimeoutConfig(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeCfg := func(s string) {
 		write(t, root, deployConfigPath, s)

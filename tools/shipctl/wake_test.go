@@ -11,6 +11,7 @@ import (
 // после перевода в Check, когда работа задачи уже лежит в main. Без --push и без
 // автономного выката обход коммитит перевод строк, но не пушит.
 func TestMergeCallsWake(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchWithFix(t, root)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {

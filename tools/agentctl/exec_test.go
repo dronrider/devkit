@@ -267,6 +267,38 @@ env = ["CLAUDE_CONFIG_DIR=~/.claude-home"]
 	}
 }
 
+// TestExecForeignProtocolWithoutEnv: харнес чужого протокола поднимается без
+// пар окружения. Его клиент ходит штатным входом из собственного каталога
+// (~/.codex у Codex), и пустая секция машинного слоя это штатное включение
+// профиля (README дашборда, «Первый запуск Codex»), а не дыра обвязки.
+// Семейству claude-code без пар отказ остаётся (TestExecRefusesHarnessWithoutEnv).
+func TestExecForeignProtocolWithoutEnv(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "codextest", `[delegate]
+mode = "cli"
+command = ["/bin/sh", "-c", "true"]
+
+[hooks]
+protocol = "codex"
+
+[quota]
+`)
+	writeMachine(t, kit, `enabled = ["codextest"]
+
+[codextest]
+`)
+	work := realPath(t, t.TempDir())
+	dump := filepath.Join(work, "env.txt")
+	code, out := execOut(t, kit, "codextest", execEnvDump(dump))
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	env := dumpedEnv(t, kit, work)
+	if env[harnessEnv] != "codextest" {
+		t.Fatalf("харнес команды %q, жду codextest: команда пошла мимо обвязки", env[harnessEnv])
+	}
+}
+
 // TestExecUnknownHarness: имя без профиля это отказ, а не запуск на подписке по
 // умолчанию. Опечатка тут стоит целой сессии, ушедшей не на ту квоту.
 func TestExecUnknownHarness(t *testing.T) {

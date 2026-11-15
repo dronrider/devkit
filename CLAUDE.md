@@ -1,4 +1,2 @@
-<!-- devkit:generated depth=core body=97bf976f9930 -->
+<!-- devkit:generated body=336cc4fbf19b -->
 @AGENTS.md
-@RULES.board.core.md
-@docs/map.md

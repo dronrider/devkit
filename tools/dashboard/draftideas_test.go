@@ -15,6 +15,11 @@ import (
 )
 
 func TestDraftThoughtsBeforeGroomHTTP(t *testing.T) {
+	// Доска и сервер одни на все случаи: случай заводит свой черновик POST
+	// записи и разбирает его номер из ответа, поэтому случаи не встречаются
+	// на одной записи накопителя.
+	e, c, _ := tasksEnv(t)
+	base := draftThoughtsServer(t, e)
 	for _, tc := range []struct {
 		name    string
 		state   draftproposal.State
@@ -31,27 +36,32 @@ func TestDraftThoughtsBeforeGroomHTTP(t *testing.T) {
 		{name: "legacy", legacy: "\n## Грумминг\n\nОтложено прежде.\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e, c, _ := tasksEnv(t)
-			base := draftThoughtsServer(t, e)
 			resp := doReq(t, c, "POST", base+"/api/projects/demo/drafts", `{"text":"Исходник","prio":"mid"}`)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatal(body(t, resp))
 			}
+			var created struct {
+				ID string `json:"id"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&created); err != nil || created.ID == "" {
+				t.Fatalf("номер черновика не разобран из ответа записи: %v", err)
+			}
 			resp.Body.Close()
-			url := base + "/api/projects/demo/drafts/XR-005"
+			id := created.ID
+			url := base + "/api/projects/demo/drafts/" + id
 			resp = doReq(t, c, "POST", url+"/ideas", `{"text":"Старое замечание"}`)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatal(body(t, resp))
 			}
 			resp.Body.Close()
-			path, _ := draftPathOf(e.proj, "XR-005")
+			path, _ := draftPathOf(e.proj, id)
 			if tc.state.Version != 0 {
-				if err := draftproposal.SavePrepared(e.proj, "XR-005", tc.state); err != nil {
+				if err := draftproposal.SavePrepared(e.proj, id, tc.state); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if tc.legacy != "" {
-				putDoc(t, e.proj, draftFileRel("XR-005"), readFile(t, path)+tc.legacy)
+				putDoc(t, e.proj, draftFileRel(id), readFile(t, path)+tc.legacy)
 			}
 			before := readFile(t, path)
 			resp = doReq(t, c, "GET", url, "")

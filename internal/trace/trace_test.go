@@ -99,6 +99,54 @@ func TestRegcheckLogged(t *testing.T) {
 	}
 }
 
+// TestLastGreenRegcheck: последним зелёным считается самый поздний прогон
+// regcheck с нулевым кодом, а красный, чужая команда и битое время не
+// считаются. Отбор очереди слияний сравнивает это время с доработками ветки
+// (DK-1650).
+func TestLastGreenRegcheck(t *testing.T) {
+	if _, ok := LastGreenRegcheck(filepath.Join(t.TempDir(), "нет")); ok {
+		t.Fatal("чтение пустого журнала прошло успехом")
+	}
+	path := filepath.Join(t.TempDir(), "log")
+	text := "2026-10-24T09:00:00\tregcheck\trun\t1\tотворот\n" +
+		"2026-10-24T10:00:00\tregcheck\trun\t0\tчисто\n" +
+		"2026-10-24T10:30:00\tagentctl\tплан\t0\tчисто\n" +
+		"вчера\tregcheck\trun\t0\tбитое время\n" +
+		"2026-10-24T08:00:00\tregcheck\trun\t0\tчисто, но раньше\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	last, ok := LastGreenRegcheck(path)
+	if !ok {
+		t.Fatal("зелёный прогон не найден")
+	}
+	want := time.Date(2026, 10, 24, 10, 0, 0, 0, time.Local)
+	if !last.Equal(want) {
+		t.Fatalf("последний зелёный = %v, жду %v", last, want)
+	}
+}
+
+// TestReviewNotesOpen: открытым считается элемент раздела «Ревью» без
+// исхода, хвост переноса едет с замечанием, а закрытые исходы и чистый
+// вердикт не считаются. Отбор очереди слияний читает тот же разбор и из
+// ветки (DK-1650).
+func TestReviewNotesOpen(t *testing.T) {
+	doc := "## Ревью\n\nУровень 1 до a1b2c3d: тронут один каталог\n\n" +
+		"- поправить вывод: исправлено\n" +
+		"- передумать форму вывода\n" +
+		"и хвост переноса\n\n" +
+		"Вердикт: без замечаний.\n"
+	open := ReviewNotesOpen(doc)
+	if len(open) != 1 || open[0] != "- передумать форму вывода и хвост переноса" {
+		t.Fatalf("открытые замечания = %q", open)
+	}
+	closed := "## Ревью\n\nУровень 2 до a1b2c3d: тронут internal\n\n" +
+		"- замечание: исправлено\n- второе: отклонено, так задумано\n\nВердикт: без замечаний.\n"
+	if open := ReviewNotesOpen(closed); len(open) != 0 {
+		t.Fatalf("закрытые замечания названы открытыми: %q", open)
+	}
+}
+
 // gitRepo ставит свежий репозиторий с коммитом в main и именованной веткой:
 // PathsTouched читает дифф между ними.
 func gitRepo(t *testing.T) string {

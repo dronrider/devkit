@@ -4,6 +4,9 @@ const { chromium } = createRequire(import.meta.url)("playwright");
 const [base, executablePath, token] = process.argv.slice(2);
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext();
+await context.addInitScript(() => {
+  localStorage.setItem("devkit.poll.ask", "250");
+});
 try {
   assert.equal((await context.request.post(base + "/api/login", { data: { token } })).status(), 200);
   const page = await context.newPage();

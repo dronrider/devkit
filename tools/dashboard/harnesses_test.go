@@ -121,6 +121,61 @@ func TestHarnessesFromAgentctl(t *testing.T) {
 	}
 }
 
+// protocolFixture это раскладка с подпиской чужого протокола: agentctl называет
+// её протокол и (устаревший бинарь ещё так умеет) находку отсутствующих хуков.
+// Находка у чужого протокола гасится: настроек хуков формата claude-code у
+// клиента нет, и чужая дорога чата не должна сворачиваться до запуска.
+const protocolFixture = `{
+  "default": "перваяtest",
+  "source": "фикстура",
+  "harnesses": [
+    {"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1",
+     "protocol": "claude-code",
+     "models": [{"tier": "pro", "model": "модель-pro"}]},
+    {"name": "codextest", "enabled": true, "default": false, "bin": "клиент-codex",
+     "protocol": "codex", "hooks_gap": "обвязки нет: devkitctl doctor --fix",
+     "models": [{"tier": "pro", "model": "модель-codex"}]}
+  ]
+}`
+
+// TestHarnessProtocol: протокол приезжает из машинного вида и доезжает до ручки,
+// слово родного семейства гасится в раскладке (экрану довольно одного признака
+// чужой дороги), а разрыв хуков чужой подписки не останавливает её чат.
+func TestHarnessProtocol(t *testing.T) {
+	e := newTestEnv(t)
+	writeAgentctlFake(t, e.bin, protocolFixture)
+	v := getHarnesses(t, e, e.loggedClient(t))
+	var codex, claude *Harness
+	for i := range v.Harnesses {
+		switch v.Harnesses[i].Name {
+		case "codextest":
+			codex = &v.Harnesses[i]
+		case "перваяtest":
+			claude = &v.Harnesses[i]
+		}
+	}
+	if codex == nil {
+		t.Fatalf("подписка codextest не приехала: %+v", v.Harnesses)
+	}
+	if codex.Protocol != "codex" || !codex.foreign() {
+		t.Fatalf("протокол подписки codextest приехал как %q", codex.Protocol)
+	}
+	if claude == nil || claude.Protocol != "" || claude.foreign() {
+		t.Fatalf("родное семейство приехало со словом протокола: %+v", claude)
+	}
+	if hooksGapNote(codex) != "" {
+		t.Fatalf("у чужого протокола остался разрыв хуков: %q", hooksGapNote(codex))
+	}
+	// chatHooksGap судит пару «модель+подписка»: codex-модель проходит даже при
+	// находке в раскладке, а пара claude-code без хуков завернётся как раньше.
+	if m := e.s.chatHooksGap("модель-codex", "codextest"); m != "" {
+		t.Fatalf("codex-чат завернулся разрывом хуков: %s", m)
+	}
+	if m := e.s.chatHooksGap("модель-pro", "перваяtest"); m != "" {
+		t.Fatalf("подписка без находки завернулась: %s", m)
+	}
+}
+
 // Порог ротации исполнителя-субагента целиком считает agentctl и отдаёт полем
 // harness --json (DK-615): дашборд берёт число как есть. Своё запасное число
 // он подставляет только там, где ответа нет вовсе, и нуля снаружи не бывает.

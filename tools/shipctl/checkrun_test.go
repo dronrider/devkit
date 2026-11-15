@@ -30,6 +30,7 @@ const rowMixed = "| XR-001 | Починка бага [приёмка: mixed] | b
 // smoke, а закрытие оставляет человеку. Раньше подъём шёл бинарём дашборда, и
 // без него строка стояла в Check до захода человека.
 func TestMergeAutonomousRaisesCheckRun(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowMixed, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -61,6 +62,7 @@ func TestMergeAutonomousRaisesCheckRun(t *testing.T) {
 // режет: выкат поднимает проверяющего той же моделью, независимость несёт
 // отдельная сессия, и отчёт называет обе модели для сведения.
 func TestMergeRaisesCheckerOnAuthorModel(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowMixed, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -95,6 +97,7 @@ func TestMergeRaisesCheckerOnAuthorModel(t *testing.T) {
 // Выкат за пользователем прогон не поднимает: человек в окне, и проверяющего
 // он поднимает сам (граница задачи DK-718).
 func TestMergeWithoutAutonomousRaisesNothing(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, "deploy = true\nautonomous = false\n")
 	branchWithFix(t, root)
@@ -110,6 +113,7 @@ func TestMergeWithoutAutonomousRaisesNothing(t *testing.T) {
 // Разлив поезда тиком сторожка это второй вход: тик зовёт `ship --drain`, и
 // прогон поднимается на весь состав, а не на головную задачу.
 func TestShipDrainRaisesCheckRunForTrain(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg+rowInProg3, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -143,6 +147,7 @@ func TestShipDrainRaisesCheckRunForTrain(t *testing.T) {
 // него окна нет; голый ship зовёт тот, кто сидит в окне и проверяющего
 // поднимает сам. Оставшееся без отметки доберёт следующий тик.
 func TestShipByHandRaisesNothing(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -168,6 +173,7 @@ func TestShipByHandRaisesNothing(t *testing.T) {
 // Ручной выкат поезда командой человека прогон не поднимает: явный --deploy это
 // указание прямо сейчас, и окно у него есть.
 func TestShipManualDeployRaisesNothing(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -184,6 +190,7 @@ func TestShipManualDeployRaisesNothing(t *testing.T) {
 // Ветка, не тронувшая ничего вне docs/, уходит в Check без выката, и прогон ей
 // нужен тот же: сценарий у неё свой, а отметки smoke на ней нет.
 func TestMergeTrainDocsOnlyRaisesCheckRun(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -216,6 +223,7 @@ func checkStand(t *testing.T) (string, string) {
 // Страховка тика поднимает строку Check тем же путём, что выкат, а машинный
 // вид отдаёт исход по строкам: по нему тик помнит повтор отказа.
 func TestCheckRunJSONForTheTick(t *testing.T) {
+	t.Parallel()
 	root, callLog := checkStand(t)
 	out, failed, err := cmdCheckRun(root, nil, true)
 	if err != nil || failed {
@@ -344,6 +352,7 @@ func TestCheckRunStaysOnActiveHarnessWithSameModel(t *testing.T) {
 
 // Поднимать нечего значит и говорить нечего: пустой состав утилит не зовёт.
 func TestCheckRunNoteWithoutTasks(t *testing.T) {
+	t.Parallel()
 	if note := checkRunNote(t.TempDir(), nil); note != "" {
 		t.Fatalf("на пустом составе приписки быть не должно: %q", note)
 	}

@@ -15,6 +15,7 @@ const (
 )
 
 func TestMergeIndependentDespiteFailedCheck(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg+rowFailed, "")
 	branchWithFix(t, root)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
@@ -29,6 +30,7 @@ func TestMergeIndependentDespiteFailedCheck(t *testing.T) {
 // TestMergeFixesBrokenProd: форвард-фикс самой проваленной задачи проходит,
 // иначе чинить прод было бы нечем, и перевод в Check гасит признак.
 func TestMergeFixesBrokenProd(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowSelfFailed, "")
 	branchWithFix(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
@@ -47,6 +49,7 @@ func TestMergeFixesBrokenProd(t *testing.T) {
 // TestRevertClearsFailMark: откат это второй способ починить прод, и признак
 // он гасит сам. Задача при этом уже в In progress, поэтому move не зовётся.
 func TestRevertClearsFailMark(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowSelfFailed, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
@@ -77,6 +80,7 @@ const rowBlockedFailed = "| XR-001 | Починка бага [провал: пр
 // Раньше задачу с блокера revert только возвращал в In progress, пометка
 // оставалась, и очередь выката стояла с починенным продом.
 func TestRevertClearsFailMarkFromBlocked(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, "", "")
 	data, _ := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
 	write(t, root, "docs/TASKS.md", strings.Replace(string(data),
@@ -108,6 +112,7 @@ func TestRevertClearsFailMarkFromBlocked(t *testing.T) {
 // TestRevertWithoutFailMark: обычный откат задачи из In progress признака не
 // касается и лишнего коммита доски не делает.
 func TestRevertWithoutFailMark(t *testing.T) {
+	t.Parallel()
 	root, callLog := setup(t, rowInProg, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	before := gitT(t, root, "rev-parse", "HEAD")
@@ -125,6 +130,7 @@ func TestRevertWithoutFailMark(t *testing.T) {
 // TestStatusNamesBrokenProd: status называет сломанный прод отдельной строкой
 // и позволяет продолжать независимые задачи.
 func TestStatusNamesBrokenProd(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowSelfFailed, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	st, err := cmdStatus(root)
@@ -143,6 +149,7 @@ func TestStatusNamesBrokenProd(t *testing.T) {
 // её выкат остался на проде. Очередь такая задача не держит, но выкат за ней
 // числится, и status его называет.
 func TestStatusNamesReturnedDeploy(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	st, err := cmdStatus(root)
@@ -160,6 +167,7 @@ func TestStatusNamesReturnedDeploy(t *testing.T) {
 // TestStatusSilentOnFreshTask: у задачи первого захода выкатов ещё нет, и
 // строки про них в status быть не должно.
 func TestStatusSilentOnFreshTask(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	st, err := cmdStatus(root)
 	if err != nil {
@@ -173,6 +181,7 @@ func TestStatusSilentOnFreshTask(t *testing.T) {
 // TestStatusCheckStaysInQueue: задача, которая из Check ещё не уходила, это
 // занятая очередь, а не вернувшийся в работу выкат.
 func TestStatusCheckStaysInQueue(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, "", rowInProg)
 	codeCommit(t, root, "XR-001", "one.txt")
 	st, err := cmdStatus(root)
@@ -190,6 +199,7 @@ func TestStatusCheckStaysInQueue(t *testing.T) {
 // TestReturnedIgnoresTrain: слитая в поезд задача до прода не доехала, её код
 // лежит выше точки выката, и выкатом за ней он не считается.
 func TestReturnedIgnoresTrain(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
@@ -210,6 +220,7 @@ func TestReturnedIgnoresTrain(t *testing.T) {
 // TestFailedChecksReadsBoard: разбор пометки идёт по той же строке доски, что
 // пишет taskctl, включая соседство с маркером зависимости и блокировкой.
 func TestFailedChecksReadsBoard(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	data, _ := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
 	write(t, root, "docs/TASKS.md", strings.Replace(string(data), "| Починка бага |",
@@ -233,6 +244,7 @@ func TestFailedChecksReadsBoard(t *testing.T) {
 // замечаниями такая строка не считается: там правку вернули в работу
 // осознанно, а тут перевод недоведён.
 func TestStatusNamesStuckMove(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	if err := recordMovePending(root, "XR-001", "taskctl move: XR-001: у барьера «доступ» обходов 4, а перебор в «Приёмка» имеет строк 0"); err != nil {

@@ -147,10 +147,12 @@ func acquireLock(root, who string) (func(), error) {
 		}
 		stale, err := lockStale(f, path)
 		if err != nil {
+			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 			return nil, fmt.Errorf("замок %s не проверился: %v", lockPath, err)
 		}
 		if stale {
+			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 			continue
 		}
@@ -158,11 +160,13 @@ func acquireLock(root, who string) (func(), error) {
 		// освобождением замка: вне работы команды файла держателя нет.
 		owner := filepath.Join(root, lockOwnerPath)
 		if err := os.WriteFile(owner, []byte(lockOwner(who, time.Now())), 0o644); err != nil {
+			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 			return nil, fmt.Errorf("замок %s не записал держателя в %s: %v", lockPath, lockOwnerPath, err)
 		}
 		return func() {
 			os.Remove(owner)
+			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 			f.Close()
 		}, nil
 	}

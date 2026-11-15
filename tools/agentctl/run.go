@@ -322,6 +322,23 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 			return 0, err
 		}
 	}
+	// Внешний исполнитель занимает задачу замком головы (DK-1692): пока он
+	// работает с деревом, тик и дашборд получают отказ занятости, а не второго
+	// исполнителя рядом. Run из живой головы замок не трогает: токен владельца
+	// при нём, и задача уже занята своей головой.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, err
+	}
+	hold, err := taskhead.HoldForDelegate(home, id, os.Getenv(taskhead.LockFromEnv))
+	if err != nil {
+		if busy, ok := err.(*taskhead.BusyError); ok {
+			fmt.Fprintf(errw, "%s: %s; второй исполнитель в то же дерево не поднимается, продолжает голова задачи\n", id, busy.Error())
+			return taskhead.CodeBusy, nil
+		}
+		return 0, err
+	}
+	defer hold.Release()
 	p, err := pickVerdict(root, id, role, goal)
 	if err != nil {
 		return 0, err
@@ -442,6 +459,11 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 	// отдали, а tmux-сессии у подпроцесса нет вовсе, и унаследованные значения
 	// записали бы его в реестр машины чужой работой.
 	cmd.Env = append(cmd.Env, taskEnv+"="+id, tmuxEnv+"=", hiddenEnv+"=1")
+	// Владелец замка задачи для делегата: свой pid, когда run держит замок
+	// сам, и владельца головы, когда run идёт внутри неё.
+	if owner := taskhead.Owner(taskhead.LockPath(home, id)); owner > 0 {
+		cmd.Env = append(cmd.Env, taskhead.LockFromEnv+"="+strconv.Itoa(owner))
+	}
 	if sid := os.Getenv(parentSessionEnv); sid != "" {
 		cmd.Env = append(cmd.Env, parentEnv+"="+sid)
 	}

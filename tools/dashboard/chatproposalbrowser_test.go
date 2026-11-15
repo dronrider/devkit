@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,9 +31,9 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+	if !needPlaywright(t, node) {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
-			t.Fatalf("playwright: %v %s", err, out)
+			t.Fatal("playwright недоступен; задать NODE_PATH")
 		}
 		t.Skip("нет playwright")
 	}
@@ -90,15 +91,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = publish("both"); err != nil {
 		t.Fatal(err)
 	}
-	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "dashboard")
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Env = append(os.Environ(), "GOWORK=off")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build: %s %v", out, err)
-		}
-	}
+	bin := buildDashboard(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +110,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	}
 	defer log.Close()
 	server := exec.Command(bin, "serve")
+	server.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	server.Dir = st.e.proj
 	server.Env = os.Environ()
 	server.Stdout = log
@@ -124,7 +118,22 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { server.Process.Kill(); server.Wait() })
+	t.Cleanup(func() {
+		group := -server.Process.Pid
+		if err := syscall.Kill(group, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			t.Errorf("остановка группы dashboard: %v", err)
+		}
+		server.Wait()
+		var groupErr error
+		for range 100 {
+			groupErr = syscall.Kill(group, 0)
+			if groupErr == syscall.ESRCH {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Errorf("группа dashboard не исчезла: %v", groupErr)
+	})
 	base := "http://" + address
 	deadline := time.Now().Add(15 * time.Second)
 	for {

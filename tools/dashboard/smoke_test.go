@@ -127,3 +127,40 @@ func TestSmokeClientAcknowledgesReservation(t *testing.T) {
 		t.Fatalf("fake agentctl did not acknowledge reservation: %v", err)
 	}
 }
+
+// Стенд делит каталог фикстур между прогонами, чтобы не платить проверкой
+// службы безопасности за каждый новый файл, а оболочки кита остаются на своих
+// местах исполняемыми файлами за симлинками. Тик живых потоков прогон
+// поднимает на время и возвращает.
+func TestSmokeStandSharesFixtureBin(t *testing.T) {
+	oldTick := tailPoll
+	first, err := newSmoke(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.close()
+	second, err := newSmoke(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	if tailPoll == oldTick {
+		t.Fatal("прогон не ускорил тик живых потоков стенда")
+	}
+	if first.bin != second.bin {
+		t.Fatalf("прогоны развели фикстуры по каталогам: %s и %s", first.bin, second.bin)
+	}
+	for _, rel := range []string{
+		filepath.Join("goal-loop", "goal-run.py"),
+		filepath.Join("board-task", "task-run.py"),
+	} {
+		fi, err := os.Stat(filepath.Join(second.root, "devkit", "kit", "skills", rel))
+		if err != nil || fi.IsDir() {
+			t.Fatalf("оболочка %s не читается за симлинком: %v", rel, err)
+		}
+	}
+	second.close()
+	if tailPoll != oldTick {
+		t.Fatal("прогон не вернул тик живых потоков")
+	}
+}

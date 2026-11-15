@@ -21,6 +21,7 @@ func boardCommit(t *testing.T, root, id, note string) {
 // DK-602: мелочь, слитая в main мимо ship/merge, больше не запирает пуш
 // доски.
 func TestPushMixedRangePasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
@@ -42,6 +43,7 @@ func TestPushMixedRangePasses(t *testing.T) {
 // TestPushPureBoardRangePasses: чистая доска без единого кода проходит, как и
 // раньше до DK-602.
 func TestPushPureBoardRangePasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	boardCommit(t, root, "XR-001", "ход")
@@ -58,6 +60,7 @@ func TestPushPureBoardRangePasses(t *testing.T) {
 // TestPushBareCodeWithoutIDRefused: голый код без ID задачи в subject рубеж
 // отбивает по-старому, origin остаётся нетронутым.
 func TestPushBareCodeWithoutIDRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	before := gitT(t, bare, "rev-parse", "main")
@@ -80,6 +83,7 @@ func TestPushBareCodeWithoutIDRefused(t *testing.T) {
 // TestPushCodeWithBacklogIDRefused: код с ID задачи, которая ещё в Backlog
 // (XR-002 в setup), рубеж тоже отбивает: работа над ней не начата.
 func TestPushCodeWithBacklogIDRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	before := gitT(t, bare, "rev-parse", "main")
@@ -115,6 +119,7 @@ func archiveCommit(t *testing.T, root, id string) {
 // выдуманный номер, незаведённая задача), рубеж отбивает явно, а не
 // пропускает молча (DK-602, замечание ревью на rangeVerdict/sectOf).
 func TestPushCodeWithUnknownIDRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	before := gitT(t, bare, "rev-parse", "main")
@@ -136,6 +141,7 @@ func TestPushCodeWithUnknownIDRefused(t *testing.T) {
 // (есть в docs/TASKS-archive.md, но не в живом docs/TASKS.md), рубеж
 // пускает: это обычный фикс уже слитой задачи, а не дыра.
 func TestPushCodeWithArchivedIDPasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	archiveCommit(t, root, "XR-050")
 	bare := addRemote(t, root)
@@ -158,6 +164,7 @@ func TestPushCodeWithArchivedIDPasses(t *testing.T) {
 // названной паре sha и не трогает origin, тем самым флагом её зовёт
 // hooks/pre-push.
 func TestPushCheckOnlyDoesNotPush(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	before := gitT(t, bare, "rev-parse", "main")
@@ -192,6 +199,7 @@ func TestPushCheckOnlyDoesNotPush(t *testing.T) {
 // сходить за доску, --no-renames в rangeVerdict держит ту же дыру закрытой,
 // что и старый разбор в hooks/pre-push (DK-119).
 func TestPushRenameIntoBoardIsRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	before := gitT(t, bare, "rev-parse", "main")
@@ -212,6 +220,7 @@ func TestPushRenameIntoBoardIsRefused(t *testing.T) {
 // TestPushNothingToPush: main и origin/main совпадают, команда молчит без
 // ошибки и без пуша.
 func TestPushNothingToPush(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 
@@ -248,6 +257,7 @@ func checkOnly(t *testing.T, root string) error {
 // следа ревью, ворот отбивает. ID в subject говорит, чья это правка, а не
 // то, что её кто-то читал.
 func TestPushGateRefusesCodeWithoutReviewTrace(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
@@ -275,6 +285,7 @@ func TestPushGateRefusesCodeWithoutReviewTrace(t *testing.T) {
 
 // TestPushGatePassesWithReviewNote: заметка ревью ровно на HEAD пропускает код.
 func TestPushGatePassesWithReviewNote(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
@@ -289,6 +300,7 @@ func TestPushGatePassesWithReviewNote(t *testing.T) {
 // TestPushGateRefusesNoteOnAncestor: заметка на прошлом коммите след с HEAD не
 // снимает, иначе код, дописанный после ревью, уезжал бы под чужим следом.
 func TestPushGateRefusesNoteOnAncestor(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	codeCommit(t, root, "XR-001", "feature.txt")
@@ -303,6 +315,7 @@ func TestPushGateRefusesNoteOnAncestor(t *testing.T) {
 // TestPushGatePassesWithTaskFileLevel: у ветки задачи доски след живёт строкой
 // уровня в файле задачи, и заметки такой ветке не нужно.
 func TestPushGatePassesWithTaskFileLevel(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-q", "-b", "xr-001-worktree")
@@ -317,6 +330,7 @@ func TestPushGatePassesWithTaskFileLevel(t *testing.T) {
 // TestPushGateRefusesTaskBranchWithoutLevel: та же ветка задачи, но со снятой
 // строкой уровня, отбивается, и отказ называет файл, в котором её нет.
 func TestPushGateRefusesTaskBranchWithoutLevel(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-q", "-b", "xr-001")
@@ -337,6 +351,7 @@ func TestPushGateRefusesTaskBranchWithoutLevel(t *testing.T) {
 // TestPushGatePassesPureBoard: чистая доска без кода проходит без следа ревью,
 // как и раньше: коммит доски пушится сразу, а ревьюить там нечего.
 func TestPushGatePassesPureBoard(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	boardCommit(t, root, "XR-001", "ход")
@@ -401,6 +416,7 @@ func corpRepo(t *testing.T) (root, base string) {
 // До DK-796 путь authn/docs/TASKS.md не сходил под docs/TASKS.md от корня
 // репозитория, и калитка считала его кодом.
 func TestPushCorpNestedBoardPasses(t *testing.T) {
+	t.Parallel()
 	root, base := corpRepo(t)
 	write(t, root, "authn/docs/TASKS.md", "# Доска authn\n| AU-001 | ход |\n")
 	write(t, root, "authn/docs/TASKS-archive.md", "| архив authn |\n| AU-001 | сдана |\n")
@@ -418,6 +434,7 @@ func TestPushCorpNestedBoardPasses(t *testing.T) {
 // TestPushCorpNestedTaskFilePasses: правка файла задачи боковой директории
 // (cap_autotests/docs/tasks/CA-001.md) идёт тем же порядком, что и доска.
 func TestPushCorpNestedTaskFilePasses(t *testing.T) {
+	t.Parallel()
 	root, base := corpRepo(t)
 	write(t, root, "cap_autotests/docs/tasks/CA-001.md", "# CA-001\nход\n")
 	gitT(t, root, "add", ".")
@@ -434,6 +451,7 @@ func TestPushCorpNestedTaskFilePasses(t *testing.T) {
 // корп-контура (стенд tools/obeycheck/testdata/project внутри обычного
 // проекта) за доску не сходит и по-прежнему отбивается как код.
 func TestPushNestedStandBoardStillRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	write(t, root, "tools/obeycheck/testdata/project/docs/TASKS.md", "# стенд\n")
@@ -449,6 +467,7 @@ func TestPushNestedStandBoardStillRefused(t *testing.T) {
 // autonomous=true в deploy.local основного чекаута, текущая ветка это ветка
 // задачи (xr-001), код с легитимным ID проходит без следа ревью.
 func TestPushGateAutonomousTaskBranchPasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -468,6 +487,7 @@ func TestPushGateAutonomousTaskBranchPasses(t *testing.T) {
 // TestPushGateAutonomousMainStillRefused: DK-1324, main остаётся вопросом
 // человека. Даже при autonomous=true пуш main без следа ревью отбивается.
 func TestPushGateAutonomousMainStillRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -486,6 +506,7 @@ func TestPushGateAutonomousMainStillRefused(t *testing.T) {
 // лежит в основном чекауте (gitignored), worktree его не несёт. Пуш из
 // worktree задачи читает autonomous через primaryRoot и пускает код.
 func TestPushGateAutonomousFromWorktreeReadsPrimaryRoot(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	bare := addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -511,6 +532,7 @@ func TestPushGateAutonomousFromWorktreeReadsPrimaryRoot(t *testing.T) {
 // autonomous=false (значение по умолчанию) ветка задачи без следа ревью
 // отбивается как раньше.
 func TestPushGateNonAutonomousTaskBranchStillRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = false\n")
@@ -535,6 +557,7 @@ func TestPushGateNonAutonomousTaskBranchStillRefused(t *testing.T) {
 // а не текущую ветку работы: git push HEAD:main из-под ветки задачи обходом
 // не идёт, и без следа ревью пуш main отбивается.
 func TestPushGateAutonomousHeadMainRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -561,6 +584,7 @@ func TestPushGateAutonomousHeadMainRefused(t *testing.T) {
 // диапазон первых коммитов меряется от origin/main, вершина ветки после
 // пуша становится опорой следующих.
 func TestPushGateAutonomousNewTaskBranchFirstPushPasses(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -582,6 +606,7 @@ func TestPushGateAutonomousNewTaskBranchFirstPushPasses(t *testing.T) {
 // ID задачи не уходит и первым пушем: диапазон меряется от origin/main,
 // когда remote в дереве есть.
 func TestPushGateAutonomousNewBareCodeWithoutIDRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -606,6 +631,7 @@ func TestPushGateAutonomousNewBareCodeWithoutIDRefused(t *testing.T) {
 // чужой ветки в автономном режиме отбивается: обход открывает только ветка
 // задачи.
 func TestPushGateAutonomousNewForeignBranchFirstPushRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	writeDeployCfg(t, root, "autonomous = true\n")
@@ -626,6 +652,7 @@ func TestPushGateAutonomousNewForeignBranchFirstPushRefused(t *testing.T) {
 // TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused: DK-1324, без
 // autonomous = true первый пуш ветки задачи отбивается как раньше.
 func TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	gitT(t, root, "checkout", "-q", "-b", "xr-001")
@@ -646,6 +673,7 @@ func TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused(t *testing.T) {
 // несёт исключение про автономный режим shipctl, иначе агент в автономном
 // проекте стоял бы на рядовом пуше ветки задачи, прочитав запрет.
 func TestPushRuleCarriesAutonomyException(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("..", "..", "RULES.core.md"))
 	if err != nil {
 		t.Fatal(err)

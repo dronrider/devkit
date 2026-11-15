@@ -10,6 +10,7 @@ import (
 // сразу, до отчёта команды. Держателя снимает отдельная горутина через
 // половину шага проверки, поэтому дожидается ожидание с первой же попытки.
 func TestLockWaitWaitsOutHolder(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	unlock, err := acquireLock(root, "merge XR-009")
@@ -41,6 +42,7 @@ func TestLockWaitWaitsOutHolder(t *testing.T) {
 // TestLockWaitZeroRefusesAtOnce: нулевой срок это прежний мгновенный отказ,
 // его ключом просит скрипт, которому важнее не встать в ожидание.
 func TestLockWaitZeroRefusesAtOnce(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	unlock, err := acquireLock(root, "merge XR-009")
@@ -67,6 +69,7 @@ func TestLockWaitZeroRefusesAtOnce(t *testing.T) {
 // это не чужое слияние, а висящий процесс, и отказ говорит про разбор, а не
 // про новый повтор.
 func TestLockWaitGivesUpOnDeadline(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	unlock, err := acquireLock(root, "merge XR-009")
@@ -87,6 +90,7 @@ func TestLockWaitGivesUpOnDeadline(t *testing.T) {
 // файла держателя после неё не остаётся: иначе следующий отказ называл бы
 // держателем пробу.
 func TestLockBusyNowLeavesNoTrace(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	if lockBusyNow(root) {
@@ -109,6 +113,7 @@ func TestLockBusyNowLeavesNoTrace(t *testing.T) {
 // ожидание очереди этапом до самого ожидания. Без этого минуты под занятым
 // замком снаружи неотличимы от зависшей команды.
 func TestMergeWaitsLockMarksStage(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 	branchWithFix(t, root)

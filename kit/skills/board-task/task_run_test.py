@@ -523,6 +523,10 @@ while True:
         if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
             mark("начат")
             mark("кончен")
+        elif os.environ.get("DEVKIT_TEST_WORK_STRAY", "") == "1":
+            # Голова ответила уведомлению о конце работы репликой без хука
+            # начала: конец хода без парного «начат» (DK-1693).
+            mark("кончен")
     if step == "фоновая команда":
         # Заказа на этот проход оболочка подать не должна: ход головы поднимает
         # конец команды. Ждём её строку об этом, потом играем сам конец
@@ -537,6 +541,8 @@ while True:
         shell("done")
         if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
             mark("начат")
+            mark("кончен")
+        elif os.environ.get("DEVKIT_TEST_WORK_STRAY", "") == "1":
             mark("кончен")
     if step in ("паркуй с субагентом", "паркуй с командой"):
         # Заказа на этот проход оболочка подать не должна: парковка при живой
@@ -580,6 +586,10 @@ while True:
                 at = f.tell()
             if got:
                 order = got[-1]
+                if os.environ.get("DEVKIT_TEST_ORDER_SILENT", "") == "1":
+                    # Голова заказа не услышала: молчит и отметок не пишет, а
+                    # окна тишины после заказа считает уже оболочка (DK-1693).
+                    continue
                 mark("начат")
                 break
         time.sleep(0.05)
@@ -1553,19 +1563,27 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(len(s.orders()), 2, s.orders())
 
     def test_silence_after_the_work_end_keeps_both_windows(self):
-        # Довооружение DK-1454: работа кончилась, а голову конец её не
-        # разбудил. Окна тишины считаются от конца работы, и такой клиент
-        # получает оба окна, как и не поднявшийся вовсе: зов был после конца
-        # работы, окна прошли, окно снято.
+        # Довооружение DK-1454, продолженное DK-1693: работа кончилась, а
+        # голову конец её не разбудил. Оболочка подаёт заказ сама, ровно один,
+        # и не разбудившаяся после него голова получает оба окна тишины, как и
+        # не поднявшаяся вовсе: зов стоит после конца работы, окна прошли,
+        # окно снято.
         s = self.stand(plan="субагенты", pause="1")
         got = s.run(extra={"DEVKIT_TASK_STARTUP": "1",
+                           "DEVKIT_TASK_WAKE_GRACE": "0",
                            "DEVKIT_TEST_WORK_LAP": "3",
-                           "DEVKIT_TEST_WORK_WAKE": "0"})
+                           "DEVKIT_TEST_WORK_WAKE": "0",
+                           "DEVKIT_TEST_ORDER_SILENT": "1"})
         self.assertEqual(got.returncode, 1, s.why(got))
         said = [l for l in s.journal() if "не начался" in l]
         self.assertTrue(said, s.journal())
         self.assertTrue([l for l in s.journal() if "окно снято, замок освобождён" in l],
                         s.journal())
+        self.assertTrue([l for l in s.journal() if "заказ прохода 2 подан оболочкой" in l],
+                        s.journal())
+        # Заказ после конца работы подан ровно один: второй строки ввода у
+        # молчащей головы нет.
+        self.assertEqual(len([l for l in s.lines("inbox")]), 1, s.lines("inbox"))
         # Зов тишины стоит после конца работы, а не в её середине: окна
         # считаются от конца работы.
         work = [l for l in s.journal() if "живых субагентах" in l][0]
@@ -1574,23 +1592,69 @@ class TestLiveHead(unittest.TestCase):
         self.assertGreaterEqual((wake - gone).total_seconds(), 3.0,
                                 "зов тишины пришёл раньше конца работы")
 
+    def test_work_end_without_a_wake_gets_one_order(self):
+        # Предмет DK-1693, инцидент INC-20261111-14: фоновая команда кончилась,
+        # а голову конец её не разбудил. Оболочка подаёт следующий заказ сама,
+        # ровно один, и задача продолжает разрешённые этапы без вмешательства
+        # человека и без инцидента о неначатом ходе.
+        s = self.stand(plan="фоновая команда|закрой", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_WAKE_GRACE": "0",
+                           "DEVKIT_TEST_WORK_WAKE": "0"})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual(len(s.orders()), 2, s.orders())
+        self.assertTrue([l for l in s.journal() if "заказ прохода 2 подан оболочкой" in l],
+                        s.journal())
+        self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
+        self.assertEqual(s.lines("простой"), [], s.lines("простой"))
+        # Ревью DK-1694: заказ назван проходом 2, и конец того же прохода
+        # журнал зовёт номером 2, а не повторяет номер кончившегося первого.
+        ends = [l for l in s.journal() if "конец прохода живой головы" in l]
+        self.assertTrue(ends, s.journal())
+        self.assertIn("проход 2 из", ends[-1], s.journal())
+        self.assertEqual(len([l for l in ends if "проход 1 из" in l]), 1, s.journal())
+
+    def test_work_end_stray_reply_still_gets_one_order(self):
+        # Тот же конец команды, но голова ответила уведомлению репликой без
+        # отметки «начат»: конец хода непарный, лишняя отметка не создаёт
+        # пустого прохода, заказ всё равно один, и инцидента нет.
+        s = self.stand(plan="фоновая команда|закрой", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_WAKE_GRACE": "0",
+                           "DEVKIT_TEST_WORK_WAKE": "0",
+                           "DEVKIT_TEST_WORK_STRAY": "1"})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual(len(s.orders()), 2, s.orders())
+        self.assertTrue([l for l in s.journal() if "непарная отметка" in l], s.journal())
+        self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
+        self.assertEqual(s.lines("простой"), [], s.lines("простой"))
+
     def test_silence_before_late_work_keeps_both_windows(self):
-        # Довооружение DK-1463 по ревью: зов тишины сработал до появления
-        # работы, а работа пришла из другого окна сессии, простояла дольше
-        # срока того зова и кончилась без зова головы. Оба окна считаются от
-        # конца этой работы: зов повторяется заново, а срок, данный до
-        # работы, до её конца не доживает.
+        # Довооружение DK-1463 по ревью, продолженное DK-1693: работа вернулась
+        # из другого окна сессии позже своего конца, простояла дольше срока
+        # тишины и кончилась без зова головы. Оболочка стоит при живой работе
+        # без зова вовсе, заказ подаёт после конца всей работы, и молчащая
+        # после него голова снимается окнами тишины: зов звучит один и стоит
+        # после конца поздней работы.
         s = self.stand(plan="субагенты", pause="1")
         got = s.run(extra={"DEVKIT_TASK_STARTUP": "2",
+                           "DEVKIT_TASK_WAKE_GRACE": "1",
                            "DEVKIT_TEST_WORK_LAP": "1",
                            "DEVKIT_TEST_WORK_WAKE": "0",
                            "DEVKIT_TEST_WORK_SECOND_GAP": "3",
-                           "DEVKIT_TEST_WORK_SECOND_LAP": "4"})
+                           "DEVKIT_TEST_WORK_SECOND_LAP": "4",
+                           "DEVKIT_TEST_ORDER_SILENT": "1"})
         self.assertEqual(got.returncode, 1, s.why(got))
         said = [l for l in s.journal() if "не начался: проверь" in l]
-        self.assertEqual(len(said), 2, s.journal())
+        self.assertEqual(len(said), 1, s.journal())
         self.assertTrue([l for l in s.journal() if "окно снято, замок освобождён" in l],
                         s.journal())
+        self.assertTrue([l for l in s.journal() if "заказ прохода 2 подан оболочкой" in l],
+                        s.journal())
+        # Зов стоит после конца поздней работы: до того оболочка молчит.
+        work = [l for l in s.journal() if "живых субагентах" in l][0]
+        wake = datetime.strptime(said[0].split("\t", 1)[0], task_run.STAMP)
+        gone = datetime.strptime(work.split("\t", 1)[0], task_run.STAMP)
+        self.assertGreaterEqual((wake - gone).total_seconds(), 8.0,
+                                "зов тишины пришёл раньше конца поздней работы")
 
     def test_waiting_head_lives_three_passes(self):
         # Предмет DK-899. Ход кончился отчётом об ожидании машинного события,
@@ -2316,14 +2380,18 @@ class TestWaitEvents(WaitStand):
 
     @loadmark.wall_clock
     def test_wait_end_closes_the_stage(self):
-        # Тот же срок стенного времени, что у test_merge_ends_the_wait
-        # (обкатка DK-1230 поймала его сама: pipe.held вернул пустую строку
-        # вместо события на загруженной машине).
         # Предмет DK-1193. Отметку ожидания кладёт agentctl wait, а этап «ждёт
         # события» в записи задачи до этой правки не закрывал никто: у DK-920
         # строка доски шесть часов говорила «ждёт события», пока шло ревью.
         # Конец условия видит одна оболочка, и она же называет конец записи.
+        # Оболочка поднята до отметки. Отметка старше оболочки считается
+        # оставшейся от прошлого запуска, и проход её не ждёт, а на загруженной
+        # машине секунда между agentctl wait и подъёмом оболочки кончалась
+        # (пустая строка вместо события в полных прогонах 2026-11-12).
+        # Процесс прибран синхронно, hold опрашивает событие в цикле, и момент
+        # смерти в гонке не участвует.
         os.environ["HOME"] = self.root
+        pipe = self.pipe()
         p = subprocess.Popen(["sleep", "30"])
         self.addCleanup(p.wait)
         self.order("процесс", str(p.pid))
@@ -2332,10 +2400,8 @@ class TestWaitEvents(WaitStand):
         self.assertIn("ждёт события", opened[0])
         self.assertEqual(opened[0].split("|")[4].strip(), "", opened[0])
 
-        timer = threading.Timer(0.5, p.kill)
-        timer.start()
-        self.addCleanup(timer.cancel)
-        pipe = self.pipe()
+        p.kill()
+        p.wait()
         self.assertEqual(pipe.held(1, "In progress"), task_run.WAIT_EVENT)
 
         closed = self.runs()
@@ -2575,6 +2641,25 @@ class TestJournal(unittest.TestCase):
         got, seen = self.read({})
         self.assertEqual(len(got), 1, got)
         self.assertEqual(self.read(seen)[0], [], "своя отметка прочиталась второй раз")
+
+    def test_garbage_secs_names_the_variable(self):
+        # Ревью DK-1694: опечатка в сроке обязана отличаться от задуманной
+        # паузы. Guardian у своих интервалов мусор отклоняет с именем
+        # переменной (DK-1691), и срок task-run называет себя в журнал тем же
+        # порядком, оставаясь на умолчании. Пустое значение это незаданный
+        # срок, и строки в журнале у него нет.
+        self.pipe.log = unittest.mock.Mock()
+        os.environ["DEVKIT_TEST_DEAD_SECONDS"] = "минута"
+        self.addCleanup(os.environ.pop, "DEVKIT_TEST_DEAD_SECONDS", None)
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS", 30), 30)
+        said = " ".join(str(c) for c in self.pipe.log.call_args_list)
+        self.assertIn("DEVKIT_TEST_DEAD_SECONDS", said)
+        self.assertIn("30", said)
+        os.environ["DEVKIT_TEST_DEAD_SECONDS"] = "5"
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS", 30), 5)
+        self.pipe.log.assert_called_once()
+        self.assertEqual(self.pipe.secs("DEVKIT_TEST_DEAD_SECONDS_UNSET", 30), 30)
+        self.pipe.log.assert_called_once()
 
     def test_trimmed_journal_gives_nothing_new(self):
         # Рез журнала это перезапись файла последними строками. Читатель со

@@ -294,7 +294,7 @@ func (s *server) consentQuery(tree string, args ...string) (string, int, error) 
 		close(fl.done)
 		s.mu.Unlock()
 	}()
-	fl.raw, fl.code, fl.err = taskctlDo(tree, args...)
+	fl.raw, fl.code, fl.err = s.taskctlDo(tree, args...)
 	return fl.raw, fl.code, fl.err
 }
 

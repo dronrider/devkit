@@ -32,6 +32,7 @@ func boardEdit(t *testing.T, root, from, to string) {
 // DoD: shipctl merge Y при откаченной X отказывает, называет X и печатает
 // готовую парковку «слияние: X». Ветка при этом в main не льётся.
 func TestMergeRefusesUnliftedEdge(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	codeCommit(t, root, "XR-002", "two.txt")
 	gitT(t, root, "rm", "-q", "two.txt")
@@ -56,6 +57,7 @@ func TestMergeRefusesUnliftedEdge(t *testing.T) {
 // закрытия: разряд «слияние:» на уже слитую предпосылку отбила бы сама
 // парковка, событие уже случилось.
 func TestMergeUserPrereqParksOnClose(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	boardEdit(t, root, "| XR-002 | Задел |", "| XR-002 | Задел [приёмка: user] |")
 	codeCommit(t, root, "XR-002", "two.txt")
@@ -68,6 +70,7 @@ func TestMergeUserPrereqParksOnClose(t *testing.T) {
 
 // Закрытая предпосылка ребро снимает, и слияние идёт как обычно.
 func TestMergePassesClosedPrereq(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	write(t, root, "docs/TASKS-archive.md", "# архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|---|---|---|---|---|---|\n| XR-002 | Задел | task | P3 | 2026-09-11 | - |\n")
 	gitT(t, root, "add", "docs/TASKS-archive.md")
@@ -80,6 +83,7 @@ func TestMergePassesClosedPrereq(t *testing.T) {
 
 // DoD: shipctl revert X при слитой Y называет Y, а работу Y не трогает.
 func TestRevertNamesMergedDependents(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	boardEdit(t, root, "| XR-002 | Задел |", "| XR-002 | Задел [после XR-001] |")
 	codeCommit(t, root, "XR-001", "one.txt")
@@ -98,6 +102,7 @@ func TestRevertNamesMergedDependents(t *testing.T) {
 
 // Откат без зависимых молчит про рёбра.
 func TestRevertWithoutDependentsIsQuiet(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	codeCommit(t, root, "XR-001", "one.txt")
 	msg, err := cmdRevert(root, RevertParams{ID: "XR-001", Test: "true"})
@@ -110,6 +115,7 @@ func TestRevertWithoutDependentsIsQuiet(t *testing.T) {
 }
 
 func TestEdgeWaitHasTypedCause(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProgAfter, "")
 	b, err := loadBoard(root)
 	if err != nil {

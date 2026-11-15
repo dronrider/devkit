@@ -83,6 +83,7 @@ func staleClone(t *testing.T) (a, b string) {
 // тег подтягивается до расчёта состава, а чужой Check без smoke переводит
 // слияние в поездной режим, но не останавливает его.
 func TestMergeSurvivesForeignDeploy(t *testing.T) {
+	t.Parallel()
 	_, b := staleClone(t)
 
 	branchFor(t, b, "XR-001", "xr-001-fix", "b.txt")
@@ -99,6 +100,7 @@ func TestMergeSurvivesForeignDeploy(t *testing.T) {
 // TestStatusSyncsDeployTag: status на отставшем клоне сверяет тег с origin и
 // не рисует аномалию окна на ровном месте (кейс 2 постановки).
 func TestStatusSyncsDeployTag(t *testing.T) {
+	t.Parallel()
 	_, b := staleClone(t)
 
 	msg, err := cmdStatus(b)
@@ -121,6 +123,7 @@ func TestStatusSyncsDeployTag(t *testing.T) {
 // выката остаётся по локальному тегу, а пометка называет причину, иначе
 // «всё сверено» на вид неотличимо от правды.
 func TestStatusUnreachableOriginKeepsLocalWindow(t *testing.T) {
+	t.Parallel()
 	_, b := staleClone(t)
 	gitT(t, b, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "origin-нет"))
 
@@ -141,6 +144,7 @@ func TestStatusUnreachableOriginKeepsLocalWindow(t *testing.T) {
 // задачи в Check, отметка не ставилась вовсе (кейс 3 постановки), из-за чего
 // очередь не освобождалась и закрытие задачи вставало.
 func TestSmokeOnStaleCloneSeesDeploy(t *testing.T) {
+	t.Parallel()
 	_, b := staleClone(t)
 
 	msg, err := cmdSmoke(b, SmokeParams{ID: "XR-005"})
@@ -159,6 +163,7 @@ func TestSmokeOnStaleCloneSeesDeploy(t *testing.T) {
 // нет вообще» не поглощается: тег не заводится из ничего (открытая строка
 // DK-077).
 func TestStatusDeployTagDirection(t *testing.T) {
+	t.Parallel()
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	write(t, root, "code.txt", "second\n")

@@ -749,11 +749,6 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if m := tmuxMissingCheck(); m != "" {
-		s.logf("запуск %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	if !s.recoveryStopped(w, found.Path, id, false) {
 		return
 	}
@@ -822,6 +817,13 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own == nil {
 		own = s.harnesses().byDefault()
 	}
+	if own == nil || kind != "task" || own.Protocol != "codex" {
+		if m := tmuxMissingCheck(); m != "" {
+			s.logf("запуск %s в %s отклонён: tmux не нашёлся 502", id, found.Name)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+			return
+		}
+	}
 	if own == nil {
 		gap := "подписка не определилась: agentctl harness --json не назвал её, " +
 			"а чат мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
@@ -829,6 +831,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
 		return
 	}
+
 	if gap := hooksGapNote(own); gap != "" {
 		s.logf("запуск %s в %s отклонён: %s", id, found.Name, gap)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
@@ -839,6 +842,19 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if m := s.loginProbe(own); m != "" {
 		s.logf("запуск %s в %s отклонён: %s", id, found.Name, m)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if kind == "task" && own.Protocol == "codex" {
+		view, err := parseBoardView(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		if len(rowWorks(s.liveWorks(found.Path, view.Prefix, raw), id)) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "живой исполнитель задачи")})
+			return
+		}
+		s.startAppTask(w, found, id, own, tier, body.Effort, runPrompt(row.Sect, id))
 		return
 	}
 	// Лестница носителей цели, как у задачи (DK-1009). Ступень чата поднимает
@@ -1065,6 +1081,11 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// правило DK-217), а не в общем списке сессий машины. Иначе стоп на
 	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
 	// в чужом корне.
+	if a := s.appTaskFind("", found.Path, id); a != nil {
+		s.appTaskClose(a)
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "state": "стоп", "session": a.sid})
+		return
+	}
 	// Работы строки ищутся по её признаку, а не по одному полю ID: рабочих
 	// сессий у задачи бывает несколько, и стоп обязан видеть их все (DK-716).
 	rowed := rowWorks(s.liveWorks(found.Path, view.Prefix, raw), id)

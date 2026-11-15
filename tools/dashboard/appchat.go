@@ -34,9 +34,10 @@ type appChat struct {
 	thread  string
 	project string
 
-	mu     sync.Mutex
-	busy   bool
-	turnAt time.Time
+	mu        sync.Mutex
+	busy      bool
+	turnAt    time.Time
+	taskNotes chan appTaskNote
 }
 
 func (c *appChat) busyNow() bool {
@@ -63,6 +64,10 @@ func (c *appChat) effortNow() string {
 // appBusyCap это потолок одного хода без новостей: дольше он не «идёт», а
 // висит, и состояние чата обязано это назвать, а не молчать часами.
 const appBusyCap = 30 * time.Minute
+
+func appAutomaticReview(st chatStore) bool {
+	return st.GroomSource != "" || st.TaskRun
+}
 
 // appFeedDir это каталог лент дороги app-server, рядом с записями разговоров.
 func appFeedDir(home string) string {
@@ -183,6 +188,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	if st.GroomSource != "" {
 		toolEnv["DEVKIT_TASK"], toolEnv["DEVKIT_GROOM_SOURCE"], toolEnv["DEVKIT_GROOM_MODE"] = st.GroomSource, st.GroomSource, st.GroomMode
 	}
+	s.appTaskToolEnv(st, toolEnv)
 	var env []string
 	for key, value := range toolEnv {
 		env = append(env, key+"="+value)
@@ -218,7 +224,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		config["shell_environment_policy.set."+key] = value
 	}
 	policy := map[string]any{"approvalPolicy": "never", "config": config}
-	if st.GroomSource != "" {
+	if appAutomaticReview(st) {
 		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
 	}
 	var configured json.RawMessage
@@ -245,7 +251,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		}
 		c.thread = got.Thread.ID
 	}
-	if st.GroomSource != "" {
+	if appAutomaticReview(st) {
 		var actual struct {
 			ApprovalPolicy string `json:"approvalPolicy"`
 			Reviewer       string `json:"approvalsReviewer"`
@@ -254,7 +260,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 			} `json:"sandbox"`
 		}
 		if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
-			return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций груминга; обновите Codex"))
+			return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
 		}
 	}
 	s.appMu.Lock()
@@ -309,6 +315,19 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 	if method != "item/completed" && method != "turn/completed" {
 		return
 	}
+	s.appMu.Lock()
+	if c := s.appChats[sid]; c != nil {
+		c.mu.Lock()
+		if method == "turn/completed" && c.taskNotes != nil {
+			select {
+			case c.taskNotes <- appTaskNote{Method: method, Params: append(json.RawMessage(nil), params...)}:
+			default:
+				c.proc.kill()
+			}
+		}
+		c.mu.Unlock()
+	}
+	s.appMu.Unlock()
 	now := s.now().UTC().Format(time.RFC3339)
 	if method == "turn/completed" {
 		var p struct {
@@ -393,6 +412,10 @@ func (s *server) appSayRecord(sid, text string) {
 // называются словами, молчания тут не бывает.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
+	if a := s.appTaskFind(sid, "", ""); a != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
+		return
+	}
 	model, harness := st.Model, st.Harness
 	if model == "" {
 		model, harness = s.chatChoice(sid, "")
@@ -530,6 +553,12 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 // который не ответил на него за пару секунд, снимается процессом. Ход не
 // остаётся вечным ни в одном исходе, и лента называет случившееся словами.
 func (s *server) appStop(w http.ResponseWriter, sid string) {
+	if a := s.appTaskFind(sid, "", ""); a != nil {
+		s.appTaskClose(a)
+		writeJSON(w, http.StatusOK, map[string]string{"way": "stopped", "message": "конвейер задачи остановлен"})
+		return
+	}
+
 	c := s.appLive(sid)
 	if c == nil || !c.busyNow() {
 		writeJSON(w, http.StatusOK, map[string]any{"way": "gone",

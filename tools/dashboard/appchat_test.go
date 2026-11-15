@@ -99,10 +99,16 @@ for raw in sys.stdin:
         if mode() == "early":
             note("item/completed", {"item": {"type": "agentMessage",
                 "text": "ответ на реплику:" + text}})
-            note("turn/completed", {"turn": {"status": "completed"}})
-            emit({"id": mid, "result": {}})
+            note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
+            emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
             continue
-        emit({"id": mid, "result": {}})
+        emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
+        if mode() == "task-child":
+            note("turn/completed", {"threadId": "child-thread", "turn": {"id": "turn-1", "status": "completed"}})
+            note("turn/completed", {"threadId": "th-1", "turn": {"id": "child-turn", "status": "completed"}})
+            continue
+        if mode() == "task-done":
+            with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
         if mode() == "die":
             sys.stderr.write("токен кончился\n")
             sys.exit(3)
@@ -112,7 +118,11 @@ for raw in sys.stdin:
             "command": "ls -la", "aggregatedOutput": "итог команды", "exitCode": 0}})
         note("item/completed", {"item": {"type": "agentMessage",
             "text": "ответ на реплику:" + text}})
-        note("turn/completed", {"turn": {"status": "completed"}})
+        note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
+    elif m == "test/finish":
+        with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
+        note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
+        emit({"id": mid, "result": {}})
     elif m == "turn/interrupt":
         log("interrupt")
         if mode() == "deaf":

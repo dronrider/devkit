@@ -3380,6 +3380,29 @@ class TestStartupRecovery(unittest.TestCase):
             self.assertIn("CLIENT_START_ERROR", f.read())
 
 
+class AppTurnClientTests(unittest.TestCase):
+    def test_bridge_returns_main_turn_result_and_preserves_order(self):
+        stream = io.StringIO('{"code": 2, "error": "клиент отказал"}\n')
+        sock = unittest.mock.MagicMock()
+        channel = unittest.mock.MagicMock()
+        sock.__enter__.return_value = channel
+        channel.makefile.return_value = stream
+        sent = []
+        stream.write = lambda data: sent.append(data)
+        with unittest.mock.patch("socket.socket", return_value=sock), unittest.mock.patch("sys.stderr", new=io.StringIO()) as stderr:
+            code = task_run.app_turn_client(["/tmp/turn", "secret", "-p", "заказ\nвторой строкой"])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(sent[0]), {"token": "secret", "order": "заказ\nвторой строкой"})
+        channel.connect.assert_called_once_with("/tmp/turn")
+        self.assertIn("клиент отказал", stderr.getvalue())
+
+    def test_bridge_rejects_cli_shape_before_connecting(self):
+        with unittest.mock.patch("socket.socket") as sock, unittest.mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(SystemExit):
+                task_run.app_turn_client(["/tmp/turn", "secret", "заказ"])
+        sock.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)
 

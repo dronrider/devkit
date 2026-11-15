@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Состояние «ждёт человека» у строки доски (LLD DK-430, решение 4). Задача
@@ -130,7 +132,22 @@ func (s *server) handedAsks(sid string, b sessionBinds, now time.Time) []handedA
 	projects, _ := s.projects()
 	var out []handedAsk
 	for _, p := range projects {
-		out = append(out, askScan(p.Path, now, keep)...)
+		for _, h := range askScan(p.Path, now, keep) {
+			tree := h.Ask.Tree
+			if tree == "" && h.Ask.Session != "" {
+				tree = b[h.Ask.Session].Tree
+			}
+			if tree != "" {
+				source, err := os.Stat(stage.MainRoot(tree))
+				transport, terr := os.Stat(p.Path)
+				if filepath.IsAbs(tree) && err == nil && terr == nil && os.SameFile(source, transport) {
+					h.Ask.Tree = tree
+				} else if h.Ask.Tree != "" {
+					continue
+				}
+			}
+			out = append(out, h)
+		}
 	}
 	// Порядок сводится один на все деревья: спросившие в разных проектах
 	// отвечают вразнобой, и раньше всех обязан встать спросивший раньше, а не
@@ -321,6 +338,9 @@ func askForkName(text string) string {
 // показывать нечего: вопрос без текста и без вариантов рисовать не на чем.
 func agentAskOf(h handedAsk) agentAsk {
 	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Tree: h.Tree, Since: h.Since, Until: h.Ask.UnixUntil()}
+	if h.Ask.Tree != "" {
+		out.Tree = h.Ask.Tree
+	}
 	for i, q := range h.Ask.Questions {
 		if q.Scenario != nil && q.Scenario.Tree != "" {
 			out.Tree = q.Scenario.Tree

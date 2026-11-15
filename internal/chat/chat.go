@@ -399,6 +399,8 @@ func ParsePack(data []byte) ([]Question, error) {
 // отсчёт. Признак цели и старые записи с настоящим сроком читаются тем же
 // полем: срок либо есть, либо признан вечным, третьего не дано.
 type Ask struct {
+	// Tree задаёт дерево документа. Файл ожидания и вход могут лежать в основном чекауте.
+	Tree      string
 	Until     time.Time
 	Session   string
 	Task      string
@@ -435,6 +437,7 @@ const (
 	askSessionKey = "сессия "
 	askTaskKey    = "задача "
 	askFromKey    = "секция "
+	askTreeKey    = "дерево "
 )
 
 // Text собирает тело признака.
@@ -449,6 +452,9 @@ func (a Ask) Text() string {
 	}
 	if a.Task != "" {
 		out = append(out, askTaskKey+a.Task)
+	}
+	if a.Tree != "" {
+		out = append(out, askTreeKey+a.Tree)
 	}
 	if a.From != "" {
 		out = append(out, askFromKey+a.From)
@@ -488,6 +494,8 @@ func ParseAsk(text string) (Ask, bool) {
 			a.Session = strings.TrimSpace(strings.TrimPrefix(s, askSessionKey))
 		case strings.HasPrefix(s, askTaskKey):
 			a.Task = strings.TrimSpace(strings.TrimPrefix(s, askTaskKey))
+		case strings.HasPrefix(s, askTreeKey):
+			a.Tree = strings.TrimSpace(strings.TrimPrefix(s, askTreeKey))
 		case strings.HasPrefix(s, askFromKey):
 			a.From = strings.TrimSpace(strings.TrimPrefix(s, askFromKey))
 		case s != "":

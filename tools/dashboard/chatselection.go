@@ -380,6 +380,10 @@ func mergeSelectionContexts(groups ...[]selectionDeliveryContext) []selectionDel
 					found = true
 					break
 				}
+				if selectionContextMigrates(context, old) {
+					found = true
+					break
+				}
 				previous := old
 				previous.Delivered = context.Delivered
 				if reflect.DeepEqual(previous, context) {

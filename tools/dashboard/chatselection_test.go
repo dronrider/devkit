@@ -580,3 +580,20 @@ func TestSelectionDeliveredMergeMonotonic(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectionContextMigrationMerge(t *testing.T) {
+	var legacy, current selectionDeliveryContext
+	if err := json.Unmarshal([]byte(`{"reply":"saved","textKey":"same","name":"task-XR-4","session":"source","selection":{"task":"XR-4","tree":"/tmp/main"}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"reply":"saved","textKey":"same","name":"task-XR-4","session":"source","selection":{"task":"XR-4","tree":"/tmp/document"},"transport":"/tmp/main","delivered":true}`), &current); err != nil {
+		t.Fatal(err)
+	}
+	for _, groups := range [][]selectionDeliveryContext{{legacy, current}, {current, legacy}} {
+		merged := mergeSelectionContexts(groups[:1], groups[1:])
+		data, _ := json.Marshal(merged)
+		if len(merged) != 1 || merged[0].Selection.Tree != "/tmp/document" || !strings.Contains(string(data), `"delivered":true`) {
+			t.Fatalf("stale legacy context returned: %s", data)
+		}
+	}
+}

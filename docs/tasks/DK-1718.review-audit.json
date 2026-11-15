@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1718",
-  "base_sha": "bf27de1cc71d577e887cb954e8c5ecec22c5206d",
-  "head_sha": "2d672c8a8a963d5b986d72789f599be34031f555",
-  "code_hash": "aba88733b1743f6532ddb56b94e10034fe7cd3d2f693d0341742188fdef3ffd6",
+  "base_sha": "8a988ba84320546f3da3452dfe101d9e7587747c",
+  "head_sha": "875380ab7c48afdafc1551b2fe752b8549b1faa1",
+  "code_hash": "745ee346a90195c8239063f8c9cfe2ba6301ac93763d5a4f0347c7adcf389aa9",
   "task_hash": "2093c6b331d3d2c2b18be0044f7cbf83fb8fe14504e45b17bbd17e1d2ee24957",
   "sources": [
     {
@@ -44,13 +44,14 @@
     "alternative": "Можно было бы каждый раз выбирать дерево только по текущему реестру сессии. Это проще для нового поля, но запись сессии может измениться после публикации, а transport не сообщает, где создан вопрос. Явное происхождение необходимо; реестр оставлен только для совместимости старых файлов.",
     "justification": "Обязателен исходный документ и сохранённый транспорт, не конкретный способ хранения. Одно поле существующего Ask решает разрыв без нового хранилища или настройки. Narrow migration нужна двум уже сохранённым отказам; receipt guard не позволяет использовать её для принятого старого ответа. Delivered необходим для повторов после рестарта памяти serve. Между внешней доставкой и persist Delivered остаётся crash window, без новой exactly-once гарантии.",
     "evidence": [
-      "База bf27de1cc; финальный код 2d672c8a8; авторский evidence commit f68636a2e не меняет код.",
+      "Текущая база 8a988ba84; код после rebase 053ce260d + 75dea79fb; HEAD 875380ab7. Range-diff подтвердил эквивалентность пяти патчей старому диапазону bf27de1cc..eabf9978d. Прогоны на старых SHA относятся к тем же патчам; новый rehearse выполняется после фиксации обновлённого аудита.",
       "internal/chat/chat.go Ask/Text/ParseAsk; TestAskDocumentTreeRoundTrip подтверждает старый формат и неизменный QuestionSnapshot.",
       "tools/taskctl/ask.go runAsk и decidechat.go decideDraftCarrier пишут Tree=root, но .ask остаётся main.",
       "tools/dashboard/waiting.go handedAsks/agentAskOf; явные Scenario/Prepared.Tree overrides сохранены. Боевой scenarioChatQuestions всегда задаёт Scenario.Tree.",
       "tools/dashboard/chatselection.go handleSelectionSay/selectionMigrationApplied/deliverSelection/mergeSelectionContexts; negative foreign-project/fork/snapshot и failed/delivered/legacy-success/archive-success fixtures.",
       "TestSelectionContextMigrationMerge и TestSelectionDeliveredMergeMonotonic проверяют оба порядка; regcheck red на 86b93d6d6, четыре mutations red; rehearse suite green на 2d672c8a8, 26.9s.",
-      "Пределы: новая вкладка реального пользователя не отправляла выбор, browser E2E не запускался; интеграционный путь покрыт реальным taskctl и HTTP в temporary HOME. После выката чтение DK-1570 выполняет диспетчер без отправки."
+      "Пределы: новая вкладка реального пользователя не отправляла выбор, browser E2E не запускался; интеграционный путь покрыт реальным taskctl и HTTP в temporary HOME. После выката чтение DK-1570 выполняет диспетчер без отправки.",
+      "Проверена дельта новой базы bf27de1cc..8a988ba84: outbox.saidTaskFrom/saidForKey и sessions.handleSession/streamSession фильтруют отображение task-журнала по началу разговора. Они не пишут контексты выбора; session-key saidSay от handleSelectionSay не режется task boundary. chatSayStart/Done, chatStoreWrite, CLI selection и транспорт ответов не менялись. Новых архитектурных рисков для DK-1718 дельта не внесла."
     ],
     "result": "checked"
   },
@@ -67,6 +68,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go: Ask/Text/ParseAsk; tools/taskctl/ask.go: runAsk; tools/taskctl/decidechat.go: decideDraftCarrier; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "chat хранит формат Ask; taskctl публикует происхождение вопроса; dashboard выбирает документ и транспорт ответа. Новая логика относится к этим существующим обязанностям."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -82,6 +88,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go: Ask; tools/dashboard/waiting.go: handedAsks; tools/taskctl/ask.go: runAsk",
           "observation": "Писатели используют chat.Ask/WriteAsk, читатели ParseAsk и stage.MainRoot. Изменение формата проходит через контракт chat, внутренние файлы реестра не разбираются повторно."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -97,6 +108,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/taskctl/decideselection.go: decideSelection",
           "observation": "QuestionSnapshot и taskform.ParseForks переиспользованы. MigrationApplied читает факт квитанции для запрета переноса, decideSelection владеет её записью и применением выбора; нового конкурирующего писателя нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -112,6 +128,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go: Ask; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Новых слоёв и зависимостей нет. Ask.Tree нужен потому, что файл ожидания лежит в main, а вопрос отсутствует в main; Transport сохраняет прежний вход доставки."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -127,6 +148,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/taskctl/decideselection.go: decideSelection",
           "observation": "Для нового claim проверяются task/tree, показанный вопрос, IDs и snapshot; повторы требуют прежнюю семантику и textKey. Отказ до применения не выдаётся за успех; после применения ошибка доставки названа отдельно. Принятая квитанция позволяет повтор доставки."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -142,6 +168,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/taskctl/ask.go: runAsk; tools/taskctl/decidechat.go: decideDraftCarrier; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/taskctl/decideselection.go: decideSelection",
           "observation": "Источник документа задают оба боевых писателя .ask. Dashboard проверяет показанный контекст, CLI повторно проверяет fork/snapshot/IDs и пишет квитанцию; обход через прямой CLI не снимает защиту."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -157,6 +188,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/waiting.go: handedAsks; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument",
           "observation": "Старый Ask без Tree поддержан exact Ask.Session fallback в том же MainRoot. Failed legacy context переносится только при совпадении claim/text/questions/snapshot/IDs, receipt в активном, draft или архивном прежнем документе запрещает перенос; Delivered=true также запрещает перенос."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -172,6 +208,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chats.go: chatStoreWrite; TestSelectionContextMigrationMerge/TestSelectionDeliveredMergeMonotonic",
           "observation": "Ask.Tree хранит происхождение, h.Tree место транспорта. CLI document receipt является истиной о применении, SelectionContexts хранит маршрут повторной доставки и Delivered. Merge не возвращает legacy и не снимает Delivered даже при записи устаревшего st."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -187,6 +228,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: selectionMigrationApplied; tools/dashboard/chats.go: chatStoreWrite; internal/chat/chat.go: WriteAsk",
           "observation": "Новых goroutine, открытых потоков или иных ресурсов нет; os.ReadFile/ReadDir завершают операции внутри вызова. Существующий chatStoreWrite закрывает lock и temp file, WriteAsk также освобождает lock."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -202,6 +248,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/outbox.go: chatSayStart/chatSayDone; tools/dashboard/chats.go: chatStoreWrite; tools/dashboard/chatselection_test.go: TestSelectionContextMigrationMerge/TestSelectionDeliveredMergeMonotonic",
           "observation": "Claim сериализуется существующим s.mu в chatSayStart; запись chatStore под файловым lock перечитывает previous и сливает данные. Два порядка migrated/legacy и delivered/pending проверены отдельно, stale writer не возвращает старый контекст."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -217,6 +268,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/waiting.go: handedAsks/askForChat; tools/dashboard/chatscenario.go: scenarioTree; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument",
           "observation": "Ask.Tree и fallback принимаются только как абсолютное дерево того же MainRoot, что транспортный project. Ответ должен соответствовать handedAsk этой сессии; чужое дерево и неверные fork/snapshot/IDs отклоняются. Путь прежнего receipt ограничен task ID и проверенной transport identity."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -232,6 +288,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; docs/tasks/DK-1718.md: Ход работы",
           "observation": "CLI error, read error прежней квитанции, delivery error и ошибка сохранения Delivered возвращают разные ошибки. Успех выдаётся после доставки и сохранения отметки. Сбой процесса между внешней доставкой и записью Delivered может дать повтор доставки; это прежняя последовательная граница, описанная в ходе задачи."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -247,6 +308,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument, TestSelectionEmptyRefusalAndRetryDelivery",
           "observation": "Повтор применения предотвращает CLI receipt, повтор уже сохранённой доставки предотвращает Delivered после очистки says. Отказ доставки оставляет контекст для retry. Распределённая exactly-once гарантия при crash между send и persist не вводится."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -262,6 +328,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Ошибки содержат действие: проверка прежнего ответа, выбор сохранён/доставка агенту, выбор доставлен/сохранение доставки. Новых секретов и сетевых данных в сообщениях нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -277,6 +348,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "MigrationApplied получает точные файлы одного task ID: активный, draft и годы архива, а не содержимое всех задач. Полный текст нужен taskform.ParseForks; обход прекращается на найденном reply receipt."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -292,6 +368,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Сначала сопоставляется показанный вопрос, затем читается старый receipt только при кандидате legacy migration. Чтение контекста и итоговый merge используют существующий файловый контракт; новых запросов БД или внешних сервисов нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -307,6 +388,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/taskctl/decide.go: runDecide; tools/taskctl/decideselection.go: decideSelection; tools/dashboard/chats.go: chatStoreWrite",
           "observation": "Изменение документа и квитанция делаются одной CLI записью; chatStoreWrite использует lock и atomic rename. Между документом, внешней доставкой и Delivered нет общей транзакции: частичный отказ назван, retry не повторяет решение."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -322,6 +408,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Новых запросов БД/ORM и чтения данных по коллекции бизнес-объектов нет. Цикл archive ограничен файлами одного task ID и нужен для поиска его старой квитанции, без загрузки чужих задач."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -337,6 +428,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/taskctl/decideselection.go: decideSelection; internal/chat/chat.go: Ask",
           "observation": "Применение выбора и запись receipt остаются в taskctl, маршрутизация и доставка в dashboard, формат в internal/chat. Dashboard не пишет решение в markdown напрямую."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -352,6 +448,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "docs/tasks/DK-1718.md: Что происходит/Границы; tools/taskctl/ask.go: runAsk; tools/taskctl/decidechat.go: decideDraftCarrier",
           "observation": "Исправляется действующий Ask/selection путь, им опубликован реальный вопрос DK-1570. Механизм не объявлен deprecated; обработка старого формата нужна двум уже сохранённым отказам."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -367,6 +468,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/waiting.go: handedAsks; internal/chat/chat.go: Ask/Text",
           "observation": "Переход на новый механизм не требуется: исправляется совместимость активного пользовательского пути. Legacy fallback ограничен старым Ask, новые вопросы несут происхождение явно."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -412,6 +518,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go: Ask/Text; tools/taskctl/ask.go: runAsk; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Tree сохраняется при создании вопроса, Transport определяется его входом, Delivered записывается после фактической доставки. Это изменяемое состояние операции в Ask/chatStore, а не конфигурация при запуске."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -442,6 +553,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/waiting.go: handedAsks/agentAskOf; tools/dashboard/chatselection.go: selectionMatches; tools/dashboard/README.md: Ответ на вопрос из рабочего дерева",
           "observation": "Приоритет происхождения задан: явный Ask.Tree, иначе реестр exact Ask.Session при том же MainRoot, иначе прежний transport. Для scenario/prepared сохранён их явный Tree override; новый alias настройки не добавлен."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -487,6 +603,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; internal/chat/chat.go: Ask",
           "observation": "Ask.Tree, context.Transport и Delivered называют разные предметы: происхождение документа, вход доставки и сохранённый факт доставки. Helpers MigrationApplied/Migrates/Transport соответствуют действиям."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -502,6 +623,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "selectionContextMigrates/selectionMigrationApplied только проверяют условия, selectionTransport только выбирает путь; запись остаётся в handleSelectionSay/chatStoreWrite."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -517,6 +643,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/waiting.go: handedAsk/agentAskOf",
           "observation": "Tree в Selection означает документ, Transport в context означает место .ask/.chat. h.Tree сохраняет существующее значение транспорта; имена не переставлены у старых потребителей."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -532,6 +663,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Новых величин времени/размера/единиц нет; TextKey это SHA256 текста, Reply ключ отправки, а Tree/Transport абсолютные пути с разными ролями."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -547,6 +683,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Внешние поля и helpers имеют предметные имена; i/old/current/path локальны коротким обходам. Новых безымянных публичных data/result контрактов нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -562,6 +703,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; internal/chat/chat.go: Text/ParseAsk; tools/dashboard/waiting.go: handedAsks/agentAskOf",
           "observation": "Все новые значения потребляются: Ask.Tree при сериализации/маршрутизации, Transport при миграции/putChat, Delivered при retry/merge. Переданные p/sid/claim/text/answer сохраняют прежних потребителей."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -577,6 +723,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chats.go: chatStoreWrite",
           "observation": "Результаты новых helpers проверяются: migration gate, receipt existence/error, путь fallback и список merged contexts. Нового неиспользуемого возвращаемого значения нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -607,6 +758,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Helpers отделяют проверку семантической миграции, чтение receipt и выбор транспорта. Handler последовательно валидирует, сохраняет контекст, применяет, доставляет и сохраняет Delivered."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -622,6 +778,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument/TestSelectionDeliveredMergeMonotonic",
           "observation": "Delivered/Transport имеют предметные имена и типы; пустой Transport означает сохранённый legacy context, false Delivered отсутствие сохранённого подтверждения. Эти состояния проверены JSON fixtures."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -637,6 +798,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Ранние отказы до применения явно возвращаются. Ветка Delivered идёт до CLI/delivery; receipt check предшествует retarget. В merge отдельно видны прямая и обратная миграции и монотонный marker."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -652,6 +818,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go; tools/dashboard/chatselection.go; tools/dashboard/waiting.go; tools/taskctl/ask.go; tools/taskctl/decidechat.go",
           "observation": "Изменённые Go-файлы оформлены gofmt; git diff --check не нашёл пробельных ошибок. Новые обходы используют обычные range, os.ReadFile и taskform parser."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -667,6 +838,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Ошибки чтения receipt возвращаются в 502 вместо разрешения переноса; ошибки записи контекста, CLI и доставки не скрываются. Не найденный файл отличается от отказа чтения."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -682,6 +858,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Ошибки указывают ключ другого ответа, неподходящий показанный вопрос либо стадию принятия/доставки; ответ HTTP не выдаёт частичный отказ за успех."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -697,6 +878,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat.go: Ask.Tree; tools/dashboard/chatselection.go: deliverSelection",
           "observation": "Комментарий Ask.Tree объясняет разделение документа и входа. Старые комментарии deliverSelection о fallback transport остаются верны после использования selectionTransport."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -712,6 +898,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/README.md: Ответ на вопрос из рабочего дерева; docs/tasks/DK-1718.md: Ход работы",
           "observation": "README начинает с действий пользователя, описывает повтор после ошибки, сохранённую доставку и fallback старого формата. Уточнение ревьювера различает принятое решение и успешную доставку."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -727,6 +918,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat_test.go: TestAskDocumentTreeRoundTrip; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument; TestSelectionDeliveredMergeMonotonic/TestSelectionContextMigrationMerge",
           "observation": "Изменение формата сопровождается unit TestAskDocumentTreeRoundTrip; маршрут и повтор проверяются HTTP+реальным taskctl+git worktree в TestSelectionWorktreeDocument; merge имеет два изолированных теста."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -742,6 +938,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "docs/tasks/DK-1718.md: Проверка, Краснота регрессионных проверок",
           "observation": "Первый regcheck на bf27de1cc показал red legacy/failed-context и green исправления. Второй на 86b93d6d6 показал red reverse merge и green 2d672c8a8. Команды, базы, успешный выход regcheck и вывод сохранены автором."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -757,6 +958,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "internal/chat/chat_test.go: TestAskDocumentTreeRoundTrip; tools/dashboard/chatselection_test.go: TestSelectionDeliveredMergeMonotonic/TestSelectionContextMigrationMerge/TestSelectionWorktreeDocument",
           "observation": "Чистая логика формата/merge покрыта unit-тестами, путь question->HTTP->CLI->документ->fallback chat интеграционным стендом; UI не меняется."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -772,6 +978,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument; internal/chat/chat_test.go: TestAskDocumentTreeRoundTrip; docs/tasks/DK-1718.md: Проверка",
           "observation": "WorktreeDocument является интеграционным тестом: настоящий git, сборка taskctl, HTTP и файловая доставка; это не выдаётся за unit/E2E браузера. Изолированные Ask/merge можно запускать фильтром отдельно от него."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -787,6 +998,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument; tools/dashboard/chatselection_test.go: TestSelectionDeliveredMergeMonotonic/TestSelectionContextMigrationMerge",
           "observation": "Ожидаемые значения заданы явно: документ worktree меняется на месяц: хватает, main неизменен, вход main получает одну строку, worktree вход отсутствует; негативные запросы дают 400. JSON legacy contexts собраны как старый формат, счёт сообщений не вычисляется проверяемой логикой."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -802,6 +1018,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "docs/tasks/DK-1718.md: Проверка, Краснота регрессионных проверок",
           "observation": "Четыре реальные мутации дали exit1: снятие Delivered migration guard, снятие duplicate short-circuit, обход receipt guard для active/archive, снятие монотонности Delivered. После каждой source восстановлен; финальный source SHA 2d672c8a8 и rehearsed suite green."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -817,6 +1038,11 @@
           "object": "Маршрут ответа и сохранённые контексты",
           "location": "tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument/TestSelectionDeliveredMergeMonotonic/TestSelectionContextMigrationMerge",
           "observation": "Проверки порядка merge детерминированы двумя явными порядками slices. Restart моделируется очисткой says под s.mu. Реестр/now задаются фикстурой, sleep для новых проверок не добавлен."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -907,6 +1133,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "README.md: Раскладка; git diff bf27de1cc..2d672c8a8",
           "observation": "Новые файлы и языки не добавлены; Go-правки остаются в internal/chat и существующих tools/dashboard/taskctl."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -922,6 +1153,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Правится существующая chat семья dashboard до её переезда, новый домен и обход межпакетного контракта не вводятся."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -937,6 +1173,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/server.go: handler; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Маршрут HTTP не меняется; handleSelectionSay остаётся в chatselection.go, клиент получает готовые ошибки/результат."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -952,6 +1193,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Dashboard вызывает taskctlWrite для решения; доска и markdown решения из handler напрямую не пишутся."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -967,6 +1213,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/waiting.go: imports/handedAsks; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Переиспользованы chat, stage.MainRoot, sessions и taskform.ParseForks. Нового exec git/дубликата internal нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -997,6 +1248,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts; tools/dashboard/tasks.go: taskctlWrite/taskctlDo",
           "observation": "Все ветки selection отвечают через writeJSON; применение через taskctlWrite и существующую taskctlDo/runProc воронку. Транскрипт не разбирается заново."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1027,6 +1283,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "git diff bf27de1cc..2d672c8a8; tools/dashboard/README.md: Ответ на вопрос из рабочего дерева",
           "observation": "Новых UI кнопок/плашек и поверхности управления нет. Ответ на существующие варианты остаётся репликой чата."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1042,6 +1303,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/waiting.go: handedAsks/agentAskOf; tools/dashboard/groomconsent.go: groomConsent; tools/dashboard/chatproposal.go: handleProposalSay",
           "observation": "handedAsks по-прежнему возвращает PreparedQuestion без изменения его payload. agentAskOf сохраняет явный Prepared/Proposal.Tree override, groomConsent использует shown.Tree и published AskPath(h.Tree). Новое происхождение не заменяет check-ask согласие."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1087,6 +1353,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chats.go: chatStoreWrite; tools/dashboard/outbox.go: chatSayStart/chatSayDone; tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Новой памяти процесса нет: Delivered лежит в существующем chatStore, запись закрыта lock/merge; says остаётся под s.mu."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1102,6 +1373,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: deliverSelection",
           "observation": "Путь подъёма клиента не меняется: deliverSelection сохраняет chatSend/deliverToCarrier и меняет лишь fallback файл. Нового запуска мимо agentctl exec нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1117,6 +1393,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: deliverSelection; git diff bf27de1cc..2d672c8a8",
           "observation": "App-server transport и его события занятости не меняются. Выбор происхождения документа не подменяет существующий deliverToCarrier."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1147,6 +1428,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay; tools/dashboard/waiting.go: handedAsks",
           "observation": "Новых мест запуска процессов нет. Обращение taskctl идёт существующим taskctlWrite, stage.MainRoot сохраняет контракт root; новая логика не добавляет exec.Command."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1177,6 +1463,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "git diff --stat bf27de1cc..2d672c8a8",
           "observation": "Новых файлов утилит/каталогов/языков нет, существующие доменные файлы сохранены."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1192,6 +1483,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Расширена существующая chat семья файлов, отдельного нового домена нет; правило разрешает правки до переезда в старых семьях."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1357,6 +1653,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "internal/chat/chat_test.go; tools/dashboard/chatselection_test.go",
           "observation": "Тесты лежат рядом: chat_test.go и chatselection_test.go проверяют соответствующие chat.go/chatselection.go."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1372,6 +1673,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument; tools/dashboard/chatscenario_test.go: newScenarioStand",
           "observation": "Новый git repo/worktree создаётся в temporary stand home, реальные task docs и пользовательский ответ не менялись."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1387,6 +1693,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "docs/tasks/DK-1718.md: Проверка, Краснота регрессионных проверок",
           "observation": "Два фактических regcheck подтвердили red на bf27de1cc и 86b93d6d6, green на исправлениях; команды/вывод сохранены."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1402,6 +1713,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/tasks_test.go: TestMain; tools/dashboard/chatscenario_test.go: newScenarioStand; tools/dashboard/chatselection_test.go: TestSelectionWorktreeDocument",
           "observation": "Используется существующий TestMain/newTestEnv/newScenarioStand: HOME временный, session env очищен, tmux/notify изолированы, настоящий taskctl собирается для стенда."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1447,6 +1763,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/chatselection.go: handleSelectionSay, selectionContextMigrates, selectionMigrationApplied, mergeSelectionContexts",
           "observation": "Сохраняются chatselection.go/chatselection_test.go, handleSelectionSay и существующие имена handler. Новых файлов другого домена нет."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     },
@@ -1462,6 +1783,11 @@
           "object": "Проектный контракт и затронутые потребители",
           "location": "tools/dashboard/README.md: Ответ на вопрос из рабочего дерева; docs/tasks/DK-1718.md; hooks/check-symbols.py",
           "observation": "Новый README и задача вычитаны свежим ревьювером; символы проверены check-symbols. Команды/ID и машинные строки не переписаны."
+        },
+        {
+          "object": "Применимость прежнего доказательства после rebase",
+          "location": "git range-diff bf27de1cc..eabf9978d 8a988ba84..875380ab7; delta bf27de1cc..8a988ba84",
+          "observation": "Все пять патчей DK-1718 эквивалентны. Дельта базы меняет чтение task-журнала в outbox/sessions и отдельный абзац README; Ask/selection/context merge, chatSayStart/Done и доставка не изменены. Новые saidTaskFrom/saidForKey читают историю, не пишут SelectionContexts и не меняют wire."
         }
       ]
     }

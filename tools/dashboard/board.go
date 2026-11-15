@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/peers"
+	"github.com/dronrider/devkit/internal/taskhead"
 	"github.com/dronrider/devkit/internal/works"
 )
 
@@ -554,6 +555,11 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 	}
 	for _, entry := range s.appListRows("") {
 		st := s.chatStoreRead(entry.ID)
+		if a := s.appTaskFind(entry.ID, "", ""); a != nil && a.root == projectPath && taskhead.Working(taskhead.LockPath(a.home, st.Task)) {
+			list = append(list, Work{ID: st.Task, Kind: "task", Via: workViaSession, Session: entry.ID, Title: st.Task + " работа", Model: st.Model, Harness: st.Harness, Live: workBusy, Started: st.Born})
+			busy[st.Task] = true
+			continue
+		}
 		if st.GroomSource == "" || !sameGroomTree(st.GroomTree, projectPath) {
 			continue
 		}

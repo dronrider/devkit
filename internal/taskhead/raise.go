@@ -128,11 +128,17 @@ type Request struct {
 	// же строкой её называет сам клиент флагом --name из секции [head]
 	// (DK-879). Пусто значит, что профиль ключа name не назвал, и голова идёт
 	// без него, как раньше.
-	Name string
+	Name      string
+	AppServer *AppServerCarrier
+}
+
+type AppServerCarrier struct {
+	Command []string
 }
 
 // Result это исход лестницы.
 type Result struct {
+	PID   int
 	Code  int
 	Rung  string
 	Lines []string
@@ -178,7 +184,7 @@ func Raise(q Request) (Result, error) {
 	if err := draftmeta.GuardRecord(q.Root, q.ID); err != nil {
 		return res, err
 	}
-	head, err := ReadHead(ProfilePath(q.Devkit, q.Harness))
+	head, err := q.readHead()
 	if err != nil {
 		return res, err
 	}
@@ -232,6 +238,9 @@ func Raise(q Request) (Result, error) {
 	}
 
 	tmux, _ := exec.LookPath("tmux")
+	if q.AppServer != nil {
+		tmux = ""
+	}
 	if tmux == "" {
 		res.say("tmux не нашёлся в PATH: живого и нового окна не будет, лестница начинается с headless")
 	} else if q.replyLive(tmux, &res) {
@@ -572,6 +581,7 @@ func (q Request) headless(runner string, head Head, lock string, me int, res *Re
 		res.say("оболочка headless не приняла замок за %s, журнал %s", q.Adopt, logPath)
 		return false
 	}
+	res.PID = owner
 	res.say("голова %s поднята headless, оболочка pid %d, журнал %s", q.ID, owner, logPath)
 	return true
 }
@@ -745,4 +755,35 @@ func newSessionID() string {
 	b[8] = b[8]&0x3f | 0x80
 	h := hex.EncodeToString(b[:])
 	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+
+func (q Request) readHead() (Head, error) {
+	if q.AppServer == nil {
+		return ReadHead(ProfilePath(q.Devkit, q.Harness))
+	}
+	data, err := os.ReadFile(ProfilePath(q.Devkit, q.Harness))
+	if err != nil {
+		return Head{}, err
+	}
+	section, protocol := "", ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = line
+			continue
+		}
+		if section == "[hooks]" {
+			key, value, ok := strings.Cut(line, "=")
+			if ok && strings.TrimSpace(key) == "protocol" {
+				protocol, err = parseStr(strings.TrimSpace(value))
+				if err != nil {
+					return Head{}, err
+				}
+			}
+		}
+	}
+	if protocol != "codex" || len(q.AppServer.Command) == 0 {
+		return Head{}, fmt.Errorf("носитель app-server требует профиль protocol=codex и команду доставки")
+	}
+	return Head{Client: q.AppServer.Command, Bin: q.AppServer.Command[0], TurnEnd: TurnExit}, nil
 }

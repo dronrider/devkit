@@ -821,7 +821,9 @@ type chatStore struct {
 	// Thread это нить клиента чужого протокола: её продолжает следующий подъём
 	// процесса, и разговор не начинается с чистого листа после перезапуска
 	// демона.
-	Thread string `json:"thread,omitempty"`
+	Thread     string `json:"thread,omitempty"`
+	TaskRun    bool   `json:"taskRun,omitempty"`
+	TaskRunPID int    `json:"taskRunPID,omitempty"`
 	// CxEffort это уровень глубины клиента чужого протокола: у него нет
 	// окружения сессии, и выбор меню модели живёт записью разговора.
 	CxEffort string `json:"cxEffort,omitempty"`
@@ -3062,6 +3064,14 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	}
+	if a := s.appTaskFind(sid, "", ""); a != nil {
+		if !s.recoveryChatStopped(w, found, sid, "stop") {
+			return
+		}
+		s.appTaskClose(a)
+		writeJSON(w, http.StatusOK, map[string]string{"way": "stopped", "message": "конвейер задачи остановлен"})
+		return
 	}
 	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
 	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.

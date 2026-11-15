@@ -2696,7 +2696,24 @@ class Pipeline:
                   kind=PASSES_REASON)
 
 
+def app_turn_client(argv):
+    import socket
+    if len(argv) != 4 or argv[2] != "-p":
+        die("носитель app-server ждёт socket token -p order")
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.connect(argv[0])
+        stream = sock.makefile("rw", encoding="utf-8")
+        stream.write(json.dumps({"token": argv[1], "order": argv[3]}) + "\n")
+        stream.flush()
+        answer = json.loads(stream.readline())
+    if answer.get("error"):
+        sys.stderr.write("task-run: %s\n" % answer["error"])
+    return int(answer.get("code", 2))
+
+
 def main(argv):
+    if argv and argv[0] == "--app-turn-client":
+        return app_turn_client(argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
         sys.stdout.write(USAGE)
         return 0

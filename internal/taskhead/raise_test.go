@@ -905,3 +905,35 @@ func TestRecoveryDoesNotFallBackAfterTmuxFailure(t *testing.T) {
 		t.Fatal("печатный дубль поднят: " + got)
 	}
 }
+
+func TestAppServerCarrierKeepsSharedLock(t *testing.T) {
+	s := newStand(t, true, true)
+	put(t, ProfilePath(s.devkit, "codex"), "[hooks]\nprotocol = \"codex\"\n", 0644)
+	q := s.req()
+	q.Harness = "codex"
+	q.Wanted = true
+	q.AppServer = &AppServerCarrier{Command: []string{"python3", "bridge.py"}}
+	res, err := Raise(q)
+	if err != nil || res.Code != CodeRaised || res.Rung != RungHeadless || res.PID <= 0 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if strings.Contains(s.tmux("calls.log"), "new-session") {
+		t.Fatal("app-server поднят в tmux")
+	}
+	duplicate, err := Raise(q)
+	if err != nil || duplicate.Code != CodeBusy {
+		t.Fatalf("второй carrier: %+v %v", duplicate, err)
+	}
+}
+
+func TestAppServerCarrierRequiresCodexProtocol(t *testing.T) {
+	s := newStand(t, false, true)
+	q := s.req()
+	q.AppServer = &AppServerCarrier{Command: []string{"python3", "bridge.py"}}
+	if _, err := Raise(q); err == nil || !strings.Contains(err.Error(), "protocol=codex") {
+		t.Fatalf("обход профиля: %v", err)
+	}
+	if Owner(LockPath(s.home, q.ID)) != 0 {
+		t.Fatal("замок взят до проверки протокола")
+	}
+}

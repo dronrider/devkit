@@ -331,6 +331,7 @@ func cmdServe(home, staticDir string) error {
 	keeperStop := make(chan struct{})
 	defer close(keeperStop)
 	go srv.quotaKeeper(keeperStop)
+	defer srv.appTasksClose()
 	go srv.loginKeeper(keeperStop)
 	// Сторож поднятых сессий: смерть подъёма замечает он, когда на разговор
 	// никто не смотрит (chatwatch.go).

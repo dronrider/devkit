@@ -198,6 +198,7 @@ type server struct {
 	groomStartMu sync.Mutex
 	appMu        sync.Mutex
 	appChats     map[string]*appChat
+	appTasks     map[string]*appTask
 
 	// Вопросы помощника пароля askpass (askpass.go, DK-772): ID запроса ->
 	// ожидание. Пароль живёт тут, в памяти, и в ответе помощнику; в журнал,
@@ -239,6 +240,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{},
 		archive: map[string]archiveEntry{}, deaf: map[string]deafEntry{},
 		appChats:    map[string]*appChat{},
+		appTasks:    map[string]*appTask{},
 		flights:     map[string]*boardFlight{},
 		lagSaid:     map[string]bool{},
 		slowSaid:    map[string]bool{},

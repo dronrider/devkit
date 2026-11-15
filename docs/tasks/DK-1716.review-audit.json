@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1716",
-  "base_sha": "ce84b5981cc19ef15690613fb48bbbfa5cc19c60",
-  "head_sha": "0e2aa63dcdb75c32c9e2283edf12d5fb62330078",
-  "code_hash": "b804729ff3be43f270bcc52106b4e2d22b2e7d6f51d261751294fc0401c43a63",
+  "base_sha": "410883111bde5f2458b086909d7d04473e448b7d",
+  "head_sha": "f8c6eaf91428d42e5667c82c43a0bafb8a03c7ac",
+  "code_hash": "1bb61ef7e8f0452b1d9eac46a06a5cf87ed262650bec95d66570221516d0bf6f",
   "task_hash": "a586a419382a8c7c69ee265c2c5b4748fcc79691096c5e2e492c7f25d7c9fa70",
   "sources": [
     {
@@ -50,7 +50,9 @@
       "Жизненный цикл/видимость; tools/dashboard/apptask_test.go; appchat_test.go; runs.go; chats.go; Проверки exactcompletion, active/stale rights, cancelstartup, stop/manualstate и cleanup закрывают найденные ревью риски.",
       "Внешний путь; apptask_regression_test.go; apptask_artifact_test.go; docs/tasks/DK-1716.md:Сценарий проверки; Один HTTP API формы проверен против old/new и отдельного бинаря в synthetic HOME, без настоящего modelвызова.",
       "Граница агентской процедуры; kit/skills/board-task/task-run.py, docs/ARCHITECTURE.md, git diff ce84b5981..5eb73d30e; изменен программный носитель и описание протокола, шаги SKILL.md/определений агентов не менялись; живой obeycheck не заявлен.",
-      "Сценарий после неудачной обкатки; docs/tasks/DK-1716.md, 0e2aa63dc; изменена только shell-группа в одном шаге, guard пустого/неисполняемого бинаря проверен изолированно; программный код и95 источников правил неизменны, прежние доказательства применимы."
+      "Сценарий после неудачной обкатки; docs/tasks/DK-1716.md, 0e2aa63dc; изменена только shell-группа в одном шаге, guard пустого/неисполняемого бинаря проверен изолированно; программный код и источники95 правил неизменны, прежние доказательства применимы.",
+      "Ребейз на410883111: все9 коммитов range-diff равны. Программный transport и источники95 правил идентичны; предыдущие проверки/мутации относятся к эквивалентному коду. Изучены новые main изменения DK-1717/1718 (outbox/history/selection/Ask.Tree) и их стык с app-server; узкий merged-context прогон GREEN на f8c6eaf91 (14,9с), проверены TaskRun и новые selection/history границы.",
+      "Соответствие старых и новых коммитов: 30820cb52->3f06c1792;8fa580379->0b40e38a7;eaf192abe->06b58c6c0. Старые regcheck/мутации остаются историческими доказательствами эквивалентного патча; свежая совместимость проверена на новой базе410883111."
     ]
   },
   "rules": [
@@ -150,12 +152,17 @@
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Старый путь и сохраненные чаты совместимы с дополнительными полями.",
+      "reason": "Девять патчей сохранены ребейзом; совместимость нового main по истории/принадлежности ответа проверена чтением и целевым прогоном.",
       "evidence": [
         {
           "object": "Запуск задачи Codex",
           "location": "chats.go:chatStore; internal/taskhead/raise.go:Request/AppServerCarrier/readHead; runs.go:handleRunStart",
           "observation": "omitempty поля TaskRun/PID отсутствуют у старых чатов; nil AppServer вызывает прежний ReadHead, только task+codex выбирает новую ветку."
+        },
+        {
+          "object": "Совместимость с DK-1717/1718 на новой базе",
+          "location": "410883111..f8c6eaf91; tools/dashboard/chats.go:chatStoreWrite/handleChatSay; sessions.go:handleSession; chatselection.go:mergeSelectionContexts/deliverSelection",
+          "observation": "range-diff ce84..47c93214d против410883111..f8c6eaf91 дает9 равныхкоммитов. app*/chats.go/taskhead/task-run/testfiles и источники95 правил не изменились. appFeedServe вызывается до transcriptboundary; selection обрабатывается до appSay; chatStoreWrite под файловым lock сохраняет monotonic Delivered contexts при записи Thread/TaskRun. Merged-context TestAppTask, Selection(WorktreeDocument|DeliveredMergeMonotonic|ContextMigrationMerge|ReceiptBelongsToMessage), TaskSaid(ConversationBoundary|StreamBoundary) GREEN на f8c6eaf91: пакет11,722с, обёртка14,9с."
         }
       ]
     },
@@ -201,6 +208,11 @@
           "object": "Запуск задачи Codex",
           "location": "server.go:appMu; apptask.go:appTask lifecycle; appchat.go:appChat.mu; internal/taskhead/lock.go",
           "observation": "appTasks/appChats защищены appMu, busy/notes под c.mu; отмена при handshake не допускает позднюю регистрацию/turn; общий tasklock арбитрирует процессы."
+        },
+        {
+          "object": "Совместимость с DK-1717/1718 на новой базе",
+          "location": "410883111..f8c6eaf91; tools/dashboard/chats.go:chatStoreWrite/handleChatSay; sessions.go:handleSession; chatselection.go:mergeSelectionContexts/deliverSelection",
+          "observation": "range-diff ce84..47c93214d против410883111..f8c6eaf91 дает9 равныхкоммитов. app*/chats.go/taskhead/task-run/testfiles и источники95 правил не изменились. appFeedServe вызывается до transcriptboundary; selection обрабатывается до appSay; chatStoreWrite под файловым lock сохраняет monotonic Delivered contexts при записи Thread/TaskRun. Merged-context TestAppTask, Selection(WorktreeDocument|DeliveredMergeMonotonic|ContextMigrationMerge|ReceiptBelongsToMessage), TaskSaid(ConversationBoundary|StreamBoundary) GREEN на f8c6eaf91: пакет11,722с, обёртка14,9с."
         }
       ]
     },
@@ -751,6 +763,11 @@
           "object": "Пять исправлений независимого ревью",
           "location": "docs/tasks/DK-1716.md:Ход работы; regcheck --base 8fa580379 --tests tools/dashboard/apptask_test.go,tools/dashboard/appchat_test.go",
           "observation": "TestAppTask StartAndStopWithoutTmux, ChatStopVariantsPersistState, CancelDuringHandshake, StaleRecordCannotGrantTaskRights и ChildCompletionDoesNotFinishPass: регчек подтвердил oldred/newgreen на eaf192abe, timeout2m. Чужая UIзадача не запускалась."
+        },
+        {
+          "object": "Исходная HTTP регрессия на новой предковой базе",
+          "location": "docs/tasks/DK-1716.md:Ход работы; env GOWORK=off regcheck --base 410883111bde5f2458b086909d7d04473e448b7d --tests tools/dashboard/apptask_regression_test.go,tools/dashboard/appchat_test.go -- devkitctl test tools/dashboard -run '^TestAppTaskRunFromForm$' -count=1",
+          "observation": "Диспетчер выполнил команду после ребейза: old410883111 RED, currentf8c6eaf91 GREEN. Перенесены только apptask_regression_test.go/appchat_test.go, тест вызывает API кнопки формы, фактический liveSol не вызывался."
         }
       ]
     },

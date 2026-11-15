@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1716",
-  "base_sha": "410883111bde5f2458b086909d7d04473e448b7d",
-  "head_sha": "f8c6eaf91428d42e5667c82c43a0bafb8a03c7ac",
-  "code_hash": "1bb61ef7e8f0452b1d9eac46a06a5cf87ed262650bec95d66570221516d0bf6f",
+  "base_sha": "fe95ee38b2eb006e8827a736785be40a7849d613",
+  "head_sha": "30880e99e6050e21fc4f0e16420cd7d0217709dd",
+  "code_hash": "d626f6b046c442711df140d52411afbb586b11ffb0a6932e21f6b38334968cdf",
   "task_hash": "a586a419382a8c7c69ee265c2c5b4748fcc79691096c5e2e492c7f25d7c9fa70",
   "sources": [
     {
@@ -39,7 +39,7 @@
   ],
   "architecture": {
     "goal": "После выбора Sol и Выполнить задача реально начинает работу с выбранными моделью и effort; пользователь видит ход/отказ, дубль не появляется, остановка прекращает работу.",
-    "decision": "Только форма task+protocol=codex создает частный Unix socket carrier. taskhead.Raise поднимает штатную task-run.py headless с этой командой; каждый проход передает order существующей appSpawn/turn/start и получает код только по main threadId+turnId.",
+    "decision": "Форма task+foreign выбирает существующую app-server дорогу и после строгой проверки protocol=codex в taskhead создает частный Unix socket carrier. taskhead.Raise поднимает штатную task-run.py headless с этой командой; каждый проход передает order существующей appSpawn/turn/start и получает код только по main threadId+turnId.",
     "boundaries": "taskhead/taskstate владеют общим lock, RunID и manualstop. task-run владеет preflight/foreign entry/pass budget/ожиданиями. dashboard appTask владеет socket/process lifecycle и runtime scope, appSpawn/appNote/feed владеют Codex RPC/историей. chatStore сохраняет модель/effort/thread, но не является самостоятельным разрешением TaskRun прав.",
     "alternative": "Прямой appTurn из handleRunStart короче, но обходит task-run preflight, чужого исполнителя и счет проходов. Добавление Codex CLI в [head] проще для запуска процесса, но выбирает другой уже нежелательный носитель и не использует существующие app-server/history. Новый общий RPC-конвейер в Go продублировал бы Python lifecycle.",
     "justification": "Обязательный контракт это пользовательская кнопка и штатные gates/fullcycle, выбранная модель/effort/binding и отказ дубля. App-server выбран после исследования отсутствующей head и уже действующего протокола. Ограничение workspace-write/on-request/auto_review согласовано человеком только для активного TaskRun с формы (развилка15ноября), обычный чат и CLI остаются never. Узкий адаптер минимально соединяет существующие владельцы без второго конвейера.",
@@ -52,7 +52,9 @@
       "Граница агентской процедуры; kit/skills/board-task/task-run.py, docs/ARCHITECTURE.md, git diff ce84b5981..5eb73d30e; изменен программный носитель и описание протокола, шаги SKILL.md/определений агентов не менялись; живой obeycheck не заявлен.",
       "Сценарий после неудачной обкатки; docs/tasks/DK-1716.md, 0e2aa63dc; изменена только shell-группа в одном шаге, guard пустого/неисполняемого бинаря проверен изолированно; программный код и источники95 правил неизменны, прежние доказательства применимы.",
       "Ребейз на410883111: все9 коммитов range-diff равны. Программный transport и источники95 правил идентичны; предыдущие проверки/мутации относятся к эквивалентному коду. Изучены новые main изменения DK-1717/1718 (outbox/history/selection/Ask.Tree) и их стык с app-server; узкий merged-context прогон GREEN на f8c6eaf91 (14,9с), проверены TaskRun и новые selection/history границы.",
-      "Соответствие старых и новых коммитов: 30820cb52->3f06c1792;8fa580379->0b40e38a7;eaf192abe->06b58c6c0. Старые regcheck/мутации остаются историческими доказательствами эквивалентного патча; свежая совместимость проверена на новой базе410883111."
+      "Соответствие старых и новых коммитов: 30820cb52->3f06c1792;8fa580379->0b40e38a7;eaf192abe->06b58c6c0. Старые regcheck/мутации остаются историческими доказательствами эквивалентного патча; свежая совместимость проверена на новой базе410883111.",
+      "30880e99e:3dispatch comparisons используют уже существующий Harness.foreign(), nil-safe; поддерживаемый carrier протокол по-прежнему задает readHead. Это сокращает дублирование знания профиля в dashboard, не добавляя backend/новую подписку и не снимая guard. TestAppTaskRenamedHarness проверяет произвольное имя подписки с тем же протоколом; quota regression red/green подтверждает отсутствие literals.",
+      "Второй rebase наfe95ee38b: main изменил только docs/tasks/DK-1718.md; range-diff410883111..ddabd1518 противfe95ee38b..64c9cfe83 дает11 равных патчей. Общий программный контекст после предыдущей проверки совместимости не изменился."
     ]
   },
   "rules": [
@@ -83,6 +85,11 @@
           "object": "Запуск задачи Codex",
           "location": "internal/taskhead/raise.go:AppServerCarrier/readHead; tools/dashboard/apptask.go:appTaskPass; task-run.py:app_turn_client",
           "observation": "Raise получает команду как контракт носителя; Python не обращается к внутренним структурам dashboard."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -143,6 +150,11 @@
           "object": "Запуск задачи Codex",
           "location": "internal/taskhead/raise.go:Raise; lock.go:HoldForDelegate; apptask.go; chats.go:handleChatStop",
           "observation": "Входы задачи и чата закрывают один appTask; child completion не должен менять main busy. Исправления ревью проверяются отдельными тестами."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -157,12 +169,17 @@
         {
           "object": "Запуск задачи Codex",
           "location": "chats.go:chatStore; internal/taskhead/raise.go:Request/AppServerCarrier/readHead; runs.go:handleRunStart",
-          "observation": "omitempty поля TaskRun/PID отсутствуют у старых чатов; nil AppServer вызывает прежний ReadHead, только task+codex выбирает новую ветку."
+          "observation": "omitempty поля TaskRun/PID отсутствуют у старых чатов; nil AppServer вызывает прежний ReadHead, task+foreign выбирает носитель, чей строгий protocol=codex проверяет общий readHead."
         },
         {
           "object": "Совместимость с DK-1717/1718 на новой базе",
           "location": "410883111..f8c6eaf91; tools/dashboard/chats.go:chatStoreWrite/handleChatSay; sessions.go:handleSession; chatselection.go:mergeSelectionContexts/deliverSelection",
           "observation": "range-diff ce84..47c93214d против410883111..f8c6eaf91 дает9 равныхкоммитов. app*/chats.go/taskhead/task-run/testfiles и источники95 правил не изменились. appFeedServe вызывается до transcriptboundary; selection обрабатывается до appSay; chatStoreWrite под файловым lock сохраняет monotonic Delivered contexts при записи Thread/TaskRun. Merged-context TestAppTask, Selection(WorktreeDocument|DeliveredMergeMonotonic|ContextMigrationMerge|ReceiptBelongsToMessage), TaskSaid(ConversationBoundary|StreamBoundary) GREEN на f8c6eaf91: пакет11,722с, обёртка14,9с."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -228,6 +245,11 @@
           "object": "Запуск задачи Codex",
           "location": "apptask.go:appTaskPass/appTaskToolEnv; appchat.go:appSpawn/appAutomaticReview; raise.go:readHead",
           "observation": "Private temp dir0700/socket0600+token+проверка owner PID; protocol codex обязателен; TaskRun политика проверяется ответом клиента, обычный taskchat никогда не получает ее из stale флага."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -393,6 +415,11 @@
           "object": "Запуск задачи Codex",
           "location": "runs.go:handleRunStart; apptask.go:startAppTask/appTaskPass; appchat.go:appSpawn/appEffort",
           "observation": "Harness/tier разворачиваются в st.Model; effort high хранится в CxEffort и turn/start; protocol выбирает носитель, auto_review ограничено согласованной задачей."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -453,6 +480,11 @@
           "object": "Запуск задачи Codex",
           "location": "internal/taskhead/raise.go:AppServerCarrier; task-run.py:--app-turn-client; apptask_artifact_test.go",
           "observation": "Carrier это внутренний объект Request и private delivery command; DEVKIT_DASHBOARD_BIN существует только как вход теста установленного артефакта."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -468,6 +500,11 @@
           "object": "Запуск задачи Codex",
           "location": "raise.go:readHead; apptask.go:appTaskPass; appchat.go:appSpawn; task-run.py:app_turn_client",
           "observation": "Проверяются protocol codex+command, token/nonempty order, effective workspaceWrite/on-request/auto_review и JSON turn ID; malformed carrier argv отвергается до socket."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -488,6 +525,11 @@
           "object": "Один шаг сценария проверки артефакта",
           "location": "docs/tasks/DK-1716.md:Сценарий проверки; commit0e2aa63dc",
           "observation": "Команда занимает одну физическую строку: выбор probe_binary && test-x && DEVKIT_DASHBOARD_BIN=... devkitctl test. sh-n GREEN. Изолированный shell с mockdevkitctl: пустой/несуществующий путь завершается до теста, исполняемый путь передается неизменным. Это проверка команды, повторный настоящий artifactrehearse остается диспетчеру."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -743,6 +785,11 @@
           "object": "Запуск задачи Codex",
           "location": "raise_test.go; appchat_test.go; apptask_test.go; apptask_regression_test.go; apptask_artifact_test.go; task_run_test.py",
           "observation": "Покрыты headless carrier/protocol/lock, formHTTP/model/effort/binding, bridge shape/result, stop/failure/revoke, installedartifact."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },
@@ -768,6 +815,16 @@
           "object": "Исходная HTTP регрессия на новой предковой базе",
           "location": "docs/tasks/DK-1716.md:Ход работы; env GOWORK=off regcheck --base 410883111bde5f2458b086909d7d04473e448b7d --tests tools/dashboard/apptask_regression_test.go,tools/dashboard/appchat_test.go -- devkitctl test tools/dashboard -run '^TestAppTaskRunFromForm$' -count=1",
           "observation": "Диспетчер выполнил команду после ребейза: old410883111 RED, currentf8c6eaf91 GREEN. Перенесены только apptask_regression_test.go/appchat_test.go, тест вызывает API кнопки формы, фактический liveSol не вызывался."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
+        },
+        {
+          "object": "Достоверность регрессии quota и положительной renamed проверки",
+          "location": "regcheck --base 64c9cfe83 --tests tools/dashboard/apptask_test.go -- devkitctl test tools/dashboard -run 'Test(QuotaNoHarnessNamesInCode|AppTaskRenamedHarness)' -count=1; devkitctl test tools/dashboard -run 'Test(QuotaNoHarnessNamesInCode|AppTaskRenamedHarness|AppTaskRunFromForm|RunStartOnChosenHarness|RunStartWithoutHarnessKeepsOldWay)' -count=1 -v",
+          "observation": "Автор сообщил фактические команды: 5 PASS (2,750 с пакет, 6,1 с wrapper), combined regcheck old 64c9cfe83 RED из-за трех литералов quota / new 30880e99e GREEN. Renamed test отдельно не объявлен красным на старом коде: это positive compatibility test при неизменном protocol=codex. Между прогоном незакоммиченного delta и commit 30880e99e правок не было."
         }
       ]
     },
@@ -818,6 +875,11 @@
           "object": "Один шаг сценария проверки артефакта",
           "location": "docs/tasks/DK-1716.md:Сценарий проверки; commit0e2aa63dc",
           "observation": "Команда занимает одну физическую строку: выбор probe_binary && test-x && DEVKIT_DASHBOARD_BIN=... devkitctl test. sh-n GREEN. Изолированный shell с mockdevkitctl: пустой/несуществующий путь завершается до теста, исполняемый путь передается неизменным. Это проверка команды, повторный настоящий artifactrehearse остается диспетчеру."
+        },
+        {
+          "object": "Выбор app-server по существующему критерию профиля",
+          "location": "64c9cfe83..30880e99e; tools/dashboard/runs.go:handleRunStart; apptask.go:appTaskPass; harnesses.go:Harness.foreign; internal/taskhead/raise.go:readHead; apptask_test.go:TestAppTaskRenamedHarness; quota_test.go:TestQuotaNoHarnessNamesInCode",
+          "observation": "Три литеральных сравнения заменены на nil-safe foreign(), общий с appchat критерий. Строгий protocol=codex и непустая carriercommand в taskhead не менялись: другой протокол дает отказ до запуска/замка. Quota guard не ослаблен. Renamed fixture меняет snapshot и имяtoml, HTTP200 сохраняет customtask/task/thread. Автор сообщил5целевых GREEN2,75с и regcheck old64c9RED/new30880GREEN; fullsuite послефикса оставлен штатному merge."
         }
       ]
     },

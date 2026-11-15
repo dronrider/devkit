@@ -38,7 +38,8 @@ const chats = [
   { id: "blank-eff", project: "demo", blank: true, state: "not-started", idle: true,
     model: "opus", pickHarness: "claude-code", mtime: "2026-08-12T09:30:00+03:00", tasks: [] },
 ];
-const chatModels = tiers.map((m) => ({ model: m.model, tier: m.tier, harness: "claude-code" }));
+const chatModels = tiers.map((m) => ({ model: m.model, tier: m.tier, harness: "claude-code" }))
+  .concat([{ model: "glm-5.3", tier: "pro", harness: "glm-code" }]);
 const board = { sections: [{ key: "in-progress", rows: [
   { id: "XR-1", title: "панель разговора", sect: "in-progress" },
 ] }] };
@@ -87,13 +88,13 @@ const last = () => posted[posted.length - 1];
 const markOn = (pop) => allByClass(pop, "effmark")
   .filter((b) => String(b.className).includes("on")).map((b) => dump(b).trim());
 
-// --- состав меню: строки моделей с чипами и метрами, ползунок ступеней глубины ---
+// --- состав меню: группы подписок с квотами, модели внутри, ползунок ступеней ---
 {
   const { pop } = openRowMenu();
   if (!pop) fail("у строки нет меню модели и глубины");
   const text = dump(pop).replace(/\s+/g, " ");
   for (const want of ["Модель", "Автоматически", "Глубина размышления",
-    "haiku mini, claude-code", "opus pro, claude-code", "glm-5.3 pro, glm-code"]) {
+    "claude-code", "glm-code", "haiku mini", "opus pro", "glm-5.3 pro"]) {
     if (!text.includes(want)) fail("в меню нет «" + want + "»: " + text);
   }
   // Переключатель стоит в первой строке списка моделей и включён по умолчанию:
@@ -102,17 +103,40 @@ const markOn = (pop) => allByClass(pop, "effmark")
   if (!box) fail("в меню формы задачи нет переключателя «Автоматически»");
   if (!box.checked) fail("переключатель «Автоматически» открылся снятым");
   if (!byClass(pop, "is-auto")) fail("меню не помечено включённым переключателем: " + dump(pop));
-  // Подписка со снимком несёт обе полоски, подписка без снимка ни одной:
-  // пустая полоска читалась бы нулём, а ноль у остатка это исчерпанный лимит.
+  // Первый уровень это подписки: по строке группы на подписку из ответа ручки,
+  // полоски квот стоят на группе, а у строк моделей их больше нет.
+  const grows = allByClass(pop, "grow");
+  if (grows.length !== 2) fail("групп подписок в меню не две: " + grows.length);
   const rows = allByClass(pop, "hrow");
-  const rich = rows.find((h) => dump(h).includes("opus"));
+  if (rows.length !== 4) fail("строк моделей в меню не четыре: " + rows.length);
+  if (rows.some((r) => allByClass(r, "meter").length)) {
+    fail("полоски квот вернулись на строку модели: " + dump(rows[0]));
+  }
+  // Меню открывается с развёрнутой группой текущей пары, точка стоит у её имени.
+  const opened = grows.filter((g) => String(g.className).includes("open"));
+  if (opened.length !== 1 || !dump(opened[0]).includes("claude-code")) {
+    fail("меню открылось не с группой пары машины: " +
+      JSON.stringify(grows.map((g) => dump(g))));
+  }
+  const held = grows.filter((g) => String(g.className).includes("hold"));
+  if (held.length !== 1 || !dump(held[0]).includes("claude-code")) {
+    fail("точка текущей пары стоит не у группы подписки по умолчанию: " +
+      JSON.stringify(grows.map((g) => dump(g))));
+  }
+  // Подписка со снимком несёт обе полоски на строке группы, подписка без
+  // снимка ни одной: пустая полоска читалась бы нулём, а ноль у остатка это
+  // исчерпанный лимит.
+  const rich = grows.find((g) => dump(g).includes("claude-code"));
   const widths = allByClass(rich, "meter").map((m) => m.children[0].style.width);
   if (JSON.stringify(widths) !== JSON.stringify(["62%", "18%"])) {
-    fail("полоски окна и недели не доехали до строки: " + JSON.stringify(widths));
+    fail("полоски окна и недели не доехали до строки группы: " + JSON.stringify(widths));
   }
-  const bare = rows.find((h) => dump(h).includes("glm"));
+  const bare = grows.find((g) => dump(g).includes("glm-code"));
   if (allByClass(bare, "meter").length) {
     fail("подписка без снимка рисует полоски: " + dump(bare));
+  }
+  if (!String(bare.title || "").includes("снимка нет")) {
+    fail("строка группы не говорит про снимок: " + bare.title);
   }
   const levels = allByClass(pop, "effmark").map((b) => dump(b).trim());
   if (JSON.stringify(levels) !== JSON.stringify(["low", "medium", "high", "xhigh", "max"])) {
@@ -120,10 +144,52 @@ const markOn = (pop) => allByClass(pop, "effmark")
   }
 }
 
+// --- свёртка по подписке: развёрнутая группа одна, выбор её не сворачивает ---
+{
+  const { pop } = openRowMenu();
+  await settle();
+  const grows = allByClass(pop, "grow");
+  const glmGrp = grows.find((g) => dump(g).includes("glm-code"));
+  const ccGrp = grows.find((g) => dump(g).includes("claude-code"));
+  const isOpen = (g) => String(g.className).includes("open");
+  // При включённом переключателе группы погашены и не нажимаются: клик по
+  // свёрнутой подписке ничего не раскрывает.
+  glmGrp.handlers.click({ stopPropagation: () => {} });
+  if (isOpen(glmGrp)) fail("включённый переключатель пустил руку к группам подписок");
+  if (!String(ccGrp.className).includes("verdgrp")) {
+    fail("группа пары машины не осталась яркой среди погашенных: " + ccGrp.className);
+  }
+  autoSet(pop, false);
+  // Клик по группе раскрывает её модели и сворачивает прежнюю группу.
+  glmGrp.handlers.click({ stopPropagation: () => {} });
+  if (!isOpen(glmGrp) || isOpen(ccGrp)) {
+    fail("клик по подписке не сменил раскрытую группу: " +
+      JSON.stringify(grows.map((g) => g.className)));
+  }
+  // Выбор строки моделей группу не сворачивает и меню не закрывает.
+  const glmRow = allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"));
+  glmRow.handlers.click({ stopPropagation: () => {} });
+  if (!isOpen(glmGrp)) fail("выбор модели свернул её группу");
+  if (pop.hidden) fail("выбор модели закрыл меню до выбора глубины");
+  // Точка уехала на группу ручного выбора.
+  if (!String(glmGrp.className).includes("hold") ||
+    String(ccGrp.className).includes("hold")) {
+    fail("точка текущей пары не уехала на группу выбора: " +
+      JSON.stringify(grows.map((g) => g.className)));
+  }
+  // Повторный клик по раскрытой группе сворачивает её, и раскрытых не остаётся.
+  glmGrp.handlers.click({ stopPropagation: () => {} });
+  if (grows.some(isOpen)) fail("повторный клик не свернул раскрытую группу");
+  ccGrp.handlers.click({ stopPropagation: () => {} });
+  if (!isOpen(ccGrp) || isOpen(glmGrp)) fail("соседняя подписка раскрылась поверх прежней");
+}
+
 // --- включённый переключатель не пускает руку к строкам и шкале ---
 {
   const { box, pop } = openRowMenu();
   const before = markOn(pop);
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -134,6 +200,9 @@ const markOn = (pop) => allByClass(pop, "effmark")
   // Снятый переключатель возвращает ручной выбор, и он снова доезжает до дела.
   autoSet(pop, false);
   if (byClass(pop, "is-auto")) fail("снятый переключатель оставил меню в автоматическом виде");
+  const openGrp = (name) => allByClass(pop, "grow").find((h) => dump(h).includes(name))
+    .handlers.click({ stopPropagation: () => {} });
+  openGrp("glm");
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -159,12 +228,16 @@ const markOn = (pop) => allByClass(pop, "effmark")
 {
   const { pop } = openRowMenu();
   autoSet(pop, false);
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   const glm = allByClass(pop, "effmark").map((b) => dump(b).trim());
   if (JSON.stringify(glm) !== JSON.stringify(["low", "high", "max"])) {
     fail("шкала glm не из трёх ступеней: " + JSON.stringify(glm));
   }
+  allByClass(pop, "grow").find((h) => dump(h).includes("claude-code"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("opus"))
     .handlers.click({ stopPropagation: () => {} });
   const ant = allByClass(pop, "effmark").map((b) => dump(b).trim());
@@ -191,6 +264,8 @@ const markOn = (pop) => allByClass(pop, "effmark")
 {
   const { box, pop } = openRowMenu();
   autoSet(pop, false);
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -248,6 +323,15 @@ const markOn = (pop) => allByClass(pop, "effmark")
   // В разговоре переключателя нет: там модель и глубину выбирают руками
   // (DK-1570, замечание пользователя).
   if (autoBox(menu)) fail("в меню разговора появился переключатель «Автоматически»");
+  // Свёртка в разговоре та же: группы подписок, развёрнута группа выбранной
+  // модели (DK-1570, макет свёртки).
+  const chatGrows = allByClass(menu, "grow");
+  if (chatGrows.length !== 2) fail("в меню разговора групп подписок не две: " + chatGrows.length);
+  const chatOpen = chatGrows.filter((g) => String(g.className).includes("open"));
+  if (chatOpen.length !== 1 || !dump(chatOpen[0]).includes("claude-code")) {
+    fail("в меню разговора развёрнута не группа выбранной модели: " +
+      JSON.stringify(chatGrows.map((g) => dump(g))));
+  }
   sel.handlers.mousedown({ preventDefault() {}, stopPropagation() {} });
   if (menu.hidden) fail("нажатие на выбор модели не открыло меню");
   // Повторное нажатие закрывает: меню не висит над строкой реплики.

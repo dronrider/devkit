@@ -11,6 +11,17 @@ import (
 func TestEffortMenuBrowserGeometry(t *testing.T) {
 	t.Setenv("DASHBOARD_EFFORT_CASE", "")
 	t.Setenv("DASHBOARD_EFFORT_LEVELS_ONLY", "")
+	t.Setenv("DASHBOARD_EFFORT_COLLAPSE", "")
+	effortMenuBrowser(t)
+}
+
+// Состав меню моделей по подписке (DK-1570, макет свёртки): первый уровень
+// это группы подписок с их квотами, модели стоят внутри групп, развёрнута
+// группа одна, включённый переключатель «Автоматически» гасит группы кроме
+// пары машины, и у поля ввода чата свёртка та же без переключателя. Сценарий
+// гоняется настоящим движком: гашение и раскрытие это computed-стили.
+func TestEffortMenuCollapseComposition(t *testing.T) {
+	t.Setenv("DASHBOARD_EFFORT_COLLAPSE", "1")
 	effortMenuBrowser(t)
 }
 
@@ -24,6 +35,7 @@ func TestEffortMenuClippingRegressions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("DASHBOARD_EFFORT_CASE", tc.focus)
 			t.Setenv("DASHBOARD_EFFORT_LEVELS_ONLY", "1")
+			t.Setenv("DASHBOARD_EFFORT_COLLAPSE", "")
 			effortMenuBrowser(t)
 		})
 	}

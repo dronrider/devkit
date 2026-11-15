@@ -1741,11 +1741,10 @@ function modelMeterPcts(harnessName) {
   return out;
 }
 
-// Строка меню это подписка, модель и ярус целиком, как в лестнице agentctl
-// harness (DK-1570). Чип называет ярус и подписку: у двух подписок одного
-// вида модель повторяется, и различает строки именно чип. Полоски показывают
-// квоты этой подписки, окно 5ч и неделя, а свежесть снимка стоит подсказкой:
-// подписку выбирают по остатку, и его возраст со строки пропадать не должен.
+// Строка модели внутри группы подписки (DK-1570, свёртка меню): ступень
+// лестницы agentctl harness, имя и чип яруса. Подписку называет строка группы,
+// и повторять её в чипе значило бы читать одно и то же дважды. У строки сверх
+// лестницы яруса нет, и чипа у неё тоже нет.
 function modelMenuRow(m) {
   const row = el("div", "hrow mrow");
   row.dataset.model = m.model;
@@ -1754,8 +1753,20 @@ function modelMenuRow(m) {
   // шкалу под выбранную строку и стенды сверяют состав (DK-1570, шкала v4).
   row.dataset.levels = JSON.stringify(m.levels || []);
   row.append(el("span", "hname", m.model));
-  row.append(el("span", "hchip", [m.tier, m.harness].filter(Boolean).join(", ")));
-  const pcts = modelMeterPcts(m.harness);
+  if (m.tier) row.append(el("span", "hchip", m.tier));
+  return row;
+}
+
+// Строка группы это подписка из ответа ручки (DK-1570, свёртка меню): имя,
+// шеврон раскрытия и обе полоски её квот, окно 5ч и неделя. У двух подписок
+// одного вида две строки группы, и квоты у каждой свои. Свежесть снимка стоит
+// подсказкой: подписку выбирают по остатку, и его возраст со строки группы
+// пропадать не должен, как не пропадал прежде со строки модели.
+function modelGroupRow(name) {
+  const row = el("div", "grow");
+  row.dataset.group = name;
+  row.append(el("span", "gcar"), el("span", "gdot"), el("span", "gname", name));
+  const pcts = modelMeterPcts(name);
   const meters = el("span", "hmeters");
   for (const pair of [["5ч", pcts.win], ["нед", pcts.week]]) {
     if (pair[1] === null || pair[1] === undefined) continue;
@@ -1768,9 +1779,7 @@ function modelMenuRow(m) {
     meters.append(one);
   }
   row.append(meters);
-  const said = [(m.tier ? "ярус " + m.tier : ""), "подписка " + m.harness,
-    pcts.age || pcts.stale].filter(Boolean).join(", ");
-  withTip(row, said);
+  withTip(row, ["подписка " + name, pcts.age || pcts.stale].filter(Boolean).join(", "));
   return row;
 }
 
@@ -1940,6 +1949,13 @@ function runPickBody(into, opts) {
   // закрывается: дальше человек выбирает глубину.
   const rows = [];
   const pickOf = new Map();
+  // Свёртка меню по подписке (DK-1570): первый уровень несёт строки подписок,
+  // модели стоят внутри групп, и развёрнутая группа одна. Группа собирается по
+  // имени из ответа ручки: у двух подписок одного вида две строки с квотами
+  // каждой.
+  const groups = [];
+  const groupOf = new Map();
+  const groupByModel = (m) => (m ? groupOf.get(m.harness || "") || null : null);
   // Ручной выбор помнится строкой: ушёл на другую подписку и вернулся, бегунок
   // стоит там, где его оставили, а не на вердикте (шкала v4).
   const hand = new Map();
@@ -1954,6 +1970,27 @@ function runPickBody(into, opts) {
       if (opts.onEffort) opts.onEffort(lv);
     },
   });
+  // Развёрнутая группа одна: клик по строке подписки раскрывает её модели и
+  // сворачивает прежнюю, повторный клик по раскрытой сворачивает и её.
+  const openGroup = (g) => {
+    for (const x of groups) x.row.classList.toggle("open", x === g && Boolean(g));
+  };
+  // Меню открывается с развёрнутой группой текущей пары: вердиктной при
+  // включённом переключателе, ручного выбора при выключенном. Точка у имени
+  // группы называет, где эта пара стоит, а группа пары машины при включённом
+  // переключателе остаётся яркой среди погашенных. До ответа ручки pick пара
+  // машины неизвестна, и группой тогда стоит умолчание лестницы: раскрытым
+  // обязан быть кто-то, молчащее меню читалось бы поломкой.
+  const foldPaint = () => {
+    const pair = (auto ? autoPick : picked) || autoPick ||
+      ladder.find((m) => m.pin) || ladder[0] || null;
+    openGroup(groupByModel(pair));
+    for (const g of groups) {
+      const hold = Boolean(pair) && g.name === (pair.harness || "");
+      g.row.classList.toggle("hold", hold);
+      g.row.classList.toggle("verdgrp", auto && hold);
+    }
+  };
   // Подсвечена ровно одна строка: при включённом переключателе пара машины,
   // при выключенном выбор человека.
   const highlight = () => {
@@ -1962,6 +1999,7 @@ function runPickBody(into, opts) {
       const m = pickOf.get(r);
       r.classList.toggle("on", Boolean(target) && Boolean(m) && same(m, target));
     }
+    foldPaint();
   };
   // Выбор строки пересобирает шкалу под её набор ступеней и возвращает бегунок
   // на её ручной выбор либо вердикт. Вызывающий узнаёт новый уровень тут же:
@@ -1995,6 +2033,19 @@ function runPickBody(into, opts) {
     if (seed) hand.set(keyOf(now), seed);
   }
   for (const m of ladder) {
+    const gname = m.harness || "";
+    let grp = groupOf.get(gname);
+    if (!grp) {
+      grp = { name: gname, row: modelGroupRow(gname), kids: el("div", "gkids") };
+      groupOf.set(gname, grp);
+      groups.push(grp);
+      into.append(grp.row, grp.kids);
+      grp.row.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (auto) return;
+        openGroup(grp.row.classList.contains("open") ? null : grp);
+      });
+    }
     const row = modelMenuRow(m);
     pickOf.set(row, m);
     row.addEventListener("click", (ev) => {
@@ -2005,7 +2056,7 @@ function runPickBody(into, opts) {
       if (opts.onModel) opts.onModel(m);
     });
     rows.push(row);
-    into.append(row);
+    grp.kids.append(row);
   }
   // Шкала открывается набором пары машины либо строки-умолчания: ступени
   // семьи обязаны стоять на экране до первого касания.
@@ -2062,7 +2113,12 @@ function runPickBody(into, opts) {
       // и подсветка обязана стоять на ней. Вердикт тогда называет только
       // уровень.
       if (!now) autoPick = row;
-      if (!auto) return;
+      // В ручном виде вердикт всё равно называет пару без выбора человека, и
+      // точка группы обязана переехать на неё.
+      if (!auto) {
+        foldPaint();
+        return;
+      }
       curKey = keyOf(autoPick);
       slider.setLevels((autoPick && autoPick.levels) || []);
       slider.repaint();

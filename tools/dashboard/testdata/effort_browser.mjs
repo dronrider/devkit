@@ -3,12 +3,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 const { chromium } = createRequire(import.meta.url)("playwright");
 const [base, executablePath, token, boardNow, boardNext, flipMark] = process.argv.slice(2);
+const collapse = process.env.DASHBOARD_EFFORT_COLLAPSE === "1";
 const browser = await chromium.launch({ executablePath, headless: true });
 const context = await browser.newContext();
-await context.addInitScript(() => {
-  for (const [key, ms] of Object.entries({ ask: 250, groom: 250, pulse: 250 }))
+await context.addInitScript((fastPulse) => {
+  // Темп опроса разгоняет кейсы, но круг доски на быстром темпе трясёт стенд
+  // геометрии между замером координат и кликом: клик уезжает на соседнюю
+  // строку. Свёртке быстрый круг нужен, геометрии нет, и она живёт машинным
+  // темпом.
+  const rates = { ask: 250, groom: 250 };
+  if (fastPulse) rates.pulse = 250;
+  for (const [key, ms] of Object.entries(rates))
     localStorage.setItem("devkit.poll." + key, String(ms));
-});
+}, collapse);
 
 const proof = process.env.DASHBOARD_EFFORT_PROOF_DIR;
 if (proof) fs.mkdirSync(proof, { recursive: true });
@@ -25,10 +32,201 @@ try {
     const html = (await response.text()).replace('<script type="module" src="/assets/app.js', '<script src="/assets/app.js');
     await route.fulfill({ response, body: html });
   });
+  // Живая доска опрашивает свои ручки, и при смене отпечатка ответа она
+  // перерисовывает #groups целиком. Стенд стоит как раз внутри групп, и
+  // перерисовка вытирает его посреди случая: клики уходят в исчезнувший DOM.
+  // GET-ответы замерзают первым ответом: опрос ходит, данные не меняются, и
+  // повода перерисовывать у доски нет. Поток уведомлений под заморозку не
+  // попадает: он не кончается, и копия его не нужна.
+  const frozen = new Map();
+  await context.route(base + "/api/**", async (route) => {
+    // Заморозка стоит за кейсом свёртки: геометрия читает доску живьём, иначе
+    // подменённый ответ с новой строкой до страницы не доезжает, и проверка
+    // принудительного обновления вечно видит старую доску.
+    if (!collapse) {
+      await route.fallback();
+      return;
+    }
+    const req = route.request();
+    if (req.method() !== "GET" || req.resourceType() === "eventsource") {
+      await route.fallback();
+      return;
+    }
+    const url = req.url();
+    if (!frozen.has(url)) frozen.set(url, await route.fetch());
+    await route.fulfill({ response: frozen.get(url) });
+  });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror", String(error)));
   page.on("requestfailed", (request) => console.error("requestfailed", request.url(), request.failure()?.errorText));
-  for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+  if (collapse) {
+    // Состав меню моделей по подписке (DK-1570, макет свёртки): первый уровень
+    // это группы подписок с их квотами, модели стоят внутри групп именем и
+    // чипом яруса, развёрнута группа одна, и точка у имени группы называет
+    // текущую пару. Включённый переключатель «Автоматически» гасит все группы,
+    // кроме пары машины, и клики по погашенным не раскрывают их. У поля ввода
+    // чата свёртка та же, а переключателя там нет. Сценарий гоняется настоящим
+    // движком: гашение и разворачивание это computed-стили, а не классы на
+    // бумаге.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(base + "/#demo");
+    await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 });
+    await page.waitForFunction(() => boardPainted.screen && document.querySelector("#groups").children.length, null, { timeout: 5000 });
+    await page.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      document.querySelector("#effort-geometry")?.remove();
+      harnessView = { harnesses: [
+        { name: "stand-alpha", default: true, models: [
+          { model: "модель-а1", tier: "base", levels: ["low", "medium", "high", "xhigh", "max"] },
+          { model: "модель-а2", tier: "pro", levels: ["low", "medium", "high", "xhigh", "max"] }] },
+        { name: "stand-beta", models: [
+          { model: "модель-б1", tier: "base", levels: ["low", "high"] }] },
+        { name: "stand-gamma", models: [
+          { model: "модель-в1", tier: "pro", levels: ["low", "high", "max"] }] },
+      ] };
+      quotaView = { harnesses: [
+        { name: "stand-alpha", age_sec: 120, buckets: [
+          { name: "window5h_all", used_pct: 21 }, { name: "week_all", used_pct: 43 }] },
+        { name: "stand-gamma", age_sec: 7200, buckets: [{ name: "week_all", used_pct: 9 }] },
+      ] };
+      const host = el("div");
+      host.id = "effort-geometry";
+      host.style.cssText = "position:absolute;right:24px;top:70px;width:180px;z-index:30";
+      // Третий довод после make и подписи не занят, а tiers с now «вердикт» и
+      // auto дают меню задачи: переключатель включён, пары машины до ответа
+      // ручки нет, и развёрнута группа умолчания лестницы.
+      host.append(runControl("demo", "XR-4", (text) => el("button", "btn", text), "Выполнить",
+        undefined, undefined, undefined, undefined, undefined,
+        { list: ["base", "pro"], now: "вердикт", auto: true }));
+      const stage = el("div");
+      stage.style.cssText = "position:relative;height:100%;min-height:0;flex:1";
+      stage.append(host);
+      document.querySelector("#groups").replaceChildren(stage);
+      document.querySelector("#groups").scrollTop = 0;
+    });
+    const runHost = page.locator("#effort-geometry");
+    const runMenu = runHost.locator(".hpop");
+    await runHost.locator(".more2").click();
+    assert(await runMenu.isVisible(), "стрелка кнопки не открыла меню модели");
+    const read = (menu) => menu.evaluate((n) => {
+      const groups = [...n.querySelectorAll(".grow")];
+      return {
+        names: groups.map((g) => g.dataset.group),
+        open: groups.filter((g) => g.classList.contains("open")).map((g) => g.dataset.group),
+        verdgrp: groups.filter((g) => g.classList.contains("verdgrp")).map((g) => g.dataset.group),
+        hold: groups.filter((g) => g.classList.contains("hold")).map((g) => g.dataset.group),
+        meters: Object.fromEntries(groups.map((g) => [g.dataset.group, g.querySelectorAll(".hmt").length])),
+        titles: Object.fromEntries(groups.map((g) => [g.dataset.group, g.title || ""])),
+        rowMeters: [...n.querySelectorAll(".mrow")].filter((r) => r.querySelectorAll(".hmt").length).length,
+        rows: n.querySelectorAll(".mrow").length,
+        dimmed: Object.fromEntries(groups.map((g) => {
+          const s = getComputedStyle(g);
+          return [g.dataset.group, s.opacity + "/" + s.pointerEvents];
+        })),
+        kidsShown: Object.fromEntries(groups.map((g) => [g.dataset.group,
+          g.nextElementSibling && g.nextElementSibling.classList.contains("gkids")
+            ? getComputedStyle(g.nextElementSibling).display : "нет"])),
+        isAuto: n.classList.contains("is-auto"),
+        switch: Boolean(n.querySelector("label.auto")),
+      };
+    });
+    // Меню задачи открылось автоматическим видом: группа умолчания развёрнута
+    // и яркая, прочие погашены, и полоски квот стоят на группе, а не на моделях.
+    let comp = await read(runMenu);
+    assert(comp.isAuto && comp.switch, "у меню задачи нет включённого переключателя");
+    assert.deepEqual(comp.names, ["stand-alpha", "stand-beta", "stand-gamma"], "группы первого уровня не подписки");
+    assert.deepEqual(comp.open, ["stand-alpha"], "до вердикта развёрнута не группа умолчания");
+    assert.deepEqual(comp.verdgrp, ["stand-alpha"], "яркая при погашенных не группа пары");
+    assert.deepEqual(comp.meters, { "stand-alpha": 2, "stand-beta": 0, "stand-gamma": 1 },
+      "полоски остатка не доехали до строки группы");
+    assert(!comp.rowMeters, "полоски вернулись на строки моделей");
+    assert(comp.titles["stand-beta"].includes("снимка нет"), "группа без снимка молчит");
+    assert(comp.titles["stand-alpha"].length > 1, "подсказка группы потеряла возраст снимка");
+    assert.equal(comp.rows, 4, "строк моделей не четыре");
+    // Группа пары машины остаётся яркой, но вход закрыт и у неё: ручной выбор
+    // в автоматическом виде отключён целиком, и открыть его может только
+    // сам переключатель.
+    assert.equal(comp.dimmed["stand-alpha"], "1/none", "группа пары машины погашена");
+    for (const gone of ["stand-beta", "stand-gamma"]) {
+      assert.equal(comp.dimmed[gone], "0.45/none", "погашенная группа " + gone + " кликабельна");
+    }
+    assert.equal(comp.kidsShown["stand-alpha"], "block", "модели развёрнутой группы скрыты");
+    assert.equal(comp.kidsShown["stand-beta"], "none", "модели свёрнутой группы видны");
+    // Клик по погашенной группе её не раскрывает: гашение это не картинка, а
+    // запрет входа. Клик идёт настоящей мышью в центр строки.
+    const betaBox = await runMenu.locator('.grow[data-group="stand-beta"]').boundingBox();
+    await page.mouse.click(betaBox.x + betaBox.width / 2, betaBox.y + betaBox.height / 2);
+    comp = await read(runMenu);
+    assert.deepEqual(comp.open, ["stand-alpha"], "клик по погашенной группе раскрыл её");
+    assert(await runMenu.isVisible(), "клик по погашенной группе закрыл меню");
+    // Снятый переключатель возвращает ручной вид: группы яркие и кликабельные,
+    // аккордеон держит одну развёрнутую группу. Клик идёт по подписи: сам
+    // вход спрятан, и переключатель рисует его скругление.
+    await runMenu.locator("label.auto").click();
+    comp = await read(runMenu);
+    assert(!comp.isAuto, "переключатель снят, а меню погашено");
+    assert.equal(comp.dimmed["stand-beta"], "1/auto", "после снятия группа осталась погашенной");
+    await runMenu.locator('.grow[data-group="stand-beta"]').click();
+    comp = await read(runMenu);
+    assert.deepEqual(comp.open, ["stand-beta"], "клик по группе не сменил развёрнутую");
+    // До выбора человека точка стоит на умолчании лестницы: пара машины не
+    // известна без вердикта, а молчащая точка читалась бы пропажей выбора.
+    assert.deepEqual(comp.hold, ["stand-alpha"], "точка группы ушла с умолчания лестницы");
+    // Выбор модели не сворачивает группу и не закрывает меню: точка переехала
+    // на группу выбора, а шкала перерисовалась под семью модели.
+    await runMenu.locator('.mrow[data-model="модель-б1"]').click();
+    comp = await read(runMenu);
+    assert.deepEqual(comp.open, ["stand-beta"], "выбор модели свернул группу");
+    assert.deepEqual(comp.hold, ["stand-beta"], "точка не переехала на группу выбора");
+    assert(await runMenu.isVisible(), "выбор модели закрыл меню до выбора глубины");
+    const betaLevels = await runMenu.evaluate((n) => [...n.querySelectorAll(".effmark")].map((m) => m.textContent));
+    assert.deepEqual(betaLevels, ["low", "high"], "шкала не перерисовалась под семью модели");
+    const onRow = await runMenu.locator('.mrow[data-model="модель-б1"]').evaluate((n) => n.classList.contains("on"));
+    assert(onRow, "выбранная модель не подсвечена");
+    // Повторный клик по раскрытой группе сворачивает и её: развёрнутых не
+    // остаётся, и состав читается списком подписок.
+    await runMenu.locator('.grow[data-group="stand-beta"]').click();
+    comp = await read(runMenu);
+    assert.deepEqual(comp.open, [], "повторный клик не свернул группу");
+    assert(!Object.values(comp.kidsShown).includes("block"), "модели свёрнутых групп видны");
+    // У поля ввода чата свёртка та же, а переключателя нет: меню открывается
+    // группой текущей пары поля.
+    await page.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      document.querySelector("#effort-geometry")?.remove();
+      const models = [
+        { model: "чат-модель-1", tier: "base", levels: ["low", "high", "max"], harness: "stand-alpha" },
+        { model: "чат-модель-2", tier: "pro", levels: ["low", "high", "max"], harness: "stand-alpha" },
+        { model: "чат-модель-3", tier: "base", levels: ["low", "high", "max"], harness: "stand-omega" },
+      ];
+      const host = el("div", "cbox");
+      host.id = "effort-geometry";
+      host.style.cssText = "position:absolute;left:24px;top:70px;width:180px;z-index:30";
+      host.append(modelPick("demo", { models, entry: { model: "чат-модель-3", pickHarness: "stand-omega" } }));
+      const stage = el("div");
+      stage.style.cssText = "position:relative;height:100%;min-height:0;flex:1";
+      stage.append(host);
+      document.querySelector("#groups").replaceChildren(stage);
+    });
+    const chatHost = page.locator("#effort-geometry");
+    const chatMenu = chatHost.locator(".menu");
+    const chatField = chatHost.locator("select");
+    await chatField.click();
+    assert(await chatMenu.isVisible(), "поле модели не открыло меню");
+    comp = await read(chatMenu);
+    assert(!comp.switch, "у поля ввода чата появился переключатель");
+    assert.deepEqual(comp.names, ["stand-alpha", "stand-omega"], "группы чата не подписки");
+    assert.deepEqual(comp.open, ["stand-omega"], "меню чата открылось не группой пары поля");
+    assert.deepEqual(comp.meters, { "stand-alpha": 2, "stand-omega": 0 }, "квоты чата не доехали до групп");
+    await chatMenu.locator('.grow[data-group="stand-alpha"]').click();
+    comp = await read(chatMenu);
+    assert.deepEqual(comp.open, ["stand-alpha"], "аккордеон чата не сменил группу");
+    await chatMenu.locator('.mrow[data-model="чат-модель-2"]').click();
+    assert(await chatMenu.isVisible(), "выбор модели закрыл меню чата");
+    assert.equal(await chatField.inputValue(), "чат-модель-2", "выбор не отразился в поле модели");
+    results.push({ collapse: true });
+  }
+  if (!collapse) for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 844 }, { width: 1280, height: 800 }]) {
     // Фокус называет сочетание целиком, и вьюпорты без назначенных сочетаний
     // страницу не грузят: загрузка и две выдержки тут дороже самих проверок.
     if (focus && ![8, 24].some((count) => ["run", "chat"].some((kind) => ["top", "bottom"].some((side) => focus === `${viewport.width}/${count}/${kind}/${side}`)))) continue;
@@ -36,6 +234,9 @@ try {
     await page.goto(base + "/#demo");
     await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 }).catch(async (error) => { throw new Error(String(error) + " " + await page.locator("body").innerText() + " scripts=" + await page.locator("script").evaluateAll((nodes) => nodes.map((n) => n.outerHTML).join("|"))); });
     await page.waitForFunction(() => boardPainted.screen && document.querySelector("#groups").children.length, null, { timeout: 5000 });
+    // Шрифт доезжает позже разметки, и поздний своп сдвигает строки меню
+    // между замером координат и кликом: клик уезжает на соседнюю строку.
+    await page.evaluate(() => document.fonts.ready);
     for (const count of [8, 24]) for (const kind of ["run", "chat"]) for (const side of ["top", "bottom"]) {
       if (focus && focus !== `${viewport.width}/${count}/${kind}/${side}`) continue;
       await page.evaluate(({ count, kind, side }) => {
@@ -109,6 +310,21 @@ try {
       const anchor = host.locator(kind === "run" ? ".more2" : "select");
       const clicks = [];
       const nativeClick = async (target, expected) => {
+        // Раскладка доезжает кадрами позже разметки, и клик по координатам,
+        // снятым до сдвига, уезжает на соседнюю строку. Клик ждёт двух кадров
+        // с неподвижной строкой и только потом меряет точку.
+        await target.evaluate((n) => new Promise((done) => {
+          let top = null;
+          let ticks = 0;
+          const step = () => {
+            const r = n.getBoundingClientRect().top;
+            if (top !== null && Math.abs(top - r) < 0.5) return done();
+            top = r;
+            if (++ticks > 30) return done();
+            requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }));
         const point = await target.evaluate((n) => {
           const menu = n.closest(".hpop,.menu");
           if (menu) {
@@ -189,12 +405,14 @@ try {
       assert(!(await menu.isVisible()), "Escape не закрыл меню");
       await open();
       if (!levelsOnly) {
-      const next = menu.locator(".mrow").nth(1);
+      const next = menu.locator(".grow.open + .gkids .mrow").nth(1);
       const choice = await next.getAttribute("data-model");
       await nativeClick(next, "model-1");
-      assert(await menu.isVisible(), "выбор модели закрыл меню до выбора глубины");
-      assert(await next.evaluate((n) => n.classList.contains("on")), "модель не выбрана");
-      if (kind === "chat") assert.equal(await anchor.inputValue(), choice, "выбор не отразился в поле модели");
+      assert(await menu.isVisible(), "выбор модели закрыл меню до выбора глубины " + label);
+      assert(await next.evaluate((n) => n.classList.contains("on")), "модель не выбрана " + label +
+        " rows=" + await menu.evaluate((n) => [...n.querySelectorAll(".grow")].map((g) =>
+          g.dataset.group + (g.classList.contains("open") ? ":open" : "")).join(",")));
+      if (kind === "chat") assert.equal(await anchor.inputValue(), choice, "выбор не отразился в поле модели " + label);
       }
       const geometry = await menu.evaluate((menu) => {
         const rect = (n) => { const r = n.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
@@ -204,9 +422,15 @@ try {
           scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight,
           overflowY: getComputedStyle(menu).overflowY,
           levels: marks.map((n) => ({ text: n.textContent, ...rect(n) })),
-          content: [...menu.querySelectorAll(".hname,.hchip,.hmt,.meter")].map(rect),
+          // Свёрнутые группы строк не показывают: меряются только уложенные
+          // узлы, у скрытых rect нулевой и в проверку краёв они не входят.
+          content: [...menu.querySelectorAll(".gname,.hname,.hchip,.hmt,.meter")]
+            .filter((n) => n.getClientRects().length).map(rect),
           rowCount: menu.querySelectorAll(".mrow").length,
-          quotaPerRow: [...menu.querySelectorAll(".mrow")].map((n) => n.querySelectorAll(".hmt").length),
+          groups: menu.querySelectorAll(".grow").length,
+          openGroups: menu.querySelectorAll(".grow.open").length,
+          quotaPerGroup: [...menu.querySelectorAll(".grow")].map((n) => n.querySelectorAll(".hmt").length),
+          metersOnRows: [...menu.querySelectorAll(".mrow")].some((n) => n.querySelectorAll(".hmt").length),
           navigation: rect(document.querySelector(".ptabs")),
           inPanel: Boolean(menu.closest(".cpanel .cpin")),
           inOwn: Boolean(menu.closest("#effort-own")),
@@ -219,7 +443,12 @@ try {
       }
       assert(kind === "chat" ? geometry.inPanel : geometry.inOwn, "меню вне своего контейнера " + label);
       assert.equal(geometry.rowCount, count, "состав лестницы " + label);
-      assert(geometry.quotaPerRow.every((n) => n === 2), "у каждой подписки две квоты " + label);
+      // Состав сворачивается по подписке (DK-1570): группа на четыре модели,
+      // развёрнута одна, и полоски квот стоят на группе, а не на строках.
+      assert.equal(geometry.groups, count / 4, "групп подписок не по одной на четыре модели " + label);
+      assert.equal(geometry.openGroups, 1, "развёрнутых групп не одна " + label);
+      assert(geometry.quotaPerGroup.every((n) => n === 2), "у каждой подписки две квоты " + label);
+      assert(!geometry.metersOnRows, "полоски квот вернулись на строки моделей " + label);
       assert(geometry.menu.left >= 0 && geometry.menu.right <= viewport.width + 1, "ширина меню " + label);
       assert(geometry.menu.top >= 0 && geometry.menu.bottom <= viewport.height + 1, "высота меню " + label);
       assert(geometry.scrollWidth <= geometry.clientWidth + 1, "горизонтальное переполнение " + label);
@@ -227,10 +456,14 @@ try {
       assert.deepEqual(geometry.levels.map((r) => r.text), ["low", "medium", "high", "xhigh", "max"]);
       assert(geometry.levels.every((r, i, rows) => !i || rows[i - 1].right <= r.left), "подписи глубины перекрываются " + label);
       if (geometry.scrollHeight > geometry.clientHeight + 1) assert.equal(geometry.overflowY, "auto", "прокрутка меню " + label);
-      if (!levelsOnly) for (const selector of [".mrow:first-of-type", ".mrow:last-of-type", ".effmark:last-child"]) {
-        const target = selector.startsWith(".mrow") ? menu.locator(".mrow")[selector.includes("first") ? "first" : "last"]() : menu.locator(selector);
-        await nativeClick(target, selector);
-        assert(await menu.isVisible(), "click пункта закрыл меню " + label);
+      if (!levelsOnly) {
+        // Клики проходят по строкам развёрнутой группы: свёрнутые группы
+        // своих строк не показывают, и выбор модели идёт после раскрытия.
+        const openRows = menu.locator(".grow.open + .gkids .mrow");
+        for (const target of [openRows.first(), openRows.last(), menu.locator(".effmark:last-child")]) {
+          await nativeClick(target, "строка развёрнутой группы");
+          assert(await menu.isVisible(), "click пункта закрыл меню " + label);
+        }
       }
       const checkLevels = async (phase) => {
         for (const level of ["low", "medium", "high", "xhigh", "max"]) {
@@ -266,7 +499,7 @@ try {
       }
     }
   }
-  assert.equal(results.length, focus ? 1 : 24, "проверены все назначенные сочетания");
+  assert.equal(results.length, collapse ? 1 : (focus ? 1 : 24), "проверены все назначенные сочетания");
   console.log(JSON.stringify({ ok: true, cases: results.length }));
 } finally {
   await browser.close();

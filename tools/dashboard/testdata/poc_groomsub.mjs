@@ -74,8 +74,17 @@ const openMenu = () => {
   const { pop } = openMenu();
   const text = dump(pop).replace(/\s+/g, " ");
   for (const want of ["Модель", "Глубина размышления",
-    "opus pro, claude-code", "glm-5.3 base, glm-code"]) {
+    "claude-code", "glm-code", "opus pro", "glm-5.3 base"]) {
     if (!text.includes(want)) fail("в меню разбора нет «" + want + "»: " + text);
+  }
+  // Состав сворачивается по подписке, как у запуска задачи: групп две,
+  // развёрнута группа умолчания (DK-1570, макет свёртки).
+  const grows = allByClass(pop, "grow");
+  if (grows.length !== 2) fail("в меню разбора групп подписок не две: " + grows.length);
+  const opened = grows.filter((g) => String(g.className).includes("open"));
+  if (opened.length !== 1 || !dump(opened[0]).includes("claude-code")) {
+    fail("в меню разбора развёрнута не группа умолчания: " +
+      JSON.stringify(grows.map((g) => dump(g))));
   }
   // Разбор черновика это форма записи, и переключатель «Автоматически» есть и
   // тут: включённый оставляет пару машины, то есть умолчание лестницы (DK-1570).
@@ -90,7 +99,7 @@ const openMenu = () => {
   // верхний ярус клиента разбору не нужен (RUN_TIER).
   const on = allByClass(pop, "hrow")
     .filter((h) => String(h.className).includes("on")).map((h) => dump(h).trim());
-  if (on.join(",") !== "opus pro, claude-code") {
+  if (on.join(",") !== "opus pro") {
     fail("умолчание разбора не модель яруса RUN_TIER: " + on.join(","));
   }
 }
@@ -114,6 +123,8 @@ if (posted[0].body.effort) {
   const was = posted.length;
   const { pop } = openMenu();
   autoSet(pop, false);
+  allByClass(pop, "grow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
@@ -142,7 +153,7 @@ if (posted[0].body.effort) {
   if (!sw || !sw.checked) fail("после разбора переключатель остался снятым");
   const on = allByClass(pop, "hrow")
     .filter((h) => String(h.className).includes("on")).map((h) => dump(h).trim());
-  if (on.join(",") !== "opus pro, claude-code") {
+  if (on.join(",") !== "opus pro") {
     fail("после разбора подсвечена не пара умолчания: " + on.join(","));
   }
   await confirm(pickOne().btn);
@@ -176,11 +187,13 @@ if (sandbox.location.hash !== "#demo/drafts") {
   const menu = byClass(box, "rmenu");
   if (!menu) fail("у строки цели нет меню модели и глубины: " + dump(box));
   const rows = allByClass(menu, "hrow").map((h) => dump(h).trim());
-  if (!rows.some((r) => r.includes("glm-code"))) {
+  if (!rows.some((r) => r.includes("glm-5.3"))) {
     fail("в меню цели нет второй подписки машины: " + JSON.stringify(rows));
   }
   const was = posted.length;
-  allByClass(menu, "hrow").find((h) => dump(h).includes("glm-code"))
+  allByClass(menu, "grow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(menu, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
   if (posted.length !== was) {

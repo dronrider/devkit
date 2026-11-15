@@ -1162,7 +1162,8 @@ func TestStaticRunSplitLayout(t *testing.T) {
 	// доски.
 	pick := funcBody(t, app, "function runPickBody(")
 	for _, want := range []string{`el("span", "hph", "Модель")`,
-		`el("span", "hph gap", "Глубина размышления")`, "modelMenuRow(m", `el("div", "tbar")`} {
+		`el("span", "hph gap", "Глубина размышления")`, "modelMenuRow(m", "modelGroupRow(gname)",
+		`el("div", "tbar")`} {
 		if !strings.Contains(pick, want) {
 			t.Fatalf("тело выбора запуска собрано не тем блоком (нет %q)", want)
 		}
@@ -1176,19 +1177,26 @@ func TestStaticRunSplitLayout(t *testing.T) {
 			t.Errorf("в тело выбора запуска вернулось %q", gone)
 		}
 	}
-	// Строка меню это модель, чип «ярус, подписка» и две полоски остатка, окно
-	// и неделя (DK-1570). Подписку выбирают по остатку, возраст снимка стоит
-	// подсказкой, а полоски-градусники с датами сброса из строки ушли.
+	// Строка модели это имя и чип яруса, а полоски остатка живут на строке
+	// группы подписки (DK-1570, свёртка): квоты у подписки одни, и повторять
+	// их у каждой модели значило бы читать одну картину четырежды. Возраст
+	// снимка стоит подсказкой группы.
 	row := funcBody(t, app, "function modelMenuRow(")
-	for _, want := range []string{`el("span", "hname", m.model)`, `el("span", "hchip"`,
-		"modelMeterPcts(m.harness)", "withTip(row,"} {
+	for _, want := range []string{`el("span", "hname", m.model)`, `el("span", "hchip"`} {
 		if !strings.Contains(row, want) {
-			t.Fatalf("строка списка подписок собрана не тем блоком (нет %q)", want)
+			t.Fatalf("строка списка моделей собрана не тем блоком (нет %q)", want)
 		}
 	}
 	for _, gone := range []string{"quotaRow(b)", `el("span", "h1")`, "по умолчанию\")"} {
 		if strings.Contains(row, gone) {
-			t.Errorf("в строку списка подписок вернулось %q", gone)
+			t.Errorf("в строку списка моделей вернулось %q", gone)
+		}
+	}
+	group := funcBody(t, app, "function modelGroupRow(")
+	for _, want := range []string{`el("span", "gname", name)`, "modelMeterPcts(name)",
+		"withTip(row,"} {
+		if !strings.Contains(group, want) {
+			t.Fatalf("строка группы подписок собрана не тем блоком (нет %q)", want)
 		}
 	}
 	dir, page := chromeStand(t, "split_run.js")

@@ -519,8 +519,8 @@ a:hover{text-decoration:underline}
 .hhead{display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:9px 11px 8px}
 .hhead .hph{padding:0}
-/* Включённый переключатель гасит ручной выбор: строки подписок и шкала глубины
-   не нажимаются, а пара машины остаётся видимой. */
+/* Включённый переключатель гасит ручной выбор: группы подписок, строки моделей
+   и шкала глубины не нажимаются, а пара машины остаётся видимой. */
 .auto{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none}
 .autotx{font:500 11px var(--sans);color:var(--tx2)}
 .auto input{position:absolute;opacity:0;width:0;height:0}
@@ -533,14 +533,37 @@ a:hover{text-decoration:underline}
 .auto input:checked + .sw::after{left:13px;background:var(--acc)}
 .auto input:focus-visible + .sw{outline:1px solid var(--acc);outline-offset:2px}
 @media (prefers-reduced-motion: reduce){.auto .sw,.auto .sw::after{transition:none}}
+.is-auto .grow{opacity:.45;pointer-events:none}
+.is-auto .grow.verdgrp{opacity:1}
 .is-auto .hrow:not(.on){opacity:.45;pointer-events:none}
+.is-auto .hrow.on{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--acc) 45%,transparent)}
 .is-auto .eff{pointer-events:none}
 .is-auto .effmark,.is-auto .effrail,.is-auto .efffill,.is-auto .effdot{opacity:.45}
 .is-auto .effdot.verd{opacity:1}
 .is-auto .effthumb{opacity:.9}
-/* Строка меню это подписка, модель и ярус целиком (DK-1570). Имя слева, чип
-   называет ярус и подписку, полоски остатка окна и недели стоят ниже. Подписок
-   одного вида может быть несколько, и различает строки чип, а не имя модели. */
+/* Строка группы это подписка из ответа ручки (DK-1570, свёртка меню): имя,
+   шеврон раскрытия и обе полоски её квот, окно 5ч и неделя. Точка у имени
+   называет, где стоит текущая пара. */
+.grow{position:relative;display:flex;align-items:center;gap:7px;width:100%;padding:6px 11px;border:none;
+  border-radius:8px;min-height:34px;text-align:left;background:none;
+  color:var(--tx);cursor:pointer}
+.grow:hover{background:var(--bg3)}
+.gcar{flex:none;width:7px;height:7px;border-right:1.5px solid var(--tx3);border-bottom:1.5px solid var(--tx3);
+  transform:rotate(-45deg);transition:transform .15s ease;margin-top:2px}
+.grow.open .gcar{transform:rotate(45deg)}
+@media (prefers-reduced-motion: reduce){.gcar{transition:none}}
+.gname{min-width:0;overflow-wrap:anywhere;
+  font:600 12.5px var(--sans);color:var(--tx)}
+.gdot{position:absolute;left:3px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;
+  background:var(--acc);opacity:0}
+.grow.hold .gdot{opacity:.9}
+.grow .hmeters{flex:1;display:flex;gap:10px;align-items:center;min-width:0;padding-left:6px}
+/* Модели подписки стоят внутри и раскрыты у одной группы зараз: клик по строке
+   подписки раскрывает их и сворачивает прежнюю группу. */
+.gkids{display:none;padding:1px 0 3px 14px}
+.grow.open + .gkids{display:block}
+/* Строка модели внутри группы: имя слева, чип называет ярус. Полоски квот
+   уехали на строку группы, у подписки они одни. */
 .hrow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px 7px;width:100%;padding:6px 11px;border:none;
   border-radius:8px;min-height:34px;text-align:left;background:none;
   color:var(--tx);cursor:pointer}
@@ -551,7 +574,6 @@ a:hover{text-decoration:underline}
 .hrow .hchip{min-width:0;max-width:160px;font:500 10px var(--sans);background:var(--bg3);color:var(--tx2);
   border-radius:5px;padding:1px 6px;overflow-wrap:anywhere}
 .hrow.on .hchip{background:color-mix(in oklab,var(--acc) 18%,var(--bg3))}
-.hrow .hmeters{grid-column:1/-1;display:flex;gap:10px;align-items:center;min-width:0;width:100%}
 /* Полоска остатка в строке тоньше карточной и без своих фонов: цвет ей даёт
    тот же meterClass, что и карточкам квот. */
 .hmt{display:flex;flex:1;align-items:center;gap:5px;min-width:0;color:var(--tx3);

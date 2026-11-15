@@ -220,11 +220,11 @@ type sessionInfo struct {
 	// Protocol это протокол клиента дороги app-server: стоит только у чужого
 	// протокола, и экран по нему ветвит реплику и ленту.
 	Protocol string `json:"protocol,omitempty"`
-	path   string
-	suffix string
-	stamp  string
-	root   string
-	mod    time.Time
+	path     string
+	suffix   string
+	stamp    string
+	root     string
+	mod      time.Time
 }
 
 // sessionFiles обходит каталоги транскриптов; сортировка свежие сверху, при
@@ -3058,12 +3058,16 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	_, onBoard := rows[info.Task]
 	keys := saidKeys(sid, info.Task, rows == nil || onBoard)
+	var taskFrom time.Time
+	if len(keys) > 1 {
+		taskFrom = s.saidTaskFrom(sid, head.Born, found.Path)
+	}
 	// Чтение ленты это и есть показ разговора человеку: панель читает её,
 	// пока разговор открыт на экране. Отметка нужна автоматике уборки, она по
 	// ней отличает непрочитанный ответ от прочитанного.
 	s.chatSeenMark(sid)
 	if r.URL.Query().Get("stream") == "1" {
-		s.streamSession(w, r, sid, path, keys)
+		s.streamSession(w, r, sid, path, keys, taskFrom)
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -3094,7 +3098,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// записью (saidCut).
 		from := feedFrom(items, feed.whole)
 		for _, key := range keys {
-			items = saidMerge(items, saidCut(saidLoad(s.cfg.Home, key), from))
+			items = saidMerge(items, saidForKey(saidLoad(s.cfg.Home, key), key, from, taskFrom))
 		}
 		// Заходы одного окна склеиваются в одну ленту: остановы у живой головы
 		// конвейера прежние, и после каждого кнопка поднимает новую сессию под
@@ -3192,7 +3196,11 @@ type tailSrc struct {
 // открытого потока, а прежний стрим цеплял один «живой» файл на открытии и
 // ронял его насовсем, стоило в транскрипте закрыться любому вызову
 // инструмента: после этого лента молчала до перезагрузки страницы.
-func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path string, keys []string) {
+func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path string, keys []string, taskBoundary ...time.Time) {
+	var taskFrom time.Time
+	if len(taskBoundary) != 0 {
+		taskFrom = taskBoundary[0]
+	}
 	f, ok := sseOpen(w)
 	if !ok {
 		return
@@ -3216,7 +3224,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 		items := feed.items
 		from := feedFrom(items, feed.whole)
 		for _, key := range keys {
-			items = saidMerge(items, saidCut(saidLoad(s.cfg.Home, key), from))
+			items = saidMerge(items, saidForKey(saidLoad(s.cfg.Home, key), key, from, taskFrom))
 		}
 		seq = len(items)
 		for i, t := range saidTails {
@@ -3286,7 +3294,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// агенту, и ждать, пока его отразит транскрипт (а по дороге
 			// задачи он не отразит вовсе), значит держать чужой экран
 			// пустым.
-			for _, t := range saidTails {
+			for i, t := range saidTails {
 				var lines []string
 				lines, t.off = newLines(t.file, t.off)
 				if len(lines) == 0 {
@@ -3294,6 +3302,7 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 				}
 				list, next := saidReplies(lines, t.src, t.idx)
 				t.idx = next
+				list = saidForKey(list, keys[i], time.Time{}, taskFrom)
 				for _, item := range list {
 					item.Seq = seq
 					seq++

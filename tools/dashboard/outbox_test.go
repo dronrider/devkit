@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -429,5 +433,185 @@ func TestFeedHistoryKeepsSaidInOrder(t *testing.T) {
 	}
 	if seen < 10 {
 		t.Fatalf("реплик человека в ленте %d, история их не отдала", seen)
+	}
+}
+
+func taskSaidBindTime(at string) string {
+	parsed, _ := time.Parse(time.RFC3339, at)
+	return bindTimeSince(parsed.Unix())
+}
+
+// Снятие границы feedFrom на полном транскрипте возвращало весь task-журнал.
+func TestTaskSaidConversationBoundary(t *testing.T) {
+	for _, mode := range []string{"since", "born", "old-window", "continuation", "resume", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			e, c := chatEnv(t)
+			const sid = "aaaa-1717"
+			const born = "2026-08-17T10:00:01Z"
+			transcript := passTalk("начало", born)
+			if mode == "legacy" {
+				transcript = `{"type":"user","message":{"role":"user","content":"начало"},"gitBranch":"main"}` + "\n"
+			}
+			if mode == "since" {
+				transcript = `{"type":"system","timestamp":"2026-08-16T08:00:00Z"}` + "\n" + transcript
+			}
+			if mode == "born" {
+				transcript = `{"type":"system","timestamp":"2026-08-17T10:00:00Z"}` + "\n" + transcript
+			}
+			writeSession(t, e.home, e.proj, "-xr-4", sid, transcript, time.Now())
+			writeBinds(t, e.home, passBind(e.home, taskSaidBindTime("2026-08-17T10:00:01Z"), sid, "XR-4", e.proj, "chat-XR-4-2"))
+			lower := "2026-08-17T10:00:00Z"
+			switch mode {
+			case "since":
+				at, _ := time.Parse(time.RFC3339, lower)
+				writeChatStore(t, e.home, "tmux-chat-XR-4-2", chatStore{Since: at.Unix(), From: "blank-1717"})
+			case "resume":
+				lower = born
+				at, _ := time.Parse(time.RFC3339, "2026-08-17T10:00:02Z")
+				writeChatStore(t, e.home, "tmux-chat-XR-4-2", chatStore{Since: at.Unix(), From: sid})
+				writeBinds(t, e.home, passBind(e.home, taskSaidBindTime("2026-08-17T10:00:03Z"), sid, "XR-4", e.proj, "chat-XR-4-2"))
+			case "old-window":
+				at, _ := time.Parse(time.RFC3339, "2026-08-18T10:00:00Z")
+				writeChatStore(t, e.home, "tmux-chat-XR-4-2", chatStore{Since: at.Unix()})
+				lower = born
+			case "continuation":
+				lower = "2026-08-17T09:00:00Z"
+				writeSession(t, e.home, e.proj, "-xr-4", "bbbb-1717", passTalk("прошлый заход", lower), time.Now())
+				writeBinds(t, e.home,
+					passBind(e.home, taskSaidBindTime("2026-08-17T09:00:00Z"), "bbbb-1717", "XR-4", e.proj, "chat-XR-4-2"),
+					passBind(e.home, taskSaidBindTime("2026-08-17T10:00:01Z"), sid, "XR-4", e.proj, "chat-XR-4-2"))
+				if err := e.s.saidPut(saidSessionKey("bbbb-1717"), saidRec{Time: "2026-08-17T08:30:00Z", Text: "свой прошлый"}); err != nil {
+					t.Fatal(err)
+				}
+			case "born":
+				lower = "2026-08-17T10:00:00Z"
+			}
+			for _, rec := range []saidRec{
+				{Time: "2026-08-16T10:00:00Z", Text: "чужое старое"},
+				{Time: lower, Text: "на границе"},
+				{Time: "2026-08-17T09:30:00Z", Text: "ответ до продолжателя"},
+				{Time: "2026-08-17T10:01:00Z", Text: "ответ парковке"},
+			} {
+				if err := e.s.saidPut(saidTaskKey("XR-4"), rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := e.s.saidPut(saidSessionKey(sid), saidRec{Time: "2026-08-15T00:00:00Z", Text: "свой до начала"}); err != nil {
+				t.Fatal(err)
+			}
+			read := func(query string) struct {
+				Items []reply
+				Start bool
+				Total int
+			} {
+				resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid+query, "")
+				var got struct {
+					Items []reply
+					Start bool
+					Total int
+				}
+				if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+					t.Fatal(err)
+				}
+				return got
+			}
+			all := read("?n=100")
+			if !all.Start {
+				t.Fatalf("начало не достигнуто: %+v", all)
+			}
+			texts := userTexts(all.Items)
+			joined := strings.Join(texts, "|")
+			if !strings.Contains(joined, "свой до начала") || !strings.Contains(joined, "на границе") || !strings.Contains(joined, "ответ парковке") {
+				t.Fatalf("потеря допустимых реплик: %q", texts)
+			}
+			if mode == "legacy" && !strings.Contains(joined, "чужое старое") {
+				t.Fatalf("legacy без временных меток потерял журнал: %q", texts)
+			}
+			if mode != "legacy" && strings.Contains(joined, "чужое старое") {
+				t.Fatalf("старый task-журнал попал в новый разговор: %q", texts)
+			}
+			if mode == "continuation" && (!strings.Contains(joined, "ответ до продолжателя") || !strings.Contains(joined, "свой прошлый") || !strings.Contains(joined, "прошлый заход")) {
+				t.Fatalf("потерян прошлый заход: %q", texts)
+			}
+			var pages []reply
+			query := "?n=2"
+			for i := 0; i < 20; i++ {
+				page := read(query)
+				pages = append(page.Items, pages...)
+				if page.Start || len(page.Items) == 0 {
+					break
+				}
+				query = "?n=2&before=" + url.QueryEscape(page.Items[0].Key)
+			}
+			if !reflect.DeepEqual(userTexts(pages), texts) {
+				t.Fatalf("страницы отличаются от полной ленты: %q / %q", userTexts(pages), texts)
+			}
+			if all.Total != len(all.Items) {
+				t.Fatalf("total=%d items=%d", all.Total, len(all.Items))
+			}
+		})
+	}
+}
+
+func TestTaskSaidStreamBoundary(t *testing.T) {
+	e, c := chatEnv(t)
+	const sid = "aaaa-1717"
+	writeSession(t, e.home, e.proj, "-xr-4", sid, passTalk("начало", "2026-08-17T10:00:01Z"), time.Now())
+	writeBinds(t, e.home, passBind(e.home, taskSaidBindTime("2026-08-17T10:00:01Z"), sid, "XR-4", e.proj, "chat-XR-4-2"))
+	since, _ := time.Parse(time.RFC3339, "2026-08-17T10:00:00Z")
+	writeChatStore(t, e.home, "tmux-chat-XR-4-2", chatStore{Since: since.Unix()})
+	put := func(key, at, text string) {
+		t.Helper()
+		if err := e.s.saidPut(key, saidRec{Time: at, Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(saidTaskKey("XR-4"), "2026-08-16T00:00:00Z", "чужое в снимке")
+	put(saidTaskKey("XR-4"), "2026-08-17T10:00:02Z", "снимок готов")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid+"?stream=1", nil)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	scan := bufio.NewScanner(resp.Body)
+	var got []reply
+	until := func(text string) {
+		t.Helper()
+		for scan.Scan() {
+			line := scan.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var item reply
+			if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &item) != nil {
+				continue
+			}
+			got = append(got, item)
+			if item.Text == text {
+				return
+			}
+		}
+		t.Fatalf("нет %q: %v, %q", text, scan.Err(), userTexts(got))
+	}
+	until("снимок готов")
+	put(saidTaskKey("XR-4"), "2026-08-16T00:00:00Z", "чужое в дострении")
+	put(saidSessionKey(sid), "2026-08-15T00:00:00Z", "свой до начала")
+	put(saidTaskKey("XR-4"), "2026-08-17T10:00:03Z", "дострение готово")
+	until("дострение готово")
+	texts := strings.Join(userTexts(got), "|")
+	if strings.Contains(texts, "чужое") || !strings.Contains(texts, "свой до начала") {
+		t.Fatalf("неверная граница потока: %q", texts)
+	}
+	var taskKeys []string
+	for _, item := range got {
+		if strings.HasPrefix(item.Key, "said-task-") {
+			taskKeys = append(taskKeys, item.Key)
+		}
+	}
+	if !reflect.DeepEqual(taskKeys, []string{"said-task-XR-4:1", "said-task-XR-4:3"}) {
+		t.Fatalf("поток сменил ключи: %q", taskKeys)
 	}
 }

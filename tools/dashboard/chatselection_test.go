@@ -425,3 +425,175 @@ func TestSelectionReplyKeepsOtherAttachments(t *testing.T) {
 		t.Fatalf("выбор потерял прочие вложения: %+v", item)
 	}
 }
+
+func TestSelectionWorktreeDocument(t *testing.T) {
+	for _, mode := range []string{"source", "legacy", "failed-context", "delivered-context", "legacy-success", "legacy-archive-success"} {
+		t.Run(mode, func(t *testing.T) {
+			st := newScenarioStand(t)
+			git := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "user.name=stand", "-c", "user.email=stand@example.invalid", "-C", st.e.proj}, args...)...)
+				cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			git("init")
+			git("add", "docs")
+			git("commit", "-m", "stand")
+			tree := filepath.Join(filepath.Dir(st.e.proj), "selection-branch")
+			git("worktree", "add", "-b", "selection", tree)
+			primary := readFile(t, st.path)
+			linked := *st.e
+			linked.proj = tree
+			work := *st
+			work.e = &linked
+			work.path = filepath.Join(tree, "docs/tasks/drafts/XR-4.md")
+			work.run(t, "--ask", "срок", "--hint", "месяц: хватает", "--option", "месяц", "--option", "год", "когда?")
+			cmd := exec.Command(st.bin, "-C", tree, "decide", "XR-4", "срок", "--chat")
+			cmd.Env = append(os.Environ(), "DEVKIT_TMUX=chat-scenario-stand", "CLAUDE_CODE_SESSION_ID="+scenarioPanelSID)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("publish: %v %s", err, out)
+			}
+			name := chat.TaskName("XR-4")
+			askPath := chat.AskPath(st.e.proj, name)
+			raw := readFile(t, askPath)
+			if mode == "source" && !strings.Contains(raw, "дерево "+tree+"\n") {
+				t.Fatalf("source lost: %s", raw)
+			}
+			if mode != "source" {
+				raw = strings.ReplaceAll(raw, "дерево "+tree+"\n", "")
+				if err := os.WriteFile(askPath, []byte(raw), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeBinds(t, st.e.home, "2026-11-15T12:00:01 сессия "+scenarioPanelSID+" задача XR-4 проект demo дерево "+tree+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
+			hs := st.e.s.handedAsks(scenarioPanelSID, st.e.s.binds(), st.e.s.now())
+			if len(hs) != 1 {
+				t.Fatalf("asks: %+v", hs)
+			}
+			shown := agentAskOf(hs[0])
+			if shown.Tree != tree {
+				t.Fatalf("wrong document: %+v", shown)
+			}
+			alien := filepath.Join(filepath.Dir(st.e.proj), "alien")
+			mkProject(t, alien)
+			forged := shown
+			forged.Tree = alien
+			st.sendSelection(t, selectionTestBody(t, forged, "", "foreign-project", map[string][]string{"срок": {"1"}}), http.StatusBadRequest)
+			request := selectionTestBody(t, shown, "точные слова", "worktree-selection", map[string][]string{"срок": {"1"}})
+			if mode == "failed-context" || mode == "delivered-context" || mode == "legacy-success" || mode == "legacy-archive-success" {
+				data, _ := json.Marshal(request["selection"])
+				var previous chat.Selection
+				if err := json.Unmarshal(data, &previous); err != nil {
+					t.Fatal(err)
+				}
+				previous.Tree = st.e.proj
+				key, err := st.e.s.selectionTextKey(scenarioPanelSID, "worktree-selection", "точные слова", previous)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store := st.e.s.chatStoreRead(scenarioPanelSID)
+				stored := selectionDeliveryContext{Reply: "worktree-selection", TextKey: key, Selection: previous, Name: name, Session: scenarioPanelSID}
+				if mode == "delivered-context" {
+					if err := json.Unmarshal([]byte(`{"delivered":true}`), &stored); err != nil {
+						t.Fatal(err)
+					}
+				}
+				store.SelectionContexts = append(store.SelectionContexts, stored)
+				if err := st.e.s.chatStoreWrite(scenarioPanelSID, store); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "legacy-success" || mode == "legacy-archive-success" {
+				receipt := `{"reply":"worktree-selection","selection":{},"result":"решено раньше"}`
+				saved, err := taskform.AppendToFork(primary, "сценарии", "  - вложение ответа: "+receipt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(st.path, []byte(saved), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "legacy-archive-success" {
+					putDoc(t, st.e.proj, "docs/tasks/archive/2026/XR-4.md", saved)
+					if err := os.Remove(st.path); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if mode == "delivered-context" || mode == "legacy-success" || mode == "legacy-archive-success" {
+				before := readFile(t, work.path)
+				st.sendSelection(t, request, http.StatusBadRequest)
+				if readFile(t, work.path) != before || len(chatLines(t, st.e.proj, name)) != 0 {
+					t.Fatal("successful context was retargeted")
+				}
+				return
+			}
+			bad := selectionTestBody(t, shown, "точные слова", "worktree-selection", map[string][]string{"срок": {"2"}})
+			if mode == "failed-context" {
+				st.sendSelection(t, bad, http.StatusBadRequest)
+			}
+			wrong := shown
+			wrong.Snapshot = "q1-wrong"
+			st.sendSelection(t, selectionTestBody(t, wrong, "", "wrong-snapshot", map[string][]string{"срок": {"1"}}), http.StatusBadRequest)
+			wrong = shown
+			wrong.Fork = "чужой вопрос"
+			st.sendSelection(t, selectionTestBody(t, wrong, "", "wrong-fork", map[string][]string{"чужой вопрос": {"1"}}), http.StatusBadRequest)
+			st.sendSelection(t, request, http.StatusOK)
+			f, found := taskform.FindFork(readFile(t, work.path), "срок")
+			if !found || f.Answer != "месяц: хватает" || readFile(t, st.path) != primary {
+				t.Fatalf("wrong document changed: %+v", f)
+			}
+			after := readFile(t, work.path)
+			st.sendSelection(t, request, http.StatusOK)
+			st.e.s.mu.Lock()
+			st.e.s.says = nil
+			st.e.s.mu.Unlock()
+			repeated := st.sendSelection(t, request, http.StatusOK)
+			if !strings.Contains(repeated, `"way":"dup"`) {
+				t.Fatalf("successful response delivered again: %s", repeated)
+			}
+			if readFile(t, work.path) != after || len(chatLines(t, st.e.proj, name)) != 1 {
+				t.Fatal("duplicate application or delivery")
+			}
+			if _, err := os.Stat(chat.Path(tree, name)); !os.IsNotExist(err) {
+				t.Fatalf("transport moved into document tree: %v", err)
+			}
+		})
+	}
+}
+
+func TestSelectionDeliveredMergeMonotonic(t *testing.T) {
+	var delivered, pending selectionDeliveryContext
+	raw := `{"reply":"saved","textKey":"same","name":"task-XR-4","selection":{"task":"XR-4","tree":"/tmp/document"},"transport":"/tmp/main","delivered":true}`
+	if err := json.Unmarshal([]byte(raw), &delivered); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(strings.Replace(raw, `"delivered":true`, `"delivered":false`, 1)), &pending); err != nil {
+		t.Fatal(err)
+	}
+	for _, groups := range [][]selectionDeliveryContext{{delivered, pending}, {pending, delivered}} {
+		merged := mergeSelectionContexts(groups[:1], groups[1:])
+		data, _ := json.Marshal(merged)
+		if len(merged) != 1 || !strings.Contains(string(data), `"delivered":true`) {
+			t.Fatalf("delivery marker regressed: %s", data)
+		}
+	}
+}
+
+func TestSelectionContextMigrationMerge(t *testing.T) {
+	var legacy, current selectionDeliveryContext
+	if err := json.Unmarshal([]byte(`{"reply":"saved","textKey":"same","name":"task-XR-4","session":"source","selection":{"task":"XR-4","tree":"/tmp/main"}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"reply":"saved","textKey":"same","name":"task-XR-4","session":"source","selection":{"task":"XR-4","tree":"/tmp/document"},"transport":"/tmp/main","delivered":true}`), &current); err != nil {
+		t.Fatal(err)
+	}
+	for _, groups := range [][]selectionDeliveryContext{{legacy, current}, {current, legacy}} {
+		merged := mergeSelectionContexts(groups[:1], groups[1:])
+		data, _ := json.Marshal(merged)
+		if len(merged) != 1 || merged[0].Selection.Tree != "/tmp/document" || !strings.Contains(string(data), `"delivered":true`) {
+			t.Fatalf("stale legacy context returned: %s", data)
+		}
+	}
+}

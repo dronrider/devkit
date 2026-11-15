@@ -333,7 +333,7 @@ func decideDraftCarrier(root string, p DecideParams, doc string, env func(string
 	if sid == "" {
 		return ""
 	}
-	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, Questions: chatQuestions(forks)}); err != nil {
+	if err := chat.WriteAsk(main, name, chat.Ask{Tree: root, Session: sid, Task: p.ID, Questions: chatQuestions(forks)}); err != nil {
 		return ""
 	}
 	return fmt.Sprintf("%s: вопрос лежит признаком ожидания: ответ из панели дойдёт этой сессии, заход кончается рубежом", p.ID)

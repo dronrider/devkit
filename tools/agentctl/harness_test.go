@@ -701,6 +701,19 @@ env = ["CLAUDE_CONFIG_DIR={home}"]
 	if err != nil {
 		t.Fatal(err)
 	}
+	var source struct {
+		ProfileDir string `json:"profile_dir"`
+	}
+	if err := json.Unmarshal([]byte(text), &source); err != nil {
+		t.Fatal(err)
+	}
+	wantDir, err := filepath.Abs(filepath.Join(kit, "kit", "harness"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.ProfileDir != wantDir {
+		t.Fatalf("каталог профилей: %q, нужен %q", source.ProfileDir, wantDir)
+	}
 	var v harnessesJSON
 	if err := json.Unmarshal([]byte(text), &v); err != nil {
 		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)

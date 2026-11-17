@@ -1379,9 +1379,11 @@ type harnessModelJSON struct {
 
 // harnessesJSON это ответ команды: машинная раскладка подписок целиком.
 type harnessesJSON struct {
-	Default   string        `json:"default,omitempty"`
-	Source    string        `json:"source"`
-	Harnesses []harnessJSON `json:"harnesses"`
+	// ProfileDir фиксирует источник профилей для последующего exec из другого дерева.
+	ProfileDir string        `json:"profile_dir"`
+	Default    string        `json:"default,omitempty"`
+	Source     string        `json:"source"`
+	Harnesses  []harnessJSON `json:"harnesses"`
 	// ExecRotateTokens это порог ротации исполнителя-субагента: ключ
 	// exec_rotate_tokens машинного конфига, а без ключа умолчание agentctl.
 	// Поле всегда заполнено, потребителю считать умолчание не из чего.
@@ -1429,13 +1431,17 @@ func cmdHarnessJSON(start string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("абсолютный путь профилей харнесов: %w", err)
+	}
 	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
 	if err != nil {
 		return "", err
 	}
 	rotate, _ := execRotate(l, machineConfigPath())
 	drotate, _ := dispatcherRotate(l, machineConfigPath())
-	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{},
+	v := harnessesJSON{ProfileDir: dir, Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{},
 		ExecRotateTokens: rotate, DispatcherRotateTokens: drotate, Warns: l.Warns}
 	var names []string
 	for name := range l.Setup {

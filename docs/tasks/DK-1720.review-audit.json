@@ -1,8 +1,8 @@
 {
   "version": 1,
   "id": "DK-1720",
-  "base_sha": "b7402066de09463469824d658e297a15b80ecced",
-  "head_sha": "e58a6b1b7475e1f2c4968e1969d9fd83f3e16371",
+  "base_sha": "a7eff737b61881b3b455c41fb71631d5e56ec7b2",
+  "head_sha": "76e6ccfc1814b0f00bc49662978c8b7f38d41350",
   "code_hash": "d0b4f77efd80c202acf7330c5ff4ad5a20fb33c3a61f9c627706ddff5a8c34af",
   "task_hash": "3a51216a93b4cdab84ca92f40e8203e235703491cde61f197be5c9b5e5cf594a",
   "sources": [
@@ -45,14 +45,15 @@
     "justification": "Обязателен запуск выбранного model/harness и сохранение projectcwd/overlay; live диагностика доказала отказ до CLI из-за старого kit/harness. Предложенный автором перенос canonical source подходит, поскольку профиль и его выбор принадлежат agentctl. filepath.Abs решает перенос относительного выбора между cwd; шеловое quoting покрывает пробелы. Совместимость со старым agentctl сознательно сохраняет прежний поиск, полная гарантия требует обновлённых двух бинарей. Ни pin, ни доказанная причина текущего отказа не разрешают автоматическую отправку неизвестного исхода.",
     "result": "checked",
     "evidence": [
-      "База b7402066d, code e7eef5e86+01f6d58d1; docs88a82786e и rehearsalaf7242ad4; reviewer prosefb03ed7f5. Прочитана вся дельта относительно новой базы; старый code7ab67814e уже в main и не выдан за новую проверку.",
+      "База a7eff737b61881b3b455c41fb71631d5e56ec7b2, code e7eef5e86+01f6d58d1; docs88a82786e и rehearsalaf7242ad4; reviewer prosefb03ed7f5. Прочитана вся дельта относительно новой базы; старый code7ab67814e уже в main и не выдан за новую проверку.",
       "harness.go:harnessDir -> filepath.Abs -> mergeLayers -> harnessesJSON.ProfileDir; harnesses.go:readHarnesses -> HarnessView.ProfileDir json:- -> harnesses cache; chats.go:launchEnv -> shQuote DEVKIT_HOME -> chatCmd agentctl exec.",
       "cmdExec продолжает брать projectConfigPath(start) и execRunDir из задачи. Actual exec интеграция строит agentctl, воспроизводит missing current.toml без pin, затем fake CLI подтверждает PWD, DEVKIT_HOME, выбранные model/harness и full multiline text, machine marker, очистку чужих vars и project enabled [].",
       "Относительный source нормализуется до сменыcwd; other kit с пробелами применяется после mock TTL, а до TTL сохраняется прежний источник. Файл current.toml в stale tree не появляется.",
       "Независимый regcheck: /private/tmp/dk1720-profile-review-regcheck-rebased.log. Manifest и три полных лога /private/tmp/dk1720-profile-mutations/ прочитаны: снятие pin, потеря source и снятие Abs дают semantic FAIL без build failed/panic; восстановленные production files совпадают с HEAD.",
       "Авторские targeted receipts: dashboard10.359s, agentctl2.506s; свежая обкатка88a82786e534 scenario04b7a23d PASS4.335s. Полный dashboard этой новой дельты автор не повторял по согласованной границе риска; финальный full при merge обязателен. Прежний401.601s относится к старому source7ab, не к profile fix.",
       "Ограничения: live повтор/installed artifact/new independent QA ещё не выполнены ревьювером и не объявлены PASS. Conditional oldSID/tmuxRollerror сохранён отдельно вне текущей дельты; фактический GET имел dead и unsafe fuse не подтверждён. Native stage hook collaboration отсутствует; этапы не имитировались. Наследованный dashboard TestMain не содержит runsguard, новый test использует существующий temp-home/spare guard.",
-      "Docs-only rebase на b7402066d проверен: пять source/test файлов побайтно совпадают с prerebase2754e2458. Первая native QA FAIL96f53f1d6 сохранена в разделе Проверка; успехом она не заменялась. Source/review SHAs выше приведены уже после rebase. Независимый regcheck обновлён против b7402066d и дал valid red/green. Финальная обкатка выполнена в свежем дереве4b30347b5991 после audit/docs commit: scenario04b7a23d, tempHOME, шаг1 PASS4.796s. Полный вывод и отметка записаны штатным taskctl rehearse; исходный live FAIL шага2 сохранён. Лог команды /private/tmp/dk1720-profile-review-rehearse-rebased.log."
+      "Docs-only rebase на b7402066d проверен: пять source/test файлов побайтно совпадают с prerebase2754e2458. Первая native QA FAIL96f53f1d6 сохранена в разделе Проверка; успехом она не заменялась. Source/review SHAs выше приведены уже после rebase. Независимый regcheck обновлён против b7402066d и дал valid red/green. Финальная обкатка выполнена в свежем дереве4b30347b5991 после audit/docs commit: scenario04b7a23d, tempHOME, шаг1 PASS4.796s. Полный вывод и отметка записаны штатным taskctl rehearse; исходный live FAIL шага2 сохранён. Лог команды /private/tmp/dk1720-profile-review-rehearse-rebased.log.",
+      "Уточнена фактическая merge-base a7eff737b вместо промежуточной b7402066d: между ними только docs, без изменений tools/internal/hooks/go.mod/go.sum. Соседний taskfile DK-1724 исключён из предмета новой базой. Regcheck фактически исполнен против b7402066d; его red/green применим к a7eff737b по идентичности codebase, запуск на a7 не выдумывался. Все95 правил/источников совпадают; code cycle не повторён. После этого audit/docs commit выполняется ещё одна свежая обкатка."
     ]
   },
   "rules": [

@@ -1,0 +1,1483 @@
+{
+  "version": 1,
+  "id": "DK-1724",
+  "base_sha": "9f079b4185ff68863c66f7c80d80ef1b49975368",
+  "head_sha": "9629538fca1628d40e43734f525975e8c8139b17",
+  "code_hash": "5c733fcf82d122a23fbe5ae7f69d53430d19db58779e6feed9baf2470e3c5ee8",
+  "task_hash": "03ae0cf555e69462fa4bc7075e3e686d00bdad155f04fb5af9647dc3217e3cb7",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "44a0bfaf8ade236d54cd6f6ed8810436d8cc51a2ca644a60b05b6a7201790306"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "Реплика в прежний чат незакрытой задачи, созданный запуском работы, сохраняет нить, модель и историю и получает ранее разрешённые on-request и auto_review при workspace-write. У задачи остаётся один штатный владелец. Согласование LLD и следующие действия определяет пользовательская реплика.",
+    "decision": "Дашборд сохраняет корень, ID запуска и ID чата и сверяет их с текущими доской и taskstate. Старый формат с PID принимается только при совпадении запуска, модели, подписки и точного main-chat назначения с источником работа. Продолжение идёт через taskhead.Raise с ExpectedRun и ContinueStopped, прежний app-server и однопроходную task-run.py. После ответа оболочка освобождает замок.",
+    "boundaries": "Доска через taskctl определяет существование и статус задачи; taskstate хранит Run и Stopped под отдельным файловым замком с каноническим корнем. taskhead занимает общий замок и передаёт его оболочке, оболочка подтверждает PID нового Run. Дашборд сохраняет происхождение после принятия замка, резервирует appTasks до handshake и управляет своим клиентом через lifecycle/stop. appSpawn продолжает прежнюю thread и допускает рабочую policy только при подтверждённом owner. После окончания сохраняется происхождение, но TaskRun становится false. appDead сверяет указатель клиента. Существующая таблица s.says подавляет повторы в памяти одного daemon; после рестарта durable receipt обычной реплики отсутствует.",
+    "alternative": "Прямое включение on-request в обычном appSay было бы короче, но оставило бы рабочие права без штатного владельца задачи и защиты от второго исполнителя. Новый самостоятельный носитель дублировал бы taskhead и task-run. Добавление одного прохода к существующей оболочке сохраняет один механизм запуска и остановки.",
+    "justification": "Обязательны прежняя нить и модель, workspace-write, явно разрешённые on-request/auto_review и единый owner. Предложенный способ проверен независимо от описания: ExpectedRun повторно защищает смену запуска под taskstate guard, а реальный carrier получает токен общего замка. Сохранённый SID нужен для отказа скопированной записи, корень различает одноимённые задачи разных деревьев. Legacy-ветка нужна текущим сохранённым чатам; она не доверяет одной привязке Task. Check и Blocked допускают один ответ без автоматического следующего прохода. После замечания №1 Done и архив продолжаются обычным never. Расширения протокола повторов через рестарт и согласования DK-1712 в предмет не входят.",
+    "result": "checked",
+    "evidence": [
+      "Полный предмет ревью | 9f079b418..9629538fc; docs/tasks/DK-1724.md: Чего хотим, Границы, DoD | Прочитан весь финальный дифф 15 файлов и связанные потребители. После 9629538fc изменена одна фраза README про клиент в простое; production-код прежний 1886b33ad.",
+      "Происхождение, статус и атомарное занятие | tools/dashboard/apptask.go: appTaskContinuation, raiseAppTask; internal/taskhead/raise.go: Raise; internal/taskstate/state.go: Acquire, Start, Save | Статус читается свежим taskctl list --json; новое происхождение сравнивается с RunID/root/SID, старое с Run PID/model/harness и main-chat Source=работа. ExpectedRun проверяется до изменения Run/Stopped под guard; чужой общий lock возвращает busy. appTasks резервируется до appDrop/handshake.",
+      "Штатный носитель и освобождение | tools/dashboard/apptask.go: appTaskPass, appTaskClose, appTaskOwns; tools/dashboard/appchat.go: appSpawn, appDead; kit/skills/board-task/task-run.py: initial_order, preflight, run_passes | Реальный task-run принимает общий замок, appTaskPass получает токен и передаёт полный order в прежнюю thread. Однопроходная оболочка допускает ответ в ожидании человека и завершается после одного прохода. Закрытие, отмена и поздняя смерть старого клиента не удаляют новый клиент.",
+      "Поведенческие свидетельства | docs/tasks/DK-1724.md: Проверки, Доработка по ревью; tools/dashboard/apptask_continuation_test.go; tools/dashboard/apptask_continuation_artifact_test.go | Авторские targeted/AppTask/AppChat/Automatic/Groom и taskhead greens актуальны по коду; semantic regcheck на 9f079b418 дал identity/ownership lost, на 9f8df0e97 дал ошибочные409 для Done/архива. Кандидат ab24984ab71df39b380b64f962e79820090c6654d5353d88930bbb6117f916a3 прошёл оба artifact без SKIP:2.56с и1.76с; реальный выбранный runtime SHA6863d27729dad579bb8ca09228c43a20acefb66f4c87cd956a853c640ff86e08, установленный agentctl и профиль codex SHA19efa597a2807709f282875bef8b65e32ea0de9345d59549b604bdc4dfdfd279 использованы с синтетическим клиентом.",
+      "Независимая проверка тестов и исправления | /private/tmp/dk1724-review-evidence/mutations.json; source-snapshot.json; mutation-*.log; tools/dashboard/apptask_test.go: TestAppTaskEndedChatUsesNeverAndDropsLockToken | Пять временных мутаций собрали код и упали по смыслу: пропуск ExpectedRun, пропуск origin, добавление хвоста ротации, never вместо on-request, пропуск однопроходного stop. SHA всех production и выбранных тестов совпали с финальной версией; единственная поздняя дельта добавила отдельный artifact-тест и прочитана. Независимый Done/реальный архив PASS1.31с, пакет3.376с.",
+      "Пределы и эксплуатация | docs/tasks/DK-1724.md: Сценарий проверки; tools/dashboard/outbox.go: chatSayStart, chatSayDone; tasks_test.go: TestMain | Установленный после выката путь и полный release-прогон остаются отдельными действиями диспетчера. Настоящая DK-1712 проверялась только чтением; turn/start, resume и подписки не вызывались. Дедупликация обычных сообщений ограничена одним daemon. Старый TestMain без runsguard не менялся; новые фикстуры изолированы. Native hooks отсутствуют: plan done не закрывает custom review-пункт из-за отсутствия стадии разработка; стадии не подставлялись."
+    ]
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "taskhead сохраняет запуск и замок; Pipeline выполняет один заказ; apptask связывает owner с carrier; appchat управляет клиентом и политикой; chatStore хранит происхождение. Несвязанной логики в изменении нет.",
+      "evidence": [
+        {
+          "object": "Разделение обязанностей всех production-изменений",
+          "location": "internal/taskhead/raise.go: Request/Raise/runnerArgs; kit/skills/board-task/task-run.py: Pipeline; tools/dashboard/apptask.go; appchat.go; chats.go: chatStore",
+          "observation": "taskhead сохраняет запуск и замок; Pipeline выполняет один заказ; apptask связывает owner с carrier; appchat управляет клиентом и политикой; chatStore хранит происхождение. Несвязанной логики в изменении нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ExpectedRun и ReplyOnce добавлены к существующему контракту с прежним умолчанием. Все вызовы appDead передают ожидаемый клиент; дашборд пользуется taskstate/taskhead API, не переписывает их файлы.",
+      "evidence": [
+        {
+          "object": "Контракты Raise, appDead и носителя",
+          "location": "internal/taskhead/raise.go: Request.ExpectedRun, AppServerCarrier.ReplyOnce; tools/dashboard/appchat.go: appLive/appSpawn -> appDead; apptask.go: raiseAppTask",
+          "observation": "ExpectedRun и ReplyOnce добавлены к существующему контракту с прежним умолчанием. Все вызовы appDead передают ожидаемый клиент; дашборд пользуется taskstate/taskhead API, не переписывает их файлы."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Первый запуск и продолжение используют общий raiseAppTask, общий Raise и существующий run_pass. Дублирования алгоритма замка или отдельной копии конвейера не добавлено.",
+      "evidence": [
+        {
+          "object": "Единый путь рабочего запуска",
+          "location": "tools/dashboard/apptask.go: startAppTask/raiseAppTask; internal/taskhead/raise.go: Raise; kit/skills/board-task/task-run.py: run_passes",
+          "observation": "Первый запуск и продолжение используют общий raiseAppTask, общий Raise и существующий run_pass. Дублирования алгоритма замка или отдельной копии конвейера не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "RunID защищает от смены запуска/PID reuse, root от другого дерева, SID от копии записи. Один проход нужен для ответа в Check/Blocked без дальнейшей автоматической работы. Новый сервис, пакет или зависимость не вводятся; hashlib стандартный.",
+      "evidence": [
+        {
+          "object": "Необходимость новых полей и режима",
+          "location": "tools/dashboard/chats.go: TaskRunRoot/ID/Session; apptask.go: appTaskContinuation; task-run.py: reply_once",
+          "observation": "RunID защищает от смены запуска/PID reuse, root от другого дерева, SID от копии записи. Один проход нужен для ответа в Check/Blocked без дальнейшей автоматической работы. Новый сервис, пакет или зависимость не вводятся; hashlib стандартный."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Отсутствие рабочего происхождения оставляет ordinary-путь; Done/архив дают ordinary never; неподтверждённые состояние/запуск дают409. Успех Raise требует принятого замка и готового turn; --reply-once имеет явное умолчание false и завершает оболочку.",
+      "evidence": [
+        {
+          "object": "Входы и исходы продолжения",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation, raiseAppTask; appchat.go: appSay; task-run.py: parse_args",
+          "observation": "Отсутствие рабочего происхождения оставляет ordinary-путь; Done/архив дают ordinary never; неподтверждённые состояние/запуск дают409. Успех Raise требует принятого замка и готового turn; --reply-once имеет явное умолчание false и завершает оболочку."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ExpectedRun проверяется у владельца состояния под taskstate guard, общий lock занимается до запуска, а рабочая policy и tool token зависят от appTaskOwns. Проверка не ограничена UI. Неподтверждённая RPC-policy завершает свой клиент до turn.",
+      "evidence": [
+        {
+          "object": "Защита смены Run и рабочей политики",
+          "location": "internal/taskhead/raise.go: Raise; tools/dashboard/apptask.go: appTaskOwns/appTaskToolEnv; appchat.go: appSpawn",
+          "observation": "ExpectedRun проверяется у владельца состояния под taskstate guard, общий lock занимается до запуска, а рабочая policy и tool token зависят от appTaskOwns. Проверка не ограничена UI. Неподтверждённая RPC-policy завершает свой клиент до turn."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые JSON-поля необязательны. Старые записи проходят точную проверку Run/main-chat и обновляются новым происхождением. Замечание№1 о регрессии Done/архива исправлено1886b33ad; независимый тест подтвердил прежние thread/model/harness и never без токена.",
+      "evidence": [
+        {
+          "object": "Старые записи и закрытые чаты",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation; appchat.go: appSay; apptask_test.go: TestAppTaskEndedChatUsesNeverAndDropsLockToken",
+          "observation": "Новые JSON-поля необязательны. Старые записи проходят точную проверку Run/main-chat и обновляются новым происхождением. Замечание№1 о регрессии Done/архива исправлено1886b33ad; независимый тест подтвердил прежние thread/model/harness и never без токена."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Доска читается через taskctl, Run/Stopped через taskstate. chatStore хранит происхождение, которое сверяется заново при реплике. Архив использует существующий кеш по mtime/размеру только для безопасного ordinary-пути; новая база состояния не создаётся.",
+      "evidence": [
+        {
+          "object": "Источники истины, кеши и метаданные",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation/raiseAppTask; tools/dashboard/goal.go: archiveRows; internal/taskstate/state.go",
+          "observation": "Доска читается через taskctl, Run/Stopped через taskstate. chatStore хранит происхождение, которое сверяется заново при реплике. Архив использует существующий кеш по mtime/размеру только для безопасного ordinary-пути; новая база состояния не создаётся."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сокет создан0600 в каталоге0700; listener/каталог удаляются на всех отказах. a.stop и once закрывают свой carrier; владелец группы сверяется перед kill. lifecycle защищает запуск/закрытие клиента; watcher видит смерть оболочки, stop освобождает замок.",
+      "evidence": [
+        {
+          "object": "Сокет, процессы, горутины и завершение",
+          "location": "tools/dashboard/apptask.go: raiseAppTask, appTaskServe, appTaskClose, appTasksClose; appchat.go: appDrop/appDead; task-run.py: stop/drop_lock",
+          "observation": "Сокет создан0600 в каталоге0700; listener/каталог удаляются на всех отказах. a.stop и once закрывают свой carrier; владелец группы сверяется перед kill. lifecycle защищает запуск/закрытие клиента; watcher видит смерть оболочки, stop освобождает замок."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Резерв по SID либо root/task ставится до appDrop и handshake. Подтверждённый busy клиент не перехватывается. Run проверяется и меняется под одним guard, общий lock ограничивает внешних исполнителей. Закрытие старого клиента сравнивает указатель; ParallelHandshake и own-delegate тесты проверяют фактических владельцев.",
+      "evidence": [
+        {
+          "object": "Гонки реплик, handoff и позднего cleanup",
+          "location": "tools/dashboard/apptask.go: appMu/appTasks reservation, a.lifecycle/a.launched; appchat.go: appDead(expected); internal/taskhead/raise.go: Raise",
+          "observation": "Резерв по SID либо root/task ставится до appDrop и handshake. Подтверждённый busy клиент не перехватывается. Run проверяется и меняется под одним guard, общий lock ограничивает внешних исполнителей. Закрытие старого клиента сравнивает указатель; ParallelHandshake и own-delegate тесты проверяют фактических владельцев."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Нужны task/project/thread и Run PID/model/harness; новые origin поля сверяются все, legacy дополнительно требует точный SID/project/Source=работа. Одна ручная привязка не повышает права. Unix carrier проверяет token и owner PID; policy подтверждается ответом клиента.",
+      "evidence": [
+        {
+          "object": "Граница доверия к происхождению и разрешениям",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation/appTaskPass; appchat.go: appSpawn",
+          "observation": "Нужны task/project/thread и Run PID/model/harness; новые origin поля сверяются все, legacy дополнительно требует точный SID/project/Source=работа. Одна ручная привязка не повышает права. Unix carrier проверяет token и owner PID; policy подтверждается ответом клиента."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "HTTP-успех появляется после ready от принятого turn. Ошибка происхождения/lock/writer/handshake даёт видимый отказ и закрывает свой carrier; claim незавершённой попытки освобождается. ExternalWriterConflict проверяет отсутствие user feed/turn при отказе и успешный повтор после освобождения нити. Новый durable receipt обычной реплики не заявлен.",
+      "evidence": [
+        {
+          "object": "Частичные отказы подъёма и доставки",
+          "location": "tools/dashboard/apptask.go: raiseAppTask/appTaskPass; appchat.go: appSpawn; outbox.go: chatSayRelease",
+          "observation": "HTTP-успех появляется после ready от принятого turn. Ошибка происхождения/lock/writer/handshake даёт видимый отказ и закрывает свой carrier; claim незавершённой попытки освобождается. ExternalWriterConflict проверяет отсутствие user feed/turn при отказе и успешный повтор после освобождения нити. Новый durable receipt обычной реплики не заявлен."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Прежний msg_id подавляет повтор в одном daemon; appTasks и общий lock исключают параллельного owner независимо от msg_id. Handshake/turn имеют существующие пределы; reply_once не накапливает автопроходы. После рестарта память s.says теряется: crash-exactly-once остаётся вне существующего протокола и согласованного предмета.",
+      "evidence": [
+        {
+          "object": "Повторы, ожидания и ресурсы",
+          "location": "tools/dashboard/apptask.go: ready/appCallCap/appBusyCap; tools/dashboard/outbox.go: chatSayStart/Done; apptask_continuation_test.go",
+          "observation": "Прежний msg_id подавляет повтор в одном daemon; appTasks и общий lock исключают параллельного owner независимо от msg_id. Handshake/turn имеют существующие пределы; reply_once не накапливает автопроходы. После рестарта память s.says теряется: crash-exactly-once остаётся вне существующего протокола и согласованного предмета."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Причины недоступной доски, чужого запуска, busy и внешнего writer попадают в HTTP/ленту. Лог оболочки содержит канонический путь и SHA фактически выбранного файла, без секретов. Неудачная доставка не выдаётся за успешный ответ; диагностическая metadata локальна.",
+      "evidence": [
+        {
+          "object": "Диагностика отказов и фактического runtime",
+          "location": "tools/dashboard/apptask.go: fail; appchat.go: appSay/appSpawn; task-run.py: run_passes",
+          "observation": "Причины недоступной доски, чужого запуска, busy и внешнего writer попадают в HTTP/ленту. Лог оболочки содержит канонический путь и SHA фактически выбранного файла, без секретов. Неудачная доставка не выдаётся за успешный ответ; диагностическая metadata локальна."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "На одну реплику делается один list --json и одно чтение состояния исходного Run; чтение полного небольшого JSON taskstate нужно для согласованного снимка PID/model/harness/ID/root. Полная доска приходит по существующему API taskctl. SQL/ORM и новых широких выборок в зависимостях этих вызовов нет.",
+      "evidence": [
+        {
+          "object": "Чтение доски и атомарного Run",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation; tools/dashboard/board.go: boardJSON; internal/taskstate/state.go: Acquire",
+          "observation": "На одну реплику делается один list --json и одно чтение состояния исходного Run; чтение полного небольшого JSON taskstate нужно для согласованного снимка PID/model/harness/ID/root. Полная доска приходит по существующему API taskctl. SQL/ORM и новых широких выборок в зависимостях этих вызовов нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверка доски предшествует проверке исходного Run, Raise повторно сверяет ожидаемый ID под guard, затем читается уже новый Run после handoff. Последовательность зависит от результатов и не может быть безопасно распараллелена. Циклов чтения состояния на коллекцию нет.",
+      "evidence": [
+        {
+          "object": "Последовательность обращений к данным",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation -> headRequest/Raise -> taskstate.Acquire -> chatStoreWrite",
+          "observation": "Проверка доски предшествует проверке исходного Run, Raise повторно сверяет ожидаемый ID под guard, затем читается уже новый Run после handoff. Последовательность зависит от результатов и не может быть безопасно распараллелена. Циклов чтения состояния на коллекцию нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ExpectedRun и Stopped обрабатываются под одним taskstate guard, запись Save атомарна с fsync файла/каталога. После handoff сохраняется происхождение; отказ записи вызывает appTaskClose. Между модельным turn и HTTP нет распределённой транзакции, как и у прежнего appSay; предел retry через рестарт описан явно.",
+      "evidence": [
+        {
+          "object": "Граница атомарности состояния и запуска",
+          "location": "internal/taskhead/raise.go: Raise; internal/taskstate/state.go: Guard.Save; tools/dashboard/apptask.go: raiseAppTask",
+          "observation": "ExpectedRun и Stopped обрабатываются под одним taskstate guard, запись Save атомарна с fsync файла/каталога. После handoff сохраняется происхождение; отказ записи вызывает appTaskClose. Между модельным turn и HTTP нет распределённой транзакции, как и у прежнего appSay; предел retry через рестарт описан явно."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Реплика касается одной задачи. Цикл по appTasks проверяет только память под appMu; дополнительных запросов на каждый элемент не делает. main-chat и кеш архива читаются существующим пакетным способом. Нового цикла по БД/сети нет.",
+      "evidence": [
+        {
+          "object": "Коллекции и N+1",
+          "location": "tools/dashboard/apptask.go: reservation loop, appTaskContinuation; internal/mainchat; tools/dashboard/goal.go: archiveRows",
+          "observation": "Реплика касается одной задачи. Цикл по appTasks проверяет только память под appMu; дополнительных запросов на каждый элемент не делает. main-chat и кеш архива читаются существующим пакетным способом. Нового цикла по БД/сети нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "taskstate отвечает за канонический файл и guard, дашборд за допустимость рабочего продолжения, chatStore за запись чата. Новое бизнес-решение не перенесено в слой хранения. Логику и интеграцию проверяют без реальной БД на временных файлах и синтетическом клиенте.",
+      "evidence": [
+        {
+          "object": "Хранение и решения о режиме",
+          "location": "internal/taskstate/state.go; tools/dashboard/apptask.go: appTaskContinuation; tools/dashboard/chats.go: chatStore",
+          "observation": "taskstate отвечает за канонический файл и guard, дашборд за допустимость рабочего продолжения, chatStore за запись чата. Новое бизнес-решение не перенесено в слой хранения. Логику и интеграцию проверяют без реальной БД на временных файлах и синтетическом клиенте."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Старый формат не объявлен deprecated: он остался у живой DK-1712 и других сохранённых чатов. Исправление нужно для их продолжения после рестарта. Legacy только проверяется и на следующем запуске получает новые origin-поля; параллельного старого launch-механизма не появляется.",
+      "evidence": [
+        {
+          "object": "Поддерживаемый legacy-формат",
+          "location": "docs/tasks/DK-1724.md: Что происходит/Доработка; tools/dashboard/apptask.go: legacy branch; apptask_continuation_artifact_test.go",
+          "observation": "Старый формат не объявлен deprecated: он остался у живой DK-1712 и других сохранённых чатов. Исправление нужно для их продолжения после рестарта. Legacy только проверяется и на следующем запуске получает новые origin-поля; параллельного старого launch-механизма не появляется."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Правка совместимости внесена в действующий app-server путь, а не в снятый с поддержки механизм. Реальная старая запись сверена чтением; artifact удаляет все три новых поля и доказывает миграцию прежнего SID/thread/model через тот же Raise.",
+      "evidence": [
+        {
+          "object": "Причина совместимости со старой записью",
+          "location": "docs/tasks/DK-1724.md: read-only совместимость DK-1712; appTaskContinuation; TestAppTaskContinuationInstalledArtifact",
+          "observation": "Правка совместимости внесена в действующий app-server путь, а не в снятый с поддержки механизм. Реальная старая запись сверена чтением; artifact удаляет все три новых поля и доказывает миграцию прежнего SID/thread/model через тот же Raise."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ReplyOnce проходит от carrier к --reply-once и меняет ровно заказ/допуск ответа/остановку после прохода. false сохраняет прежний конвейер. Рабочая policy задана явно и проверена по RPC; origin влияет на разрешение запуска. Мутации подтверждают наблюдаемое изменение поведения.",
+      "evidence": [
+        {
+          "object": "ReplyOnce, origin и policy как действующие параметры",
+          "location": "internal/taskhead/raise.go: runnerArgs; task-run.py: parse_args/initial_order/preflight/run_passes; appchat.go: appSpawn",
+          "observation": "ReplyOnce проходит от carrier к --reply-once и меняет ровно заказ/допуск ответа/остановку после прохода. false сохраняет прежний конвейер. Рабочая policy задана явно и проверена по RPC; origin влияет на разрешение запуска. Мутации подтверждают наблюдаемое изменение поведения."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Пользовательского переключателя прав не добавлено: рабочее происхождение определяет режим по уже согласованному контракту. Внутренний ReplyOnce нужен для различия обычного конвейера и одного ответа. Env artifact-путей выбирает точные установленные артефакты только для независимой проверки.",
+      "evidence": [
+        {
+          "object": "Необходимость выбора режима и test-only входов",
+          "location": "tools/dashboard/apptask.go: raiseAppTask; task-run.py: reply_once; apptask_continuation_artifact_test.go",
+          "observation": "Пользовательского переключателя прав не добавлено: рабочее происхождение определяет режим по уже согласованному контракту. Внутренний ReplyOnce нужен для различия обычного конвейера и одного ответа. Env artifact-путей выбирает точные установленные артефакты только для независимой проверки."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "RunID/root/SID и Stopped являются состоянием запуска и хранятся в taskstate/chatStore, перечитываются на реплике. automatic фиксирует режим конкретного процесса и не служит машинной настройкой. Изменяемый статус доски не переносится в harness.local.",
+      "evidence": [
+        {
+          "object": "Изменяемые данные против конфигурации",
+          "location": "tools/dashboard/chats.go: TaskRunRoot/ID/Session; internal/taskstate/state.go; tools/dashboard/appchat.go: automatic",
+          "observation": "RunID/root/SID и Stopped являются состоянием запуска и хранятся в taskstate/chatStore, перечитываются на реплике. automatic фиксирует режим конкретного процесса и не служит машинной настройкой. Изменяемый статус доски не переносится в harness.local."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "ReplyOnce/--reply-once по умолчанию false, применяется при создании оболочки. Необязательные origin JSON-поля читаются при реплике. DEVKIT_DASHBOARD_BIN/TASK_RUN_ARTIFACT/AGENTCTL_ARTIFACT/PROFILE_SOURCE_HOME/PROFILE_SOURCE_ROOT документированы точной командой; это test-only абсолютные пути, отсутствие обязательных входов даёт явный SKIP.",
+      "evidence": [
+        {
+          "object": "Имена, умолчания и момент применения",
+          "location": "task-run.py: USAGE/parse_args; internal/taskhead/raise.go: ReplyOnce; docs/tasks/DK-1724.md: Сценарий проверки; apptask_artifact_test.go",
+          "observation": "ReplyOnce/--reply-once по умолчанию false, применяется при создании оболочки. Необязательные origin JSON-поля читаются при реплике. DEVKIT_DASHBOARD_BIN/TASK_RUN_ARTIFACT/AGENTCTL_ARTIFACT/PROFILE_SOURCE_HOME/PROFILE_SOURCE_ROOT документированы точной командой; это test-only абсолютные пути, отсутствие обязательных входов даёт явный SKIP."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Нового production-источника конфигурации нет. taskRunPath сохраняет приоритет DEVKIT_HOME затем roots; headRequest берёт тот же devkit. Артефакт кладёт выбранную оболочку в реально выбираемый путь и сверяет её собственный canonical path/SHA; установленный profile_dir используется через явную синтетическую раскладку.",
+      "evidence": [
+        {
+          "object": "Источники профилей и runtime",
+          "location": "tools/dashboard/runs.go: taskRunPath/headRequest; apptask_artifact_test.go: selected; TestAppTaskContinuationInstalledProfilesArtifact",
+          "observation": "Нового production-источника конфигурации нет. taskRunPath сохраняет приоритет DEVKIT_HOME затем roots; headRequest берёт тот же devkit. Артефакт кладёт выбранную оболочку в реально выбираемый путь и сверяет её собственный canonical path/SHA; установленный profile_dir используется через явную синтетическую раскладку."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Неподтверждённые project/thread/run/root/SID, неизвестный статус и недоступные данные дают содержательную ошибку, не fallback к рабочим правам. Неабсолютные artifact-пути завершают тест с именем параметра. Отсутствующие test-only входы явно SKIP, который инструкция не считает проверкой.",
+      "evidence": [
+        {
+          "object": "Неверные входы и диагностика",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation; task-run.py: parse_args; apptask_artifact_test.go; apptask_continuation_artifact_test.go",
+          "observation": "Неподтверждённые project/thread/run/root/SID, неизвестный статус и недоступные данные дают содержательную ошибку, не fallback к рабочим правам. Неабсолютные artifact-пути завершают тест с именем параметра. Отсутствующие test-only входы явно SKIP, который инструкция не считает проверкой."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Действие одно: реплика в прежний чат; пользователь не синхронизирует несколько настроек. README описывает результат и отказ. Два candidate artifact проверяют одну команду с точным бинарём, оболочкой и установленным источником профилей. Production installed-after-deploy остаётся за отдельной сессией.",
+      "evidence": [
+        {
+          "object": "Путь глазами потребителя",
+          "location": "tools/dashboard/README.md: Первый запуск Codex; docs/tasks/DK-1724.md: Сценарий проверки; TestAppTaskContinuationInstalledArtifact/InstalledProfilesArtifact",
+          "observation": "Действие одно: реплика в прежний чат; пользователь не синхронизирует несколько настроек. README описывает результат и отказ. Два candidate artifact проверяют одну команду с точным бинарём, оболочкой и установленным источником профилей. Production installed-after-deploy остаётся за отдельной сессией."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имена различают происхождение, ожидаемый исходный Run и одноразовый режим. appTaskContinuation определяет возможность продолжения, raiseAppTask поднимает его; названия не скрывают другой предмет.",
+      "evidence": [
+        {
+          "object": "Имена новых API и полей",
+          "location": "Request.ExpectedRun/AppServerCarrier.ReplyOnce; chatStore.TaskRunRoot/ID/Session; raiseAppTask/appTaskContinuation; Pipeline.reply_once",
+          "observation": "Имена различают происхождение, ожидаемый исходный Run и одноразовый режим. appTaskContinuation определяет возможность продолжения, raiseAppTask поднимает его; названия не скрывают другой предмет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "appTaskContinuation читает авторитетные данные и меняет только переданный локальный снимок; Raise/raiseAppTask обозначают реальное занятие и запуск. appDead удаляет только ожидаемый мёртвый клиент. Скрытого сохранения в функции с именем validate нет.",
+      "evidence": [
+        {
+          "object": "Соответствие имени побочному эффекту",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation, raiseAppTask; appchat.go: appDead",
+          "observation": "appTaskContinuation читает авторитетные данные и меняет только переданный локальный снимок; Raise/raiseAppTask обозначают реальное занятие и запуск. appDead удаляет только ожидаемый мёртвый клиент. Скрытого сохранения в функции с именем validate нет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "RunID обозначает идентичность запуска во всех слоях, SID адрес чата, thread нить клиента. ReplyOnce/--reply-once/reply_once выражают один режим. Политику never не называют рабочим продолжением.",
+      "evidence": [
+        {
+          "object": "Единая терминология",
+          "location": "chatStore.TaskRun*; taskstate.Run; Request.ExpectedRun; Pipeline.reply_once; README/ARCHITECTURE",
+          "observation": "RunID обозначает идентичность запуска во всех слоях, SID адрес чата, thread нить клиента. ReplyOnce/--reply-once/reply_once выражают один режим. Политику never не называют рабочим продолжением."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "PID процесса, ID запуска, ID чата и корень названы отдельно и сравниваются с соответствующими полями, а не взаимозаменяемы. Новый временной или размерный литерал в production не вводится.",
+      "evidence": [
+        {
+          "object": "PID, ID и системы отсчёта",
+          "location": "TaskRunPID/TaskRunID/TaskRunSession/TaskRunRoot; appTask.pid/root/sid; appChat.automatic",
+          "observation": "PID процесса, ID запуска, ID чата и корень названы отдельно и сравниваются с соответствующими полями, а не взаимозаменяемы. Новый временной или размерный литерал в production не вводится."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Экспортированные ExpectedRun/ReplyOnce и сохранённые TaskRun* имеют предметные имена. Короткие q/st/a/c используются в существующем локальном контексте запроса, снимка и carrier; новых публичных data/manager нет.",
+      "evidence": [
+        {
+          "object": "Области видимости новых имён",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation/raiseAppTask; internal/taskhead/raise.go: Request",
+          "observation": "Экспортированные ExpectedRun/ReplyOnce и сохранённые TaskRun* имеют предметные имена. Короткие q/st/a/c используются в существующем локальном контексте запроса, снимка и carrier; новых публичных data/manager нет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все новые параметры влияют на проверку, lifecycle, аргументы оболочки либо подтверждение доставки. expected сравнивается перед удалением, claim передаётся chatSayDone, ExpectedRun используется внутри guard; неиспользованных параметров нет.",
+      "evidence": [
+        {
+          "object": "Потребители добавленных параметров",
+          "location": "raiseAppTask: replyOnce/claim; appDead: expected; Request.ExpectedRun; AppServerCarrier.ReplyOnce; Pipeline.reply_once",
+          "observation": "Все новые параметры влияют на проверку, lifecycle, аргументы оболочки либо подтверждение доставки. expected сравнивается перед удалением, claim передаётся chatSayDone, ExpectedRun используется внутри guard; неиспользованных параметров нет."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "bool/error продолжения различают ordinary, отказ и рабочий путь; Raise.Code/PID обрабатываются перед записью. Новый restart результат потребляется restart-сценариями; appArtifactEnv сознательно сохраняет прежнюю пару результатов для старых тестов.",
+      "evidence": [
+        {
+          "object": "Потребители результатов и wrapper API",
+          "location": "appTaskContinuation -> appSay; taskhead.Raise -> raiseAppTask; appArtifactRestartable -> artifact tests/appArtifactEnv",
+          "observation": "bool/error продолжения различают ordinary, отказ и рабочий путь; Raise.Code/PID обрабатываются перед записью. Новый restart результат потребляется restart-сценариями; appArtifactEnv сознательно сохраняет прежнюю пару результатов для старых тестов."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Оба production-вызова appDead передают ожидаемый указатель. Старый безусловный сброс TaskRun в appSay заменён проверкой происхождения, а closed-путь сохраняет обычное поведение. Ошибки записи и Raise не удалены из контракта.",
+      "evidence": [
+        {
+          "object": "Изменённые сигнатуры и удалённая логика",
+          "location": "tools/dashboard/appchat.go: appDead call sites, appSay; tools/dashboard/apptask.go: startAppTask wrapper; tests",
+          "observation": "Оба production-вызова appDead передают ожидаемый указатель. Старый безусловный сброс TaskRun в appSay заменён проверкой происхождения, а closed-путь сохраняет обычное поведение. Ошибки записи и Raise не удалены из контракта."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверка происхождения отделена от запуска. Подъём объединяет ресурсы, handoff и готовность одного carrier; выполнение одного заказа осталось в appTaskPass. Pipeline меняется только в точках выбора заказа, допуска ответа и конца прохода.",
+      "evidence": [
+        {
+          "object": "Связность функций",
+          "location": "appTaskContinuation; raiseAppTask; appTaskPass; Pipeline.initial_order/preflight/run_passes",
+          "observation": "Проверка происхождения отделена от запуска. Подъём объединяет ресурсы, handoff и готовность одного carrier; выполнение одного заказа осталось в appTaskPass. Pipeline меняется только в точках выбора заказа, допуска ответа и конца прохода."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Литералы false/true передаются в именованный параметр replyOnce, далее в поле ReplyOnce. Состояния ordinary/working отражены отдельными проверками; новая политика использует явные строковые значения protocol, не числовые магические константы.",
+      "evidence": [
+        {
+          "object": "Значения флагов и состояния",
+          "location": "startAppTask/raiseAppTask call sites; AppServerCarrier{ReplyOnce: replyOnce}; chatStore origin; appChat.automatic",
+          "observation": "Литералы false/true передаются в именованный параметр replyOnce, далее в поле ReplyOnce. Состояния ordinary/working отражены отдельными проверками; новая политика использует явные строковые значения protocol, не числовые магические константы."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверки входов и отрицательные состояния завершаются до запуска. Ресурсы удаляются рядом с ошибкой, a.launched закрывается до ожидания appTaskClose. reply_once stop стоит перед автоматическими следующими проходами; недостижимых старых веток не добавлено.",
+      "evidence": [
+        {
+          "object": "Основной путь и выходы при отказе",
+          "location": "tools/dashboard/apptask.go: appTaskContinuation/raiseAppTask; appchat.go: appSay; task-run.py: run_passes",
+          "observation": "Проверки входов и отрицательные состояния завершаются до запуска. Ресурсы удаляются рядом с ошибкой, a.launched закрывается до ожидания appTaskClose. reply_once stop стоит перед автоматическими следующими проходами; недостижимых старых веток не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go использует существующие структуры, defer/mutex/select и стандартные errors.As; Python opts/ветки Pipeline следуют местному коду. Новых внешних зависимостей нет. diff --check чист; Go-файлы отформатированы gofmt.",
+      "evidence": [
+        {
+          "object": "Форма Go/Python и форматирование",
+          "location": "Все изменённые .go и task-run.py; git diff --check 9f079b418..HEAD",
+          "observation": "Go использует существующие структуры, defer/mutex/select и стандартные errors.As; Python opts/ветки Pipeline следуют местному коду. Новых внешних зависимостей нет. diff --check чист; Go-файлы отформатированы gofmt."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки чтения доски и состояния сохраняют исходную причину через %w; несовпадение Run и lock возвращает отдельный исход. Writer-conflict сохраняется типом appThreadWriterConflict и превращается в409. nil не подставляется вместо отказа.",
+      "evidence": [
+        {
+          "object": "Причины ошибок",
+          "location": "appTaskContinuation fmt.Errorf(%w); Raise; appSpawn; raiseAppTask fail",
+          "observation": "Ошибки чтения доски и состояния сохраняют исходную причину через %w; несовпадение Run и lock возвращает отдельный исход. Writer-conflict сохраняется типом appThreadWriterConflict и превращается в409. nil не подставляется вместо отказа."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сообщения различают отсутствующую задачу, недоступную доску, сменившийся запуск, идущий ход и другого writer. Для busy/writer есть действие дождаться/остановить либо закрыть разговор в другом клиенте. Внутренний PID не заменяет причину.",
+      "evidence": [
+        {
+          "object": "Понятность отказов пользователю",
+          "location": "tools/dashboard/appchat.go: appSay/appSpawn; tools/dashboard/apptask.go: fail/appTaskContinuation",
+          "observation": "Сообщения различают отсутствующую задачу, недоступную доску, сменившийся запуск, идущий ход и другого writer. Для busy/writer есть действие дождаться/остановить либо закрыть разговор в другом клиенте. Внутренний PID не заменяет причину."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарии объясняют отличие старой записи с PID от ручной привязки и опасность поздней смерти процесса. Лог canonical path/SHA нужен для доказательства фактически выбранной оболочки. Существующие комментарии про обычный конвейер сохраняют смысл при false.",
+      "evidence": [
+        {
+          "object": "Комментарии и диагностическая metadata",
+          "location": "tools/dashboard/apptask.go: legacy comment; appchat.go: appDead; artifact/test synchronization comments; task-run.py: reply_once SHA",
+          "observation": "Комментарии объясняют отличие старой записи с PID от ручной привязки и опасность поздней смерти процесса. Лог canonical path/SHA нужен для доказательства фактически выбранной оболочки. Существующие комментарии про обычный конвейер сохраняют смысл при false."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Документация описывает один ответ, прежнюю нить/model, владельца и отказ неподтверждённого состояния. Done/архив описаны как ordinary never. Пример acceptance называет точный бинарь/runtime/profile и запрещает считать SKIP успехом. Фраза про закрытие клиента уточнена как клиент в простое.",
+      "evidence": [
+        {
+          "object": "Документированный контракт",
+          "location": "task-run.py: USAGE; tools/dashboard/README.md: Первый запуск Codex; docs/ARCHITECTURE.md: carrier invariant; docs/tasks/DK-1724.md",
+          "observation": "Документация описывает один ответ, прежнюю нить/model, владельца и отказ неподтверждённого состояния. Done/архив описаны как ordinary never. Пример acceptance называет точный бинарь/runtime/profile и запрещает считать SKIP успехом. Фраза про закрытие клиента уточнена как клиент в простое."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Изменения общего Raise, реальной оболочки и HTTP/carrier покрыты в той же серии. Интеграционный lifecycle запускает настоящую task-run.py, а не подменяет исправленную логику. Отдельного обещания дописать тесты нет.",
+      "evidence": [
+        {
+          "object": "Тесты всех частей правки",
+          "location": "internal/taskhead/raise_test.go; tools/dashboard/{appchat,apptask,apptask_continuation,apptask_continuation_artifact,apptask_artifact,apptask_regression}_test.go",
+          "observation": "Изменения общего Raise, реальной оболочки и HTTP/carrier покрыты в той же серии. Интеграционный lifecycle запускает настоящую task-run.py, а не подменяет исправленную логику. Отдельного обещания дописать тесты нет."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Авторский regcheck на 9f079b418 компилируется и теряет TaskRun/owner в saved/legacy; исправленная версия зелёная. Для найденной регрессии база9f8df0e97 компилируется и возвращает409 в Done/архиве; fix1886b33ad зелёный, независимо повторён1.31с.",
+      "evidence": [
+        {
+          "object": "Смысловая краснота обоих багов",
+          "location": "/private/tmp/dk1724-regcheck-rebased-base.log; /private/tmp/dk1724-regcheck-closed-base.log; docs/tasks/DK-1724.md",
+          "observation": "Авторский regcheck на 9f079b418 компилируется и теряет TaskRun/owner в saved/legacy; исправленная версия зелёная. Для найденной регрессии база9f8df0e97 компилируется и возвращает409 в Done/архиве; fix1886b33ad зелёный, независимо повторён1.31с."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Чистая логика совпадения thread/turn проверяется отдельно. Файловый guard/lock и carrier покрыты интеграционными тестами с процессами; отдельный бинарный artifact проверяет runtime, restart и установленный profile. Тонкий UI не меняется.",
+      "evidence": [
+        {
+          "object": "Пирамида проверок",
+          "location": "TestAppTaskCompletionMatchesThreadAndTurn; TestContinuationExpectedRunPreservesStoppedState; TestAppTaskContinuation*; artifact tests",
+          "observation": "Чистая логика совпадения thread/turn проверяется отдельно. Файловый guard/lock и carrier покрыты интеграционными тестами с процессами; отдельный бинарный artifact проверяет runtime, restart и установленный profile. Тонкий UI не меняется."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Completion matcher является юнитом; lock/lifecycle/dashboard тесты интеграционные, используют HTTP/Unix socket и внешние синтетические процессы. Artifact тесты сквозные на точном бинаре. Группы явно выбираются по TestAppTaskContinuation/InstalledArtifact; юнит можно запускать отдельно -run CompletionMatchesThreadAndTurn, реальной БД/сервиса в его подготовке нет.",
+      "evidence": [
+        {
+          "object": "Фактические зависимости групп тестов",
+          "location": "tools/dashboard/apptask_test.go, apptask_continuation_test.go, apptask_continuation_artifact_test.go; internal/taskhead/raise_test.go",
+          "observation": "Completion matcher является юнитом; lock/lifecycle/dashboard тесты интеграционные, используют HTTP/Unix socket и внешние синтетические процессы. Artifact тесты сквозные на точном бинаре. Группы явно выбираются по TestAppTaskContinuation/InstalledArtifact; юнит можно запускать отдельно -run CompletionMatchesThreadAndTurn, реальной БД/сервиса в его подготовке нет."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ожидаются конкретные HTTP-исходы, один точный текст, прежняя th-1, политика и отказ внешнему делегату. Клиент fixture расширяет существующий JSONL-контракт, исполняет настоящий carrier и lock; ожидаемые данные не вычисляются исправляемым helper. Семантический regcheck и мутации отличают тест от пустого совпадения.",
+      "evidence": [
+        {
+          "object": "Независимые ожидания и реалистичность fixture",
+          "location": "apptask_continuation_test.go: Lifecycle/RefusesUnprovenState/ParallelHandshake; appchat_test.go: appClientPy; apptask_artifact_test.go",
+          "observation": "Ожидаются конкретные HTTP-исходы, один точный текст, прежняя th-1, политика и отказ внешнему делегату. Клиент fixture расширяет существующий JSONL-контракт, исполняет настоящий carrier и lock; ожидаемые данные не вычисляются исправляемым helper. Семантический regcheck и мутации отличают тест от пустого совпадения."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "В temp-копии убиты: снятие проверки ExpectedRun -> changed continuation started; снятие origin ->200 для чужого Run/SID; неправильная ветка initial_order -> exact input0 из-за tail; неверная policy never ->502; пропавший stop ->конвейер не снят. Сборки проходили. SHA production и выбранных tests сверены с финальной версией, поздний новый profile-artifact проверен отдельно.",
+      "evidence": [
+        {
+          "object": "Пять осмысленных мутаций",
+          "location": "/private/tmp/dk1724-review-evidence/mutations.json; mutation-expected-run.log; mutation-provenance.log; mutation-human-order.log; mutation-approval-policy.log; mutation-one-pass.log",
+          "observation": "В temp-копии убиты: снятие проверки ExpectedRun -> changed continuation started; снятие origin ->200 для чужого Run/SID; неправильная ветка initial_order -> exact input0 из-за tail; неверная policy never ->502; пропавший stop ->конвейер не снят. Сборки проходили. SHA production и выбранных tests сверены с финальной версией, поздний новый profile-artifact проверен отдельно."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Гонка handshake управляется файлами barrier/release, завершение turn отдельным test/finish, stop/restart явными вызовами. Ожидание проверяет факт lock/registry/TaskRun и имеет внешний timeout, не сравнивает длительность операции с производительным порогом. Случайных sleep для предположения об окончании хода нет.",
+      "evidence": [
+        {
+          "object": "Детерминизм concurrency/lifecycle",
+          "location": "TestAppTaskContinuationParallelHandshake; appchat_test.go: resume-barrier; waitTaskStopped; artifact restart helper",
+          "observation": "Гонка handshake управляется файлами barrier/release, завершение turn отдельным test/finish, stop/restart явными вызовами. Ожидание проверяет факт lock/registry/TaskRun и имеет внешний timeout, не сравнивает длительность операции с производительным порогом. Случайных sleep для предположения об окончании хода нет."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Нового непокрываемого слоя или исключения из тестов не заявлено. UI/бизнес-формы не меняются; новая логика проверяется matcher-тестами и интеграцией с реальной оболочкой. Записанное AGENTS-исключение для нового слоя не требуется.",
+      "evidence": [
+        {
+          "object": "Исключения из юнитов",
+          "location": "Финальный diff9f079b418..9629538fc; AGENTS.md; apptask tests",
+          "observation": "Нового непокрываемого слоя или исключения из тестов не заявлено. UI/бизнес-формы не меняются; новая логика проверяется matcher-тестами и интеграцией с реальной оболочкой. Записанное AGENTS-исключение для нового слоя не требуется."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые fixtures используют t.TempDir/HOME, подменяют realHomeFn, бинарь копируют в temp, клиент синтетический; profile-artifact читает настоящую раскладку, но исполняет её в отдельном HOME с подменным bin. Старый TestMain без runsguard является неизменённым baseline-пределом, известным до DK-1724. Новых записей в боевой runs из этих путей не добавлено; это не утверждение о всей старой suite.",
+      "evidence": [
+        {
+          "object": "Изоляция нового стенда и прежний TestMain",
+          "location": "apptask_regression_test.go: appTaskEnv/useHeadHome; server_test.go: newTestEnv; tasks_test.go: TestMain; artifact helper",
+          "observation": "Новые fixtures используют t.TempDir/HOME, подменяют realHomeFn, бинарь копируют в temp, клиент синтетический; profile-artifact читает настоящую раскладку, но исполняет её в отдельном HOME с подменным bin. Старый TestMain без runsguard является неизменённым baseline-пределом, известным до DK-1724. Новых записей в боевой runs из этих путей не добавлено; это не утверждение о всей старой suite."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Заголовок описывает весь стандарт. Проверены его конкретные блоки56..80 и общие ARCH-001..028; заголовок не заменён выборочной проверкой.",
+      "evidence": [
+        {
+          "object": "Заголовок архитектурного стандарта",
+          "location": "docs/ARCHITECTURE.md; architecture этого отчёта",
+          "observation": "Заголовок описывает весь стандарт. Проверены его конкретные блоки56..80 и общие ARCH-001..028; заголовок не заменён выборочной проверкой."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общий и проектный источники присутствуют и прочитаны. Все28 общих и28 проектных архитектурных блоков имеют отдельные выводы; согласованного отступления для правки не требуется.",
+      "evidence": [
+        {
+          "object": "Оба уровня архитектурных правил",
+          "location": "RULES.architecture.md; docs/ARCHITECTURE.md; sources/rules отчёта",
+          "observation": "Общий и проектный источники присутствуют и прочитаны. Все28 общих и28 проектных архитектурных блоков имеют отдельные выводы; согласованного отступления для правки не требуется."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Изменение остаётся в текущих файлах каркаса/оболочки/семьи app чатов; конкретные границы каталогов, доменов, HTTP и источника доски проверены ниже.",
+      "evidence": [
+        {
+          "object": "Группа архитектурных границ",
+          "location": "docs/ARCHITECTURE.md: Границы; production diff",
+          "observation": "Изменение остаётся в текущих файлах каркаса/оболочки/семьи app чатов; конкретные границы каталогов, доменов, HTTP и источника доски проверены ниже."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go-тесты лежат рядом с dashboard, общий код в internal, оболочка Python рядом со SKILL.md. Верхний уровень, команды и зависимости не добавлены. Существующая граница go/Python сохранена.",
+      "evidence": [
+        {
+          "object": "Размещение и языки новых файлов",
+          "location": "README.md: Раскладка; new apptask_continuation*_test.go; task-run.py/internal/taskhead",
+          "observation": "Go-тесты лежат рядом с dashboard, общий код в internal, оболочка Python рядом со SKILL.md. Верхний уровень, команды и зависимости не добавлены. Существующая граница go/Python сохранена."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Это правка существующей семьи файлов до доменного переезда, не новый домен. Вызов общего taskhead явный, чтение taskstate идёт через пакет; новый пакет-владелец домена не нужен.",
+      "evidence": [
+        {
+          "object": "Граница домена чатов/запусков",
+          "location": "tools/dashboard/{appchat,apptask,chats,runs}.go; internal/taskhead",
+          "observation": "Это правка существующей семьи файлов до доменного переезда, не новый домен. Вызов общего taskhead явный, чтение taskstate идёт через пакет; новый пакет-владелец домена не нужен."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Маршрут /say и /runs не меняется. Решение о продолжении/праве выполняется на сервере, ответы через writeJSON; клиентская статика не содержит копии проверки происхождения.",
+      "evidence": [
+        {
+          "object": "HTTP и серверная логика",
+          "location": "tools/dashboard/server.go: handler; appchat.go: appSay; apptask.go: raiseAppTask",
+          "observation": "Маршрут /say и /runs не меняется. Решение о продолжении/праве выполняется на сервере, ответы через writeJSON; клиентская статика не содержит копии проверки происхождения."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Дашборд читает текущую строку и архив, но не переписывает их для продолжения. Конвейер сохраняет прежний контракт изменения задачи; Run-метаданные не служат собственной базой статусов.",
+      "evidence": [
+        {
+          "object": "Источник истины доски",
+          "location": "appTaskContinuation -> boardJSON -> taskctl list --json; task-run.py: preflight/show",
+          "observation": "Дашборд читает текущую строку и архив, но не переписывает их для продолжения. Конвейер сохраняет прежний контракт изменения задачи; Run-метаданные не служат собственной базой статусов."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверка Run и штатное занятие используют существующие пакеты. Локальной копии taskstate serialization/lock/delegate или запуска git не добавлено.",
+      "evidence": [
+        {
+          "object": "Повторное использование internal",
+          "location": "tools/dashboard/apptask.go imports mainchat/taskhead/taskstate; internal/taskhead/raise.go",
+          "observation": "Проверка Run и штатное занятие используют существующие пакеты. Локальной копии taskstate serialization/lock/delegate или запуска git не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все конкретные инварианты группы проверены по затронутым чатам, процессам, памяти и источникам. Неприменимые form/render/groom блоки разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "Группа проектных инвариантов",
+          "location": "docs/ARCHITECTURE.md: Инварианты; blocks62..73",
+          "observation": "Все конкретные инварианты группы проверены по затронутым чатам, процессам, памяти и источникам. Неприменимые form/render/groom блоки разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все новые HTTP-ответы идут writeJSON. Доска запрашивается существующим boardJSON/runProcEnv, нового прямого subprocess-протокола taskctl не создано. Транскриптный parseReplies не меняется, app-server сохраняет свою существующую JSONL/feed дорогу.",
+      "evidence": [
+        {
+          "object": "Единые точки JSON/чтения доски",
+          "location": "appchat.go/appTask*.go: writeJSON; board.go: boardJSON -> runProcEnv; appNote/feed",
+          "observation": "Все новые HTTP-ответы идут writeJSON. Доска запрашивается существующим boardJSON/runProcEnv, нового прямого subprocess-протокола taskctl не создано. Транскриптный parseReplies не меняется, app-server сохраняет свою существующую JSONL/feed дорогу."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Текстовый parseReplies и форматирование карточек не изменены и новый путь их не вызывает. Реплика человека передаётся прежнему app-server текстом; новой подмены инструментальной разметки нет.",
+      "evidence": [
+        {
+          "object": "Разбор текстовых вызовов модели",
+          "location": "tools/dashboard/sessions.go: parseReplies; tools/dashboard/appchat.go: appItemReplies/appSayRecord; full diff",
+          "observation": "Текстовый parseReplies и форматирование карточек не изменены и новый путь их не вызывает. Реплика человека передаётся прежнему app-server текстом; новой подмены инструментальной разметки нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сценарий остаётся одной репликой и существующими кнопками stop/model. Новых служебных кнопок/плашек, состава цели и решений LLD в чат не добавлено.",
+      "evidence": [
+        {
+          "object": "Поверхность пользовательского чата",
+          "location": "tools/dashboard/appchat.go: appSay; tools/dashboard/static unchanged; README: continuation",
+          "observation": "Сценарий остаётся одной репликой и существующими кнопками stop/model. Новых служебных кнопок/плашек, состава цели и решений LLD в чат не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Продолжение обычной реплики не вызывает prepared check-ask/apply и не синтезирует согласие. Маршрутизация типизированных ответов остаётся перед appSay; GroomSource по-прежнему включает прежний режим. Связанные авторские Automatic/Groom greens переиспользованы, код этих правил не изменён.",
+      "evidence": [
+        {
+          "object": "Согласие на груминг и PreparedQuestion",
+          "location": "appAutomaticReview; handleChatSay ordering; unchanged prepared/scenario handlers",
+          "observation": "Продолжение обычной реплики не вызывает prepared check-ask/apply и не синтезирует согласие. Маршрутизация типизированных ответов остаётся перед appSay; GroomSource по-прежнему включает прежний режим. Связанные авторские Automatic/Groom greens переиспользованы, код этих правил не изменён."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Изменение не создаёт и не редактирует подготовленные задачи/формы; taskForm, адаптеры сохранения и состав разбора не задействованы новым продолжением.",
+      "evidence": [
+        {
+          "object": "Общая форма taskForm",
+          "location": "tools/dashboard/static/app.js unchanged; /say -> appSay",
+          "observation": "Изменение не создаёт и не редактирует подготовленные задачи/формы; taskForm, адаптеры сохранения и состав разбора не задействованы новым продолжением."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новые разделы формы, запись мысли и проверка HasGroomResult не добавлены и не вызываются новым путём. Поверхность изменения ограничена доставкой обычной реплики.",
+      "evidence": [
+        {
+          "object": "Форма мысли и formContentBlock",
+          "location": "tools/dashboard/static unchanged; appTaskContinuation/raiseAppTask",
+          "observation": "Новые разделы формы, запись мысли и проверка HasGroomResult не добавлены и не вызываются новым путём. Поверхность изменения ограничена доставкой обычной реплики."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Реестры меняются под appMu, lifecycle сериализует закрытие и создание carrier, channel launched отделяет подтверждённого владельца. automatic устанавливается один раз до публикации appChat. Нового memo-кеша или незащищённой карты нет.",
+      "evidence": [
+        {
+          "object": "Память и порядок замков",
+          "location": "appTask.appMu/lifecycle/launched/stop; appChat.automatic; appDead(expected)",
+          "observation": "Реестры меняются под appMu, lifecycle сериализует закрытие и создание carrier, channel launched отделяет подтверждённого владельца. automatic устанавливается один раз до публикации appChat. Нового memo-кеша или незащищённой карты нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-c8be7a833c89c0e8",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Рабочее продолжение использует существующий appSpawn/agentctl exec и source profile_dir, а не новый путь к клиенту. Новый artifact использует установленный agentctl и основной codex.toml с настоящим profile_dir, синтетический HOME/bin/model-client; runtime-source путь подтверждён отдельно. Проверено взаимодействие с ранее слитой DK-1720.",
+      "evidence": [
+        {
+          "object": "agentctl exec и источник профилей",
+          "location": "appserver.go: appServerStart; runs.go: headRequest; TestAppTaskContinuationInstalledProfilesArtifact",
+          "observation": "Рабочее продолжение использует существующий appSpawn/agentctl exec и source profile_dir, а не новый путь к клиенту. Новый artifact использует установленный agentctl и основной codex.toml с настоящим profile_dir, синтетический HOME/bin/model-client; runtime-source путь подтверждён отдельно. Проверено взаимодействие с ранее слитой DK-1720."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-91fb2123abfa64cb",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Занятость хода открывается до отправки реплики и гасится\n  уведомлением конца хода, смерть процесса записывается в ленту словами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Codex остаётся JSONL-процессом, feed живёт у дашборда, tmux не появляется. appTaskPass открывает busy до turn/start, завершение фильтрует thread/turn, смерть клиента видна в ленте. Остальные протоколы не выбирают новый carrier.",
+      "evidence": [
+        {
+          "object": "Протокол app-server",
+          "location": "appTaskPass -> appSpawn/appNote; appchat.go: busy/turn; appserver.go unchanged; taskhead: AppServerCarrier",
+          "observation": "Codex остаётся JSONL-процессом, feed живёт у дашборда, tmux не появляется. appTaskPass открывает busy до turn/start, завершение фильтрует thread/turn, смерть клиента видна в ленте. Остальные протоколы не выбирают новый carrier."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71c48ce43f26ae0a",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Автопроверка дополнительных прав включена для груминга и работающего\n  конвейера с формы. Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  получает `never` без токена замка. Закрытая задача продолжает обычный\n  разговор с `never`. Недоступная задача и сменившийся запуск приводят\n  к видимому отказу.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый и legacy пути сохраняют общий Raise/taskstate/lock и старую нить. Подтверждение прав связано с owner; ручная привязка ordinary, Done/архив ordinary never, неизвестные/недоступные состояния видимо ограничены. Проверены one-pass, own delegate, external writer, parallel handshake, stop/restart и отсутствие автопроходов. Согласование LLD не выполнялось.",
+      "evidence": [
+        {
+          "object": "Рабочий carrier и политика прав",
+          "location": "docs/ARCHITECTURE.md: Execute carrier; appTaskContinuation/raiseAppTask/appTaskPass/appTaskOwns; task-run.py",
+          "observation": "Новый и legacy пути сохраняют общий Raise/taskstate/lock и старую нить. Подтверждение прав связано с owner; ручная привязка ordinary, Done/архив ordinary never, неизвестные/недоступные состояния видимо ограничены. Проверены one-pass, own delegate, external writer, parallel handshake, stop/restart и отсутствие автопроходов. Согласование LLD не выполнялось."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых HTTP-клиентов к внешнему сервису, git fetch/push или сетевого пути чтения доски в runtime нет. Unix socket локален; тестовый HTTP ограничен loopback. Сеть модели остаётся обязанностью существующего клиентского процесса.",
+      "evidence": [
+        {
+          "object": "Отсутствие новой сети",
+          "location": "appTaskContinuation -> local taskctl; appSpawn -> local app-server; artifact setup",
+          "observation": "Новых HTTP-клиентов к внешнему сервису, git fetch/push или сетевого пути чтения доски в runtime нет. Unix socket локален; тестовый HTTP ограничен loopback. Сеть модели остаётся обязанностью существующего клиентского процесса."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый carrier поднимается существующим headless с q.Root, клиент получает chatTree, artifact serve стартует из e.home, чтение установленной раскладки из sourceRoot. Нового exec без Dir в изменении нет.",
+      "evidence": [
+        {
+          "object": "Рабочий каталог процессов",
+          "location": "internal/taskhead/raise.go: headless cmd.Dir=q.Root; appServerStart: cmd.Dir; artifact helper/read command",
+          "observation": "Новый carrier поднимается существующим headless с q.Root, клиент получает chatTree, artifact serve стартует из e.home, чтение установленной раскладки из sourceRoot. Нового exec без Dir в изменении нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Конкретные правила размещения ниже применены ко всем новым файлам тестов; production-структура каталогов не расширяется.",
+      "evidence": [
+        {
+          "object": "Группа размещения",
+          "location": "docs/ARCHITECTURE.md: Куда кладётся новое; final diff",
+          "observation": "Конкретные правила размещения ниже применены ко всем новым файлам тестов; production-структура каталогов не расширяется."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Весь финальный diff находится в разрешённых существующих каталогах. Оболочка остаётся рядом со скиллом, тесты рядом с dashboard и taskhead; команды нового верхнего уровня нет.",
+      "evidence": [
+        {
+          "object": "Белый список каталогов",
+          "location": "README.md: Раскладка; internal/taskhead; kit/skills/board-task; tools/dashboard; docs/tasks",
+          "observation": "Весь финальный diff находится в разрешённых существующих каталогах. Оболочка остаётся рядом со скиллом, тесты рядом с dashboard и taskhead; команды нового верхнего уровня нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые файлы продолжают старую семью appTask, которая ещё не переехала. Нового самостоятельного домена функциональность не создаёт; правило пакета для нового домена не требует искусственного переноса текущего кода.",
+      "evidence": [
+        {
+          "object": "Новый домен либо старая семья",
+          "location": "tools/dashboard/apptask_continuation_test.go; apptask_continuation_artifact_test.go; appchat/apptask",
+          "observation": "Новые файлы продолжают старую семью appTask, которая ещё не переехала. Нового самостоятельного домена функциональность не создаёт; правило пакета для нового домена не требует искусственного переноса текущего кода."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Продолжение задачи использует общую идентичность Run и guard остановки, но не автоматический recovery-attempt. Конкретные общие инварианты проверены ниже; механизм дежурного не переписывался.",
+      "evidence": [
+        {
+          "object": "Группа восстановления",
+          "location": "docs/ARCHITECTURE.md: Восстановление исчезнувшего конвейера; taskhead/state consumers",
+          "observation": "Продолжение задачи использует общую идентичность Run и guard остановки, но не автоматический recovery-attempt. Конкретные общие инварианты проверены ниже; механизм дежурного не переписывался."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "RunID создаётся до подъёма, оболочка подтверждает PID после принятия lock. ExpectedRun сравнивается под guard до изменения, Stopped снимается после занятия общего lock. Ключ состояния канонический root/task, Save атомарен с fsync. Старый stopped state сохраняется при несовпадении ID, доказано тестом и мутацией.",
+      "evidence": [
+        {
+          "object": "ID, handoff и durable состояние",
+          "location": "internal/taskhead/raise.go: newSessionID/Start/headless; task-run.py: take_lock; internal/taskstate/state.go/python taskstate.py",
+          "observation": "RunID создаётся до подъёма, оболочка подтверждает PID после принятия lock. ExpectedRun сравнивается под guard до изменения, Stopped снимается после занятия общего lock. Ключ состояния канонический root/task, Save атомарен с fsync. Старый stopped state сохраняется при несовпадении ID, доказано тестом и мутацией."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новый путь является явной репликой и не задаёт RecoveryAttempt/PreviousRun. Журнал расхода/квоты и подтверждение погибшего владельца automatic recovery не меняются. Добавленная ExpectedRun-проверка стоит раньше, но без параметра сохраняет прежнюю recovery ветку.",
+      "evidence": [
+        {
+          "object": "Автоматический recovery.py",
+          "location": "tools/devkitctl/recovery.py unchanged; Request.RecoveryAttempt branch preserved",
+          "observation": "Новый путь является явной репликой и не задаёт RecoveryAttempt/PreviousRun. Журнал расхода/квоты и подтверждение погибшего владельца automatic recovery не меняются. Добавленная ExpectedRun-проверка стоит раньше, но без параметра сохраняет прежнюю recovery ветку."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Продолжение не закрывает recovery-инцидент и не создаёт фальшивую попытку. Формат подтверждения root/task/attempt/RunID/PID не изменён, обычный новый Run подтверждает сама оболочка. Правило закрытия инцидента не задействовано.",
+      "evidence": [
+        {
+          "object": "Подтверждение автоматического восстановления",
+          "location": "internal/taskhead/raise.go: recovery branches; tools/devkitctl/taskstate.py unchanged; continuation tests",
+          "observation": "Продолжение не закрывает recovery-инцидент и не создаёт фальшивую попытку. Формат подтверждения root/task/attempt/RunID/PID не изменён, обычный новый Run подтверждает сама оболочка. Правило закрытия инцидента не задействовано."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Заголовок обозначает проектные дополнения; все конкретные14 блоков и16 общих правил имеют самостоятельные выводы, а не один общий формальный PASS.",
+      "evidence": [
+        {
+          "object": "Заголовок стайлгайда",
+          "location": "docs/STYLEGUIDE.md; common-style rules",
+          "observation": "Заголовок обозначает проектные дополнения; все конкретные14 блоков и16 общих правил имеют самостоятельные выводы, а не один общий формальный PASS."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общий и проектный источники доступны и проверены. Отдельно сверены имена, параметры, ошибки, тесты, размещение, форматирование и вся изменённая связная проза.",
+      "evidence": [
+        {
+          "object": "Оба уровня стиля",
+          "location": "RULES.style.md; docs/STYLEGUIDE.md; proofread scope",
+          "observation": "Общий и проектный источники доступны и проверены. Отдельно сверены имена, параметры, ошибки, тесты, размещение, форматирование и вся изменённая связная проза."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Изменение возвращает HTTP-исходы и пишет объяснение в ленту; не добавляет проверочную CLI-утилиту или hook. Применимость двух конкретных CLI/hook правил разобрана отдельно.",
+      "evidence": [
+        {
+          "object": "Группа ошибок/отказов",
+          "location": "docs/STYLEGUIDE.md: Ошибки и отказы; apptask/appchat",
+          "observation": "Изменение возвращает HTTP-исходы и пишет объяснение в ленту; не добавляет проверочную CLI-утилиту или hook. Применимость двух конкретных CLI/hook правил разобрана отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новой проверочной CLI-утилиты со stdout находок не добавлено. task-run.py является существующей оболочкой конвейера, её коды0/1/2/3 сохранены; Go artifact тесты используют контракт testing. Правило0/1/2 для describe-подобной команды не относится к этим объектам.",
+      "evidence": [
+        {
+          "object": "Выход проверочной утилиты",
+          "location": "final diff: task-run.py, dashboard handlers, Go-tests",
+          "observation": "Новой проверочной CLI-утилиты со stdout находок не добавлено. task-run.py является существующей оболочкой конвейера, её коды0/1/2/3 сохранены; Go artifact тесты используют контракт testing. Правило0/1/2 для describe-подобной команды не относится к этим объектам."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Хуки не добавлены и их диагностические команды не меняются. HTTP409/502 дашборда не является stderr hook-а; готовая замена shell-команды здесь не требуется.",
+      "evidence": [
+        {
+          "object": "Отказ hook",
+          "location": "final diff; hooks unchanged",
+          "observation": "Хуки не добавлены и их диагностические команды не меняются. HTTP409/502 дашборда не является stderr hook-а; готовая замена shell-команды здесь не требуется."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверены имена/расположение, temp-синтетика, semantic regcheck и среда всех новых тестов. Браузерный живой тест в изменение не входит.",
+      "evidence": [
+        {
+          "object": "Группа тестового размещения",
+          "location": "docs/STYLEGUIDE.md: Раскладка тестов; changed *_test.go",
+          "observation": "Проверены имена/расположение, temp-синтетика, semantic regcheck и среда всех новых тестов. Браузерный живой тест в изменение не входит."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Go-тесты лежат рядом с соответствующими модулями и имеют суффикс _test.go. Новые continuation/artifact файлы относятся к одной семье appTask. Python-оболочку проверяет эта интеграция, тестового сборника в другом каталоге не создано.",
+      "evidence": [
+        {
+          "object": "Место и имена тестов",
+          "location": "internal/taskhead/raise_test.go; tools/dashboard/apptask*_test.go/appchat_test.go",
+          "observation": "Go-тесты лежат рядом с соответствующими модулями и имеют суффикс _test.go. Новые continuation/artifact файлы относятся к одной семье appTask. Python-оболочку проверяет эта интеграция, тестового сборника в другом каталоге не создано."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Стенды используют временные дом/проект/bin, synthetic board и клиент. Точный бинарь копируется в temp, source profile read-only подключается symlink и исполняется с подменным bin в temp HOME. Боевой devkit дерево и живая задача не изменяются.",
+      "evidence": [
+        {
+          "object": "Временная синтетика",
+          "location": "appTaskEnv/newTestEnv/useHeadHome; appArtifactRestartable; TestAppTaskContinuationInstalledProfilesArtifact",
+          "observation": "Стенды используют временные дом/проект/bin, synthetic board и клиент. Точный бинарь копируется в temp, source profile read-only подключается symlink и исполняется с подменным bin в temp HOME. Боевой devkit дерево и живая задача не изменяются."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Обе старые версии компилируются и падают на проверяемом поведении, а не на отсутствующем поле/сигнатуре: потеря owner на9f079b418 и409 в Done/архиве на9f8df0e97. Новый код зелёный, Done-путь независимо повторён.",
+      "evidence": [
+        {
+          "object": "Регрессионные тесты",
+          "location": "docs/tasks/DK-1724.md: regcheck fragments; /private/tmp/dk1724-regcheck-rebased-base.log; closed-base.log",
+          "observation": "Обе старые версии компилируются и падают на проверяемом поведении, а не на отсутствующем поле/сигнатуре: потеря owner на9f079b418 и409 в Done/архиве на9f8df0e97. Новый код зелёный, Done-путь независимо повторён."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Существующий TestMain гасит session/config vars и уводит uid-home; newTestEnv задаёт PATH/fixtures. Новые standSpawnEnv явно очищают SID/task/tmux и используют temp HOME/DEVKIT_HOME. Установленный agentctl читает реальную конфигурацию только до построения синтетического запуска. Общий baseline-предел runsguard отражён в TEST-009.",
+      "evidence": [
+        {
+          "object": "Подмена окружения всего стенда",
+          "location": "tasks_test.go: TestMain; server_test.go: newTestEnv; appTaskEnv/useHeadHome; artifact standSpawnEnv",
+          "observation": "Существующий TestMain гасит session/config vars и уводит uid-home; newTestEnv задаёт PATH/fixtures. Новые standSpawnEnv явно очищают SID/task/tmux и используют temp HOME/DEVKIT_HOME. Установленный agentctl читает реальную конфигурацию только до построения синтетического запуска. Общий baseline-предел runsguard отражён в TEST-009."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новые тесты не запускают живой браузер и не обращаются к кешу playwright. Они проверяют loopback HTTP и синтетический JSONL-client; правило единственного живого browser-стенда не задействовано.",
+      "evidence": [
+        {
+          "object": "Браузер из кеша playwright",
+          "location": "changed Go integration/artifact tests; static unchanged",
+          "observation": "Новые тесты не запускают живой браузер и не обращаются к кешу playwright. Они проверяют loopback HTTP и синтетический JSONL-client; правило единственного живого browser-стенда не задействовано."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Имена файлов сохраняют appTask-префикс текущей семьи; функции не создают новый HTTP-маршрут, а работают под существующими handleChatSay/handleRun. Конкретное правило семей проверено ниже.",
+      "evidence": [
+        {
+          "object": "Группа имён",
+          "location": "docs/STYLEGUIDE.md: Имена; appTask family; Request fields",
+          "observation": "Имена файлов сохраняют appTask-префикс текущей семьи; функции не создают новый HTTP-маршрут, а работают под существующими handleChatSay/handleRun. Конкретное правило семей проверено ниже."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые файлы относятся к appTask и названы этим префиксом. appTaskContinuation/raiseAppTask являются внутренними помощниками существующего handler, а не новыми handle HTTP entry points; шагов обкатки step не добавлено.",
+      "evidence": [
+        {
+          "object": "Префиксы файлов и хендлеров",
+          "location": "tools/dashboard/apptask_continuation*_test.go; appchat.go; apptask.go; server.go unchanged",
+          "observation": "Новые файлы относятся к appTask и названы этим префиксом. appTaskContinuation/raiseAppTask являются внутренними помощниками существующего handler, а не новыми handle HTTP entry points; шагов обкатки step не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Независимый свежий reviewer прочитал3документа в указанном scope большого README(5942строки). Факты, команды, машинные строки и структура сохранены. Одна правка формы уточнила клиент в простое вместо ожидания ответа. Выборка prose, pairs/dictionary/machine-lines прочитаны; символы и diff --check проверены отдельно.",
+      "evidence": [
+        {
+          "object": "Символы и вычитка связной прозы",
+          "location": "docs/tasks/DK-1724.md целиком; docs/ARCHITECTURE.md целиком; tools/dashboard/README.md: вход1..90 и Первый запуск Codex190..310; RULES.md: Код и тексты",
+          "observation": "Независимый свежий reviewer прочитал3документа в указанном scope большого README(5942строки). Факты, команды, машинные строки и структура сохранены. Одна правка формы уточнила клиент в простое вместо ожидания ответа. Выборка prose, pairs/dictionary/machine-lines прочитаны; символы и diff --check проверены отдельно."
+        }
+      ]
+    }
+  ]
+}

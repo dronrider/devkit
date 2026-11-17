@@ -14,7 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dronrider/devkit/internal/mainchat"
 	"github.com/dronrider/devkit/internal/taskhead"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 type appTaskNote struct {
@@ -55,7 +57,9 @@ func (s *server) appTaskClose(a *appTask) {
 			s.logf("конец конвейера %s не записался: %v", a.task, err)
 		}
 		s.appMu.Lock()
-		delete(s.appTasks, a.sid)
+		if s.appTasks[a.sid] == a {
+			delete(s.appTasks, a.sid)
+		}
 		s.appMu.Unlock()
 		os.RemoveAll(a.dir)
 	})
@@ -219,6 +223,11 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *Harness, tier, effort, order string) {
 	sid := "as" + msgID()
 	st := chatStore{Task: id, Project: p.Name, Model: h.tierModel(tier), Harness: h.Name, Protocol: h.Protocol, TaskRun: true, CxEffort: effort, Born: s.now().Unix()}
+	s.raiseAppTask(w, p, sid, st, h, tier, order, false, "")
+}
+
+func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce bool, claim string) {
+	id := st.Task
 	if st.CxEffort == "" {
 		raw, err := runProcQuiet(p.Path, true, binPath(agentctlBin), "pick", id)
 		if err == nil {
@@ -233,11 +242,20 @@ func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *H
 			s.mainChatAssign(id, sid, p.Name, "работа")
 		}
 		s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true, Text: "конвейер задачи не поднялся: " + err.Error(), Time: s.now().UTC().Format(time.RFC3339)}})
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "session": sid})
+		status := http.StatusBadGateway
+		body := map[string]string{"error": err.Error(), "session": sid}
+		var conflict *appThreadWriterConflict
+		if errors.As(err, &conflict) {
+			status = http.StatusConflict
+			body["refused"] = err.Error()
+		}
+		writeJSON(w, status, body)
 	}
-	if err := s.chatStoreWrite(sid, st); err != nil {
-		fail(err)
-		return
+	if !replyOnce {
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			fail(err)
+			return
+		}
 	}
 	dir, err := os.MkdirTemp("/tmp", "dk-at-")
 	if err != nil {
@@ -265,16 +283,49 @@ func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *H
 		return
 	}
 	a := &appTask{sid: sid, root: p.Path, task: id, home: q.Home, dir: dir, listener: listener, token: msgID(), launched: make(chan struct{}), ready: make(chan error, 1), stop: make(chan struct{})}
-	q.AppServer = &taskhead.AppServerCarrier{Command: []string{"python3", taskRunPath(s.cfg.Roots), "--app-turn-client", socket, a.token}}
+	q.ContinueStopped, q.ExpectedRun = replyOnce, st.TaskRunID
+	q.AppServer = &taskhead.AppServerCarrier{ReplyOnce: replyOnce, Command: []string{"python3", taskRunPath(s.cfg.Roots), "--app-turn-client", socket, a.token}}
 	s.appMu.Lock()
+	for _, existing := range s.appTasks {
+		if existing.sid == sid || existing.root == p.Path && existing.task == id {
+			s.appMu.Unlock()
+			listener.Close()
+			os.RemoveAll(dir)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт"})
+			return
+		}
+	}
 	s.appTasks[sid] = a
 	s.appMu.Unlock()
+	if replyOnce {
+		if live := s.appLive(sid); live != nil && live.busyNow() {
+			s.appMu.Lock()
+			delete(s.appTasks, sid)
+			s.appMu.Unlock()
+			listener.Close()
+			os.RemoveAll(dir)
+			close(a.launched)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+			return
+		}
+		s.appDrop(sid, "возобновление рабочего запуска задачи")
+	}
 	go s.appTaskServe(a, p)
 	res, err := taskhead.Raise(q)
 	a.pid = res.PID
 	st.TaskRunPID = res.PID
 	if err == nil && res.Code == taskhead.CodeRaised {
-		err = s.chatStoreWrite(sid, st)
+		var state *taskstate.Guard
+		state, err = taskstate.Acquire(q.Home, p.Path, id)
+		if err == nil {
+			if state.State.Run == nil {
+				err = errors.New("состояние запуска задачи не подтверждено")
+			} else {
+				st.TaskRun, st.TaskRunRoot, st.TaskRunID, st.TaskRunSession = true, state.State.Root, state.State.Run.ID, sid
+				err = s.chatStoreWrite(sid, st)
+			}
+			state.Close()
+		}
 	}
 	close(a.launched)
 	if err != nil || res.Code != taskhead.CodeRaised {
@@ -321,7 +372,10 @@ func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *H
 		fail(err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
+	if replyOnce {
+		s.chatSayDone(sid, claim, "appserver")
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
 }
 
 func (s *server) appTaskToolEnv(sid string, st chatStore, env map[string]string) {
@@ -369,4 +423,53 @@ func (s *server) appTaskOwns(sid string, st chatStore) bool {
 		return false
 	}
 	return st.Task == a.task && st.TaskRunPID > 0 && st.TaskRunPID == a.pid && taskhead.Owner(taskhead.LockPath(a.home, a.task)) == a.pid && taskhead.Working(taskhead.LockPath(a.home, a.task))
+}
+
+// Старые записи сохраняли только PID; сверка состояния и назначения отличает
+// прежний запуск с формы от чата, которому вручную приписали ID задачи.
+func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (bool, error) {
+	if st.TaskRunPID <= 0 && st.TaskRunID == "" && !st.TaskRun {
+		return false, nil
+	}
+	if st.Task == "" || st.Thread == "" || st.Project != p.Name {
+		return false, errors.New("исходный рабочий разговор задачи не подтверждён")
+	}
+	raw, err := boardJSON(s.cfg.Home, p.Path)
+	if err != nil {
+		return false, fmt.Errorf("состояние задачи недоступно: %w", err)
+	}
+	rows, err := parseBoardRows(raw)
+	if err != nil {
+		return false, fmt.Errorf("состояние задачи не прочитано: %w", err)
+	}
+	row, ok := rows[st.Task]
+	if !ok || row.Sect == "done" || row.Sect == "archive" {
+		return false, errors.New("задача закрыта либо отсутствует на доске; рабочее продолжение недоступно")
+	}
+	switch row.Sect {
+	case "backlog", "ready", "in-progress", "check", "blocked":
+	default:
+		return false, errors.New("состояние задачи не допускает рабочее продолжение")
+	}
+	state, err := taskstate.Acquire(realHomeFn(), p.Path, st.Task)
+	if err != nil {
+		return false, fmt.Errorf("состояние запуска недоступно: %w", err)
+	}
+	defer state.Close()
+	run := state.State.Run
+	if run == nil || run.ID == "" || run.PID != st.TaskRunPID || run.Harness != st.Harness || run.Model != st.Model {
+		return false, errors.New("исходный запуск задачи изменился либо не подтверждён")
+	}
+	if st.TaskRunID != "" {
+		if st.TaskRunID != run.ID || st.TaskRunRoot != state.State.Root || st.TaskRunSession != sid {
+			return false, errors.New("исходный запуск задачи относится к другому дереву либо запуску")
+		}
+	} else {
+		bind := s.mainChatBind(st.Task)
+		if bind.Chat != sid || bind.Project != p.Name || bind.Source != mainchat.ByWork {
+			return false, errors.New("происхождение прежнего рабочего разговора не подтверждено")
+		}
+	}
+	st.TaskRunID, st.TaskRunRoot, st.TaskRunSession = run.ID, state.State.Root, sid
+	return true, nil
 }

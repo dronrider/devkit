@@ -152,15 +152,19 @@ func (s *server) appLive(sid string) *appChat {
 		return c
 	}
 	s.appMu.Unlock()
-	s.appDead(sid)
+	s.appDead(sid, c)
 	return nil
 }
 
 // appDead убирает мёртвый процесс из реестра и, если ход был открыт, называет
 // его обрыв в ленте: вечного ожидания ответа дорога не оставляет.
-func (s *server) appDead(sid string) {
+func (s *server) appDead(sid string, expected *appChat) {
 	s.appMu.Lock()
 	c := s.appChats[sid]
+	if c != expected {
+		s.appMu.Unlock()
+		return
+	}
 	delete(s.appChats, sid)
 	s.appMu.Unlock()
 	if c == nil {
@@ -244,7 +248,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	for key, value := range toolEnv {
 		config["shell_environment_policy.set."+key] = value
 	}
-	policy := map[string]any{"approvalPolicy": "never", "config": config}
+	policy := map[string]any{"approvalPolicy": "never", "config": config, "sandbox": "workspace-write"}
 	if s.appAutomaticReview(sid, st) {
 		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
 	}
@@ -295,7 +299,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	// заходом человека в разговор.
 	go func() {
 		<-proc.dead
-		s.appDead(sid)
+		s.appDead(sid, c)
 	}()
 	return c, nil
 }
@@ -439,13 +443,6 @@ func (s *server) appSayRecord(sid, text string) {
 // называются словами, молчания тут не бывает.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
-	if st.TaskRun && !s.appTaskOwns(sid, st) {
-		st.TaskRun = false
-		if err := s.chatStoreWrite(sid, st); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "состояние конвейера не обновилось: " + err.Error()})
-			return
-		}
-	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
 		return
@@ -470,6 +467,19 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	}
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
+	}
+	continuation, err := s.appTaskContinuation(found, sid, &st)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
+		return
+	}
+	if continuation {
+		if live := s.appLive(sid); live != nil && live.busyNow() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+			return
+		}
+		s.raiseAppTask(w, found, sid, st, h, "", text, true, claim)
+		return
 	}
 	dir := chatTree(found.Path, st.Task)
 	if st.GroomTree != "" {

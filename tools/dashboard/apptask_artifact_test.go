@@ -15,6 +15,11 @@ import (
 )
 
 func appArtifactEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
+	e, c, _ := appArtifactRestartable(t, mode)
+	return e, c
+}
+
+func appArtifactRestartable(t *testing.T, mode string) (*testEnv, *http.Client, func()) {
 	t.Helper()
 	binary := os.Getenv("DEVKIT_DASHBOARD_BIN")
 	if binary == "" {
@@ -48,22 +53,27 @@ func appArtifactEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 		t.Fatal(err)
 	}
 	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
-	logFile, err := os.Create(filepath.Join(e.home, "artifact.log"))
-	if err != nil {
-		t.Fatal(err)
+	if source := os.Getenv("DEVKIT_TASK_RUN_ARTIFACT"); source != "" {
+		if !filepath.IsAbs(source) {
+			t.Fatal("DEVKIT_TASK_RUN_ARTIFACT должен быть абсолютным путём")
+		}
+		runtime, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected := taskRunPath(e.cfg.Roots)
+		if err := os.WriteFile(selected, runtime, 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("task-run artifact %s sha256 %x; selected %s sha256 %x", source, sha256.Sum256(runtime), selected, sha256.Sum256([]byte(readFile(t, selected))))
 	}
-	defer logFile.Close()
-	cmd := exec.Command(copyPath, "serve")
-	cmd.Dir = e.home
-	cmd.Env = standSpawnEnv("HOME="+e.home, "DEVKIT_DASH_HOME="+e.home, "DEVKIT_HOME="+kit, "DEVKIT_NOTIFY_OFF=1", "CLAUDE_CODE_SESSION_ID=", "CODEX_THREAD_ID=", "CLAUDE_CONFIG_DIR=", "DEVKIT_TMUX=", "DEVKIT_TASK=")
-	cmd.Stdout, cmd.Stderr = logFile, logFile
-	if err = cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
+	var cmd *exec.Cmd
+	var done chan struct{}
 	var processErr error
-	go func() { processErr = cmd.Wait(); close(done) }()
-	t.Cleanup(func() {
+	stop := func() {
+		if cmd == nil {
+			return
+		}
 		cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case <-done:
@@ -71,31 +81,51 @@ func appArtifactEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 			cmd.Process.Kill()
 			<-done
 		}
-	})
-	e.srv.Close()
-	e.srv.URL = fmt.Sprintf("http://127.0.0.1:%d", port)
-	until := time.After(10 * time.Second)
-	tick := time.NewTicker(20 * time.Millisecond)
-	defer tick.Stop()
-	ready := false
-	for !ready {
-		resp, err := http.Get(e.srv.URL + "/healthz")
-		if err == nil {
-			ready = resp.StatusCode == http.StatusOK
-			resp.Body.Close()
+		cmd = nil
+	}
+	start := func() {
+		logFile, err := os.OpenFile(filepath.Join(e.home, "artifact.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if ready {
-			break
+		defer logFile.Close()
+		cmd = exec.Command(copyPath, "serve")
+		cmd.Dir = e.home
+		cmd.Env = standSpawnEnv("HOME="+e.home, "DEVKIT_DASH_HOME="+e.home, "DEVKIT_HOME="+kit, "DEVKIT_NOTIFY_OFF=1", "DEVKIT_TASK_PASS_PAUSE=0", "CLAUDE_CODE_SESSION_ID=", "CODEX_THREAD_ID=", "CLAUDE_CONFIG_DIR=", "DEVKIT_TMUX=", "DEVKIT_TASK=")
+		cmd.Stdout, cmd.Stderr = logFile, logFile
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
 		}
-		select {
-		case <-done:
-			t.Fatalf("artifact вышел: %v\n%s", processErr, readFile(t, logFile.Name()))
-		case <-until:
-			t.Fatalf("artifact не поднялся:\n%s", readFile(t, logFile.Name()))
-		case <-tick.C:
+		done = make(chan struct{})
+		current, finished := cmd, done
+		go func() { processErr = current.Wait(); close(finished) }()
+		until := time.After(10 * time.Second)
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			resp, err := http.Get(e.srv.URL + "/healthz")
+			if err == nil {
+				ready := resp.StatusCode == http.StatusOK
+				resp.Body.Close()
+				if ready {
+					return
+				}
+			}
+			select {
+			case <-done:
+				t.Fatalf("artifact вышел: %v\n%s", processErr, readFile(t, logFile.Name()))
+			case <-until:
+				t.Fatalf("artifact не поднялся:\n%s", readFile(t, logFile.Name()))
+			case <-tick.C:
+			}
 		}
 	}
-	return e, e.loggedClient(t)
+	e.srv.Close()
+	e.srv.URL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	t.Cleanup(stop)
+	start()
+	restart := func() { stop(); start() }
+	return e, e.loggedClient(t), restart
 }
 
 func TestAppTaskInstalledArtifact(t *testing.T) {

@@ -104,6 +104,9 @@ for raw in sys.stdin:
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": {"thread": {"id": "th-1"}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": "user" if mode() == "ignored-reviewer" else params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
     elif m == "thread/resume":
+        if mode() == "resume-barrier":
+            with open(os.path.join(os.getcwd(), "fake-app-handshake"), "w") as f: f.write(str(os.getpid()))
+            while not os.path.exists(os.path.join(os.getcwd(), "fake-app-release")): time.sleep(0.01)
         if mode() == "resume-error":
             emit({"id": mid, "error": {"message": "rollout is unreadable"}})
             continue
@@ -117,6 +120,7 @@ for raw in sys.stdin:
         emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
     elif m == "turn/start":
         log("turn " + str(params.get("effort", "")))
+        log("input " + json.dumps(params.get("input")))
         text = ""
         for part in params.get("input") or []:
             text = text + " " + str(part.get("text", ""))
@@ -131,6 +135,10 @@ for raw in sys.stdin:
             note("turn/completed", {"threadId": "child-thread", "turn": {"id": "turn-1", "status": "completed"}})
             note("turn/completed", {"threadId": "th-1", "turn": {"id": "child-turn", "status": "completed"}})
             continue
+        if mode() == "reply-open":
+            with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("in-progress")
+        if mode() == "task-check":
+            with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("check")
         if mode() == "task-done":
             with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
         if mode() == "die":
@@ -144,7 +152,8 @@ for raw in sys.stdin:
             "text": "ответ на реплику:" + text}})
         note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
     elif m == "test/finish":
-        with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
+        if not params.get("keepOpen"):
+            with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
         note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
         emit({"id": mid, "result": {}})
     elif m == "turn/interrupt":

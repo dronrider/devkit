@@ -7,7 +7,7 @@
 
   task-run.py <ID> [-C <корень проекта>] [--order <заказ первого прохода>]
               [--again <заказ следующих>] [--passes N] [--project <имя>]
-              [--tier <ярус>] [--headless] [-- <команда клиента без -p>]
+              [--tier <ярус>] [--headless] [--reply-once] [-- <команда клиента без -p>]
 
 Голов у конвейера две, и выбирает между ними окружение.
 
@@ -165,6 +165,7 @@ turn-mark.py, и сессия, поднятая до того, как он лё�
 1 стоп оболочки (проходы исчерпаны, воронка, живая голова вышла), 2 ошибка
 вызова или окружения, 3 замок занят (голова задачи уже поднята).
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -725,12 +726,16 @@ def parse_args(argv):
         die(USAGE)
     opts = {"id": head[0], "proj": os.getcwd(), "order": "", "again": "",
             "passes": PASS_LIMIT, "project": "", "client": client, "headless": False,
-            "tier": ""}
+            "tier": "", "reply_once": False}
     rest = head[1:]
     keys = {"-C": "proj", "--order": "order", "--again": "again",
             "--project": "project", "--passes": "passes", "--tier": "tier"}
     while rest:
         key = rest[0]
+        if key == "--reply-once":
+            opts["reply_once"] = True
+            rest = rest[1:]
+            continue
         if key == "--headless":
             # Запасной вход называется словом, а не выводится из окружения.
             # Машина с tmux бывает нужна и для печатной череды, а гадать про
@@ -781,6 +786,7 @@ class Pipeline:
         self.recovery_print_pass = 0
         self.proj = opts["proj"]
         self.project = opts["project"]
+        self.reply_once = opts.get("reply_once", False)
         self.order = opts["order"]
         self.again = opts["again"]
         self.passes = opts["passes"]
@@ -1476,6 +1482,8 @@ class Pipeline:
                                  code if code and code > 0 else 1, pane=True)
 
     def initial_order(self):
+        if self.reply_once:
+            return self.order
         path = self.rotate_tail()
         if os.path.isfile(path):
             try:
@@ -2610,7 +2618,7 @@ class Pipeline:
             # ждёт человек, и стоп для него стоит как стоял. Статус строки от
             # хода по реплике не двигается, и стоп вернётся сам, едва вход
             # опустеет.
-            if not (self.replying() and self.lying_reply()):
+            if not (self.reply_once or (self.replying() and self.lying_reply())):
                 self.stop(0, sect, why, reason=reason, loud=not self.replied)
             self.replied = True
             self.say("%s, но во входе её чата лежит реплика: прохожу ход ответом в ленту, "
@@ -2634,6 +2642,10 @@ class Pipeline:
         die(said + ", строку с чужим заходом конвейер не поднимает", BUSY)
 
     def run_passes(self):
+        if self.reply_once:
+            with open(__file__, "rb") as source:
+                digest = hashlib.sha256(source.read()).hexdigest()
+            self.say("оболочка ответа %s sha256 %s" % (os.path.realpath(__file__), digest))
         # Проходы считаются вычетом: ожидание это не проход, и потолок его не
         # съедает. Поэтому череда идёт while, а не for по числу проходов.
         idle, holds, n = 0, 0, 1
@@ -2648,6 +2660,8 @@ class Pipeline:
             self.log("выход головы конвейера %s, %s в %s, проход %d из %d, %d с"
                      % (self.sess, self.id, after, n, self.passes, int(spent)), code)
             self.say("голова вышла кодом %d за %d с, задача в %s" % (code, int(spent), after))
+            if self.reply_once:
+                self.stop(code, after, "ответ на реплику завершён", loud=False)
             if after == DONE:
                 self.stop(0, after, "задача закрыта", loud=False)
             if after == PARKED and not self.live_work():

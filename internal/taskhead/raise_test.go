@@ -937,3 +937,36 @@ func TestAppServerCarrierRequiresCodexProtocol(t *testing.T) {
 		t.Fatal("замок взят до проверки протокола")
 	}
 }
+
+func TestContinuationExpectedRunPreservesStoppedState(t *testing.T) {
+	s := newStand(t, true, true)
+	g, err := taskstate.Acquire(s.home, s.root, "DK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = g.Start("original", "codex", "model", ""); err != nil {
+		t.Fatal(err)
+	}
+	g.State.Stopped = true
+	if err = g.Save(); err != nil {
+		t.Fatal(err)
+	}
+	g.Close()
+	q := s.req()
+	q.ExpectedRun = "replaced"
+	q.ContinueStopped = true
+	if _, err := Raise(q); err == nil {
+		t.Fatal("changed continuation started")
+	}
+	g, err = taskstate.Acquire(s.home, s.root, "DK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if !g.State.Stopped || g.State.Run == nil || g.State.Run.ID != "original" {
+		t.Fatalf("refusal changed state %+v", g.State)
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "new-session") {
+		t.Fatalf("client started: %s", got)
+	}
+}

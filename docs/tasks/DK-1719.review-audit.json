@@ -1339,7 +1339,7 @@
       "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Git/har Ness hook не меняется, новый отказ обслуживает HTTP чата, не stderr запрет команды.",
+      "reason": "Git/харнес hook не меняется, новый отказ обслуживает HTTP чата, не stderr запрет команды.",
       "evidence": [
         {
           "object": "writer conflict HTTP response",

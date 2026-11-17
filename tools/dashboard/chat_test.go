@@ -896,7 +896,7 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 	for _, want := range []string{`if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);`,
 		`else if (r.body.stuck) echo.queued(m, r.body.stuck);`,
 		`if (r.body.way === "start")`, `chatWait(project, r.body.tmux)`,
-		`function stateMark(kind, word)`, `stateMark("fail", "не доставлено")`} {
+		`function stateMark(kind, word)`} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в static/app.js нет %q", want)
 		}

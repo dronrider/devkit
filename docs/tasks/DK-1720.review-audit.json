@@ -1,0 +1,1490 @@
+{
+  "version": 1,
+  "id": "DK-1720",
+  "base_sha": "d6bb543760fa5b200953cd82b7e7703cd4c59c1f",
+  "head_sha": "90911c7fdf32a7992029d401616a71cb12aca72f",
+  "code_hash": "ff27c0d74fd581fc5f4cb83233b1e5abc87885c463badf457f07fc6f7611d3bb",
+  "task_hash": "24e5bf102428aa7c3b592318826d285dd0ae0714eb98dec2752ecd09daf95c40",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "2f115d29339ff645614184a84c42a5628450951f0ae5b564ce4932176ac6f90a"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "Первая реплика fresh/blank чата задачи поступает целиком выбранному новому клиенту; ожидание задачи не отправляет её старой голове. Ошибка сохраняет текст, выбранную пару и глубину; терминальный повтор не создаёт второго клиента при уже начатом или неизвестном запуске.",
+    "decision": "chatWaitsTask исключает fresh и blank. Панель сохраняет launch snapshot вместе с echo. POST /chats и /say заготовки сходятся в chatBlankStart под файловым flock. Для terminal до внешнего эффекта пишется отдельная pending-квитанция, после подтверждения tmux она становится accepted. Другая нагрузка получает409; неизвестный исход502/unknown превращается в held с видимой причиной и выключенной занятостью. Foreign dispatch сохраняет прежнюю семантику без terminal receipt.",
+    "boundaries": "Браузер владеет исходящей попыткой и её неизменным payload; сервер проверяет проект, модель/подписку, входы и receipt. Sidecar записывает только chatBlankStart под chat.Lock. ChatStore остаётся изменяемой проекцией для списка и черновика; его RMW и уборка не стирают receipt. startManaged владеет запуском/guardian, отличает доказанный отказ от unknown. Принятый SID берётся из Grown либо из реестра только при подтверждённой идентичности живого tmux. App-server сохраняет собственные thread/feed/process и политику прав.",
+    "alternative": "Одна правка UI исправила бы адрес, но потеря HTTP-ответа всё ещё дублировала бы первый terminal запуск. Хранить intent внутри chatStore проще по числу файлов, однако draft/model/list используют отдельные RMW и sweep; согласование всех их писателей расширяет задачу. Sidecar с одним владельцем защищает внешний эффект без переделки всей памяти чатов. Общее переустройство повторов app-server отклонено как отдельная область.",
+    "justification": "Обязательны полный текст, выбранная пара model/harness, фактический адресат и достоверный исход. Автор постановки явно ограничил новую durable-гарантию терминальными клиентами (инцидент GLM); выбор fresh/blank маршрута общий для обоих протоколов. Поддерживается безопасный автоматический повтор доказанного отказа до создания клиента. Смерть после принятого запуска и отсутствие подтверждения доставки дают unknown; raw Tail и отсутствие hooks не считаются доказательством недоставки. Sidecar оправдан потерей записи/рестартом/уборкой и конкуренцией нескольких server; новой зависимости или пользовательской настройки нет.",
+    "result": "checked",
+    "evidence": [
+      "База d6bb543760fa5b200953cd82b7e7703cd4c59c1f, source 7ab67814ebae9f81dee4b8d757414af59209a8a0. Прочитаны полный предмет diff и integration delta d095e8088..d6bb54376: appchat typed writer conflict, appserver %w, echo refused и новые фикстуры. Финальная дельта e530..7ab меняет только два комментария и устаревший literal assert; поведенческие проверки подписей сохранены.",
+      "static/app.js: chatState -> chatPanel -> post -> chatRaise; fresh/blank не попадает в answerTask. poc_taskblankroute проверяет старый live/waiting/gone, полный многострочный text, blank/id/model/harness, reject/tmux/grown.",
+      "chatblankstart.go: chatBlankStart/writeChatStartReceipt; pending -> fsync файла -> rename -> fsync каталога до startManaged, accepted после него. shared flock охватывает POST и /say; отдельный sidecar не затрагивается chatBlankSweep и поздним draft/model.",
+      "chatblankstart_test.go: failed blank write/restart, sweep/mixed APIs, pending-before-effect, post-launch write error, unknown, direct/real-guardian signals, absent/newer-registry и live reused tmux, восемь независимых server.",
+      "static/app.js: echoRead/Write/Sweep/add/restore/once сохраняют launch/unknown/refused. unknown502 -> held, mwhy, доставка не подтверждена, busy.off; pump выбирает только bad. Стенд проверяет high/model/harness после расхода effort, retry, reload и once.",
+      "docs/tasks/DK-1720.md DoD/Ход работы и tools/dashboard/README.md раздел заготовок фиксируют согласованную terminal-only гарантию и границу unknown. Живые чаты/процессы ревью не меняло; восстановление DK-1570 и проверка установленного артефакта остаются этапом после выката, не доказаны чтением исходников.",
+      "Финальные логи независимо прочитаны: /private/tmp/dk1720-final-dashboard-7ab67814e.log полный dashboard PASS 401.601s; /private/tmp/dk1720-final-targeted.log PASS 2.508s; /private/tmp/dk1720-final-regcheck.log valid red/green против d6bb54376. Обкатка в свежем дереве 7ab, 20:27, сценарий cf7799b0, шаг1 PASS 3.307s; живой шаг2 после выката не выполнен ревьювером. Семь полных mutation logs и manifest прочитаны, исходные hash независимо сверены. Первый широкий прогон e530 имел устаревший static literal FAIL, исправленный в 7ab с сохранением поведенческих проверок подписей.",
+      "Ограничения окружения: нативного stage hook у collaboration нет, этапы не имитировались. Изначальный sandbox EPerm на sibling worktree/plan преодолён штатным одобрением scoped exec. Наследованный TestMain использует spare-session guard; runsguard.Guard в этом runner отсутствует, данная правка его не добавляет. Установленный артефакт и успешная отправка живому GLM здесь не доказаны."
+    ]
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Логика первой отправки остаётся в семье chats; cloudstart меняет только классификацию исхода запуска.",
+      "evidence": [
+        {
+          "object": "владельцы доменов",
+          "location": "chatblankstart.go:chatBlankStart; chats.go:handleChatStart/chatRaiseSay; cloudstart.go:startManaged",
+          "observation": "Логика первой отправки остаётся в семье chats; cloudstart меняет только классификацию исхода запуска."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Использованы существующие контракты chat.Lock, startManaged, chatCmd, writeJSON и sessions; потребители обычных чатов сохранены.",
+      "evidence": [
+        {
+          "object": "межмодульные вызовы",
+          "location": "chatblankstart.go; chats.go; internal/chat/chat.go:Lock",
+          "observation": "Использованы существующие контракты chat.Lock, startManaged, chatCmd, writeJSON и sessions; потребители обычных чатов сохранены."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Оба terminal входа blank используют один helper и одну функцию fingerprint; отдельной копии дедупликации в /say нет.",
+      "evidence": [
+        {
+          "object": "общий старт",
+          "location": "chats.go:handleChatStart/chatRaiseSay; chatblankstart.go:chatStartKey",
+          "observation": "Оба terminal входа blank используют один helper и одну функцию fingerprint; отдельной копии дедупликации в /say нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Отдельный sidecar нужен из-за sweep и независимых RMW chatStore; зависимостей, сервиса или пользовательского флага не добавлено.",
+      "evidence": [
+        {
+          "object": "receipt как отдельное состояние",
+          "location": "chatblankstart.go; chats.go:chatStoreWrite/chatBlankSweep",
+          "observation": "Отдельный sidecar нужен из-за sweep и независимых RMW chatStore; зависимостей, сервиса или пользовательского флага не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Контракт различает new/start,409, доказанный отказ502 и unknown502; UI и README описывают сохранение текста и повторы.",
+      "evidence": [
+        {
+          "object": "контракты обоих API",
+          "location": "chatblankstart.go:chatBlankStart; static/app.js:chatRaise/post; README.md:заготовки",
+          "observation": "Контракт различает new/start,409, доказанный отказ502 и unknown502; UI и README описывают сохранение текста и повторы."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Инвариант одного terminal старта защищён на сервере для POST и /say; модель/подписка и fingerprint проверяются до внешнего эффекта.",
+      "evidence": [
+        {
+          "object": "все входы blank",
+          "location": "chats.go:handleChatStart/chatRaiseSay; chatblankstart.go:chatBlankStart",
+          "observation": "Инвариант одного terminal старта защищён на сервере для POST и /say; модель/подписка и fingerprint проверяются до внешнего эффекта."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые поля echo необязательны для старого localStorage; schema chatStore не меняется. Foreign без terminal receipt сохраняет прежний старт; DK-1719 refused сохранён при rebase.",
+      "evidence": [
+        {
+          "object": "старые данные и потребители",
+          "location": "static/app.js:echoRead/Write/makeEcho; chatblankstart.go:foreign dispatch",
+          "observation": "Новые поля echo необязательны для старого localStorage; schema chatStore не меняется. Foreign без terminal receipt сохраняет прежний старт; DK-1719 refused сохранён при rebase."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Receipt имеет единственного писателя под file lock; chatStore/echo являются проекциями. Sweep и RMW не меняют sidecar, payload snapshot сохраняется через reload.",
+      "evidence": [
+        {
+          "object": "источники истины",
+          "location": "chatblankstart.go:chatStartReceipt/chatBlankStart; static/app.js:echoRead/Write/Sweep",
+          "observation": "Receipt имеет единственного писателя под file lock; chatStore/echo являются проекциями. Sweep и RMW не меняют sidecar, payload snapshot сохраняется через reload."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Файловый lock закрывается defer, temp receipt удаляется defer; guardian остаётся владельцем cloud lock при unknown. UI timers используют существующие stop/clear, held не дожимается.",
+      "evidence": [
+        {
+          "object": "lock/temp/guardian/timers",
+          "location": "chatblankstart.go; cloudstart.go:guardianScript/startReservedContext; static/app.js:makeEcho",
+          "observation": "Файловый lock закрывается defer, temp receipt удаляется defer; guardian остаётся владельцем cloud lock при unknown. UI timers используют существующие stop/clear, held не дожимается."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Чтение receipt и решение о запуске выполняются под одним flock, общим для разных экземпляров server и обоих API; проверено восемью независимыми server.",
+      "evidence": [
+        {
+          "object": "конкурентные writers",
+          "location": "chatblankstart.go:chat.Lock; chatblankstart_test.go:TestTaskBlankConcurrentServersShareReceipt",
+          "observation": "Чтение receipt и решение о запуске выполняются под одним flock, общим для разных экземпляров server и обоих API; проверено восемью независимыми server."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сохранены sameOrigin/findProject, JSON limit, effortBad/taskParamRe/chatPairKnown. Новый helper проверяет chatKey и project receipt; fingerprint включает text/id/model/harness/effort.",
+      "evidence": [
+        {
+          "object": "границы входа и адресат",
+          "location": "chats.go:handleChatStart/handleChatSay; chatblankstart.go:chatBlankStart",
+          "observation": "Сохранены sameOrigin/findProject, JSON limit, effortBad/taskParamRe/chatPairKnown. Новый helper проверяет chatKey и project receipt; fingerprint включает text/id/model/harness/effort."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Pending фиксируется до эффекта. Сигнал/timeout/status error не выдаётся за отказ без эффекта, pending остаётся и UI показывает unknown с причиной; accepted-save failure не запускает повтор.",
+      "evidence": [
+        {
+          "object": "частичные отказы",
+          "location": "chatblankstart.go:writeChatStartReceipt/chatBlankStart; cloudstart.go:startManaged/startReservedContext; static/app.js:held",
+          "observation": "Pending фиксируется до эффекта. Сигнал/timeout/status error не выдаётся за отказ без эффекта, pending остаётся и UI показывает unknown с причиной; accepted-save failure не запускает повтор."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Одинаковый fingerprint не повторяет запуск; другой409. Неизвестный исход удерживается. Live имя проверяется по From/Since/Created, absent без Grown не направляется по чужому registry owner. Сроки guardian/chatWait и backoff остаются существующими.",
+      "evidence": [
+        {
+          "object": "повторы и идентичность",
+          "location": "chatblankstart.go:accepted retry; cloudstart.go; static/app.js:chatWait/makeEcho",
+          "observation": "Одинаковый fingerprint не повторяет запуск; другой409. Неизвестный исход удерживается. Live имя проверяется по From/Since/Created, absent без Grown не направляется по чужому registry owner. Сроки guardian/chatWait и backoff остаются существующими."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "502 unknown имеет машинный флаг и видимую причину на held bubble; busy выключен,409 называет начатый чат. Квитанция содержит hash и адреса запуска, без исходного текста и секретов.",
+      "evidence": [
+        {
+          "object": "диагностика отказов",
+          "location": "chatblankstart.go:fail/hold; static/app.js:chatRaise/makeEcho.draw",
+          "observation": "502 unknown имеет машинный флаг и видимую причину на held bubble; busy выключен,409 называет начатый чат. Квитанция содержит hash и адреса запуска, без исходного текста и секретов."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "В затронутой цепочке нет SQL/ORM или возвращаемых DB-проекций: receipt/chatStore читаются файлами, реестр sessions читается существующим reader.",
+      "evidence": [
+        {
+          "object": "отсутствие DB выборок",
+          "location": "chatblankstart.go -> chatStoreRead/sessions.TmuxOwnerSince; cloudstart.go",
+          "observation": "В затронутой цепочке нет SQL/ORM или возвращаемых DB-проекций: receipt/chatStore читаются файлами, реестр sessions читается существующим reader."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверена вся последовательность файловых чтений: receipt, blank и при retry tmux memory/roll/registry. Последние нужны только для идентичности адресата; лишней DB/ORM загрузки нет.",
+      "evidence": [
+        {
+          "object": "последовательность чтений",
+          "location": "chatblankstart.go:chatBlankStart",
+          "observation": "Проверена вся последовательность файловых чтений: receipt, blank и при retry tmux memory/roll/registry. Последние нужны только для идентичности адресата; лишней DB/ORM загрузки нет."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общей транзакции с tmux нет; граница intent фиксируется на диске до эффекта и сохраняется при unknown. Accepted и проекция blank могут отстать, но повтор защищён receipt.",
+      "evidence": [
+        {
+          "object": "атомарность и восстановление",
+          "location": "chatblankstart.go:writeChatStartReceipt/chatBlankStart",
+          "observation": "Общей транзакции с tmux нет; граница intent фиксируется на диске до эффекта и сохраняется при unknown. Accepted и проекция blank могут отстать, но повтор защищён receipt."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новая операция работает с одной заготовкой; обходов коллекции с запросом на элемент нет. Восемь server существуют только в concurrency fixture.",
+      "evidence": [
+        {
+          "object": "отсутствие N+1",
+          "location": "chatblankstart.go:chatBlankStart; chatblankstart_test.go",
+          "observation": "Новая операция работает с одной заготовкой; обходов коллекции с запросом на элемент нет. Восемь server существуют только в concurrency fixture."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Чтение/запись receipt локализованы в helper и serializer; в JSON хранилище не перенесены бизнес-правила чужих доменов. Сценарий проверяется синтетикой без БД.",
+      "evidence": [
+        {
+          "object": "хранение и решения",
+          "location": "chatblankstart.go; chatblankstart_test.go",
+          "observation": "Чтение/запись receipt локализованы в helper и serializer; в JSON хранилище не перенесены бизнес-правила чужих доменов. Сценарий проверяется синтетикой без БД."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Terminal chats и fresh/blank остаются действующим входом для выбранного GLM; это не deprecated дорога. Перенос семейств по DK-1265 не отменяет исправление в их текущих файлах.",
+      "evidence": [
+        {
+          "object": "статус механизма",
+          "location": "docs/ARCHITECTURE.md:Границы; chats.go; README.md:заготовки",
+          "observation": "Terminal chats и fresh/blank остаются действующим входом для выбранного GLM; это не deprecated дорога. Перенос семейств по DK-1265 не отменяет исправление в их текущих файлах."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Исправляется подтверждённый отказ доставки у действующего клиента; замена протокола или перенос всего legacy домена не требуется. Новое состояние ограничено безопасностью terminal retry.",
+      "evidence": [
+        {
+          "object": "основание локальной правки",
+          "location": "docs/tasks/DK-1720.md:Что происходит/Границы; chatblankstart.go",
+          "observation": "Исправляется подтверждённый отказ доставки у действующего клиента; замена протокола или перенос всего legacy домена не требуется. Новое состояние ограничено безопасностью terminal retry."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сохранены независимые model/harness/effort. Панель фиксирует выбранную пару и high на попытку, chatCmd/effortPair потребляют их; spent effort и reload payload не меняют.",
+      "evidence": [
+        {
+          "object": "выбор клиента и глубины",
+          "location": "static/app.js:post/chatRaise; chatblankstart.go:chatCmd/effortPair; testdata/poc_taskblankroute.mjs",
+          "observation": "Сохранены независимые model/harness/effort. Панель фиксирует выбранную пару и high на попытку, chatCmd/effortPair потребляют их; spent effort и reload payload не меняют."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новой опции отключения защиты или маршрута нет: корректный адрес и защита принятого terminal запуска включены всегда. Существующий выбор модели/подписки остаётся пользовательским.",
+      "evidence": [
+        {
+          "object": "опции выбора",
+          "location": "chatblankstart.go; static/app.js:chatWaitsTask/post",
+          "observation": "Новой опции отключения защиты или маршрута нет: корректный адрес и защита принятого terminal запуска включены всегда. Существующий выбор модели/подписки остаётся пользовательским."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Intent/accepted/unknown относятся к данным конкретной отправки и хранятся в sidecar/echo. Они меняются в момент отправки/подтверждения; profile config остаётся существующим источником выбора.",
+      "evidence": [
+        {
+          "object": "жизненный цикл данных",
+          "location": "chatblankstart.go:chatStartReceipt; static/app.js:launch/unknown",
+          "observation": "Intent/accepted/unknown относятся к данным конкретной отправки и хранятся в sidecar/echo. Они меняются в момент отправки/подтверждения; profile config остаётся существующим источником выбора."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых параметров окружения или конфига нет. Параметры запуска прежние; новый launch snapshot берёт model/harness из entry либо preference, effort из ручного выбора, затем имеет приоритет при retry.",
+      "evidence": [
+        {
+          "object": "приоритет payload",
+          "location": "static/app.js:post/chatRaise; README.md:заготовки",
+          "observation": "Новых параметров окружения или конфига нет. Параметры запуска прежние; новый launch snapshot берёт model/harness из entry либо preference, effort из ручного выбора, затем имеет приоритет при retry."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Sidecar является квитанцией операции, не альтернативным config source. Snapshot не создаёт второго способа настройки модели; он сохраняет уже сделанный выбор на одну попытку.",
+      "evidence": [
+        {
+          "object": "новые сущности состояния",
+          "location": "chatblankstart.go:chatStartReceipt; static/app.js:launchHint",
+          "observation": "Sidecar является квитанцией операции, не альтернативным config source. Snapshot не создаёт второго способа настройки модели; он сохраняет уже сделанный выбор на одну попытку."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Неверные effort/id/model+harness отклоняются существующими boundary checks; изменённый принятый payload409, corrupt receipt unknown502. Подмена на умолчание после ошибки не добавлена.",
+      "evidence": [
+        {
+          "object": "неверные значения",
+          "location": "chats.go:handleChatStart; chatblankstart.go:receipt validation",
+          "observation": "Неверные effort/id/model+harness отклоняются существующими boundary checks; изменённый принятый payload409, corrupt receipt unknown502. Подмена на умолчание после ошибки не добавлена."
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Путь потребителя проверен через chatPanel с GLM парой и high: отказ до запуска, retry, смерть, unknown, reload и видимая причина. Foreign boundary согласована и записана отдельно.",
+      "evidence": [
+        {
+          "object": "сквозной выбор",
+          "location": "testdata/poc_taskblankroute.mjs; README.md:заготовки; docs/tasks/DK-1720.md:DoD",
+          "observation": "Путь потребителя проверен через chatPanel с GLM парой и high: отказ до запуска, retry, смерть, unknown, reload и видимая причина. Foreign boundary согласована и записана отдельно."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "chatBlankStart, chatStartReceipt, writeChatStartReceipt, launch и unknown называют назначение данных и операции.",
+      "evidence": [
+        {
+          "object": "новые имена",
+          "location": "chatblankstart.go; static/app.js:post/makeEcho",
+          "observation": "chatBlankStart, chatStartReceipt, writeChatStartReceipt, launch и unknown называют назначение данных и операции."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Start выполняет запуск с явно описанными эффектами; key и serializer не меняют внешние процессы. Предикат chatWaitsTask возвращает boolean и не отправляет реплику.",
+      "evidence": [
+        {
+          "object": "семантика функций",
+          "location": "chatblankstart.go:chatBlankStart/chatStartKey/writeChatStartReceipt; static/app.js:chatWaitsTask",
+          "observation": "Start выполняет запуск с явно описанными эффектами; key и serializer не меняют внешние процессы. Предикат chatWaitsTask возвращает boolean и не отправляет реплику."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Термины receipt/unknown/launch едины в API, echo и README; refused DK-1719 сохранён как доказанный отказ, а unknown имеет отдельную подпись.",
+      "evidence": [
+        {
+          "object": "связанные состояния",
+          "location": "chatblankstart.go; static/app.js; README.md",
+          "observation": "Термины receipt/unknown/launch едины в API, echo и README; refused DK-1719 сохранён как доказанный отказ, а unknown имеет отдельную подпись."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Created/Since используют существующую unix-second систему tmux/chatStore, body effort строковый; преобразование в registry threshold идёт через bindTimeSince.",
+      "evidence": [
+        {
+          "object": "единицы времени",
+          "location": "chatblankstart.go:chatStartReceipt/retry; chats.go:bindTimeSince",
+          "observation": "Created/Since используют существующую unix-second систему tmux/chatStore, body effort строковый; преобразование в registry threshold идёт через bindTimeSince."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые package symbols имеют предметные имена chatStartReceipt/chatBlankStart; короткие prev/st/key/path локальны одному сценарию.",
+      "evidence": [
+        {
+          "object": "области имён",
+          "location": "chatblankstart.go",
+          "observation": "Новые package symbols имеют предметные имена chatStartReceipt/chatBlankStart; короткие prev/st/key/path локальны одному сценарию."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Проверены все параметры helper. Blank задаёт lock/key/store, id определяет fingerprint/tree/env, text идёт в fingerprint/command. Model+harness определяют выбор, effort идёт в fingerprint/env, claim завершает outbox, way задаёт API и восстановление выбора.",
+      "evidence": [
+        {
+          "object": "параметры и потребители",
+          "location": "chatblankstart.go:chatBlankStart; chats.go:оба вызова",
+          "observation": "Проверены все параметры helper. Blank задаёт lock/key/store, id определяет fingerprint/tree/env, text идёт в fingerprint/command. Model+harness определяют выбор, effort идёт в fingerprint/env, claim завершает outbox, way задаёт API и восстановление выбора."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки serializer/startManaged потребляются; ключ сравнивается; HTTP way/tmux/session/model/harness читает chatRaise/chatWait и /say. Возврат held читается lift и превращается в echo.held.",
+      "evidence": [
+        {
+          "object": "возвраты",
+          "location": "chatblankstart.go; cloudstart.go; static/app.js:chatRaise/post",
+          "observation": "Ошибки serializer/startManaged потребляются; ключ сравнивается; HTTP way/tmux/session/model/harness читает chatRaise/chatWait и /say. Возврат held читается lift и превращается в echo.held."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Публичные поля ответа не удалены. Убрана хрупкая проверка буквального вызова stateMark из static test; поведение обычной подписи проверяет poc_chatnobtn.mjs, unknown проверяет реальный chatPanel. Ошибки внешнего старта не выброшены: structured refusal и unknown различаются.",
+      "evidence": [
+        {
+          "object": "совместимость и удалённый literal assert",
+          "location": "git diff d6bb54376..7ab67814e; chat_test.go; testdata/poc_chatnobtn.mjs:99; testdata/poc_taskblankroute.mjs",
+          "observation": "Публичные поля ответа не удалены. Убрана хрупкая проверка буквального вызова stateMark из static test; поведение обычной подписи проверяет poc_chatnobtn.mjs, unknown проверяет реальный chatPanel. Ошибки внешнего старта не выброшены: structured refusal и unknown различаются."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Helper выполняет один сценарий принятия первой отправки; сериализация receipt отделена. UI snapshot добавлен в существующую очередь, без независимого нового транспорта.",
+      "evidence": [
+        {
+          "object": "связность операций",
+          "location": "chatblankstart.go; static/app.js:post/echoRead/Write",
+          "observation": "Helper выполняет один сценарий принятия первой отправки; сериализация receipt отделена. UI snapshot добавлен в существующую очередь, без независимого нового транспорта."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Accepted/Unknown и wire unknown имеют предметный смысл. Вызов held(...,undefined,true) обозначает unknown, остальные значения полей протокола названы new/start.",
+      "evidence": [
+        {
+          "object": "флаги и литералы",
+          "location": "chatblankstart.go:chatStartReceipt; static/app.js:lift/held",
+          "observation": "Accepted/Unknown и wire unknown имеют предметный смысл. Вызов held(...,undefined,true) обозначает unknown, остальные значения полей протокола названы new/start."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сначала проверяются receipt/другой payload/unknown, затем новая отправка; каждый отказ завершает handler. Старый только POST lock/StartKey удалён в пользу общего helper.",
+      "evidence": [
+        {
+          "object": "порядок и удалённое решение",
+          "location": "chatblankstart.go:chatBlankStart; git diff d6bb54376..7ab67814e",
+          "observation": "Сначала проверяются receipt/другой payload/unknown, затем новая отправка; каждый отказ завершает handler. Старый только POST lock/StartKey удалён в пользу общего helper."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Использованы Go errors.Is/As/Join, defer Close, JSON и SHA256 стандартной библиотеки; JS сохраняет существующий стиль plain objects и Promise callbacks. Компиляция targeted подтверждена, формат кода прочитан.",
+      "evidence": [
+        {
+          "object": "языковые формы",
+          "location": "chatblankstart.go; cloudstart.go; static/app.js",
+          "observation": "Использованы Go errors.Is/As/Join, defer Close, JSON и SHA256 стандартной библиотеки; JS сохраняет существующий стиль plain objects и Promise callbacks. Компиляция targeted подтверждена, формат кода прочитан."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ошибки lock/read/write/start сохраняют операцию и cause через %w/Join. После внешнего эффекта ошибка возвращает unknown, не успех; restore адреса не подменяет ошибку пустым SID.",
+      "evidence": [
+        {
+          "object": "контекст ошибок",
+          "location": "chatblankstart.go; cloudstart.go; static/app.js:chatRaise",
+          "observation": "Ошибки lock/read/write/start сохраняют операцию и cause через %w/Join. После внешнего эффекта ошибка возвращает unknown, не успех; restore адреса не подменяет ошибку пустым SID."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "409 предлагает открыть уже начатый разговор; unknown сообщает, что повтор не отправлен и доставка не подтверждена. Человек видит причину в bubble, не только в console.",
+      "evidence": [
+        {
+          "object": "сообщения человеку",
+          "location": "chatblankstart.go:conflict/hold; static/app.js:makeEcho.draw",
+          "observation": "409 предлагает открыть уже начатый разговор; unknown сообщает, что повтор не отправлен и доставка не подтверждена. Человек видит причину в bubble, не только в console."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарии receipt объясняют порядок внешнего эффекта и защиту от sweep/RMW; два старых комментария lift исправлены на фактический unknown-контракт.",
+      "evidence": [
+        {
+          "object": "причины и актуальность комментариев",
+          "location": "chatblankstart.go; static/app.js:chatRaise/post; git diff e53036bda..7ab67814e",
+          "observation": "Нет обещания, что отсутствие сессии доказывает недоставку. Комментарии согласованы с сохранением pending и остановкой повторов при unknown."
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "README описывает первый запуск через плюс, выбранные model/harness, два terminal API, одинаковый и изменённый payload, доказанный отказ и unknown, сохранение после reload и границу foreign.",
+      "evidence": [
+        {
+          "object": "документация контракта",
+          "location": "tools/dashboard/README.md:заготовки; docs/tasks/DK-1720.md:DoD",
+          "observation": "README описывает первый запуск через плюс, выбранные model/harness, два terminal API, одинаковый и изменённый payload, доказанный отказ и unknown, сохранение после reload и границу foreign."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Код сопровождается chatblankroute_test.go, chatblankstart_test.go и DOM fixture; проверяются observable API/process count/payload/pending/busy, а не только внутренняя функция.",
+      "evidence": [
+        {
+          "object": "состав тестов",
+          "location": "chatblankroute_test.go; chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Код сопровождается chatblankroute_test.go, chatblankstart_test.go и DOM fixture; проверяются observable API/process count/payload/pending/busy, а не только внутренняя функция."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Финальный regcheck на d6bb54376 дал valid red старого кода и green source 7ab67814e после всех мутаций. Новые receipt symbols проверены отдельными тестами/мутациями.",
+      "evidence": [
+        {
+          "object": "регрессионный red/green",
+          "location": "/private/tmp/dk1720-final-regcheck.log; docs/tasks/DK-1720.md:Ход работы",
+          "observation": "Команда с --tests chatblankroute_test.go,poc_taskblankroute.mjs и тремя TestTaskBlank сценариями реально выполнила baseline/current. Test-only baseline не содержит новый receipt-файл, которого не может собрать старая база; это ограничение явно записано."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Серверные интеграционные стенды проверяют JSON/fs/process boundary; настоящий app.js через chatPanel проверяет маршрут и echo state. Отдельного нового вычислительного алгоритма вне этих сценариев нет.",
+      "evidence": [
+        {
+          "object": "уровни проверок",
+          "location": "chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Серверные интеграционные стенды проверяют JSON/fs/process boundary; настоящий app.js через chatPanel проверяет маршрут и echo state. Отдельного нового вычислительного алгоритма вне этих сценариев нет."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые TestTaskBlank составляют интеграционную группу по prefix. Node process, httptest, fake tmux/clients и real guardian signal. Это не unit; группа запускается -run TestTaskBlank отдельно от остальных тестов.",
+      "evidence": [
+        {
+          "object": "фактические зависимости",
+          "location": "chatblankroute_test.go; chatblankstart_test.go; tasks_test.go:TestMain",
+          "observation": "Новые TestTaskBlank составляют интеграционную группу по prefix. Node process, httptest, fake tmux/clients и real guardian signal. Это не unit; группа запускается -run TestTaskBlank отдельно от остальных тестов."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ожидания выведены из адреса, полного текста, selected pair, числа new-session и исхода; post-write failure/unknown не заменяют проверяемый helper. Мок startReservedFn используется только для определённого seam, guardian143 отдельно исполняет real код.",
+      "evidence": [
+        {
+          "object": "независимость assertions",
+          "location": "chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Ожидания выведены из адреса, полного текста, selected pair, числа new-session и исхода; post-write failure/unknown не заменяют проверяемый helper. Мок startReservedFn используется только для определённого seam, guardian143 отдельно исполняет real код."
+        },
+        {
+          "object": "замена хрупкого literal assert поведением",
+          "location": "chat_test.go:TestStaticPanelKnowsStartAndStuck; testdata/poc_chatnobtn.mjs:99; /private/tmp/dk1720-final-targeted.log",
+          "observation": "Первый широкий прогон поймал устаревший literal fail-label. После удаления единственного literal assert сохраняются ordinary bad label и unknown label/state через поведенческие стенды; финальный targeted на 7ab PASS."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все семь типовых мутаций на 7ab67814e дали семантический FAIL, затем исходники восстановлены с проверкой hash и targeted green.",
+      "evidence": [
+        {
+          "object": "полные mutation receipts",
+          "location": "/private/tmp/dk1720-mutations-7ab67814e/manifest.json; семь соседних .log; /private/tmp/dk1720-final-targeted.log",
+          "observation": "Прочитаны команды и полные логи pending-before-launch, cross-server-lock, unknown-flag, unknown-ui-held, retry-effort, dead-owner-identity, guardian-signal. Во всех exit=1 и FAIL без build failed/panic. Original hashes в manifest совпадают с git show 7ab и восстановленными файлами. Снятый flock дал map[200:8], остальные мутации ломают свой инвариант. Восстановленный TestTaskBlank и две статические/поведенческие проверки: PASS 2.508s."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Concurrency tests используют channel gate и независимые server; API counts проверяются фактами. DOM timers прокручиваются вручную. Новый код не добавляет sleep/стенных сравнений в assertions.",
+      "evidence": [
+        {
+          "object": "детерминированные события",
+          "location": "chatblankstart_test.go:concurrent tests; testdata/poc_taskblankroute.mjs",
+          "observation": "Concurrency tests используют channel gate и независимые server; API counts проверяются фактами. DOM timers прокручиваются вручную. Новый код не добавляет sleep/стенных сравнений в assertions."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Исключение тонкого UI не используется: выполняется настоящий app.js с chatState/chatPanel, нажатие Send, timers и reload.",
+      "evidence": [
+        {
+          "object": "UI coverage",
+          "location": "testdata/poc_taskblankroute.mjs",
+          "observation": "Исключение тонкого UI не используется: выполняется настоящий app.js с chatState/chatPanel, нажатие Send, timers и reload."
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новая suite/TestMain/setup не вводится и маршрутизация домов не меняется. Новые тесты используют существующий newTestEnv с t.TempDir, TestMain spare-home/session cleanup; реальные процессы/дом не используются. Добавление runsguard всему существующему runner вне данного diff.",
+      "evidence": [
+        {
+          "object": "унаследованная инфраструктура тестов",
+          "location": "server_test.go:newTestEnv; tasks_test.go:TestMain; chatblankstart_test.go",
+          "observation": "Новая suite/TestMain/setup не вводится и маршрутизация домов не меняется. Новые тесты используют существующий newTestEnv с t.TempDir, TestMain spare-home/session cleanup; реальные процессы/дом не используются. Добавление runsguard всему существующему runner вне данного diff."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "# Архитектура devkit",
+          "location": "project-architecture:project-architecture:block-0fc945667d2dd2f2",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общие и проектные источники прочитаны вместе; отчёт содержит полный сгенерированный перечень из обоих уровней.",
+      "evidence": [
+        {
+          "object": "совместное применение стандартов",
+          "location": "RULES.architecture.md; RULES.style.md; RULES.md:Тесты обязательны; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Общие и проектные источники прочитаны вместе; отчёт содержит полный сгенерированный перечень из обоих уровней."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Границы",
+          "location": "project-architecture:project-architecture:block-927d754447cbe51a",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые Go helper/test лежат в tools/dashboard в семье chat; DOM fixture в его testdata. Новых top-level каталогов или языков нет.",
+      "evidence": [
+        {
+          "object": "раскладка новых файлов",
+          "location": "README.md:Раскладка; chatblankstart.go; chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Новые Go helper/test лежат в tools/dashboard в семье chat; DOM fixture в его testdata. Новых top-level каталогов или языков нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Это доработка существующей семьи chats до её переезда; новый домен/пакет не заводится. Общий file lock импортирован из internal/chat.",
+      "evidence": [
+        {
+          "object": "границы существующего домена",
+          "location": "docs/ARCHITECTURE.md:Границы; chatblankstart.go; chats.go",
+          "observation": "Это доработка существующей семьи chats до её переезда; новый домен/пакет не заводится. Общий file lock импортирован из internal/chat."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Нового HTTP маршрута нет; server.handler сохраняется, handleChatStart/chatRaiseSay вызывают общую серверную логику. UI только выбирает явный адрес и показывает исход.",
+      "evidence": [
+        {
+          "object": "HTTP и серверные решения",
+          "location": "server.go:handler; chats.go:handleChatStart/chatRaiseSay; chatblankstart.go",
+          "observation": "Нового HTTP маршрута нет; server.handler сохраняется, handleChatStart/chatRaiseSay вызывают общую серверную логику. UI только выбирает явный адрес и показывает исход."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Receipt/echo не правят доску и не становятся базой задач. Исправленный UI перестаёт ошибочно вызывать /tasks/message для нового чата.",
+      "evidence": [
+        {
+          "object": "состояние доски",
+          "location": "static/app.js:chatWaitsTask; chatblankstart.go",
+          "observation": "Receipt/echo не правят доску и не становятся базой задач. Исправленный UI перестаёт ошибочно вызывать /tasks/message для нового чата."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Используются internal/chat.Lock и internal/sessions.TmuxOwnerSince. Нового git invocation, parser реестра или локальной копии общего механизма нет.",
+      "evidence": [
+        {
+          "object": "общие библиотеки",
+          "location": "chatblankstart.go:imports/chatBlankStart",
+          "observation": "Используются internal/chat.Lock и internal/sessions.TmuxOwnerSince. Нового git invocation, parser реестра или локальной копии общего механизма нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Инварианты",
+          "location": "project-architecture:project-architecture:block-feefa59680bc01df",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все новые HTTP ответы идут через writeJSON; разбор транскрипта и воронка taskctl не копируются.",
+      "evidence": [
+        {
+          "object": "канонические точки входа",
+          "location": "chatblankstart.go:fail/hold/responses; chats.go",
+          "observation": "Все новые HTTP ответы идут через writeJSON; разбор транскрипта и воронка taskctl не копируются."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "parseReplies/tool_use rendering не меняются; launch/unknown относится только к локальному исходящему bubble и не преобразует текст человека или tool output.",
+      "evidence": [
+        {
+          "object": "разбор tool-use",
+          "location": "static/app.js:makeEcho; git diff d6bb54376..7ab67814e",
+          "observation": "parseReplies/tool_use rendering не меняются; launch/unknown относится только к локальному исходящему bubble и не преобразует текст человека или tool output."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сохранены одно поле ввода и прежние действия. Причина unknown добавлена к самой исходящей реплике; служебных кнопок/плашек над чатом не добавлено.",
+      "evidence": [
+        {
+          "object": "пользовательская поверхность",
+          "location": "static/app.js:chatPanel/makeEcho.draw",
+          "observation": "Сохранены одно поле ввода и прежние действия. Причина unknown добавлена к самой исходящей реплике; служебных кнопок/плашек над чатом не добавлено."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "PreparedQuestion/check-ask, подтверждение груминга и их запросы не изменены. Обычный task wait теперь не перехватывает fresh/blank отправку; согласие не имитируется.",
+      "evidence": [
+        {
+          "object": "grooming consent",
+          "location": "static/app.js:chatWaitsTask; git diff d6bb54376..7ab67814e",
+          "observation": "PreparedQuestion/check-ask, подтверждение груминга и их запросы не изменены. Обычный task wait теперь не перехватывает fresh/blank отправку; согласие не имитируется."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "taskForm/formContentBlock/поле мысли и сохранение prepared не меняются. Новый bubble не создаёт альтернативную форму задачи или согласия.",
+      "evidence": [
+        {
+          "object": "формы задач и черновиков",
+          "location": "static/app.js:changed chat functions; git diff d6bb54376..7ab67814e",
+          "observation": "taskForm/formContentBlock/поле мысли и сохранение prepared не меняются. Новый bubble не создаёт альтернативную форму задачи или согласия."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "taskForm/formContentBlock/поле мысли и сохранение prepared не меняются. Новый bubble не создаёт альтернативную форму задачи или согласия.",
+      "evidence": [
+        {
+          "object": "формы задач и черновиков",
+          "location": "static/app.js:changed chat functions; git diff d6bb54376..7ab67814e",
+          "observation": "taskForm/formContentBlock/поле мысли и сохранение prepared не меняются. Новый bubble не создаёт альтернативную форму задачи или согласия."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новой mutable process map/cache нет. Новый разделяемый intent хранится файлом под chat.Lock; существующая память echo принадлежит одному экземпляру панели и её timers очищаются прежними stop callbacks.",
+      "evidence": [
+        {
+          "object": "синхронизация нового состояния",
+          "location": "chatblankstart.go:chat.Lock; static/app.js:makeEcho",
+          "observation": "Новой mutable process map/cache нет. Новый разделяемый intent хранится файлом под chat.Lock; существующая память echo принадлежит одному экземпляру панели и её timers очищаются прежними stop callbacks."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3b1e41ceae5295a7",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый helper вызывает chatCmd с выбранным harness и binPath(agentctlBin), который сохраняет agentctl exec. Default и явная GLM пара проходят той же обёрткой; иностранный протокол использует appStart/appSay.",
+      "evidence": [
+        {
+          "object": "запуск выбранного клиента",
+          "location": "chatblankstart.go:chatCmd/foreign dispatch; chats.go:chatCmd; appchat.go:appSpawn",
+          "observation": "Новый helper вызывает chatCmd с выбранным harness и binPath(agentctlBin), который сохраняет agentctl exec. Default и явная GLM пара проходят той же обёрткой; иностранный протокол использует appStart/appSay."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-91fb2123abfa64cb",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Занятость хода открывается до отправки реплики и гасится\n  уведомлением конца хода, смерть процесса записывается в ленту словами.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Foreign проверяется в общем blank lock, но не получает terminal sidecar и не идёт в tmux. JSONL/feed/busy thread принадлежат прежним appStart/appSay. Поведение DK-1719 refused сохранено после rebase.",
+      "evidence": [
+        {
+          "object": "app-server boundary",
+          "location": "chatblankstart.go:foreign dispatch; appchat.go; static/app.js:refused+unknown union",
+          "observation": "Foreign проверяется в общем blank lock, но не получает terminal sidecar и не идёт в tmux. JSONL/feed/busy thread принадлежат прежним appStart/appSay. Поведение DK-1719 refused сохранено после rebase."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-552bc88301573f94",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Автопроверка дополнительных прав включена только для груминга и работающего\n  конвейера с формы. После его конца обычный чат получает `never` без токена замка.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "apptask/taskhead/taskstate и политика прав не меняются. Общий startManaged получил только типизацию неопределённого исхода; app-server carrier не переводится на terminal helper.",
+      "evidence": [
+        {
+          "object": "носитель конвейера",
+          "location": "cloudstart.go:startManaged; apptask.go; git diff d6bb54376..7ab67814e",
+          "observation": "apptask/taskhead/taskstate и политика прав не меняются. Общий startManaged получил только типизацию неопределённого исхода; app-server carrier не переводится на terminal helper."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых сетевых/git вызовов нет; sidecar/echo локальны. Подъём существующего клиента не добавляет серверу прямой API сети, board catchup/push не меняются.",
+      "evidence": [
+        {
+          "object": "сетевые границы",
+          "location": "chatblankstart.go; cloudstart.go; static/app.js",
+          "observation": "Новых сетевых/git вызовов нет; sidecar/echo локальны. Подъём существующего клиента не добавляет серверу прямой API сети, board catchup/push не меняются."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новая дорога не обходит startManaged: tmux сохраняет -c chatTree, guardian cmd.Dir=tree. Клиент запускается прежним agentctl exec из своего каталога.",
+      "evidence": [
+        {
+          "object": "рабочие каталоги",
+          "location": "chatblankstart.go:startManaged call; cloudstart.go:startReservedContext; chats.go:chatCmd",
+          "observation": "Новая дорога не обходит startManaged: tmux сохраняет -c chatTree, guardian cmd.Dir=tree. Клиент запускается прежним agentctl exec из своего каталога."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Куда кладётся новое",
+          "location": "project-architecture:project-architecture:block-3fe8e64fa2671774",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые Go helper/test лежат в tools/dashboard в семье chat; DOM fixture в его testdata. Новых top-level каталогов или языков нет.",
+      "evidence": [
+        {
+          "object": "раскладка новых файлов",
+          "location": "README.md:Раскладка; chatblankstart.go; chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Новые Go helper/test лежат в tools/dashboard в семье chat; DOM fixture в его testdata. Новых top-level каталогов или языков нет."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Это доработка существующей семьи chats до её переезда; новый домен/пакет не заводится. Общий file lock импортирован из internal/chat.",
+      "evidence": [
+        {
+          "object": "границы существующего домена",
+          "location": "docs/ARCHITECTURE.md:Границы; chatblankstart.go; chats.go",
+          "observation": "Это доработка существующей семьи chats до её переезда; новый домен/пакет не заводится. Общий file lock импортирован из internal/chat."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Восстановление исчезнувшего конвейера",
+          "location": "project-architecture:project-architecture:block-ff0f6ffb10430dcc",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "taskhead recovery/stop state не меняются; новый chat receipt имеет собственный ключ blank и не подменяет замок запуска задачи. Общая cloud reservation по-прежнему у guardian.",
+      "evidence": [
+        {
+          "object": "восстановление конвейера",
+          "location": "chatblankstart.go; cloudstart.go; internal/taskstate/state.go",
+          "observation": "taskhead recovery/stop state не меняются; новый chat receipt имеет собственный ключ blank и не подменяет замок запуска задачи. Общая cloud reservation по-прежнему у guardian."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Цикл recovery и его квота/PID confirmation не меняются и не вызываются новой первой отправкой. Для chat неизвестный исход не запускает новый процесс и сохраняет выбранную пару.",
+      "evidence": [
+        {
+          "object": "recovery журнала задачи",
+          "location": "chatblankstart.go:unknown; git diff d6bb54376..7ab67814e",
+          "observation": "Цикл recovery и его квота/PID confirmation не меняются и не вызываются новой первой отправкой. Для chat неизвестный исход не запускает новый процесс и сохраняет выбранную пару."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Цикл recovery и его квота/PID confirmation не меняются и не вызываются новой первой отправкой. Для chat неизвестный исход не запускает новый процесс и сохраняет выбранную пару.",
+      "evidence": [
+        {
+          "object": "recovery журнала задачи",
+          "location": "chatblankstart.go:unknown; git diff d6bb54376..7ab67814e",
+          "observation": "Цикл recovery и его квота/PID confirmation не меняются и не вызываются новой первой отправкой. Для chat неизвестный исход не запускает новый процесс и сохраняет выбранную пару."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "# Стиль devkit",
+          "location": "project-style:project-style:block-8bfebc193cc45790",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общие и проектные источники прочитаны вместе; отчёт содержит полный сгенерированный перечень из обоих уровней.",
+      "evidence": [
+        {
+          "object": "совместное применение стандартов",
+          "location": "RULES.architecture.md; RULES.style.md; RULES.md:Тесты обязательны; docs/ARCHITECTURE.md; docs/STYLEGUIDE.md",
+          "observation": "Общие и проектные источники прочитаны вместе; отчёт содержит полный сгенерированный перечень из обоих уровней."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Ошибки и отказы",
+          "location": "project-style:project-style:block-9c4dd47968139c01",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новой проверочной CLI утилиты нет: изменены HTTP handlers, UI и тесты. Контракт exit 0/1/2 к ним не применяется.",
+      "evidence": [
+        {
+          "object": "CLI findings",
+          "location": "chatblankstart.go; cloudstart.go; static/app.js",
+          "observation": "Новой проверочной CLI утилиты нет: изменены HTTP handlers, UI и тесты. Контракт exit 0/1/2 к ним не применяется."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Hook не добавлен и не изменён; новые ошибки передаются HTTP JSON, не stderr протоколом hook.",
+      "evidence": [
+        {
+          "object": "hook отказ",
+          "location": "git diff d6bb54376..7ab67814e",
+          "observation": "Hook не добавлен и не изменён; новые ошибки передаются HTTP JSON, не stderr протоколом hook."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Раскладка тестов",
+          "location": "project-style:project-style:block-41b95475184c2aef",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "chatblankstart_test.go рядом с chatblankstart.go, route API/DOM test в семье chat, JS fixture в testdata. Существующий sessions_test поменял только актуальный guard.",
+      "evidence": [
+        {
+          "object": "расположение тестов",
+          "location": "chatblankstart_test.go; chatblankroute_test.go; sessions_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "chatblankstart_test.go рядом с chatblankstart.go, route API/DOM test в семье chat, JS fixture в testdata. Существующий sessions_test поменял только актуальный guard."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Все новые server/receipt/tmux log fixtures используют newTestEnv/t.TempDir; DOM использует fake storage/DOM. Реальная домашняя папка и живые чаты не менялись.",
+      "evidence": [
+        {
+          "object": "изоляция фикстур",
+          "location": "server_test.go:newTestEnv; chatblankstart_test.go; testdata/poc_taskblankroute.mjs",
+          "observation": "Все новые server/receipt/tmux log fixtures используют newTestEnv/t.TempDir; DOM использует fake storage/DOM. Реальная домашняя папка и живые чаты не менялись."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Финальный regcheck на d6bb54376 дал valid red старого кода и green source 7ab67814e после всех мутаций. Новые receipt symbols проверены отдельными тестами/мутациями.",
+      "evidence": [
+        {
+          "object": "регрессионный red/green",
+          "location": "/private/tmp/dk1720-final-regcheck.log; docs/tasks/DK-1720.md:Ход работы",
+          "observation": "Команда с --tests chatblankroute_test.go,poc_taskblankroute.mjs и тремя TestTaskBlank сценариями реально выполнила baseline/current. Test-only baseline не содержит новый receipt-файл, которого не может собрать старая база; это ограничение явно записано."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Существующий TestMain очищает session/config vars и уводит realHome/clientHome в spare; newTestEnv задаёт временные HOME/PATH и fake agentctl/tmux. Signal subtests явно включают real guardian только над синтетикой.",
+      "evidence": [
+        {
+          "object": "окружение интеграционных тестов",
+          "location": "tasks_test.go:TestMain; server_test.go:newTestEnv; chatblankstart_test.go:signal",
+          "observation": "Существующий TestMain очищает session/config vars и уводит realHome/clientHome в spare; newTestEnv задаёт временные HOME/PATH и fake agentctl/tmux. Signal subtests явно включают real guardian только над синтетикой."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ревью не управляло live browser, чатом, подпиской или процессом модели. UI проверяется Node DOM стендом; после выката чтение инцидента остаётся отдельным этапом.",
+      "evidence": [
+        {
+          "object": "границы живой проверки",
+          "location": "testdata/poc_taskblankroute.mjs; docs/tasks/DK-1720.md:Сценарий проверки",
+          "observation": "Ревью не управляло live browser, чатом, подпиской или процессом модели. UI проверяется Node DOM стендом; после выката чтение инцидента остаётся отдельным этапом."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно.",
+      "evidence": [
+        {
+          "object": "## Имена",
+          "location": "project-style:project-style:block-a969903cd6ddc137",
+          "observation": "Заголовок задаёт раздел стандарта, самостоятельного требования в нём нет; нормативные блоки раздела разобраны отдельно."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый файл называется chatblankstart.go и его test, helper в существующей chat семье. Handle имена сохранены; новых step/доменов нет.",
+      "evidence": [
+        {
+          "object": "имена семьи",
+          "location": "chatblankstart.go; chats.go:handleChatStart/chatRaiseSay",
+          "observation": "Новый файл называется chatblankstart.go и его test, helper в существующей chat семье. Handle имена сохранены; новых step/доменов нет."
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые сообщения и README русские, wire-поля и model/harness остаются контрактными именами. Коммиты проходят действующие symbol/prose hooks; вычитка окончательной документации выполняется отдельно перед review clean.",
+      "evidence": [
+        {
+          "object": "код и тексты",
+          "location": "README.md:заготовки; chatblankstart.go:errors; static/app.js:unknown label",
+          "observation": "Новые сообщения и README русские, wire-поля и model/harness остаются контрактными именами. Коммиты проходят действующие symbol/prose hooks; вычитка окончательной документации выполняется отдельно перед review clean."
+        }
+      ]
+    }
+  ]
+}

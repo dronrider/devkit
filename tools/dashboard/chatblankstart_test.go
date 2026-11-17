@@ -120,24 +120,30 @@ func TestTaskBlankReceiptFailurePreventsLaunch(t *testing.T) {
 }
 
 func TestTaskBlankDirectSignalRetainsUnknownReceipt(t *testing.T) {
-	e, c := chatEnv(t)
-	blank := blankMake(t, e, c, `{"model":"opus"}`)
-	log := filepath.Join(e.home, "signal.log")
-	writeScript(t, e.bin, "claude", "exit 0")
-	writeScript(t, e.bin, "tmux", `echo "$@" >> '`+log+`'
+	for _, id := range []string{"", "XR-4"} {
+		t.Run("task="+id, func(t *testing.T) {
+			t.Setenv("DEVKIT_TEST_CLOUD_REAL", "1")
+			e, c := chatEnv(t)
+			order, _ := json.Marshal(map[string]string{"model": "opus", "id": id})
+			blank := blankMake(t, e, c, string(order))
+			log := filepath.Join(e.home, "signal.log")
+			writeScript(t, e.bin, "claude", "exit 0")
+			writeScript(t, e.bin, "tmux", `echo "$@" >> '`+log+`'
 case "$1" in
 new-session) kill -TERM $$;;
 ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
-	for i := 0; i < 2; i++ {
-		w := blankStartRequest(e.s, blank, "первый текст")
-		if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
-			t.Fatalf("неизвестный сигнал выдал доставку: %d %s", w.Code, w.Body.String())
-		}
-	}
-	if n := strings.Count(readFile(t, log), "new-session"); n != 1 {
-		t.Fatalf("после сигнала клиент повторён: %d", n)
+			for i := 0; i < 2; i++ {
+				w := blankStartRequest(e.s, blank, "первый текст")
+				if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
+					t.Fatalf("неизвестный сигнал выдал доставку: %d %s", w.Code, w.Body.String())
+				}
+			}
+			if n := strings.Count(readFile(t, log), "new-session"); n != 1 {
+				t.Fatalf("после сигнала клиент повторён: %d", n)
+			}
+		})
 	}
 }
 
@@ -201,6 +207,11 @@ func TestTaskBlankReceiptDoesNotFollowReusedTmux(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := reply["tmux"]
+	appendBinds(t, e.home, "2099-01-01T00:00:00 сессия aaaa4444-4444-4444-8444-444444444444 задача XR-4 проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux "+name+"\n")
+	writeTmuxFake(t, e.bin, log, "")
+	if w := blankStartRequest(e.s, blank, "первый текст"); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
+		t.Fatalf("отсутствующее окно открыло чужой registry owner: %d %s", w.Code, w.Body.String())
+	}
 	mem := e.s.chatStoreRead("tmux-" + name)
 	mem.From = "blank-other"
 	if err := e.s.chatStoreWrite("tmux-"+name, mem); err != nil {
@@ -209,5 +220,58 @@ func TestTaskBlankReceiptDoesNotFollowReusedTmux(t *testing.T) {
 	writeTmuxFake(t, e.bin, log, name+"\t1\t9999999999\n")
 	if w := blankStartRequest(e.s, blank, "первый текст"); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
 		t.Fatalf("старый чат открыл чужое окно: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTaskBlankReceiptExistsBeforeExternalStart(t *testing.T) {
+	e, c := chatEnv(t)
+	blank := blankMake(t, e, c, `{"model":"opus","id":"XR-4"}`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	old := startReservedFn
+	observed := false
+	startReservedFn = func(root, tree, id, sess string, command func(string) string) error {
+		data, err := os.ReadFile(e.s.chatStartReceiptPath(blank))
+		var receipt chatStartReceipt
+		if err == nil && json.Unmarshal(data, &receipt) == nil && receipt.Key != "" && receipt.Tmux == sess && !receipt.Accepted {
+			observed = true
+		}
+		return errors.New("launch refused")
+	}
+	defer func() { startReservedFn = old }()
+	w := blankStartRequest(e.s, blank, "первый текст")
+	if w.Code != http.StatusBadGateway || !observed {
+		t.Fatalf("внешний запуск не защищён pending квитанцией: observed=%v code=%d", observed, w.Code)
+	}
+}
+
+func TestTaskBlankReceiptPostLaunchWriteFailureIsUnknown(t *testing.T) {
+	e, c := chatEnv(t)
+	blank := blankMake(t, e, c, `{"model":"opus","id":"XR-4"}`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	old := startReservedFn
+	calls := 0
+	startReservedFn = func(root, tree, id, sess string, command func(string) string) error {
+		calls++
+		path := e.s.chatStartReceiptPath(blank)
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+	defer func() { startReservedFn = old }()
+	for i := 0; i < 2; i++ {
+		fresh := &server{cfg: e.s.cfg, now: e.s.now}
+		w := blankStartRequest(fresh, blank, "первый текст")
+		if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
+			t.Fatalf("ошибка после внешнего эффекта выдала доставку: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("неподтверждённый запуск повторён: %d", calls)
 	}
 }

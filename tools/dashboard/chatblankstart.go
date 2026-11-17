@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dronrider/devkit/internal/sessions"
 	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 type chatStartReceipt struct {
@@ -82,15 +82,11 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 		if session == "" {
 			memory := s.chatStoreRead("tmux-" + prev.Tmux)
 			roll, err := tmuxRollAsk()
-			if err != nil || memory.From != blank || memory.Since < prev.Since || (roll.alive(prev.Tmux) && (prev.Created == 0 || roll[prev.Tmux] != prev.Created)) {
+			if err != nil || memory.From != blank || memory.Since < prev.Since || !roll.alive(prev.Tmux) || prev.Created == 0 || roll[prev.Tmux] != prev.Created {
 				hold(errors.New("принадлежность первого окна не подтверждена; повтор не отправлен"))
 				return
 			}
 			session = sessions.TmuxOwnerSince(s.bindsAll(), prev.Tmux, bindTimeSince(prev.Since))
-			if session == "" && !roll.alive(prev.Tmux) {
-				hold(errors.New("первый клиент недоступен, принятие реплики не подтверждено; повтор не отправлен"))
-				return
-			}
 		}
 
 		s.chatSayDone(blank, claim, way)

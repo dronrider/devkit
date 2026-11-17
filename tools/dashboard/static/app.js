@@ -13776,7 +13776,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         mark = stateMark("wait", "в очереди");
         why = m.why || "";
       } else if (m.state === "held") {
-        mark = stateMark("fail", "не доставлено");
+        mark = stateMark("fail", m.unknown ? "доставка не подтверждена" : "не доставлено");
         why = m.why || "агенту её не отдали";
       } else if (m.state === "bad") {
         mark = stateMark("fail", stopped ? "не ушло" : "не ушло, дожимаю");

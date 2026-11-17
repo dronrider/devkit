@@ -199,6 +199,10 @@ func startReservedContext(ctx context.Context, root, tree, id, sess string, comm
 			}
 			if code != 0 {
 				out, _ := os.ReadFile(filepath.Join(dir, "out"))
+				if code >= 128 {
+					os.WriteFile(filepath.Join(dir, "seen"), []byte("seen"), 0600)
+					return fmt.Errorf("%w: tmux завершён сигналом (код %d): %s", errChatStartUnknown, code, strings.TrimSpace(string(out)))
+				}
 				os.WriteFile(filepath.Join(dir, "seen"), []byte("seen"), 0600)
 				return fmt.Errorf("tmux: %s", strings.TrimSpace(string(out)))
 			}

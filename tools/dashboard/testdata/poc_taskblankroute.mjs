@@ -94,7 +94,7 @@ console.log("ok");
   if (posts.length !== 3 || posts.some(p => JSON.stringify(p) !== JSON.stringify(posts[0])) || posts[0].effort !== "high") fail("повтор изменил исходный заказ: " + JSON.stringify(posts));
   const pending = () => JSON.parse(store.get("devkit.chat.pend.demo/" + blank.id) || "[]");
   if (pending()[0]?.state !== "held" || pending()[0]?.why !== WHY) fail("unknown не удержан с причиной: " + JSON.stringify(pending()));
-  if (!dump(panel).includes(WHY)) fail("причина неизвестного исхода не видна на пузыре");
+  if (!dump(panel).includes(WHY) || !dump(panel).includes("доставка не подтверждена")) fail("неизвестный исход не назван на пузыре");
   if (!byClass(panel, "busyrow")?.hidden) fail("unknown оставил занятость");
   const reloaded = sandbox.chatPanel("demo", await sandbox.chatState("demo", blank.id, board));
   if (!dump(reloaded).includes(WHY)) fail("перезагрузка потеряла причину unknown");

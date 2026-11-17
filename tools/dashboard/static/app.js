@@ -12089,7 +12089,7 @@ async function answerTask(project, id, text) {
 // цели подъём свой, и ответ ей уезжает обычной дорогой разговора: живой сессии
 // в сокет, мёртвой резюмом, а при пустом списке чатов подъёмом первой репликой.
 function chatWaitsTask(st) {
-  if (st.isGoal || !st.task) return false;
+  if (st.isGoal || st.fresh || st.blank || !st.task) return false;
   if (!st.wait || !st.wait.state) return false;
   return !st.entry || st.entry.state !== "live";
 }
@@ -12775,10 +12775,9 @@ async function chatRaise(project, st, text, pick, onTmux) {
   const liftWay = String(r.body.way || "");
   if (liftWay === "start" || liftWay === "new" || liftWay === "resume" ||
       liftWay === "fresh" || liftWay === "appserver") chatEffortSpend(project, st.task || st.addr);
-  // Разговор чужого протокола называет свой адрес сразу: процесс у него не
-  // терминальный, реестра ждать нечего, и панель переезжает на ленту тем же
-  // ходом, каким переезжала на родившуюся сессию.
-  if (liftWay === "appserver" && r.body.session) {
+  // Повтор уже выросшей записи и разговор чужого протокола называют адрес
+  // сразу: панель открывает эту ленту без ожидания нового окна.
+  if ((liftWay === "appserver" || liftWay === "new") && r.body.session) {
     chatLiftDrop(project, st.addr);
     echoMove(project, st.addr, r.body.session);
     switchChat(r.body.session);

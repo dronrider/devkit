@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -704,7 +705,9 @@ func chatStoreDir(home string) string {
 }
 
 type chatStore struct {
-	Model string `json:"model,omitempty"`
+	// StartKey отличает повтор принятого запуска от следующей реплики в той же записи.
+	StartKey string `json:"start_key,omitempty"`
+	Model    string `json:"model,omitempty"`
 	// Harness называет подписку сохранённого выбора: ключ выбора с DK-1281
 	// двухчастный, и разговор поднимается квотой этого поля, а не первой, у
 	// которой модель домашняя. Пусто у старых записей и умолчания, и тогда
@@ -2002,7 +2005,7 @@ func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
 // Модель тут переписывается той, которой сессию подняли на самом деле: с этой
 // минуты запись говорит о живом разговоре, а не о намерении. Подписка едет
 // рядом с моделью тем же ключом (DK-1281).
-func (s *server) chatBlankLift(sid, sess, model, harness string) {
+func (s *server) chatBlankLift(sid, sess, model, harness, startKey string) {
 	if sid == "" || !chatKeyRe.MatchString(sid) {
 		return
 	}
@@ -2015,6 +2018,7 @@ func (s *server) chatBlankLift(sid, sess, model, harness string) {
 	// незачем. Момент последней буквы уходит вместе с ними: дальше запись
 	// дорожный знак, а не разговор, в который пишут.
 	st.Tmux, st.Draft, st.Files, st.DraftAt, st.Lifted = sess, "", nil, 0, s.now().Unix()
+	st.StartKey = startKey
 	if model != "" {
 		st.Model, st.Harness = model, harness
 	}
@@ -2446,6 +2450,26 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 			model, harness)})
 		return
 	}
+	if blank != "" && chatKeyRe.MatchString(blank) {
+		lock := s.inboxLock("chat-start:" + blank)
+		lock.Lock()
+		defer lock.Unlock()
+		st := s.chatStoreRead(blank)
+		if st.Project != found.Name {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "заготовка чата принадлежит другому проекту"})
+			return
+		}
+		if st.Tmux != "" || st.Grown != "" {
+			if st.StartKey == "" || st.StartKey != chatStartKey(id, text, model, harness, body.Effort) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "чат уже начат: откройте его разговор для следующей реплики",
+					"tmux": st.Tmux, "session": st.Grown})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"way": "new", "tmux": st.Tmux,
+				"session": st.Grown, "model": st.Model, "harness": st.Harness})
+			return
+		}
+	}
 	// Подписка чужого протокола не знает терминальной механики, и её дорога
 	// своя: без tmux, без ожидания родившейся сессии, лентой файла.
 	if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
@@ -2477,7 +2501,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	s.chatBlankLift(blank, sess, model, harness)
+	s.chatBlankLift(blank, sess, model, harness, chatStartKey(id, text, model, harness, body.Effort))
 	s.chatRaised(sess, blank, id, found.Name)
 	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)",
 		found.Name, sess, chatModelName(model, harness), dir)
@@ -2485,6 +2509,11 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		"way": "new", "tmux": sess, "model": model, "harness": harness, "tree": dir,
 		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом",
 			sess, chatModelName(model, harness))})
+}
+
+func chatStartKey(id, text, model, harness, effort string) string {
+	data, _ := json.Marshal([]string{id, text, model, harness, effort})
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // chatTree выбирает каталог подъёма: боковое дерево задачи предпочитается
@@ -4298,7 +4327,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
-	s.chatBlankLift(sid, sess, model, harness)
+	s.chatBlankLift(sid, sess, model, harness, chatStartKey(task, text, model, harness, effort))
 	s.chatRaised(sess, sid, task, found.Name)
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")

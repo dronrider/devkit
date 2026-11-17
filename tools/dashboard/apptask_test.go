@@ -145,6 +145,18 @@ func TestAppTaskStopRemovesCarrier(t *testing.T) {
 	if live := e.s.appLive(sid); live != nil {
 		t.Fatal("процесс остался")
 	}
+	appMode(t, e, "")
+	r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"после остановки задачи"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusOK {
+		t.Fatalf("продолжение после стопа задачи: %d %s", r.StatusCode, raw)
+	}
+	appWaitBusy(t, e, c, sid, false)
+	if st := e.s.chatStoreRead(sid); st.Thread != "th-1" || st.Model != "модель-codex" || st.TaskRun {
+		t.Fatalf("настройки после стопа: %+v", st)
+	}
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume th-1") {
+		t.Fatalf("после стопа новая нить: %s", log)
+	}
 }
 
 func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
@@ -168,6 +180,9 @@ func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
 		t.Fatalf("обычный чат: %d %s", resp.StatusCode, raw)
 	}
 	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if after := e.s.chatStoreRead(sid); after.Thread != st.Thread || after.Model != st.Model || after.Harness != st.Harness || strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume th-1") {
+		t.Fatalf("завершённая задача потеряла нить/модель: %+v\n%s", after, log)
+	}
 	at := strings.LastIndex(log, "policy ")
 	if at < 0 || !strings.Contains(log[at:], `"approvalPolicy": "never"`) || !strings.Contains(log[at:], `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
 		t.Fatalf("после task-run остались права/токен: %s", log)

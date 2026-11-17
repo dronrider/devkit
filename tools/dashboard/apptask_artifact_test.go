@@ -14,7 +14,8 @@ import (
 	"time"
 )
 
-func TestAppTaskInstalledArtifact(t *testing.T) {
+func appArtifactEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
+	t.Helper()
 	binary := os.Getenv("DEVKIT_DASHBOARD_BIN")
 	if binary == "" {
 		t.Skip("DEVKIT_DASHBOARD_BIN не назван: проверка выкаченного бинаря")
@@ -27,7 +28,7 @@ func TestAppTaskInstalledArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("artifact %s sha256 %x", binary, sha256.Sum256(raw))
-	e, c := appTaskEnv(t, "mute")
+	e, _ := appTaskEnv(t, mode)
 	copyDir := filepath.Join(e.home, "artifact")
 	if err = os.MkdirAll(copyDir, 0755); err != nil {
 		t.Fatal(err)
@@ -94,7 +95,11 @@ func TestAppTaskInstalledArtifact(t *testing.T) {
 		case <-tick.C:
 		}
 	}
-	c = e.loggedClient(t)
+	return e, e.loggedClient(t)
+}
+
+func TestAppTaskInstalledArtifact(t *testing.T) {
+	e, c := appArtifactEnv(t, "mute")
 	code, got := appTaskStart(t, e, c)
 	if code != http.StatusOK {
 		t.Fatalf("artifact start: %d %+v\n%s", code, got, readFile(t, filepath.Join(e.home, ".devkit", "heads", "XR-002.log"))+readFile(t, filepath.Join(e.home, ".devkit", "dashboard.log")))

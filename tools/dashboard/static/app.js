@@ -13585,7 +13585,7 @@ function echoRead(project, addr) {
       // Очередь и задача переживают перезагрузку вместе с пузырём: реплика,
       // легшая во вход задачи, обязана и после неё называть очередь, а не
       // недоставку. Прежде оба поля писались в персист и не читались из него.
-      queue: Boolean(m.queue),
+      queue: Boolean(m.queue), refused: Boolean(m.refused),
       task: m.task ? String(m.task) : "",
       // Ключ записи переживает перезагрузку вместе с ней: по нему сервер узнаёт
       // повтор, а вкладка, поднятая заново, шлёт ту же запись, а не новую.
@@ -13633,7 +13633,7 @@ function echoWrite(project, addr, list) {
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
-        queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
+        queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -13700,7 +13700,7 @@ function echoSweep(project, door, chats) {
       if (!Array.isArray(was)) was = [];
       was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection,
         why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
-        queue: Boolean(rec.queue), task: rec.task || "", since: rec.since || rec.born });
+        queue: Boolean(rec.queue), refused: Boolean(rec.refused), task: rec.task || "", since: rec.since || rec.born });
       localStorage.setItem(key + hit.id, JSON.stringify(was));
     }
     localStorage.removeItem(key + door);
@@ -13929,7 +13929,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       sinceOf.set(rec.id, rec.since);
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, task: rec.task,
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task,
         scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
@@ -13940,7 +13940,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, task: rec.task, once: true });
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, once: true });
     }
     if (mine.length) {
       draw();
@@ -14031,6 +14031,11 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       draw();
       if (out.onHeld) out.onHeld();
     },
+    refused(m, why) {
+      if (!mine.includes(m)) return;
+      m.refused = true;
+      out.held(m, why);
+    },
     // Реплика доехала до очереди, которую разберут без человека: вход задачи,
     // очередь харнеса на сбросе подписки, очередь вставшего клиента. Пузырь
     // называет очередь одной строкой и стоит, пока эхо из транскрипта его не
@@ -14085,6 +14090,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       if (!mine.length || !list || !list.length) return;
       let went = false;
       for (const m of mine.slice()) {
+        if (m.refused) continue;
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
         const hit = list.find((it) => it && it.role === "user" && !it.who && (it.text || it.selection || it.proposal) &&
@@ -14780,7 +14786,7 @@ function chatPanel(project, st) {
             // набранное. Удача молчит: реплика и так видна в ленте.
             busy.off();
             if (r.body.refused) {
-              echo.held(m, r.body.refused);
+              echo.refused(m, r.body.refused);
               sayResult(r.body.refused, true);
               return;
             }

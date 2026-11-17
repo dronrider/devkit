@@ -821,9 +821,12 @@ type chatStore struct {
 	// Thread это нить клиента чужого протокола: её продолжает следующий подъём
 	// процесса, и разговор не начинается с чистого листа после перезапуска
 	// демона.
-	Thread     string `json:"thread,omitempty"`
-	TaskRun    bool   `json:"taskRun,omitempty"`
-	TaskRunPID int    `json:"taskRunPID,omitempty"`
+	Thread         string `json:"thread,omitempty"`
+	TaskRun        bool   `json:"taskRun,omitempty"`
+	TaskRunPID     int    `json:"taskRunPID,omitempty"`
+	TaskRunRoot    string `json:"taskRunRoot,omitempty"`
+	TaskRunID      string `json:"taskRunID,omitempty"`
+	TaskRunSession string `json:"taskRunSession,omitempty"`
 	// CxEffort это уровень глубины клиента чужого протокола: у него нет
 	// окружения сессии, и выбор меню модели живёт записью разговора.
 	CxEffort string `json:"cxEffort,omitempty"`

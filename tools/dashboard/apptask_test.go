@@ -23,7 +23,7 @@ func waitTaskStopped(t *testing.T, e *testEnv, sid string) {
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if e.s.appTaskFind(sid, "", "") == nil && !taskhead.Working(taskhead.LockPath(e.home, "XR-002")) {
+		if e.s.appTaskFind(sid, "", "") == nil && !e.s.chatStoreRead(sid).TaskRun && !taskhead.Working(taskhead.LockPath(e.home, "XR-002")) {
 			return
 		}
 		select {
@@ -151,6 +151,7 @@ func TestAppTaskStopRemovesCarrier(t *testing.T) {
 		t.Fatalf("продолжение после стопа задачи: %d %s", r.StatusCode, raw)
 	}
 	appWaitBusy(t, e, c, sid, false)
+	waitTaskStopped(t, e, sid)
 	if st := e.s.chatStoreRead(sid); st.Thread != "th-1" || st.Model != "модель-codex" || st.TaskRun {
 		t.Fatalf("настройки после стопа: %+v", st)
 	}
@@ -159,7 +160,7 @@ func TestAppTaskStopRemovesCarrier(t *testing.T) {
 	}
 }
 
-func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
+func TestAppTaskClosedChatRefusesWorkingContinuation(t *testing.T) {
 	e, c := appTaskEnv(t, "task-done")
 	code, got := appTaskStart(t, e, c)
 	if code != http.StatusOK {
@@ -167,27 +168,15 @@ func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
 	}
 	sid := got["session"]
 	waitTaskStopped(t, e, sid)
-	st := e.s.chatStoreRead(sid)
-	if st.TaskRun {
-		t.Fatal("завершённый конвейер оставил права task-run")
+	appTaskBoard(t, e, "done")
+	before := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	code, raw := appTaskSay(t, e, c, sid, "после закрытия", "")
+	if code != http.StatusConflict || !strings.Contains(raw, "закрыта") {
+		t.Fatalf("%d %s", code, raw)
 	}
-	if err := os.WriteFile(filepath.Join(e.proj, "fake-app-mode"), []byte("mute"), 0644); err != nil {
-		t.Fatal(err)
+	if after := readFile(t, filepath.Join(e.proj, "fake-app-log")); before != after {
+		t.Fatalf("closed chat started client: %s", after)
 	}
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"просто разговор"}`)
-	raw := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("обычный чат: %d %s", resp.StatusCode, raw)
-	}
-	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-	if after := e.s.chatStoreRead(sid); after.Thread != st.Thread || after.Model != st.Model || after.Harness != st.Harness || strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume th-1") {
-		t.Fatalf("завершённая задача потеряла нить/модель: %+v\n%s", after, log)
-	}
-	at := strings.LastIndex(log, "policy ")
-	if at < 0 || !strings.Contains(log[at:], `"approvalPolicy": "never"`) || !strings.Contains(log[at:], `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
-		t.Fatalf("после task-run остались права/токен: %s", log)
-	}
-	e.s.appDrop(sid, "конец теста")
 }
 
 func TestAppTaskCompletionMatchesThreadAndTurn(t *testing.T) {
@@ -355,15 +344,11 @@ func TestAppTaskStaleRecordCannotGrantTaskRights(t *testing.T) {
 	t.Cleanup(func() { e.s.appDrop(sid, "конец теста") })
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"обычная реплика после рестарта"}`)
 	raw := body(t, resp)
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(raw, "не подтверждён") {
 		t.Fatalf("say stale: %d %s", resp.StatusCode, raw)
 	}
-	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-	if !strings.Contains(log, `"approvalPolicy": "never"`) || strings.Contains(log, `"approvalsReviewer": "auto_review"`) || !strings.Contains(log, `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
-		t.Fatalf("stale выдал права: %s", log)
-	}
-	if e.s.chatStoreRead(sid).TaskRun {
-		t.Fatal("stale TaskRun сохранился после обычной реплики")
+	if log, err := os.ReadFile(filepath.Join(e.proj, "fake-app-log")); err == nil {
+		t.Fatalf("stale started client: %s", log)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 func appTaskEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 	t.Helper()
 	e, c := appEnv(t)
+	t.Setenv("DEVKIT_TASK_PASS_PAUSE", "0")
 	useHeadHome(t, e)
 	putDoc(t, e.proj, "docs/tasks/XR-002.md", "# XR-002: тест\n")
 	writeTaskRunFake(t, filepath.Dir(e.proj))
@@ -35,8 +36,8 @@ func appTaskEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 		t.Fatal(err)
 	}
 	writeScript(t, e.bin, "taskctl", `case "$1" in
- list) printf '%s' '`+runsBoardJSON+`';;
- show) state=backlog; if [ -f task-state ]; then state=$(cat task-state); fi; echo "XR-002 в $state";;
+ list) if [ -f `+shQuote(filepath.Join(e.proj, "board-state"))+` ]; then cat `+shQuote(filepath.Join(e.proj, "board-state"))+`; else printf '%s' '`+runsBoardJSON+`'; fi;;
+ show) state=backlog; if [ -f task-state ]; then state=$(cat task-state); fi; echo "XR-002 в $state"; echo "  вид user";;
  guard) exit 0;;
  *) exit 0;;
 esac`)

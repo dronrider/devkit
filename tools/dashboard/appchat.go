@@ -26,14 +26,15 @@ import (
 // лента лежит файлом, нить клиента продолжается resume, и следующий ход
 // поднимает процесс заново сам.
 type appChat struct {
-	sid     string
-	h       *Harness
-	model   string
-	effort  string
-	dir     string
-	proc    *appServer
-	thread  string
-	project string
+	sid       string
+	h         *Harness
+	model     string
+	effort    string
+	dir       string
+	proc      *appServer
+	thread    string
+	project   string
+	automatic bool
 
 	mu        sync.Mutex
 	busy      bool
@@ -200,6 +201,7 @@ func (e *appThreadWriterConflict) Unwrap() error { return e.cause }
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
+	c.automatic = s.appAutomaticReview(sid, st)
 	toolEnv := map[string]string{"DEVKIT_CHAT_SESSION_ID": sid, "DEVKIT_HARNESS": h.Name}
 	if st.GroomSource != "" {
 		toolEnv["DEVKIT_TASK"], toolEnv["DEVKIT_GROOM_SOURCE"], toolEnv["DEVKIT_GROOM_MODE"] = st.GroomSource, st.GroomSource, st.GroomMode
@@ -249,7 +251,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		config["shell_environment_policy.set."+key] = value
 	}
 	policy := map[string]any{"approvalPolicy": "never", "config": config, "sandbox": "workspace-write"}
-	if s.appAutomaticReview(sid, st) {
+	if c.automatic {
 		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
 	}
 	var configured json.RawMessage
@@ -280,7 +282,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		}
 		c.thread = got.Thread.ID
 	}
-	if s.appAutomaticReview(sid, st) {
+	if c.automatic {
 		var actual struct {
 			ApprovalPolicy string `json:"approvalPolicy"`
 			Reviewer       string `json:"approvalsReviewer"`
@@ -468,6 +470,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}
+	wasTaskRun := st.TaskRun
 	continuation, err := s.appTaskContinuation(found, sid, &st)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
@@ -480,6 +483,19 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		s.raiseAppTask(w, found, sid, st, h, "", text, true, claim)
 		return
+	}
+	if wasTaskRun && !st.TaskRun {
+		if err := s.chatStoreWrite(sid, st); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "состояние завершённого запуска не записалось: " + err.Error()})
+			return
+		}
+	}
+	if live := s.appLive(sid); live != nil && live.automatic && st.TaskRunPID > 0 {
+		if live.busyNow() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+			return
+		}
+		s.appDrop(sid, "закрытая задача продолжается обычным разговором")
 	}
 	dir := chatTree(found.Path, st.Task)
 	if st.GroomTree != "" {

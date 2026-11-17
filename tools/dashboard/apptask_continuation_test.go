@@ -141,7 +141,7 @@ func TestAppTaskContinuationLifecycle(t *testing.T) {
 }
 
 func TestAppTaskContinuationRefusesUnprovenState(t *testing.T) {
-	for _, kind := range []string{"closed", "missing", "unavailable", "changed-run", "other-chat", "other-head"} {
+	for _, kind := range []string{"missing", "unavailable", "changed-run", "other-chat", "other-head"} {
 		t.Run(kind, func(t *testing.T) {
 			e, c := appTaskEnv(t, "task-check")
 			code, got := appTaskStart(t, e, c)
@@ -152,8 +152,6 @@ func TestAppTaskContinuationRefusesUnprovenState(t *testing.T) {
 			waitTaskStopped(t, e, sid)
 			appTaskBoard(t, e, "check")
 			switch kind {
-			case "closed":
-				appTaskBoard(t, e, "done")
 			case "missing":
 				os.WriteFile(filepath.Join(e.proj, "board-state"), []byte(`{"sections":[]}`), 0644)
 			case "unavailable":

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -152,4 +153,107 @@ func TestAppTaskContinuationInstalledArtifact(t *testing.T) {
 		t.Fatalf("task unexpectedly closed: %s", state)
 	}
 	t.Log("PASS artifact: legacy migration, actual daemon restart, same thread/model, full message once, permissions RPC, own delegate, foreign/parallel refusal, stop and one-pass release on open task")
+}
+
+func TestAppTaskContinuationInstalledProfilesArtifact(t *testing.T) {
+	agent := os.Getenv("DEVKIT_AGENTCTL_ARTIFACT")
+	sourceHome := os.Getenv("DEVKIT_PROFILE_SOURCE_HOME")
+	sourceRoot := os.Getenv("DEVKIT_PROFILE_SOURCE_ROOT")
+	if agent == "" || sourceHome == "" || sourceRoot == "" {
+		t.Skip("не названы установленный agentctl и источник профилей")
+	}
+	if !filepath.IsAbs(agent) || !filepath.IsAbs(sourceHome) || !filepath.IsAbs(sourceRoot) {
+		t.Fatal("пути установленной конфигурации должны быть абсолютными")
+	}
+	read := exec.Command(agent, "harness", "--json")
+	read.Dir = sourceRoot
+	read.Env = standSpawnEnv("HOME="+sourceHome, "DEVKIT_DASH_HOME="+sourceHome, "DEVKIT_HOME="+sourceRoot, "DEVKIT_TASK=", "CLAUDE_CODE_SESSION_ID=", "CODEX_THREAD_ID=")
+	raw, err := read.CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed layout: %v %s", err, raw)
+	}
+	var layout struct {
+		ProfileDir string `json:"profile_dir"`
+		Harnesses  []struct {
+			Harness
+			Enabled bool `json:"enabled"`
+		} `json:"harnesses"`
+	}
+	if err = json.Unmarshal(raw, &layout); err != nil {
+		t.Fatal(err)
+	}
+	var selected *Harness
+	for i := range layout.Harnesses {
+		if layout.Harnesses[i].Name == "codex" && layout.Harnesses[i].Enabled {
+			selected = &layout.Harnesses[i].Harness
+		}
+	}
+	if selected == nil || !selected.foreign() || selected.tierModel("pro") == "" {
+		t.Fatalf("installed codex unavailable: %+v", selected)
+	}
+	profile, err := os.ReadFile(filepath.Join(layout.ProfileDir, "codex.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("installed profile %s sha256 %x; model %s", filepath.Join(layout.ProfileDir, "codex.toml"), sha256.Sum256(profile), selected.tierModel("pro"))
+	e, c, restart := appArtifactRestartable(t, "task-check")
+	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
+	if err = os.RemoveAll(filepath.Join(kit, "kit", "harness")); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(layout.ProfileDir, filepath.Join(kit, "kit", "harness")); err != nil {
+		t.Fatal(err)
+	}
+	config := "enabled = [\"codex\"]\ndefault = \"codex\"\n[codex]\nbin = " + strconv.Quote(filepath.Join(e.bin, "клиент-app")) + "\n"
+	for _, model := range selected.Models {
+		config += model.Tier + " = " + strconv.Quote(model.Model) + "\n"
+	}
+	putDoc(t, e.home, ".devkit/harness.local", config)
+	writeScript(t, e.bin, "agentctl", "exec "+shQuote(agent)+" \"$@\"")
+	restart()
+	c = e.loggedClient(t)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"codex","tier":"pro","effort":"high"}`)
+	response := body(t, resp)
+	var started map[string]string
+	json.Unmarshal([]byte(response), &started)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("installed profiles start %d %s", resp.StatusCode, response)
+	}
+	sid := started["session"]
+	waitTaskStopped(t, e, sid)
+	if started["model"] != selected.tierModel("pro") {
+		t.Fatalf("installed mapping lost: %s", response)
+	}
+	appTaskBoard(t, e, "check")
+	appMode(t, e, "reply-open")
+	code, response := appTaskSay(t, e, c, sid, "Продолжи через установленную раскладку.", "installed-profile")
+	if code != http.StatusOK {
+		t.Fatalf("installed profiles resume %d %s", code, response)
+	}
+	waitTaskStopped(t, e, sid)
+	state := e.s.chatStoreRead(sid)
+	if state.Harness != "codex" || state.Model != selected.tierModel("pro") || state.Thread != "th-1" {
+		t.Fatalf("installed identity %+v", state)
+	}
+	actual, err := filepath.EvalSymlinks(filepath.Join(kit, "kit", "harness", "codex.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := filepath.EvalSymlinks(filepath.Join(layout.ProfileDir, "codex.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != installed {
+		t.Fatalf("profile source %s != %s", actual, installed)
+	}
+	runtime := taskRunPath(e.cfg.Roots)
+	canonical, err := filepath.EvalSymlinks(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := fmt.Sprintf("оболочка ответа %s sha256 %x", canonical, sha256.Sum256([]byte(readFile(t, runtime))))
+	if trace := readFile(t, filepath.Join(e.home, ".devkit", "heads", "XR-002.log")); !strings.Contains(trace, expected) {
+		t.Fatalf("installed profile chose wrong runtime: %s", trace)
+	}
+	t.Logf("PASS installed profiles: source %s, model %s, same-thread continuation; actual runtime %s", actual, state.Model, expected)
 }

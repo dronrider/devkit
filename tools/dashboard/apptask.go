@@ -443,8 +443,16 @@ func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (boo
 		return false, fmt.Errorf("состояние задачи не прочитано: %w", err)
 	}
 	row, ok := rows[st.Task]
-	if !ok || row.Sect == "done" || row.Sect == "archive" {
-		return false, errors.New("задача закрыта либо отсутствует на доске; рабочее продолжение недоступно")
+	if !ok {
+		if _, closed := s.archiveRows(p.Path)[st.Task]; closed {
+			st.TaskRun = false
+			return false, nil
+		}
+		return false, errors.New("задача отсутствует на доске; рабочее продолжение недоступно")
+	}
+	if row.Sect == "done" || row.Sect == "archive" {
+		st.TaskRun = false
+		return false, nil
 	}
 	switch row.Sect {
 	case "backlog", "ready", "in-progress", "check", "blocked":

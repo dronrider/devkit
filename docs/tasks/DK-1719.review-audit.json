@@ -2,8 +2,8 @@
   "version": 1,
   "id": "DK-1719",
   "base_sha": "e4c66cc8a3d008d4134ffdee69fbae7901a38ef8",
-  "head_sha": "0a4604c752e5e1f7c9c8850bbd6f962420fe7a06",
-  "code_hash": "05db692a3fe63955a41f052030317231dcfd1f8e3d848987825bfc8e993898b5",
+  "head_sha": "9fc5b6e2a3bc00fd19bc5c005323f3b706537251",
+  "code_hash": "534f43a542b25a56007312b25c5f8b801279cde28e987ba0f30789589e73ad73",
   "task_hash": "b0eb2742e974b961f394793be86fda8af0a20f9b4638c41822dd1f9fedf99d27",
   "sources": [
     {
@@ -54,7 +54,10 @@
       "Согласованный предел: здесь не подтверждены production rollout и освобождение живой DK-1712. Их независимо проверяет root после merge/deploy точным installed command и read-only metadata без resume/turn. Текущая user нить не объявляется восстановленной.",
       "Все канонические sources доступны. Проверены AGENTS/core board restrictions, README layout и связанные project invariants. Выполнены отдельные план review, narrow proofread и symbols/diff checks; fullsuite оставлен штатному merge по поручению root.",
       "Предел TEST009 указан явно: в неизменённом dashboard TestMain нет runsguard.Guard; проверка DK-1719 подтверждает только изоляцию добавленных fixture процессов/путей, не соответствие всего suite. Пять свежих UI мутаций в временных копиях убиты final Node regression, рабочее дерево не менялось.",
-      "Финальные механические проверки: gofmt -l всех шести изменённых Go файлов пуст; git diff --check и check-symbols для README/taskbody завершились0. Все95 правил и архитектура заполнены; audit-check подтвердил актуальность с явной базой e4c66cc8a."
+      "Финальные механические проверки: gofmt -l всех шести изменённых Go файлов пуст; git diff --check и check-symbols для README/taskbody завершились0. Все95 правил и архитектура заполнены; audit-check подтвердил актуальность с явной базой e4c66cc8a.",
+      "Повторное ревью после rebase на9fc5b6e2a: git diff --quiet 0a4604c75 HEAD по tools/internal/hooks/kit и всем источникам правил завершился0. Все файлы tools/dashboard также побайтно совпадают с83e5139b1, README совпадает с17f90dd29. Семантический task_hash, список95 правил и хеши всех sources совпали со старым проверенным отчётом; обе строки Вычитка и машинная Обкатка сохранены.",
+      "Рассмотренная дельта e39e92a52..9fc5b6e2a состоит из7 документов: concurrency-incident-20261117, concurrency-plan, concurrency-queue, concurrency и карточекDK1203/1676/1703. Это датированные наблюдения/связи очереди и состояния соседних задач; новый runtime контракт/права/данные чата они не вводят. code_hash изменился из-за docs/concurrency*, которые codeSnapshot включает в общий снимок, а не из-за commit identity. Первоначальная база e4c66cc8a по-прежнему ancestor всей правки.",
+      "DK585 проверена по достижимости:15b1e012f,2b1d83f09,b0ebed860 отсутствуют в ancestors текущего HEAD, новых изменений tools/taskctl/obeycheck/RULES.board в диапазоне нет. Ревью этих соседних веток и выполнение иных задач не проводились. Диспетчер повторил regcheck на9fc5b6e2a против8ba69c66a, TestAppChatExternalWriterBrowser:exit0,oldred/newgreen; повторение прогона reviewer не требуется. После этого снимка root повторит штатную обкатку/слияние."
     ]
   },
   "rules": [

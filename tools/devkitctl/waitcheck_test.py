@@ -78,6 +78,21 @@ class WaitMarksTest(unittest.TestCase):
         self.assertEqual(len(set(targets)), len(targets),
                          "цели событий повторяются: %s" % targets)
 
+    def test_stub_is_pure_ascii(self):
+        # Стаб исполняется питоном машины файлом-скриптом, и порционное
+        # чтение токенизатора CPython 3.9 роняет сырую кириллицу на границе
+        # своего буфера, хотя байты на диске валидный UTF-8 (DK-1725).
+        where = Path(tempfile.mkdtemp(prefix="waitcheck-ascii-"))
+        self.addCleanup(shutil.rmtree, str(where), True)
+        waitcheck.stubs(where / "bin", where / "tmux", where / "режим",
+                        where / "proj", where / "головы")
+        for name in ("claude", "tmux"):
+            try:
+                (where / "bin" / name).read_bytes().decode("ascii")
+            except UnicodeDecodeError as e:
+                self.fail("%s не чистый ASCII: байт %#x на позиции %d"
+                          % (name, e.object[e.start], e.start))
+
     # Голодание читателя из журнала прогона (DK-1694): отметка легла в
     # 12:59:22, а оболочка под нагрузкой полного прогона считала её в
     # 12:59:28, на шестой секунде. Пятисекундный срок к тому чтению уже

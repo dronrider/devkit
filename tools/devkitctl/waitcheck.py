@@ -194,8 +194,17 @@ def wait_cmd(proj, n, events):
 
 
 def write_stub(path, head, body):
-    """Подставная программа: шапка с путями стенда и общее тело."""
-    path.write_text("#!/usr/bin/env python3\n" + head + body, encoding="utf-8")
+    """Подставная программа: шапка с путями стенда и общее тело.
+
+    Текст целиком гасится в ASCII. repr оставляет кириллицу сырыми байтами,
+    и порционное чтение токенизатора CPython 3.9 у файла-скрипта роняет стаб
+    на границе своего буфера, хотя файл на диске валидный UTF-8. Экранированная
+    последовательность в строковом литерале тела даёт тот же символ, в
+    комментарии остаётся текстом.
+    """
+    text = ("#!/usr/bin/env python3\n" + head + body)
+    path.write_text(text.encode("ascii", "backslashreplace").decode("ascii"),
+                    encoding="ascii")
     path.chmod(0o755)
 
 

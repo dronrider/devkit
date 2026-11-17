@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1725",
   "base_sha": "28c741545cc1e39511913def87e65cd6de32c9af",
-  "head_sha": "3e0620b868ad5d263760153a261588ff8da835ac",
+  "head_sha": "f9e0b210bb6cdd4c0f157af11cd9dd45e444a7bc",
   "code_hash": "a83f619a41f41fb2d11448e31a8d33998adcce563e8dcb1f6422849410c43c5e",
-  "task_hash": "58c43eae17544c0918e300485554d8cc32fc6d934997bd61dd2968b28ccd5efd",
+  "task_hash": "afec7343542b7fb74818334df9c8a27c0853d1bdfeca58183bdf7be8993ede4a",
   "sources": [
     {
       "name": "common-architecture",
@@ -46,11 +46,11 @@
     "result": "checked",
     "evidence": [
       "весь текст гасится backslashreplace и пишется encoding=\"ascii\", chmod 755 сохранён (write_stub): tools/devkitctl/waitcheck.py, дифф 28c741545..33218bb95",
-      "нет r-строк, re и b-литералов; кириллица только в комментариях, докстрингах и литералах (CLIENT_BODY и TMUX_BODY): tools/devkitctl/waitcheck.py, строки 115-180",
+      "в телах стаба CLIENT_BODY и TMUX_BODY (строки 115-180) нет r-строк и b-литералов, кириллица только в комментариях и докстрингах; re используется в коде утилиты вне стабов и на текст стаба не влияет: tools/devkitctl/waitcheck.py",
       "все поля идут через %r, backslash у repr удвоен, экранирование не меняет значений (шапка стаба): tools/devkitctl/waitcheck.py, stubs(), строки 225-230",
+      "код байт в байт тот же на 33218bb95 и на HEAD (blob-хеши dd5e6515c и 1cb1a4cf5), выводы по коду прошлого аудита применимы: git ls-tree 33218bb95 и HEAD",
       "тест краснеет на main и проходит на текущем коде, оба теста названы в команде (regcheck): .devkit/cmdout/20261118T011940-env, exit 0",
-      "стенд и ascii-тест зелёные на проверяемой версии (waitcheck_test на закоммиченном дереве): .devkit/cmdout/20261118T011657-env (9 тестов) и прогон ревьювера 2026-11-18 (10 тестов OK, 125.6s, CommandLineTools python 3.9.6)",
-      "обкатка 2026-11-18 01:23 на дереве 3e0620b868ad: «три ожидания прошли» (стенд во временном каталоге): docs/tasks/DK-1725.md, раздел «Проверка»",
+      "обкатка обоих шагов 2026-11-18 02:15 в свежем дереве 2dd0556ff02e: шаг 1 Ran 10 tests OK на CommandLineTools python 3.9.6 (127с), шаг 2 «три ожидания прошли»: docs/tasks/DK-1725.md, «Проверка»",
       "SyntaxError Non-UTF-8 \\xd1 на строке 6 стаба bin/claude, симптом совпадает с задачей (красный прогон поезда): .devkit/cmdout/20261118T004649-test"
     ]
   },
@@ -130,7 +130,7 @@
         },
         {
           "object": "стенд",
-          "location": "обкатка в docs/tasks/DK-1725.md",
+          "location": "docs/tasks/DK-1725.md, «Проверка», обкатка 2026-11-18 02:15, шаг 2",
           "observation": "запись стаба зелёная на проверяемой версии"
         }
       ]
@@ -165,13 +165,13 @@
       "evidence": [
         {
           "object": "исполнение стаба",
-          "location": "прогон ревьювера 2026-11-18, 10 тестов OK на python 3.9.6",
-          "observation": "test_three_waits_pass ok"
+          "location": "docs/tasks/DK-1725.md, «Проверка», шаг 1 обкатки 2026-11-18 02:15, дерево 2dd0556ff02e",
+          "observation": "test_three_waits_pass ok, Ran 10 tests OK на CommandLineTools python 3.9.6"
         },
         {
           "object": "разбор MARKS",
-          "location": "waitcheck_test.py marks(), test_marks_wait_for_unique_event_files ok",
-          "observation": "экранированные кириллические пути событий разбираются в те же строки"
+          "location": "docs/tasks/DK-1725.md, «Проверка», шаг 1 обкатки 02:15; waitcheck_test.py marks()",
+          "observation": "test_marks_wait_for_unique_event_files ok: экранированные кириллические пути событий разбираются в те же строки"
         }
       ]
     },
@@ -381,7 +381,7 @@
         {
           "object": "развилка «Экранирование»",
           "location": "docs/tasks/DK-1725.md, «Развилки»",
-          "observation": "cookie меняет словарь декодера, но не путь порционного чтения; решено исполнителем 2026-11-18"
+          "observation": "cookie меняет словарь декодера, но не путь порционного чтения; строка решения развилки называет фактический механизм: весь текст стаба гасится backslashreplace в write_stub"
         },
         {
           "object": "последствия",
@@ -766,7 +766,7 @@
         {
           "object": "regcheck",
           "location": ".devkit/cmdout/20261118T011940-env, exit 0",
-          "observation": "«тест краснеет на main и проходит на текущем коде», тесты названы"
+          "observation": "«тест краснеет на main и проходит на текущем коде, регрессия закрыта (тесты: tools/devkitctl/waitcheck_test.py)», тесты названы в команде"
         }
       ]
     },
@@ -785,8 +785,8 @@
         },
         {
           "object": "интеграция",
-          "location": "прогон ревьювера 2026-11-18, 10 тестов OK на python 3.9.6",
-          "observation": "test_three_waits_pass проходит стенд целиком"
+          "location": "docs/tasks/DK-1725.md, «Проверка», шаг 1 обкатки 02:15",
+          "observation": "Ran 10 tests OK (127с) на CommandLineTools python 3.9.6"
         }
       ]
     },
@@ -840,7 +840,7 @@
         },
         {
           "object": "стенд",
-          "location": "прогон ревьювера 2026-11-18, 10 тестов OK на python 3.9.6",
+          "location": "docs/tasks/DK-1725.md, «Проверка», шаг 1 обкатки 02:15",
           "observation": "test_three_waits_pass ok на текущем коде"
         }
       ]

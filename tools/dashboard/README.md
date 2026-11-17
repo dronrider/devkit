@@ -248,11 +248,18 @@ enabled = ["claude-code", "codex"]
 Проверить установленный бинарь без вызова настоящей модели можно отдельным
 прогоном. Он копирует указанный бинарь без пересборки во временный каталог,
 подставляет безопасную доску и клиент. Проверяются API запуска, привязка,
-сохранение модели и глубины, отказ второго запуска и остановка.
+сохранение модели и глубины, отказ второго запуска и остановка. Отдельный
+сценарий занимает сохранённую нить подменным владельцем, проверяет отказ
+с причиной и продолжение той же нити после выхода владельца.
 
 ```sh
-DEVKIT_DASHBOARD_BIN="$(command -v dashboard)" devkitctl test tools/dashboard -run '^TestAppTaskInstalledArtifact$' -count=1 -v
+sh -eu -c 'artifact=$(command -v dashboard); test -x "$artifact"; DEVKIT_DASHBOARD_BIN="$artifact" devkitctl test tools/dashboard -run "^TestApp(Chat|Task)InstalledArtifact$" -count=1 -v'
 ```
+
+В выводе должны быть SHA256 проверенного бинаря и строки
+`--- PASS: TestAppChatInstalledArtifact` и `--- PASS: TestAppTaskInstalledArtifact`.
+Пропуск `SKIP` проверкой не считается. Команда завершается ошибкой, если
+установленный бинарь не найден или не исполняется.
 
 Дашборд передаёт нейтральный `DEVKIT_CHAT_SESSION_ID` с адресом разговора.
 Команды нити получают его через `shell_environment_policy.set` вместе с

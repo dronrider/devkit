@@ -96,6 +96,7 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "fish": true
 type Request struct {
 	RecoveryAttempt string
 	PreviousRun     string
+	ExpectedRun     string
 	ContinueStopped bool
 	runID           string
 	ID              string // задача доски
@@ -133,7 +134,8 @@ type Request struct {
 }
 
 type AppServerCarrier struct {
-	Command []string
+	Command   []string
+	ReplyOnce bool
 }
 
 // Result это исход лестницы.
@@ -196,14 +198,17 @@ func Raise(q Request) (Result, error) {
 		return res, err
 	}
 	defer state.Close()
-	if q.ContinueStopped {
+	if q.ExpectedRun != "" && (state.State.Run == nil || state.State.Run.ID != q.ExpectedRun) {
+		return res, fmt.Errorf("исходный запуск продолжения изменился")
+	}
+	if q.ContinueStopped && q.ExpectedRun == "" {
 		state.State.Stopped = false
 		state.State.Run = nil
 		if err = state.Save(); err != nil {
 			return res, err
 		}
 	}
-	if state.State.Stopped {
+	if state.State.Stopped && !q.ContinueStopped {
 		return res, fmt.Errorf("задача остановлена пользователем; используйте явное продолжение")
 	}
 	if q.RecoveryAttempt != "" {
@@ -268,6 +273,9 @@ func Raise(q Request) (Result, error) {
 		q.runID = newSessionID()
 		if q.runID == "" {
 			return res, fmt.Errorf("не удалось создать ID запуска")
+		}
+		if q.ContinueStopped {
+			state.State.Stopped = false
 		}
 		if err = state.Start(q.runID, q.Harness, q.Model, q.RecoveryAttempt); err != nil {
 			return res, err
@@ -418,6 +426,9 @@ func (q Request) runnerArgs(runner string, headless bool) []string {
 	}
 	if q.Again != "" {
 		args = append(args, "--again", q.Again)
+	}
+	if q.AppServer != nil && q.AppServer.ReplyOnce {
+		args = append(args, "--reply-once")
 	}
 	if headless {
 		args = append(args, "--headless")

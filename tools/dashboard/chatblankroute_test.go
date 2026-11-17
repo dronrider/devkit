@@ -45,9 +45,15 @@ exit 0`)
 		if r.StatusCode != want {
 			t.Fatalf("подъём: %d, хочу %d: %s", r.StatusCode, want, b)
 		}
-		var got map[string]string
-		if err := json.Unmarshal([]byte(b), &got); err != nil {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(b), &raw); err != nil {
 			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for key, value := range raw {
+			if word, ok := value.(string); ok {
+				got[key] = word
+			}
 		}
 		return got
 	}
@@ -83,7 +89,7 @@ exit 0`)
 	}
 	data, _ = json.Marshal(map[string]string{"text": text, "model": "вторая-pro", "harness": "втораяtest", "chat": blank})
 	writeTmuxFake(t, e.bin, log, "")
-	send(http.StatusOK)
+	send(http.StatusBadGateway)
 	if after := readFile(t, log); strings.Count(after, "new-session") != strings.Count(before, "new-session") {
 		t.Fatalf("повтор после смерти клиента поднял дубль: %s", after)
 	}

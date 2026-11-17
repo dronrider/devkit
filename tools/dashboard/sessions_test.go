@@ -1433,7 +1433,7 @@ func TestStaticChatInputReasons(t *testing.T) {
 		}
 	}
 	panel := funcBody(t, app, "function chatPanel(")
-	for _, want := range []string{"const way = chatWay(st)", `if (way.kind === "new") {`,
+	for _, want := range []string{"const way = chatWay(st)", `if (launch) {`,
 		"ta.disabled = Boolean(way.off)", "send.disabled = Boolean(way.off)"} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("панель везёт реплику мимо вида доставки: нет %q", want)

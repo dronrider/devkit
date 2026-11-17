@@ -12759,13 +12759,14 @@ async function chatRaise(project, st, text, pick, onTmux) {
   // Ручная глубина едет подъёмом, а тратится его успехом: неудачный подъём
   // запуска не поднял, и выбор человека ждёт следующей попытки. Слова уровня
   // в самой реплике сильнее меню, и их разбирает уже сам агент.
-  const armEffort = chatEffortOf(project, st.task || st.addr);
+  const armEffort = Object.prototype.hasOwnProperty.call(pick, "effort") ? pick.effort : chatEffortOf(project, st.task || st.addr);
   if (armEffort) body.effort = armEffort;
   // Подъём из записи пришивается к ней: разговор останется той же строкой
   // списка, на которой он начался, и адрес панели переедет на живую сессию сам.
   if (st.blank) body.chat = st.blank;
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
+    if (r.body.unknown) return { held: r.body.error || "исход запуска не подтверждён" };
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
@@ -13572,7 +13573,7 @@ function echoRead(project, addr) {
     // tmux это имя сессии, которую подняла эта реплика: по нему панель,
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
     return raw.filter((m) => m && (m.text || m.selection || m.proposal)).map((m) => ({
-      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null,
+      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null, launch: m.launch || null, unknown: Boolean(m.unknown),
       state: m.state === "held" || m.state === "wait" || m.state === "sent" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
@@ -13630,7 +13631,7 @@ function echoWrite(project, addr, list) {
     // разговору: без него реплика в чат с умершей сессией пропадала с экрана
     // на всё ожидание транскрипта.
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection,
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection, launch: m.launch, unknown: m.unknown,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
@@ -13697,7 +13698,7 @@ function echoSweep(project, door, chats) {
       let was = [];
       try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
       if (!Array.isArray(was)) was = [];
-      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection,
+      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown,
         why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
         queue: Boolean(rec.queue), refused: Boolean(rec.refused), task: rec.task || "", since: rec.since || rec.born });
       localStorage.setItem(key + hit.id, JSON.stringify(was));
@@ -13803,6 +13804,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       const wrap = chatBubble("вы", selectionWords(m.text, m.selection), m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
+      if (m.unknown && m.state === "held") wrap.append(el("div", "mwhy", why));
       if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       for (const c of m.clips || []) {
@@ -13929,7 +13931,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
         tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task,
-        scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection) });
+        scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection, rec.launch) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
     // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
@@ -13977,7 +13979,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // wire это то, что ушло агенту (с префиксами вложений и выделения), и
     // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
     // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
-    add(text, retry, wire, sel, clips, id, scenario, proposal, selection) {
+    add(text, retry, wire, sel, clips, id, scenario, proposal, selection, launch) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
@@ -13985,7 +13987,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
       const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
-        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal, selection };
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal, selection, launch };
       sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -14018,10 +14020,11 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // Автодожим тут только множил бы очередь у вставшего клиента. Панель
     // узнаёт о причине хуком onHeld и гасит свою плашку работы: агент не
     // работает, и мигать о работе поверх причины значило бы врать.
-    held(m, why, task) {
+    held(m, why, task, unknown) {
       if (!mine.includes(m)) return;
       m.state = "held";
       m.why = why;
+      m.unknown = Boolean(unknown);
       m.queue = false;
       // Задача едет в персист вместе с пузырём: перезагрузка страницы не
       // должна уносить память о том, где реплика лежит.
@@ -14662,7 +14665,11 @@ function chatPanel(project, st) {
     putClip(clip).then(drawClips);
   };
 
-  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal, selection) => {
+  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal, selection, launchHint) => {
+    const launch = launchHint || (way.kind === "new" ? {
+      ...(st.entry && st.entry.model ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref()),
+      effort: chatEffortOf(project, st.task || st.addr), chat: st.blank || "", id: st.task || ""
+    } : null);
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
@@ -14673,8 +14680,8 @@ function chatPanel(project, st) {
     // Повтор восстановленной записи едет с тем же проводом: вложения той
     // реплики уже лежат на сервере, и строить провод заново значило бы
     // перечитать их в панель, которой их уже не принадлежит.
-    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal, selection),
-      wire0, sel, withClips, key, scenario, proposal, selection);
+    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal, selection, launch),
+      wire0, sel, withClips, key, scenario, proposal, selection, launch);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Подъём сессии первой репликой. Умершая сессия подъёма это повод поднять
@@ -14683,12 +14690,10 @@ function chatPanel(project, st) {
     // всякого участия. Второй смерти подряд довольно: дальше пузырь называет
     // причину строкой, и дожимать её нечем (DK-1011).
     const lift = (wire, tries) => {
-      chatRaise(project, st, wire,
-        st.entry && st.entry.model
-          ? { model: st.entry.model, harness: st.entry.pickHarness || "" }
-          : chatModelPref(),
+      chatRaise(project, { ...st, blank: launch.chat, task: launch.id }, wire, launch,
         (name) => echo.mark(m, name))
         .then((got) => {
+          if (got && got.held) { echo.held(m, got.held, undefined, true); busy.off(); return; }
           if (got === false) {
             echo.bad(m);
             busy.off();
@@ -14760,7 +14765,7 @@ function chatPanel(project, st) {
           .finally(done);
         return;
       }
-      if (way.kind === "new") {
+      if (launch) {
         // Плашка о подъёме встаёт сразу: между отправкой и пришиванием ленты
         // проходят секунды, и пустота под пузырём читалась как зависание.
         busy.raise();
@@ -15036,7 +15041,7 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id, wire, scenario, proposal, selection) => post(more, null, null, id, null, wire, scenario, proposal, selection), legacy);
+      (more, id, wire, scenario, proposal, selection, launch) => post(more, null, null, id, null, wire, scenario, proposal, selection, launch), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать. Гашение явное (halt): занятость,

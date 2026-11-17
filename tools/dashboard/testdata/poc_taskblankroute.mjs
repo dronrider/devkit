@@ -1,4 +1,4 @@
-import { makeSandbox, settle, tag, deepBtn, dump, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, tag, deepBtn, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
 
 const SAID = "Нужно довести задачу до завершения.\nМакеты согласованы. Продолжай";
 for (const state of ["live", "waiting", "gone"]) for (const outcome of ["reject", "tmux", "grown"]) {
@@ -56,3 +56,49 @@ for (const state of ["live", "waiting", "gone"]) for (const outcome of ["reject"
   if (sandbox.chatWay({ ...st, blank: "", fresh: false, sid: old.id, entry: old }).kind !== (state === "live" ? "say" : "task")) fail("изменился маршрут прежнего чата");
 }
 console.log("ok");
+
+// Повтор сохраняет выбранный заказ, а unknown остаётся на пузыре после reload.
+{
+  const WHY = "исход первого запуска не подтверждён; повтор не отправлен";
+  const blank = { id: "blank-retry", blank: true, state: "blank", project: "demo",
+    tasks: ["XR-4"], model: "glm-5.3-flash", pickHarness: "glm-code-2" };
+  const board = { sections: [{ key: "blocked", rows: [{ id: "XR-4", sect: "blocked", waiting: { state: "ждёт ответа" } }] }] };
+  const posts = [];
+  const { sandbox, store, timers } = makeSandbox(appPathArg(), (path, init) => {
+    if (init?.method === "POST" && path.endsWith("/chats")) {
+      posts.push(JSON.parse(init.body));
+      if (posts.length === 1) return { raw: { status: 502, text: '{"error":"tmux отказал до запуска"}' } };
+      if (posts.length === 2) return { way: "new", tmux: "chat-retry" };
+      return { raw: { status: 502, text: JSON.stringify({ error: WHY, unknown: true }) } };
+    }
+    if (path.includes("?tmux=")) return { chats: [], dead: { tmux: "chat-retry", why: "клиент умер" } };
+    if (path.includes("/chats")) return { chats: [blank], models: [] };
+    return {};
+  });
+  sandbox.chatEffortSet("demo", "XR-4", "high");
+  const st = await sandbox.chatState("demo", blank.id, board);
+  const panel = sandbox.chatPanel("demo", st);
+  tag(panel, "TEXTAREA").value = SAID;
+  deepBtn(panel, "Отправить").handlers.click({ stopPropagation() {} });
+  await settle();
+  blank.model = "opus";
+  blank.pickHarness = "claude-code";
+  const retry = timers.find(t => t.ms === 2000);
+  if (!retry) fail("доказанный отказ не получил автоматического повтора");
+  retry.fn();
+  await settle();
+  const poll = timers.find(t => t.ms === 1500);
+  if (!poll) fail("повтор не ждёт свой клиент");
+  poll.fn();
+  await settle();
+  if (posts.length !== 3 || posts.some(p => JSON.stringify(p) !== JSON.stringify(posts[0])) || posts[0].effort !== "high") fail("повтор изменил исходный заказ: " + JSON.stringify(posts));
+  const pending = () => JSON.parse(store.get("devkit.chat.pend.demo/" + blank.id) || "[]");
+  if (pending()[0]?.state !== "held" || pending()[0]?.why !== WHY) fail("unknown не удержан с причиной: " + JSON.stringify(pending()));
+  if (!dump(panel).includes(WHY)) fail("причина неизвестного исхода не видна на пузыре");
+  if (!byClass(panel, "busyrow")?.hidden) fail("unknown оставил занятость");
+  const reloaded = sandbox.chatPanel("demo", await sandbox.chatState("demo", blank.id, board));
+  if (!dump(reloaded).includes(WHY)) fail("перезагрузка потеряла причину unknown");
+  for (const t of timers.splice(0)) if (t.ms === 2000) t.fn();
+  await settle();
+  if (posts.length !== 3) fail("unknown автоматически отправлен ещё раз");
+}

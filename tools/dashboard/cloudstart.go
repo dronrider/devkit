@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
+var errChatStartUnknown = errors.New("исход запуска не подтверждён")
+
 var startReservedFn = startReserved
 
 var cloudStartWatch func(string, *exec.Cmd) func()
@@ -22,6 +25,11 @@ var cloudStartWatch func(string, *exec.Cmd) func()
 func startManaged(root, tree, id, sess string, command func(string) string) error {
 	if id == "" {
 		_, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", tree, command(""))
+		var deadline *procDeadline
+		var exited *exec.ExitError
+		if errors.As(err, &deadline) || (errors.As(err, &exited) && exited.ExitCode() < 0) || errors.Is(err, exec.ErrWaitDelay) {
+			return errors.Join(errChatStartUnknown, err)
+		}
 		return err
 	}
 	return startReservedFn(root, tree, id, sess, command)
@@ -180,14 +188,14 @@ func startReservedContext(ctx context.Context, root, tree, id, sess string, comm
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return errors.Join(errChatStartUnknown, err)
 		}
 		data, err := os.ReadFile(filepath.Join(dir, "status"))
 		if err == nil {
 			code, e := strconv.Atoi(strings.TrimSpace(string(data)))
 			if e != nil {
 				os.WriteFile(filepath.Join(dir, "seen"), []byte("seen"), 0600)
-				return fmt.Errorf("неверный ответ запуска tmux")
+				return fmt.Errorf("%w: неверный ответ запуска tmux", errChatStartUnknown)
 			}
 			if code != 0 {
 				out, _ := os.ReadFile(filepath.Join(dir, "out"))
@@ -198,10 +206,10 @@ func startReservedContext(ctx context.Context, root, tree, id, sess string, comm
 			return nil
 		}
 		if !os.IsNotExist(err) {
-			return err
+			return errors.Join(errChatStartUnknown, err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("tmux не подтвердил запуск; резерв остаётся у процесса запуска")
+			return fmt.Errorf("%w: tmux не подтвердил запуск; резерв остаётся у процесса запуска", errChatStartUnknown)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

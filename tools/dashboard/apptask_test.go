@@ -160,22 +160,47 @@ func TestAppTaskStopRemovesCarrier(t *testing.T) {
 	}
 }
 
-func TestAppTaskClosedChatRefusesWorkingContinuation(t *testing.T) {
-	e, c := appTaskEnv(t, "task-done")
-	code, got := appTaskStart(t, e, c)
-	if code != http.StatusOK {
-		t.Fatalf("%d %+v", code, got)
-	}
-	sid := got["session"]
-	waitTaskStopped(t, e, sid)
-	appTaskBoard(t, e, "done")
-	before := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-	code, raw := appTaskSay(t, e, c, sid, "после закрытия", "")
-	if code != http.StatusConflict || !strings.Contains(raw, "закрыта") {
-		t.Fatalf("%d %s", code, raw)
-	}
-	if after := readFile(t, filepath.Join(e.proj, "fake-app-log")); before != after {
-		t.Fatalf("closed chat started client: %s", after)
+func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(map[bool]string{false: "done-section", true: "archive-row"}[archived], func(t *testing.T) {
+			e, c := appTaskEnv(t, "task-done")
+			code, got := appTaskStart(t, e, c)
+			if code != http.StatusOK {
+				t.Fatalf("%d %+v", code, got)
+			}
+			sid := got["session"]
+			waitTaskStopped(t, e, sid)
+			if archived {
+				if err := os.WriteFile(filepath.Join(e.proj, "board-state"), []byte(`{"sections":[]}`), 0644); err != nil {
+					t.Fatal(err)
+				}
+				putDoc(t, e.proj, "docs/TASKS-archive.md", "# Архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|----|--------|-----|---|---------|--------|\n| XR-002 | закрытая | bug | P1 | 2026-11-17 | - |\n")
+			} else {
+				appTaskBoard(t, e, "done")
+			}
+			before := e.s.chatStoreRead(sid)
+			appMode(t, e, "mute")
+			code, raw := appTaskSay(t, e, c, sid, "обычный разговор после закрытия", "")
+			if code != http.StatusOK {
+				t.Fatalf("%d %s", code, raw)
+			}
+			after := e.s.chatStoreRead(sid)
+			if after.Thread != before.Thread || after.Model != before.Model || after.Harness != before.Harness || after.TaskRun {
+				t.Fatalf("closed identity/rights %+v", after)
+			}
+			if taskhead.Working(taskhead.LockPath(e.home, "XR-002")) || e.s.appTaskFind(sid, "", "") != nil {
+				t.Fatal("closed chat raised taskhead")
+			}
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			at := strings.LastIndex(log, "policy ")
+			if at < 0 || !strings.Contains(log[at:], `"approvalPolicy": "never"`) || strings.Contains(log[at:], `"approvalsReviewer": "auto_review"`) || !strings.Contains(log[at:], `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
+				t.Fatalf("closed retained permissions/token: %s", log)
+			}
+			if strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume th-1") {
+				t.Fatalf("closed thread changed: %s", log)
+			}
+			e.s.appDrop(sid, "test cleanup")
+		})
 	}
 }
 

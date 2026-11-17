@@ -2,9 +2,9 @@
  "version": 1,
  "id": "DK-1570",
  "base_sha": "9bf55e045741de7e3f954b30f7072c1c37b4a970",
- "head_sha": "403de673c4708a2c31f73d361373fe56369f529a",
+ "head_sha": "96bc62685b80950fdbebd94729cf9bc2f468aafe",
  "code_hash": "81355f2e908154ebb95814620d1dd41ca3671544d522955d248e9be3a29592e7",
- "task_hash": "057fba210837535e0c7557285fa0a4020567db3897c287cda05787242ebf007a",
+ "task_hash": "5d490639d6d97a551608a81752fed1916582f90a51d48764ace1a5f4cf02a2e5",
  "sources": [
   {
    "name": "common-architecture",
@@ -49,7 +49,7 @@
    "Переключатель: tools/dashboard/static/app.js:1879-1901, 2006-2018, в HEAD живы все исправления замечаний 2026-11-09: checked чекбокса в reset, note пустой пары строкой mwhy, pin-пара сильнее вердикта, onModel(null) в reset разбора.",
    "Потребители контракта: tools/dashboard/static/app.js:2147, 2193, 2265, 2663, 2691, 11304, 16402, armPickRing единственная обёртка setVerdict и обновлена на r.body; menu.reset зовут runControl, rowAction и draftRunBarFill.",
    "Прогоны ревью: .devkit/cmdout/20261117T221542-regcheck и 20261117T221547-regcheck, независимые regcheck стендов poc_effmenu+poc_groomsub и браузерной TestEffortMenuCollapseComposition против 21ce00c62, краснота базы и зелень ветки, exit 0; TestStatic прогнан devkitctl test, 21.3s ok.",
-   "Решения человека: docs/tasks/DK-1570.md, развилка 2026-11-15 с вложением ответа и замечание 17, свёртка согласована записью, рассинхрон «Чего хотим» и шага 2 сценария с согласованным видом записан неблокирующим замечанием."
+   "Решения человека: docs/tasks/DK-1570.md, развилка 2026-11-15 с вложением ответа и замечание 17, свёртка согласована записью, рассинхрон «Чего хотим» и шага 2 сценария с согласованным видом записан неблокирующим замечанием 17, отработано fixed коммитом 96bc62685, тексты задачи переведены на свёртку."
   ]
  },
  "rules": [

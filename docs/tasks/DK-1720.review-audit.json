@@ -1,8 +1,8 @@
 {
   "version": 1,
   "id": "DK-1720",
-  "base_sha": "e94bece614cea773f80cdd8abc71b16f7e8bb396",
-  "head_sha": "2342dc4796c035076d451269f30faee3164e9a26",
+  "base_sha": "b7402066de09463469824d658e297a15b80ecced",
+  "head_sha": "e58a6b1b7475e1f2c4968e1969d9fd83f3e16371",
   "code_hash": "d0b4f77efd80c202acf7330c5ff4ad5a20fb33c3a61f9c627706ddff5a8c34af",
   "task_hash": "3a51216a93b4cdab84ca92f40e8203e235703491cde61f197be5c9b5e5cf594a",
   "sources": [
@@ -45,13 +45,14 @@
     "justification": "Обязателен запуск выбранного model/harness и сохранение projectcwd/overlay; live диагностика доказала отказ до CLI из-за старого kit/harness. Предложенный автором перенос canonical source подходит, поскольку профиль и его выбор принадлежат agentctl. filepath.Abs решает перенос относительного выбора между cwd; шеловое quoting покрывает пробелы. Совместимость со старым agentctl сознательно сохраняет прежний поиск, полная гарантия требует обновлённых двух бинарей. Ни pin, ни доказанная причина текущего отказа не разрешают автоматическую отправку неизвестного исхода.",
     "result": "checked",
     "evidence": [
-      "База e94bece61, code ac9cd1e84+6c4e8212c; docs481448fa6 и rehearsal2b78f78b0; reviewer prose2342dc479. Прочитана вся дельта относительно новой базы; старый code7ab67814e уже в main и не выдан за новую проверку.",
+      "База b7402066d, code e7eef5e86+01f6d58d1; docs88a82786e и rehearsalaf7242ad4; reviewer prosefb03ed7f5. Прочитана вся дельта относительно новой базы; старый code7ab67814e уже в main и не выдан за новую проверку.",
       "harness.go:harnessDir -> filepath.Abs -> mergeLayers -> harnessesJSON.ProfileDir; harnesses.go:readHarnesses -> HarnessView.ProfileDir json:- -> harnesses cache; chats.go:launchEnv -> shQuote DEVKIT_HOME -> chatCmd agentctl exec.",
       "cmdExec продолжает брать projectConfigPath(start) и execRunDir из задачи. Actual exec интеграция строит agentctl, воспроизводит missing current.toml без pin, затем fake CLI подтверждает PWD, DEVKIT_HOME, выбранные model/harness и full multiline text, machine marker, очистку чужих vars и project enabled [].",
       "Относительный source нормализуется до сменыcwd; other kit с пробелами применяется после mock TTL, а до TTL сохраняется прежний источник. Файл current.toml в stale tree не появляется.",
-      "Независимый regcheck: /private/tmp/dk1720-profile-review-regcheck.log. Manifest и три полных лога /private/tmp/dk1720-profile-mutations/ прочитаны: снятие pin, потеря source и снятие Abs дают semantic FAIL без build failed/panic; восстановленные production files совпадают с HEAD.",
-      "Авторские targeted receipts: dashboard10.359s, agentctl2.506s; свежая обкатка481448fa6534 scenario04b7a23d PASS4.335s. Полный dashboard этой новой дельты автор не повторял по согласованной границе риска; финальный full при merge обязателен. Прежний401.601s относится к старому source7ab, не к profile fix.",
-      "Ограничения: live повтор/installed artifact/new independent QA ещё не выполнены ревьювером и не объявлены PASS. Conditional oldSID/tmuxRollerror сохранён отдельно вне текущей дельты; фактический GET имел dead и unsafe fuse не подтверждён. Native stage hook collaboration отсутствует; этапы не имитировались. Наследованный dashboard TestMain не содержит runsguard, новый test использует существующий temp-home/spare guard."
+      "Независимый regcheck: /private/tmp/dk1720-profile-review-regcheck-rebased.log. Manifest и три полных лога /private/tmp/dk1720-profile-mutations/ прочитаны: снятие pin, потеря source и снятие Abs дают semantic FAIL без build failed/panic; восстановленные production files совпадают с HEAD.",
+      "Авторские targeted receipts: dashboard10.359s, agentctl2.506s; свежая обкатка88a82786e534 scenario04b7a23d PASS4.335s. Полный dashboard этой новой дельты автор не повторял по согласованной границе риска; финальный full при merge обязателен. Прежний401.601s относится к старому source7ab, не к profile fix.",
+      "Ограничения: live повтор/installed artifact/new independent QA ещё не выполнены ревьювером и не объявлены PASS. Conditional oldSID/tmuxRollerror сохранён отдельно вне текущей дельты; фактический GET имел dead и unsafe fuse не подтверждён. Native stage hook collaboration отсутствует; этапы не имитировались. Наследованный dashboard TestMain не содержит runsguard, новый test использует существующий temp-home/spare guard.",
+      "Docs-only rebase на b7402066d проверен: пять source/test файлов побайтно совпадают с prerebase2754e2458. Первая native QA FAIL96f53f1d6 сохранена в разделе Проверка; успехом она не заменялась. Source/review SHAs выше приведены уже после rebase. Regcheck обновлён против новой базы; финальная обкатка будет записана после audit/docs commit."
     ]
   },
   "rules": [
@@ -245,7 +246,7 @@
       "evidence": [
         {
           "object": "ARCH-013 в новой profile дельте",
-          "location": "git diff e94bece61; chatprofiles_test.go; docs/tasks/DK-1720.md",
+          "location": "git diff b7402066d; chatprofiles_test.go; docs/tasks/DK-1720.md",
           "observation": "Изменение источника не добавляет retry и не снимает receipt. Actual exec тест запускает только fake CLI; live unknown не используется как разрешение автоматической отправки."
         }
       ]
@@ -305,7 +306,7 @@
       "evidence": [
         {
           "object": "ARCH-017 в новой profile дельте",
-          "location": "git diff e94bece61; chats.go:launchEnv",
+          "location": "git diff b7402066d; chats.go:launchEnv",
           "observation": "Нет новых совместно коммитируемых данных: собирается строка окружения, профили и cache читаются. Файловая квитанция и порядок внешнего старта из предыдущего круга не меняются."
         }
       ]
@@ -545,7 +546,7 @@
       "evidence": [
         {
           "object": "STYLE-005 в новой profile дельте",
-          "location": "git diff e94bece61",
+          "location": "git diff b7402066d",
           "observation": "Публичные имена предметные, локальный dir имеет короткую область cmdHarnessJSON/launchEnv; иных абстрактных manager/helper нет."
         }
       ]
@@ -590,7 +591,7 @@
       "evidence": [
         {
           "object": "STYLE-008 в новой profile дельте",
-          "location": "git diff e94bece61; README",
+          "location": "git diff b7402066d; README",
           "observation": "Старые поля/параметры/ошибки не удалены. Source не перегружен значением нового пути; обратная совместимость JSON и старого agentctl сохранена."
         }
       ]
@@ -650,7 +651,7 @@
       "evidence": [
         {
           "object": "STYLE-012 в новой profile дельте",
-          "location": "git diff e94bece61; gofmt production files",
+          "location": "git diff b7402066d; gofmt production files",
           "observation": "Использованы filepath.Abs/Dir и существующий shQuote, JSON struct fields, %w. Изменения имеют Go-форматирование, самостоятельный parser не добавлен."
         }
       ]
@@ -725,7 +726,7 @@
       "evidence": [
         {
           "object": "TEST-001 в новой profile дельте",
-          "location": "ac9cd1e84; 6c4e8212c; task targeted receipts",
+          "location": "e7eef5e86; 01f6d58d1; task targeted receipts",
           "observation": "Оба production commits содержат тесты: agentctl schema assertion и dashboard actual exec integration."
         }
       ]
@@ -736,12 +737,12 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Независимый regcheck против e94bece61 подтвердил valid red старого launcher и green новой дельты.",
+      "reason": "Независимый regcheck против b7402066d подтвердил valid red старого launcher и green новой дельты.",
       "evidence": [
         {
           "object": "TEST-002 в новой profile дельте",
-          "location": "/private/tmp/dk1720-profile-review-regcheck.log",
-          "observation": "Независимый regcheck против e94bece61 подтвердил valid red старого launcher и green новой дельты."
+          "location": "/private/tmp/dk1720-profile-review-regcheck-rebased.log",
+          "observation": "Независимый regcheck против b7402066d подтвердил valid red старого launcher и green новой дельты."
         }
       ]
     },
@@ -830,7 +831,7 @@
       "evidence": [
         {
           "object": "TEST-008 в новой profile дельте",
-          "location": "git diff e94bece61; task targeted dashboard10.359s",
+          "location": "git diff b7402066d; task targeted dashboard10.359s",
           "observation": "UI не меняется. Исключение тонкого UI не заявляется: исправленный нижний стык проверяется настоящим exec; прежние panel/blank тесты прогнаны targeted."
         }
       ]
@@ -905,7 +906,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61 --stat; README раскладка",
+          "location": "git diff b7402066d --stat; README раскладка",
           "observation": "Новый test chatprofiles_test.go лежит в существующей семье dashboard/chat; producer/test остаются в agentctl/harness. Новых языков/каталогов нет."
         }
       ]
@@ -935,7 +936,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; server.go unchanged",
+          "location": "git diff b7402066d; server.go unchanged",
           "observation": "Маршруты/handlers не добавлены и не перемещены; изменено только общее окружение и существующий parser contract."
         }
       ]
@@ -1010,7 +1011,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Разбор tool-use/parseReplies не затронут: новая дельта только профили/окружение запуска."
         }
       ]
@@ -1025,7 +1026,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61 --stat",
+          "location": "git diff b7402066d --stat",
           "observation": "Поверхность чата не меняется, новых controls или служебных плашек нет. Исправляется запуск выбранного клиента ниже UI."
         }
       ]
@@ -1040,7 +1041,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "PreparedQuestion/consent и check-ask не меняются. Pin не имитирует согласие и не отправляет реплики."
         }
       ]
@@ -1055,7 +1056,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Формы задач/черновиков, prepared и поле мысли не изменяются этой дельтой."
         }
       ]
@@ -1070,7 +1071,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Формы задач/черновиков и их общий formContentBlock не изменяются."
         }
       ]
@@ -1130,7 +1131,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; internal/taskhead unchanged",
+          "location": "git diff b7402066d; internal/taskhead unchanged",
           "observation": "Носитель конвейера taskhead/apptask и политика прав не меняются. Общая launchEnv не вводит альтернативную task runtime."
         }
       ]
@@ -1235,7 +1236,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Taskhead runID/PID confirmation и recovery state не меняются и не используются для выбора профиля."
         }
       ]
@@ -1250,7 +1251,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Recovery quota/PID/relaunch не меняются. Pin не снимает unknown receipt и не разрешает автоповтор live отправки."
         }
       ]
@@ -1265,7 +1266,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Формат подтверждения recovery и его писатель не меняются; новая дельта передаёт только источник профиля."
         }
       ]
@@ -1325,7 +1326,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Новой проверочной CLI утилиты нет: расширен JSON существующего agentctl harness, его коды выхода не меняются."
         }
       ]
@@ -1340,7 +1341,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61; cmdHarnessJSON/readHarnesses/launchEnv",
+          "location": "git diff b7402066d; cmdHarnessJSON/readHarnesses/launchEnv",
           "observation": "Hook boundary/stderr replacement не добавляется и не меняется; это поле конфигурационного JSON."
         }
       ]
@@ -1396,12 +1397,12 @@
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Регрессия независимо подтверждена regcheck на e94bece61; actual exec падает на old launcher и проходит на новом.",
+      "reason": "Регрессия независимо подтверждена regcheck на b7402066d; actual exec падает на old launcher и проходит на новом.",
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "/private/tmp/dk1720-profile-review-regcheck.log",
-          "observation": "Регрессия независимо подтверждена regcheck на e94bece61; actual exec падает на old launcher и проходит на новом."
+          "location": "/private/tmp/dk1720-profile-review-regcheck-rebased.log",
+          "observation": "Регрессия независимо подтверждена regcheck на b7402066d; actual exec падает на old launcher и проходит на новом."
         }
       ]
     },
@@ -1460,7 +1461,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "git diff e94bece61",
+          "location": "git diff b7402066d",
           "observation": "Имя chatprofiles_test.go соответствует семье chat; новые поля ProfileDir/profile_dir одинаковы в producer/consumer. Новых route/step имен нет."
         }
       ]
@@ -1475,7 +1476,7 @@
       "evidence": [
         {
           "object": "Проектный инвариант новой profile дельты",
-          "location": "2342dc479; check-symbols; task proofreading trace",
+          "location": "fb03ed7f5; check-symbols; task proofreading trace",
           "observation": "Русская проза docs/task/README вычитана; wire identifiers profile_dir/DEVKIT_HOME сохранены. Машинные review строки не переписывались."
         }
       ]

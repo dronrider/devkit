@@ -244,7 +244,7 @@ func (p *appServer) call(method string, params any) (json.RawMessage, error) {
 			return nil, fmt.Errorf("процесс умер, не ответив на %s: %s", method, p.errWhyFmt())
 		}
 		if msg.Error != nil {
-			return nil, fmt.Errorf("%s: %s", method, msg.Error.Error())
+			return nil, fmt.Errorf("%s: %w", method, msg.Error)
 		}
 		return msg.Result, nil
 	case <-time.After(appCallCap):

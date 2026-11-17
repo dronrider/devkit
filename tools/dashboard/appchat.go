@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -178,6 +179,17 @@ func (s *server) appDead(sid string) {
 	}
 }
 
+type appThreadWriterConflict struct {
+	thread string
+	cause  error
+}
+
+func (e *appThreadWriterConflict) Error() string {
+	return fmt.Sprintf("разговор %s открыт в другом клиенте Codex. Закройте этот разговор в другом клиенте, дождитесь выгрузки нити и повторите отправку здесь. История и выбранная модель сохранены", e.thread)
+}
+
+func (e *appThreadWriterConflict) Unwrap() error { return e.cause }
+
 // appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
 // продолжением. Отказ на любом шаге убивает процесс и называется словами с
 // хвостом stderr, потому что причины входа клиент пишет именно туда.
@@ -241,6 +253,10 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		policy["threadId"], policy["excludeTurns"] = thread, true
 		configured, err = proc.call("thread/resume", policy)
 		if err != nil {
+			var rejected *appError
+			if errors.As(err, &rejected) && strings.Contains(rejected.Message, "thread already has an active writer") {
+				return fail(&appThreadWriterConflict{thread: thread, cause: err})
+			}
 			return fail(fmt.Errorf("нить разговора не продолжилась: %w", err))
 		}
 	} else {
@@ -466,7 +482,16 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		if err != nil {
 			msg := err.Error()
 			s.logf("разговор %s не поднялся дорогой app-server: %s", sid, msg)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат не поднялся: " + msg})
+			status := http.StatusBadGateway
+			var conflict *appThreadWriterConflict
+			if errors.As(err, &conflict) {
+				status = http.StatusConflict
+			}
+			body := map[string]string{"error": "чат не поднялся: " + msg}
+			if status == http.StatusConflict {
+				body["refused"] = msg
+			}
+			writeJSON(w, status, body)
 			return
 		}
 		if st.Thread != c.thread {

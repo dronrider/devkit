@@ -36,7 +36,7 @@ const appHarnessJSON = `{"default": "перваяtest", "source": "фиксту�
 // хода шлёт уведомлениями, а режимом из fake-app-mode умеет молчать ходом
 // (mute), умирать на реплике (die) и не слышать прерывание (deaf).
 const appClientPy = `
-import json, os, sys, time
+import fcntl, json, os, sys, time
 
 def emit(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -54,6 +54,22 @@ def mode():
 def log(line):
     with open(os.path.join(os.getcwd(), "fake-app-log"), "a") as f:
         f.write(line + "\n")
+
+writer = None
+
+def claim_thread(mid):
+    global writer
+    if not os.path.exists("fake-app-enforce-writer-lock") or writer is not None:
+        return True
+    writer = open("fake-app-writer-lock", "a")
+    try:
+        fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        writer.close()
+        writer = None
+        emit({"id": mid, "error": {"code": -32600, "message": "thread already has an active writer"}})
+        return False
+    return True
 
 def configure_tools(params):
     # Process DEVKIT variables are filtered by the client before tool launch.
@@ -76,6 +92,7 @@ for raw in sys.stdin:
     if m == "initialize":
         emit({"id": mid, "result": {}})
     elif m == "thread/start":
+        if not claim_thread(mid): continue
         if mode() == "startup-barrier":
             with open(os.path.join(os.getcwd(), "fake-app-handshake"), "w") as f: f.write(str(os.getpid()))
             while not os.path.exists(os.path.join(os.getcwd(), "fake-app-release")): time.sleep(0.01)
@@ -87,6 +104,10 @@ for raw in sys.stdin:
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": {"thread": {"id": "th-1"}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": "user" if mode() == "ignored-reviewer" else params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
     elif m == "thread/resume":
+        if mode() == "resume-error":
+            emit({"id": mid, "error": {"message": "rollout is unreadable"}})
+            continue
+        if not claim_thread(mid): continue
         if mode() == "unsupported-reviewer" and params.get("approvalsReviewer"):
             emit({"id": mid, "error": {"message": "approvalsReviewer не поддерживается"}})
             continue
@@ -856,5 +877,133 @@ func TestAppGroomStoreFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.proj, "fake-app-log")); !os.IsNotExist(err) {
 		t.Fatalf("клиент поднят после потери контекста: %v", err)
+	}
+}
+
+func TestAppChatExternalWriterConflict(t *testing.T) {
+	e, client := appEnv(t)
+	if err := os.WriteFile(filepath.Join(e.proj, "fake-app-enforce-writer-lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sid := appStartChat(t, e, client, "первый вопрос")
+	appWaitBusy(t, e, client, sid, false)
+	e.s.appDrop(sid, "перезапуск дашборда")
+	before := e.s.chatStoreRead(sid)
+	feed := readFile(t, e.s.appFeedFile(sid))
+	h := e.s.chatHarnessOf(before.Model, before.Harness)
+	owner, err := appServerStart(h, e.proj, binPath(agentctlBin), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.kill)
+	if _, err = owner.call("initialize", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = owner.call("thread/resume", map[string]any{"threadId": before.Thread}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить","msg_id":"retry-writer"}`)
+		raw := body(t, r)
+		var got map[string]string
+		if r.StatusCode != http.StatusConflict || json.Unmarshal([]byte(raw), &got) != nil || got["refused"] == "" {
+			t.Fatalf("конфликт writer: %d %s", r.StatusCode, raw)
+		}
+		for _, want := range []string{before.Thread, "другом клиенте Codex", "Закройте", "повторите отправку", "История и выбранная модель сохранены"} {
+			if !strings.Contains(got["refused"], want) {
+				t.Errorf("нет следующего шага %q: %s", want, raw)
+			}
+		}
+		if e.s.appLive(sid) != nil || owner.gone() {
+			t.Fatal("конфликт оставил новый процесс или снял внешнего владельца")
+		}
+		if got := e.s.chatStoreRead(sid); got.Thread != before.Thread || got.Model != before.Model || got.Harness != before.Harness || got.CxEffort != before.CxEffort || got.Protocol != before.Protocol {
+			t.Fatalf("конфликт изменил настройки: %+v", got)
+		}
+		if got := readFile(t, e.s.appFeedFile(sid)); got != feed {
+			t.Fatal("непринятая реплика изменила историю")
+		}
+		if _, err = owner.call("initialize", map[string]any{}); err != nil {
+			t.Fatalf("внешний владелец повреждён: %v", err)
+		}
+	}
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Count(log, "turn ") != 1 || strings.Count(log, "start ") != 1 {
+		t.Fatalf("конфликт отправил ход или создал новую нить: %s", log)
+	}
+	owner.kill()
+	r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить","msg_id":"retry-writer"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusOK {
+		t.Fatalf("после штатного выхода владельца: %d %s", r.StatusCode, raw)
+	}
+	appWaitBusy(t, e, client, sid, false)
+	r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить","msg_id":"retry-writer"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusOK || !strings.Contains(raw, `"way":"dup"`) {
+		t.Fatalf("повтор после доставки: %d %s", r.StatusCode, raw)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if strings.Count(log, "turn ") != 2 || strings.Count(log, "start ") != 1 || strings.Count(log, "resume th-1") != 2 {
+		t.Fatalf("возобновление сменило нить или повторило ход: %s", log)
+	}
+	if got := readFile(t, e.s.appFeedFile(sid)); !strings.HasPrefix(got, feed) || strings.Count(got, `"role":"user"`) != 2 {
+		t.Fatalf("история после продолжения: %s", got)
+	}
+}
+
+func TestAppChatResumeOtherError(t *testing.T) {
+	e, client := appEnv(t)
+	sid := appStartChat(t, e, client, "первый вопрос")
+	appWaitBusy(t, e, client, sid, false)
+	e.s.appDrop(sid, "перезапуск")
+	appMode(t, e, "resume-error")
+	r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusBadGateway || !strings.Contains(raw, "rollout is unreadable") || strings.Contains(raw, `"refused"`) {
+		t.Fatalf("иная ошибка resume превратилась в writer: %d %s", r.StatusCode, raw)
+	}
+}
+
+func TestAppChatExternalWriterBrowser(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal("node обязателен для проверки отказа отправки")
+	}
+	out, err := exec.Command(node, "testdata/appchat_conflict.mjs", "static/app.js").CombinedOutput()
+	if err != nil {
+		t.Fatalf("отказ writer в панели: %v\n%s", err, out)
+	}
+}
+
+func TestAppChatStopContinuesSameThread(t *testing.T) {
+	for _, mode := range []string{"mute", "deaf"} {
+		t.Run(mode, func(t *testing.T) {
+			e, client := appEnv(t)
+			if err := os.WriteFile(filepath.Join(e.proj, "fake-app-enforce-writer-lock"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			appMode(t, e, mode)
+			sid := appStartChat(t, e, client, "первый вопрос")
+			before := e.s.chatStoreRead(sid)
+			r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
+			if raw := body(t, r); r.StatusCode != http.StatusOK {
+				t.Fatalf("стоп: %d %s", r.StatusCode, raw)
+			}
+			appWaitBusy(t, e, client, sid, false)
+			appMode(t, e, "")
+			r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить после стопа","msg_id":"after-stop"}`)
+			if raw := body(t, r); r.StatusCode != http.StatusOK {
+				t.Fatalf("после стопа: %d %s", r.StatusCode, raw)
+			}
+			appWaitBusy(t, e, client, sid, false)
+			after := e.s.chatStoreRead(sid)
+			if after.Thread != before.Thread || after.Model != before.Model || after.Harness != before.Harness {
+				t.Fatalf("после стопа сменились нить или модель: %+v", after)
+			}
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			if strings.Count(log, "turn ") != 2 || strings.Count(log, "start ") != 1 {
+				t.Fatalf("после стопа создалась новая нить: %s", log)
+			}
+			if mode == "deaf" && !strings.Contains(log, "resume th-1") {
+				t.Fatalf("после снятия процесса нить не продолжилась: %s", log)
+			}
+		})
 	}
 }

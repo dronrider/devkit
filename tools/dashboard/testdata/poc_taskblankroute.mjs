@@ -1,4 +1,4 @@
-import { makeSandbox, settle, tag, deepBtn, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, makeNode, settle, tag, deepBtn, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
 
 const SAID = "Нужно довести задачу до завершения.\nМакеты согласованы. Продолжай";
 for (const state of ["live", "waiting", "gone"]) for (const outcome of ["reject", "tmux", "grown"]) {
@@ -101,4 +101,7 @@ console.log("ok");
   for (const t of timers.splice(0)) if (t.ms === 2000) t.fn();
   await settle();
   if (posts.length !== 3) fail("unknown автоматически отправлен ещё раз");
+  const legacy = makeNode("div");
+  sandbox.makeEcho("demo", legacy, makeNode("div"), "legacy", null, [{ ...pending()[0] }]);
+  if (!dump(legacy).includes("доставка не подтверждена") || !dump(legacy).includes(WHY)) fail("старый дверной ключ потерял unknown при разборе");
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,7 +39,7 @@ exit 0`)
 	if st := blankStore(t, e.home, blank); st.Tmux != "" {
 		t.Fatal("фикстура не сорвала запись заготовки")
 	}
-	fresh := &server{cfg: e.s.cfg, now: e.s.now}
+	fresh := &server{cfg: e.s.cfg, now: e.s.now, logf: e.s.logf}
 	if w := blankStartRequest(fresh, blank, "первый текст"); w.Code != http.StatusBadGateway {
 		t.Fatalf("повтор после рестарта %d: %s", w.Code, w.Body.String())
 	}
@@ -60,7 +61,7 @@ func TestTaskBlankReceiptSurvivesSweepAndMixedAPI(t *testing.T) {
 	if _, err := os.Stat(blankPath(e.home, blank)); !os.IsNotExist(err) {
 		t.Fatalf("фикстура не убрала умершую заготовку: %v", err)
 	}
-	fresh := &server{cfg: e.s.cfg, now: e.s.now}
+	fresh := &server{cfg: e.s.cfg, now: e.s.now, logf: e.s.logf}
 	if w := blankStartRequest(fresh, blank, "первый текст"); w.Code != http.StatusBadGateway {
 		t.Fatalf("POST после уборки %d: %s", w.Code, w.Body.String())
 	}
@@ -92,7 +93,7 @@ func TestTaskBlankUnknownStartRetainsReceipt(t *testing.T) {
 	}
 	defer func() { startReservedFn = old }()
 	for i := 0; i < 2; i++ {
-		fresh := &server{cfg: e.s.cfg, now: e.s.now}
+		fresh := &server{cfg: e.s.cfg, now: e.s.now, logf: e.s.logf}
 		if w := blankStartRequest(fresh, blank, "первый текст"); w.Code != http.StatusBadGateway {
 			t.Fatalf("unknown выдал доставку: %d %s", w.Code, w.Body.String())
 		}
@@ -265,7 +266,7 @@ func TestTaskBlankReceiptPostLaunchWriteFailureIsUnknown(t *testing.T) {
 	}
 	defer func() { startReservedFn = old }()
 	for i := 0; i < 2; i++ {
-		fresh := &server{cfg: e.s.cfg, now: e.s.now}
+		fresh := &server{cfg: e.s.cfg, now: e.s.now, logf: e.s.logf}
 		w := blankStartRequest(fresh, blank, "первый текст")
 		if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"unknown":true`) {
 			t.Fatalf("ошибка после внешнего эффекта выдала доставку: %d %s", w.Code, w.Body.String())
@@ -273,5 +274,40 @@ func TestTaskBlankReceiptPostLaunchWriteFailureIsUnknown(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("неподтверждённый запуск повторён: %d", calls)
+	}
+}
+
+func TestTaskBlankConcurrentServersShareReceipt(t *testing.T) {
+	e, c := chatEnv(t)
+	blank := blankMake(t, e, c, `{"model":"opus","id":"XR-4"}`)
+	log := filepath.Join(e.home, "servers.log")
+	writeTmuxFake(t, e.bin, log, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	const count = 8
+	servers := make([]*server, count)
+	for i := range servers {
+		servers[i] = &server{cfg: e.s.cfg, now: e.s.now, logf: e.s.logf}
+		servers[i].projects()
+		servers[i].harnesses()
+	}
+	gate := make(chan struct{})
+	results := make(chan *httptest.ResponseRecorder, count)
+	for i, s := range servers {
+		go func(i int, s *server) {
+			<-gate
+			results <- blankStartRequest(s, blank, fmt.Sprintf("реплика %d", i))
+		}(i, s)
+	}
+	close(gate)
+	status := map[int]int{}
+	for i := 0; i < count; i++ {
+		w := <-results
+		status[w.Code]++
+	}
+	if status[http.StatusOK] != 1 || status[http.StatusConflict] != count-1 {
+		t.Fatalf("разные экземпляры сервера не разделили квитанцию: %+v", status)
+	}
+	if n := strings.Count(readFile(t, log), "new-session"); n != 1 {
+		t.Fatalf("экземпляры сервера подняли %d клиентов", n)
 	}
 }

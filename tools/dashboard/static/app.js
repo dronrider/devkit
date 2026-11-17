@@ -13941,7 +13941,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, once: true });
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, launch: rec.launch, unknown: rec.unknown, once: true });
     }
     if (mine.length) {
       draw();

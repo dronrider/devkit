@@ -2213,6 +2213,12 @@ func dropForeign() string {
 // tmux-сессии, а DEVKIT_CHAT это только сокращённый путь, когда ID уже на руках.
 func (s *server) launchEnv(id, sess, sid string) string {
 	env := "DEVKIT_TMUX=" + shQuote(sess) + " "
+	// Preflight уже выбрал каталог профилей. Рабочее дерево задачи может
+	// хранить старый kit/harness, а tmux - чужой DEVKIT_HOME. Закрепляем
+	// источник раскладки, сохраняя cwd и проектный слой самого exec.
+	if dir := s.harnesses().ProfileDir; dir != "" {
+		env = "DEVKIT_HOME=" + shQuote(filepath.Dir(filepath.Dir(dir))) + " " + env
+	}
 	if sid != "" {
 		if source, mode := s.inheritedGroomContext(sid, id); source != "" {
 			env += "DEVKIT_GROOM_SOURCE=" + shQuote(source) + " DEVKIT_GROOM_MODE=" + shQuote(mode) + " "

@@ -36,8 +36,8 @@ type Harness struct {
 	// машинного конфига, DK-1453). Ручной выбор строки подписки признак не
 	// ограничивает: по нему отбираются только подъёмы без человека, созванные
 	// самим конвейером.
-	Auto  bool   `json:"auto"`
-	Bin   string `json:"bin,omitempty"`
+	Auto bool   `json:"auto"`
+	Bin  string `json:"bin,omitempty"`
 	// Home это каталог хозяйства подписки. По нему ищутся транскрипты её
 	// разговоров: клиент второй подписки поднимается со своим каталогом
 	// конфигурации, и журнал он пишет туда, а не в ~/.claude (DK-362).
@@ -86,7 +86,8 @@ type HarnessModel struct {
 // поднимется на подписке по умолчанию, как до этой задачи, а причина
 // называется полем Note, чтобы отсутствие выбора не выглядело молчанием.
 type HarnessView struct {
-	Harnesses []Harness `json:"harnesses"`
+	ProfileDir string    `json:"-"`
+	Harnesses  []Harness `json:"harnesses"`
 	// ExecRotateTokens это порог ротации исполнителя-субагента: суммарный
 	// контекст, после которого диспетчер отдаёт следующее задание свежему
 	// субагенту. Число целиком считает agentctl (ключ exec_rotate_tokens
@@ -101,7 +102,8 @@ type HarnessView struct {
 // agentctlHarnesses это машинный вид agentctl: разбирается ровно он, поле в
 // поле.
 type agentctlHarnesses struct {
-	Harnesses []struct {
+	ProfileDir string `json:"profile_dir"`
+	Harnesses  []struct {
 		Name    string   `json:"name"`
 		Enabled bool     `json:"enabled"`
 		Default bool     `json:"default"`
@@ -168,6 +170,7 @@ func readHarnesses() HarnessView {
 		view.Note = fmt.Sprintf("ответ agentctl harness --json не разобрался: %v", err)
 		return view
 	}
+	view.ProfileDir = raw.ProfileDir
 	view.Warns = raw.Warns
 	if raw.ExecRotateTokens > 0 {
 		view.ExecRotateTokens = raw.ExecRotateTokens

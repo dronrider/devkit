@@ -3,9 +3,37 @@
 конец: сессия
 предмет: kit/skills/board-draft/SKILL.md «Новая идея человека»; kit/skills/interview/SKILL.md «1. Прочитай запись и определи текущий этап»; kit/skills/board-groom/SKILL.md «Процедура»
 
+## Подготовка
+
+```sh
+set -eu
+taskctl draft --prio mid <<'EOF'
+Напоминания без SMS
+
+### Ситуация
+
+Пользователь хочет добавить напоминания без SMS. Пользователь и ситуация пока неизвестны.
+
+### Осложнение
+
+Проблема и последствия пока неизвестны.
+
+### Вопрос
+
+Для кого нужны напоминания и какую проблему они решают?
+
+### Гипотеза
+
+Нужны напоминания без SMS; желаемый результат пока не определён.
+
+Интервью не завершено.
+EOF
+test -f docs/tasks/drafts/OB-003.md
+```
+
 ## Промпт
 
-Хочу добавить напоминания без SMS. Сохрани эту новую идею и спроси, чего не хватает.
+Продолжи интервью по незавершённому черновику OB-003 и спроси, чего не хватает.
 
 ## Ответ
 
@@ -19,10 +47,20 @@
 set -eu
 test "$(find docs/tasks/drafts -name 'OB-*.md' | wc -l | tr -d ' ')" = 1
 test "$(grep -c '^| OB-' docs/TASKS.md)" = 2
-grep -qi 'напоминан' docs/tasks/drafts/OB-*.md
-grep -qi 'оператор' docs/tasks/drafts/OB-*.md
-grep -qi 'sms' docs/tasks/drafts/OB-*.md
-grep -qi 'почт' docs/tasks/drafts/OB-*.md
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+text = Path('docs/tasks/drafts/OB-003.md').read_text().lower()
+text = text.partition('## черновик\n')[2]
+for name in ('ситуация', 'осложнение', 'вопрос', 'гипотеза'):
+    part = re.search(r'^### ' + name + r'\s*\n(.*?)(?=^#{1,3} |\Z)', text, re.M | re.S)
+    assert part and part.group(1).strip(), name
+for pattern in (r'напоминан', r'оператор', r'смен', r'клиент',
+                r'опазд|пропуска|забыва', r'час', r'карточк', r'\bsms\b', r'почт'):
+    assert re.search(pattern, text), pattern
+assert 'интервью не завершено' not in text
+PY
 ```
 
 ## Судья

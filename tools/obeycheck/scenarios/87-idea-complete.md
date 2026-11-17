@@ -16,6 +16,20 @@
 set -eu
 test "$(find docs/tasks/drafts -name 'OB-*.md' | wc -l | tr -d ' ')" = 1
 test "$(grep -c '^| OB-' docs/TASKS.md)" = 2
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+text = next(Path('docs/tasks/drafts').glob('OB-*.md')).read_text().lower()
+for name in ('ситуация', 'осложнение', 'вопрос', 'гипотеза'):
+    part = re.search(r'^### ' + name + r'\s*\n(.*?)(?=^#{1,3} |\Z)', text, re.M | re.S)
+    assert part and part.group(1).strip(), name
+for pattern in (r'оператор', r'смен', r'срок|дат', r'ответ', r'клиент',
+                r'вручную|ручн', r'стар\w* заявк'):
+    assert re.search(pattern, text), pattern
+assert re.search(r'стар\w* заявк[^.\n]*(без дат|необязательн|мож\w* не)', text), 'старые заявки без даты'
+assert 'интервью не завершено' not in text
+PY
 ```
 
 ## Судья

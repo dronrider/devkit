@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1735",
   "base_sha": "9772d1f9da2d6e49fe21bbd59cc2efbadb409212",
-  "head_sha": "470745482b0ecafeefce74ae43db84ad8f86705f",
+  "head_sha": "0504711ed37a443f5e5a5b7a5a2156738670ea4a",
   "code_hash": "a18c3e741181d7c36c171cc79986545172487e0238fc19e8d07e2abb1d8c0482",
-  "task_hash": "0fb22d57463124afb0f28e83af99c7cceccd017d45ad4fdad284509bd63eeaca",
+  "task_hash": "2c470e225fae963947dd245ce1bf17cfc9f0d4ef7bfd8bea011eb056352dbce5",
   "sources": [
     {
       "name": "common-architecture",
@@ -49,7 +49,8 @@
       "ownership и lifecycle; tools/dashboard/appchat.go:70,488; tools/dashboard/apptask.go:381; automatic по-прежнему равен grooming либо appTaskOwns; token только действующему владельцу; закрытый запуск выгружается отдельно. appSpawn не меняет этот выбор.",
       "policy и ownership integration; tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220; Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача.",
       "отдельный бинарь; tools/dashboard/appchat_artifact_test.go:84-155; Reviewer TestAppChatPolicyInstalledArtifact PASS, бинарь /private/tmp/dashboard-dk1735 SHA256 18da212f2e67ee9b011ce53f915a19e14f5eb7c123e0983d9ce5b28786509901: start/resume/restart/history/model/denied/failclosed. Фикстура не доказывает живую песочницу.",
-      "документация и сценарий; tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78; Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+      "документация и сценарий; tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78; Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен.",
+      "сценарий и приёмка doc delta0504711ed; docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78; Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
     ]
   },
   "rules": [
@@ -70,6 +71,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -90,6 +96,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -110,6 +121,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -130,6 +146,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -150,6 +171,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -170,6 +196,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -190,6 +221,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -210,6 +246,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -230,6 +271,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -250,6 +296,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -270,6 +321,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -290,6 +346,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -310,6 +371,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -330,6 +396,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -450,6 +521,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -470,6 +546,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -490,6 +571,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -510,6 +596,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -530,6 +621,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -550,6 +646,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -570,6 +671,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -590,6 +696,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -610,6 +721,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -630,6 +746,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -650,6 +771,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -670,6 +796,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -690,6 +821,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -710,6 +846,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -730,6 +871,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -750,6 +896,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -770,6 +921,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -790,6 +946,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -810,6 +971,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -830,6 +996,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -850,6 +1021,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -870,6 +1046,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -890,6 +1071,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -910,6 +1096,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -930,6 +1121,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -955,6 +1151,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -980,6 +1181,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1005,6 +1211,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1030,6 +1241,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1055,6 +1271,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1105,6 +1326,11 @@
           "object": "регрессия",
           "location": "docs/tasks/DK-1735.md:Ход работы; сообщение автора SHA470745482",
           "observation": "Автор выполнил regcheck с явными appchat_test.go,apptask_test.go,apptask_continuation_test.go: прежний HEAD красный, исправление зелёное; полный ^TestApp зелёный. Reviewer отдельно подтвердил адресный прогон и artifact."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1255,6 +1481,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1280,6 +1511,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1580,6 +1816,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1605,6 +1846,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1630,6 +1876,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1680,6 +1931,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1730,6 +1986,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -1755,6 +2016,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2030,6 +2296,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2055,6 +2326,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2075,6 +2351,11 @@
           "object": "policy и ownership integration",
           "location": "tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220",
           "observation": "Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2100,6 +2381,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2175,6 +2461,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     },
@@ -2200,6 +2491,11 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        },
+        {
+          "object": "сценарий и приёмка doc delta0504711ed",
+          "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
+          "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
         }
       ]
     }

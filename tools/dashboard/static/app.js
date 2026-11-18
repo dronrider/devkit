@@ -15265,7 +15265,7 @@ function chatPanel(project, st) {
       catch (err) { sayResult(err.message, true); return; }
     }
     const text = ta.value;
-    if ((!text.trim() && !selection && !(proposal && proposal.mode !== "comment")) || send.disabled) return;
+    if ((!text.trim() && !(attach.length && !goalOut) && !selection && !(proposal && proposal.mode !== "comment")) || send.disabled) return;
     ta.value = "";
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
     // очередь. Эхо транскрипта ей не положено: в ленту витка она попадёт

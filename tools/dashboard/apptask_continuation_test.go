@@ -243,7 +243,7 @@ func TestAppTaskManualBindingRemainsOrdinary(t *testing.T) {
 	}
 	defer e.s.appDrop(sid, "test cleanup")
 	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-	if !strings.Contains(log, `"approvalPolicy": "never"`) || strings.Contains(log, "auto_review") || taskhead.Working(taskhead.LockPath(e.home, "XR-002")) {
+	if !strings.Contains(log, `"approvalPolicy": "on-request"`) || !strings.Contains(log, `"approvalsReviewer": "auto_review"`) || taskhead.Working(taskhead.LockPath(e.home, "XR-002")) {
 		t.Fatalf("manual binding elevated: %s", log)
 	}
 }

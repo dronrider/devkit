@@ -160,7 +160,7 @@ func TestAppTaskStopRemovesCarrier(t *testing.T) {
 	}
 }
 
-func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
+func TestAppTaskEndedChatKeepsPolicyAndDropsLockToken(t *testing.T) {
 	for _, archived := range []bool{false, true} {
 		t.Run(map[bool]string{false: "done-section", true: "archive-row"}[archived], func(t *testing.T) {
 			e, c := appTaskEnv(t, "task-done")
@@ -193,7 +193,7 @@ func TestAppTaskEndedChatUsesNeverAndDropsLockToken(t *testing.T) {
 			}
 			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
 			at := strings.LastIndex(log, "policy ")
-			if at < 0 || !strings.Contains(log[at:], `"approvalPolicy": "never"`) || strings.Contains(log[at:], `"approvalsReviewer": "auto_review"`) || !strings.Contains(log[at:], `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
+			if at < 0 || !strings.Contains(log[at:], `"approvalPolicy": "on-request"`) || !strings.Contains(log[at:], `"approvalsReviewer": "auto_review"`) || !strings.Contains(log[at:], `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM": ""`) {
 				t.Fatalf("closed retained permissions/token: %s", log)
 			}
 			if strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume th-1") {

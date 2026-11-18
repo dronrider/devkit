@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -202,4 +204,67 @@ func TestStaticChatQuotaWaitTellsThePanel(t *testing.T) {
 		t.Fatalf("ретрай квоты в панели: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+func TestQuotaVendor1310(t *testing.T) {
+	raw, err := os.ReadFile("testdata/quota_glm1310.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := string(raw)
+	line, ok := quotaRetryLine(pane)
+	if !ok {
+		t.Fatal("реальная строка GLM1310 не узнана")
+	}
+	if quotaRetryWeekly(line) {
+		t.Fatal("Weekly/Monthly нельзя приписать недельному окну")
+	}
+	for _, negative := range []string{"\u276f " + pane, "Пользователь процитировал: " + pane, "\u273b 429 temporarily unavailable \u00b7 Retrying in 15s \u00b7 attempt 8/300\n", "\u273b 429 [1310][Weekly/Monthly Limit Exhau\u2026\n"} {
+		if _, ok := quotaRetryLine(negative); ok {
+			t.Fatalf("цитата/другая ошибка принята за квоту: %q", negative)
+		}
+	}
+}
+func TestQuotaVendor1310Status(t *testing.T) {
+	raw, err := os.ReadFile("testdata/quota_glm1310.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := "aaaa1310-1111-4111-8111-111111111111"
+	e, c, _ := termSayEnv(t, sid, string(raw))
+	writePeer(t, e.home, sid, os.Getpid())
+	writeQuota(t, e.home, "перваяtest", "taken = 2026-09-07T11:00\nweek_all = 100% сброс 2026-09-07T15:00\n")
+	list := chatsOf(t, e, c)
+	if len(list) != 1 || !strings.Contains(list[0].Quota, quotaWaitWord) {
+		t.Fatalf("список не показывает квоту: %+v", list)
+	}
+	r := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/status", "")
+	var st struct {
+		Quota string `json:"quota"`
+		Busy  bool   `json:"busy"`
+	}
+	if err := json.Unmarshal([]byte(body(t, r)), &st); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Quota, quotaWaitWord) || !strings.Contains(st.Quota, "неизвестен") || st.Busy {
+		t.Fatalf("неверная причина/срок/занятость: %+v", st)
+	}
+}
+
+func TestQuotaWeeklyStatusUsesTranscriptHarness(t *testing.T) {
+	sid := "aaaa1311-1111-4111-8111-111111111111"
+	e, c, _ := termSayEnv(t, sid, quotaRetryPane)
+	writePeer(t, e.home, sid, os.Getpid())
+	e.s.now = func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.Local) }
+	writeQuota(t, e.home, "перваяtest", "taken = 2026-09-07T11:00\nweek_all = 100% сброс 2026-09-07T15:00\n")
+	r := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/status", "")
+	var st struct {
+		Quota string `json:"quota"`
+	}
+	if err := json.Unmarshal([]byte(body(t, r)), &st); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st.Quota, "15:00") {
+		t.Fatalf("срок подписки транскрипта потерян: %+v", st)
+	}
 }

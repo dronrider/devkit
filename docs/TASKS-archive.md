@@ -829,3 +829,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1725 | waitcheck краснеет на python 3.9: стаб стенда с кириллицей не парсится | bug | P1 | 2026-11-18 | [tasks/archive/2026/DK-1725.md](tasks/archive/2026/DK-1725.md) |
 | DK-1730 | Новые Sol и Astra доступны в выборе моделей дашборда | task | P2 | 2026-11-18 | [tasks/archive/2026/DK-1730.md](tasks/archive/2026/DK-1730.md), `26dbae6d7`, `f5e742bc7`, `6a1eb80a1`, `b0e5c3bc8` |
 | DK-1731 | Автовыбор при запуске черновика показывает другую модель | bug | P2 | 2026-11-19 | [tasks/archive/2026/DK-1731.md](tasks/archive/2026/DK-1731.md) |
+| DK-1736 | Sol и Astra 6.2 заменяют прежние версии в новом выборе | bug | P2 | 2026-11-19 | [tasks/archive/2026/DK-1736.md](tasks/archive/2026/DK-1736.md) |

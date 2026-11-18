@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +10,38 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestChatModelPreferenceReplacementMetadata(t *testing.T) {
+	e, c := appEnv(t)
+	catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models": [{"tier": "pro", "model": "модель-codex"}]`,
+		`"protocol": "codex", "chat": ["gpt-6.2-astra"], "models": [{"tier": "pro", "model": "gpt-6.1-sol"}]`, 1)
+	writeScript(t, e.bin, "agentctl", `printf '%s' '`+catalog+`'`)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	var got struct {
+		Models []struct {
+			Model    string   `json:"model"`
+			Replaces []string `json:"replaces"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"gpt-6.2-sol":   "gpt-6-sol,gpt-6.1-sol",
+		"gpt-6.2-astra": "gpt-6-astra,gpt-6.1-astra",
+	}
+	for _, option := range got.Models {
+		if previous, ok := want[option.Model]; ok {
+			if strings.Join(option.Replaces, ",") != previous {
+				t.Fatalf("список не передал прежние ID для предпочтения %s: %+v", option.Model, got.Models)
+			}
+			delete(want, option.Model)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("в ответе нет актуальных моделей: %+v", want)
+	}
+}
 
 func TestChatLegacyModelDisplayBrowser(t *testing.T) {
 	chrome := findChrome()

@@ -18,8 +18,9 @@ try {
   await page.waitForFunction(() => typeof modelPick === "function");
   const got = await page.evaluate(async () => {
     const models = [
-      { model: "gpt-6.2-sol", harness: "codextest", tier: "pro", default: true },
-      { model: "gpt-6.2-astra", harness: "codextest", tier: "max" },
+      { model: "glm-5.3", harness: "other-default", tier: "pro", default: true },
+      { model: "gpt-6.2-sol", harness: "codextest", tier: "pro", replaces: ["gpt-6-sol", "gpt-6.1-sol"] },
+      { model: "gpt-6.2-astra", harness: "codextest", tier: "max", replaces: ["gpt-6-astra", "gpt-6.1-astra"] },
       { model: "gpt-6.1-terra", harness: "codextest", tier: "base" },
       { model: "gpt-6-luna", harness: "codextest", tier: "mini" },
     ];
@@ -30,6 +31,12 @@ try {
     document.body.append(fresh, historic);
     const options = (host) => [...host.querySelectorAll("option")].map((o) => ({ model: o.value, disabled: o.disabled, selected: o.selected }));
     const menu = (host) => [...host.querySelectorAll(".menu [data-model]")].map((n) => n.dataset.model);
+    const preferences = [];
+    for (const model of ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-astra", "gpt-6.1-terra", "gpt-6-luna", "unknown-model"]) {
+      localStorage.setItem("devkit.chat.model", JSON.stringify({ model, harness: "codextest" }));
+      preferences.push(chatModelPref(models));
+    }
+    localStorage.setItem("devkit.chat.model", JSON.stringify({ model: "gpt-6.1-sol", harness: "codextest" }));
     let blankOrder;
     const oldFetch = window.fetch;
     window.fetch = async (url, opts = {}) => {
@@ -43,8 +50,12 @@ try {
       return oldFetch(url, opts);
     };
     await chatBlankMake("demo", "");
+    const solBlankOrder = blankOrder;
+    localStorage.setItem("devkit.chat.model", JSON.stringify({ model: "gpt-6.1-astra", harness: "codextest" }));
+    const astraFresh = modelPick("demo", { models, addr: "new-astra" });
+    await chatBlankMake("demo", "");
     window.fetch = oldFetch;
-    return { fresh: options(fresh), historic: options(historic), freshMenu: menu(fresh), historicMenu: menu(historic), blankOrder };
+    return { fresh: options(fresh), astraFresh: options(astraFresh), historic: options(historic), freshMenu: menu(fresh), historicMenu: menu(historic), blankOrder: solBlankOrder, astraBlankOrder: blankOrder, preferences };
   });
   assert.deepEqual(got.fresh.filter((o) => o.selected).map((o) => o.model), ["gpt-6.2-sol"]);
   assert.ok(got.fresh.every((o) => o.model !== "gpt-6.1-sol"), "прежнее предпочтение не возвращается в новый выбор");
@@ -54,6 +65,17 @@ try {
     assert.ok(!menu.includes("gpt-6.1-sol"), "историческая подпись не становится действием меню");
   }
   assert.deepEqual(got.blankOrder, { id: "", model: "gpt-6.2-sol", harness: "codextest" });
+  assert.deepEqual(got.astraBlankOrder, { id: "", model: "gpt-6.2-astra", harness: "codextest" });
+  assert.deepEqual(got.astraFresh.filter((o) => o.selected).map((o) => o.model), ["gpt-6.2-astra"]);
+  assert.deepEqual(got.preferences, [
+    { model: "gpt-6.2-sol", harness: "codextest" },
+    { model: "gpt-6.2-sol", harness: "codextest" },
+    { model: "gpt-6.2-astra", harness: "codextest" },
+    { model: "gpt-6.2-astra", harness: "codextest" },
+    { model: "gpt-6.1-terra", harness: "codextest" },
+    { model: "gpt-6-luna", harness: "codextest" },
+    { model: "glm-5.3", harness: "other-default" },
+  ], "известные прежние ID сохраняют семейство и подписку, остальные предпочтения сохраняют прежнее поведение");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify(got));
 } finally {

@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1731",
   "base_sha": "8f23afac2b77f181a19c0c801c126efe9a348078",
-  "head_sha": "cc2f9c97e4151fc29478bde13f93c539f2e1e384",
-  "code_hash": "e5a4a56cf4567e222d5156889fdd24c02f3bcc038efdaa419cca2ff7980e6233",
-  "task_hash": "e2510b4bc64fbb6c8f739f2b14188e902877f87730170f2183d6bc7c5d80c540",
+  "head_sha": "c2637bda327bc4eb2baf1e189f2b3872df94d51e",
+  "code_hash": "0c6a67017b3f9d38ea58c9fc48e37f3089b343a9ac98aa12e3924a71bad9b9c7",
+  "task_hash": "4cdc16116040155df7c2ba2e1cce9380560ccc26f542a382787a8875c2ec4745",
   "sources": [
     {
       "name": "common-architecture",
@@ -38,19 +38,20 @@
     }
   ],
   "architecture": {
-    "goal": "При запуске человек видит подписку и модель, которыми будет выполнена работа; ручной выбор и Check сохраняются, глобальная политика выбора не меняется.",
-    "decision": "Вынести прежний выбор default/pro груминга в HarnessView.groomAssign, дать GET preview без ID задачи, обновлять UI фиксированного яруса перед запуском. Task verdict остаётся отдельным источником.",
-    "boundaries": "Профили машины принадлежат agentctl harness; сервер читает их через существующий 30-секундный кеш. Resolver отвечает за назначение и ошибки, UI хранит только отображение и ручной выбор на один запуск. Новый endpoint аутентифицирован. Запуск по-прежнему выполняется существующими носителями и общими замками.",
-    "alternative": "Одна клиентская подстановка default из лестницы была бы короче, но дублировала бы серверную проверку доступности и не отражала бы смену назначения. Для второго меню следует повторно использовать общий контракт preview/refresh или существующую функцию управления запуском с сохранением вида строки.",
-    "justification": "Единый серверный resolver обоснован исходным расхождением и требованием не менять политику. Но клиентский жизненный цикл применён не ко всем входам: отдельный rowAction цели сохранил прежнюю эвристику. Это оставляет тот же дефект на доске и требует возврата автору.",
+    "goal": "При запуске человек видит подписку и модель, которыми будет выполнена работа. Ручной выбор и Check сохраняют приоритет; глобальная политика выбора не меняется.",
+    "decision": "Прежний default/pro груминга разрешается общим серверным groomAssign. Новый GET даёт проекцию без ID задачи. Оба fixed-tier UI-входа используют общие armDefaultPick/confirmDefaultPick; task verdict остаётся отдельным источником.",
+    "boundaries": "agentctl harness владеет машинными профилями. Сервер читает прежний 30-секундный кеш и вычисляет назначение/ошибку. Браузер хранит отображаемую пару и ручной выбор одного запуска. Новых настроек, хранилищ и носителей нет; GET аутентифицирован, запуск сохраняет прежние замки и agentctl exec.",
+    "alternative": "Подстановка default прямо из лестницы была бы короче, но дублировала бы серверные проверки и скрывала бы смену назначения. Общий preview и проверка до POST устраняют эту неопределённость без новой инфраструктуры. Два вида кнопок сохраняют собственный вид, общий выбор имеет одного владельца.",
+    "justification": "Обязателен достоверный результат для пользователя при сохранении существующей политики. Выбранное разделение server/UI подходит этому контракту. Пропуск rowAction из первого прохода исправлен общими helpers и регрессией реального входа; ручное назначение, task verdict и pinned не подменяются default.",
     "evidence": [
-      "groomAssign, handleHarnessPick, handleDraftGroom; tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406; Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись.",
-      "runControl и rowAction, все входы fixed-tier; tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080; Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи.",
-      "Состояние выбора и запросы preview; tools/dashboard/static/app.js:2097-2185,2221-2248; pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели.",
-      "Регрессии DOM/HTTP и результаты автора; tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы; Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction.",
-      "Установленная проверка и документация API; docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972; Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+      "groomAssign, handleHarnessPick, handleDraftGroom; tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler; Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись.",
+      "runControl и rowAction, все входы fixed-tier; tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row; Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness.",
+      "Состояние выбора и общая проверка перед запуском; tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire; pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём.",
+      "Регрессии обоих UI-входов и серверного контракта; tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка; Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему.",
+      "Установленная проверка и явная synthetic rehearse; docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse; Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись.",
+      "Синтетические носители и исправленная fresh-HOME fixture; tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs; HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
     ],
-    "result": "violated"
+    "result": "checked"
   },
   "rules": [
     {
@@ -63,8 +64,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -78,13 +79,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -93,18 +94,18 @@
       "source": "common-architecture",
       "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Серверное назначение объединено, но fixed-tier preview/fire продублирован в клиентах: rowAction цели остался вне нового общего поведения. Замечание 1.",
+      "result": "checked",
+      "reason": "Серверный выбор имеет одного владельца groomAssign, а чтение и проверка default до запуска выделены в общие armDefaultPick/confirmDefaultPick обоих меню. Замечание 1 исправлено без второй политики назначения.",
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -118,8 +119,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -133,13 +134,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -148,18 +149,18 @@
       "source": "common-architecture",
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Достоверность пары не обеспечена у всех пользовательских входов: меню строки цели показывает чужую первую pro-модель, а запуск использует default. Замечание 1.",
+      "result": "checked",
+      "reason": "Оба пользовательских fixed-tier входа используют серверный выбор и одну проверку перед POST. Реальный rowAction теперь проверен при default вторым, смене и отказе; прежний обход из замечания 1 устранён.",
       "evidence": [
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -173,8 +174,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -183,23 +184,23 @@
       "source": "common-architecture",
       "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Серверный источник истины и кеш сохранены; runControl обновляет проекцию, но rowAction цели продолжает хранить начальную первую pro-строку. Замечание 1.",
+      "result": "checked",
+      "reason": "Источником пары остаётся серверный HarnessView с прежним кешем. Оба меню обновляют UI-проекцию при открытии и до автоматического fixed-tier запуска; ручной выбор живёт один запуск.",
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -213,13 +214,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -228,18 +229,18 @@
       "source": "common-architecture",
       "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Номер request устраняет перестановку ответов. Повторное чтение перед кликом реализовано у runControl, но обходится строкой цели; существенный пропуск описан в замечании 1.",
+      "result": "checked",
+      "reason": "Номер request защищает UI от перестановки ответов. Оба fixed-tier входа обновляют назначение до отправки заказа, показывают изменившуюся пару и требуют повторного нажатия; серверные замки запуска не меняются.",
       "evidence": [
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -253,8 +254,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -268,18 +269,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -293,13 +294,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -313,18 +314,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -338,8 +339,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -353,13 +354,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -373,13 +374,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -393,13 +394,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -413,13 +414,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -433,13 +434,13 @@
       "evidence": [
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -453,13 +454,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -468,23 +469,23 @@
       "source": "common-architecture",
       "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Default и порядок профилей соблюдены у resolver/runControl, но rowAction цели подменяет default первой pro-моделью. Замечание 1.",
+      "result": "checked",
+      "reason": "Default используется независимо от порядка лестницы во всех fixed-tier входах, что проверено двумя перестановками и реальным rowAction. Ручной harness, auto, task verdict и pinned Check сохраняют свои приоритеты.",
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -497,14 +498,14 @@
       "reason": "Новых пользовательских переключателей нет. Имеющийся auto/ручной выбор сохраняет выбор подписки за человеком.",
       "evidence": [
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -518,13 +519,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -537,14 +538,14 @@
       "reason": "Новой production-настройки нет. Новый тестовый DEVKIT_PREVIEW_APP документирован абсолютным путём в сценарии и читается один раз перед node.",
       "evidence": [
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -558,13 +559,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -578,13 +579,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -593,23 +594,23 @@
       "source": "common-architecture",
       "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Две перестановки default, ручной выбор, auto и неверный tier проверены; пропущен потребитель rowAction цели, где изменение default не отражается. Замечание 1.",
+      "result": "checked",
+      "reason": "Потребительские сценарии проверены через реальные оба вида управления: default вторым, изменение пары, недоступность resolver, ручной выбор и возврат auto, закреплённый Check. Свежая synthetic rehearse подтверждает независимость серверного теста от клиентского PATH машины.",
       "evidence": [
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -623,13 +624,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -643,13 +644,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -663,13 +664,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -682,9 +683,9 @@
       "reason": "Новых величин времени/байтов и неоднозначных единиц нет; request служит монотонным номером запроса меню.",
       "evidence": [
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -698,8 +699,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -713,18 +714,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -738,13 +739,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -758,8 +759,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -773,13 +774,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -793,13 +794,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -813,13 +814,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -833,13 +834,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -853,13 +854,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -873,13 +874,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -889,17 +890,17 @@
       "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Комментарии объясняют dedup пары, приоритет pinned и обновление; старые общие комментарии о первой лестнице местами устарели, но отдельного блокирующего эффекта сверх замечания 1 нет.",
+      "reason": "Новые комментарии объясняют роль общего preview, приоритет pinned и отсутствие task verdict у цели. Документация обоих входов и ограничений проверки согласована с дельтой.",
       "evidence": [
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -909,12 +910,12 @@
       "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "README описывает endpoint, отказ и повторный клик. Установленный сценарий верно ограничивает доказательство synthetic/live GET; полная обкатка требует --step и установленного нового API.",
+      "reason": "README и сценарий описывают оба входа, повторный клик, отказ и ручной выбор. Явная synthetic rehearse отделена от будущей установленной проверки; лог не выдаётся за полный installed-QA.",
       "evidence": [
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -927,9 +928,9 @@
       "reason": "Production-правка сопровождается Go HTTP-тестами и настоящим JS в DOM-стенде; fixture effort обновлена отдельно.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -939,12 +940,12 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Использован авторский финальный regcheck red-old/green-fix после исправления fixture. Независимый текущий DOM PASS согласуется с ним; дальнейших production-правок в дереве ревью нет.",
+      "reason": "Первый regcheck исходного бага и второй regcheck --base cc2f9c97e для реального rowAction подтверждают red-old/green-fix. После production-фикса менялась только fixture claude и документация; synthetic rehearse на fixture и независимый DOM прошли.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -953,18 +954,18 @@
       "source": "common-tests",
       "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Юнитная логика resolver покрыта HTTP-стыком, UI покрыт DOM; пользовательский goal-тест не проходит реальный второй вход rowAction, где остался дефект. Замечание 1.",
+      "result": "checked",
+      "reason": "Серверный resolver покрыт интеграционным HTTP-стыком, UI исполняет настоящий app.js в DOM. Добавлен реальный rowAction -> rdots -> rowPickMenu -> POST /runs, так что второй вход цели больше не подменён прямым вызовом runControl.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -977,14 +978,14 @@
       "reason": "DOM является синтетической компонентной проверкой настоящего JS; HTTP-тесты интеграционные с процессными фикстурами. Изолированный -run позволяет запускать их отдельно.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -994,17 +995,17 @@
       "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Ожидание default/model задано вручную, повторный запуск и запрет POST проверены; регрессия различает старое/новое поведение. Второй вход цели требует отдельной регрессии.",
+      "reason": "Ожидания via/model и число POST заданы вручную. Новый rowAction-тест падает при удалении чтения default, защиты от смены или отказа; regcheck подтвердил красную предыдущую реализацию. HTTP-тест сравнивает preview с командой синтетического носителя.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1014,17 +1015,17 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Регрессионные ветки различают первую подписку, пустой resolver, ручной harness, pinned и смену пары; поддержан red-old/green-fix. Снятая проверка во втором меню выявлена независимым запуском.",
+      "reason": "Типовые неверные ветки различаются проверками default, пустого resolver, ручного harness, pinned и смены пары. Новый реальный второй вход прошёл red-old/green-fix. Независимый DOM прогон подтвердил итоговый HEAD.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1037,14 +1038,14 @@
       "reason": "Порядок ответов охраняется request; сценарии DOM синхронизируются settle и счётчиками POST, случайных sleep для новой логики нет.",
       "evidence": [
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1057,14 +1058,14 @@
       "reason": "Исключение для thin UI не заявлено и не использовано: реальный app.js исполняется в DOM, серверный контракт в httptest.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1077,14 +1078,14 @@
       "reason": "Дифф не добавляет и не меняет общий TestMain/setup и не добавляет запись runs. Новые HTTP-фикстуры и DOM не поднимают реального агента. В существующем TestMain нет runsguard уже в базе; это прежний долг за пределами исправления предпросмотра, а не подтверждённая новая запись в боевой каталог.",
       "evidence": [
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     },
@@ -1143,13 +1144,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1163,13 +1164,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1178,18 +1179,18 @@
       "source": "project-architecture",
       "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
       "applicability": "applicable",
-      "result": "violated",
-      "reason": "Новый GET зарегистрирован в handler, обработчик рядом с серверным resolver, клиент рисует готовую пару. Во втором меню цели клиент ещё вычисляет первую pro-строку; замечание 1.",
+      "result": "checked",
+      "reason": "HTTP-маршрут остаётся в handler, resolver и обработчик в серверной семье harnesses. Оба fixed-tier меню рисуют серверную пару через общие helpers; самостоятельная эвристика первой pro-строки удалена.",
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1203,8 +1204,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -1218,8 +1219,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -1248,8 +1249,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -1263,13 +1264,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1283,13 +1284,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1303,13 +1304,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1323,13 +1324,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1343,13 +1344,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1363,13 +1364,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Состояние выбора и запросы preview",
-          "location": "tools/dashboard/static/app.js:2097-2185,2221-2248",
-          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Автоматический fixed-tier refresh перед запуском снимает подсветку при отказе и требует повторного клика при смене пары. Проверка отсутствует у строки цели."
+          "object": "Состояние выбора и общая проверка перед запуском",
+          "location": "tools/dashboard/static/app.js:runPickBody,readPick,armDefaultPick,confirmDefaultPick,runControl.fire,rowAction.fire",
+          "observation": "pickedByHand сохраняет ручной выбор при позднем ответе; setAuto/reset его снимают. Номер request отбрасывает ранний ответ. Оба fixed-tier входа до POST используют один confirmDefaultPick; при отказе убирается подсветка и видна причина, при смене пары требуется повторный клик. Явная ручная модель и pinned проходят своим прежним путём."
         }
       ]
     },
@@ -1383,18 +1384,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1408,18 +1409,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1433,13 +1434,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1453,8 +1454,8 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         }
       ]
     },
@@ -1468,18 +1469,18 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1508,13 +1509,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1528,13 +1529,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1563,13 +1564,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1583,13 +1584,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1603,13 +1604,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1668,13 +1669,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1688,13 +1689,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1722,9 +1723,9 @@
       "reason": "TestStaticDraftRunPreview и TestDraftGroomPreviewAssignment в drafts_test.go, отказ HarnessPick в harnesses_test.go; дополнительный JS-стенд в testdata своего инструмента.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1737,9 +1738,9 @@
       "reason": "Новые HTTP-тесты используют draftsEnv/newTestEnv с t.TempDir и фикстурами; DOM использует fake fetch. Native дома и модели в серверных проверках не используются.",
       "evidence": [
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1749,17 +1750,17 @@
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Регрессия подтверждена авторским red-old/green-fix regcheck, текущий целевой DOM повторён независимо. Пропуск второго меню оформлен замечанием 1.",
+      "reason": "Оба регрессионных исправления подтверждены regcheck, для замечания 1 использована база cc2f9c97e. Текущий DOM повторён независимо, серверный стык проверен canonical rehearse на свежем HOME.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
           "object": "runControl и rowAction, все входы fixed-tier",
-          "location": "tools/dashboard/static/app.js:2191-2330,2675-2747,5384,5756,18080",
-          "observation": "Форма черновика, новая запись без ID и форма цели используют runControl с серверным preview. Строка цели на доске использует отдельные now/fire/rowPickMenu; там осталась первая pro-строка и нет preview. Подтверждено реальным rowAction в DOM, вывод ниже в файле задачи."
+          "location": "tools/dashboard/static/app.js:runControl,rowAction,taskActions,formPage,draftPage; testdata/poc_runpreview.mjs:setup и циклы row",
+          "observation": "Форма черновика, новая запись без ID, форма цели и реальный rowAction цели используют общий armDefaultPick/confirmDefaultPick. now у незакреплённой цели пуст, открытие получает default/pro, перед POST проверяются смена и отказ. Task verdict и pinned Check остаются отдельными ветками. Прямое независимое воспроизведение даёт own-pro при default вторым, GET /api/harnesses/pick и один POST /runs с tier pro без harness."
         }
       ]
     },
@@ -1772,9 +1773,9 @@
       "reason": "Новые HTTP-тесты используют draftsEnv/newTestEnv с t.TempDir и фикстурами; DOM использует fake fetch. Native дома и модели в серверных проверках не используются.",
       "evidence": [
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1787,14 +1788,14 @@
       "reason": "Новый стенд исполняется в node vm с mock DOM; Playwright/живой браузер/модель не запускаются. Существующая effort_browser fixture проверена автором отдельно.",
       "evidence": [
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         },
         {
-          "object": "Синтетические носители и изоляция",
-          "location": "tools/dashboard/drafts_test.go:2276-2331; harnesses_test.go:449-468; server_test.go:newTestEnv; tasks_test.go:124-175; testdata/poc_runpreview.mjs:22-43",
-          "observation": "HTTP-стенд использует t.TempDir, подменённые agentctl/tmux/клиенты и временные реестры. DOM использует настоящий app.js и fake fetch. Боевые чаты и model API не вызывались. TestMain сохраняет DEVKIT_PREVIEW_APP; parallel.command_env его также сохраняет."
+          "object": "Синтетические носители и исправленная fresh-HOME fixture",
+          "location": "tools/dashboard/drafts_test.go:TestDraftGroomPreviewAssignment; harnesses_test.go:writeClientFakes; server_test.go:newTestEnv; tasks_test.go:TestMain; testdata/poc_runpreview.mjs",
+          "observation": "HTTP-стенд использует t.TempDir, fake agentctl/tmux/клиенты и временные реестры. В список writeClientFakes добавлен claude, который проверяет claudeMissing; shell-фикстура exit 0 больше не зависит от боевого PATH. Зелёная canonical rehearse воспроизвела серверное назначение на fresh HOME. DOM использует настоящий app.js и fake fetch; реальные модели/чаты не запускаются."
         }
       ]
     },
@@ -1823,13 +1824,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Регрессии DOM/HTTP и результаты автора",
-          "location": "tools/dashboard/drafts_test.go:2260-2331; harnesses_test.go:449-468; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md, Ход работы",
-          "observation": "Автор подтвердил regcheck red-old/green-fix и связанный 73.7-секундный прогон. Полная dashboard-сюита проверила этот производственный код: единственный провал был старой effort_browser fixture; после изменения только фикстуры связанный тест PASS. Независимый TestStaticDraftRunPreview PASS, 3.8 с; его goal-ветка вызывает runControl напрямую и не охватывает rowAction."
+          "object": "Регрессии обоих UI-входов и серверного контракта",
+          "location": "tools/dashboard/drafts_test.go:TestStaticDraftRunPreview,TestDraftGroomPreviewAssignment; harnesses_test.go:TestHarnessPickRefusesUnavailableAssignment; testdata/poc_runpreview.mjs; docs/tasks/DK-1731.md:Ход работы,Проверка",
+          "observation": "Авторский regcheck --base cc2f9c97e подтвердил red-old/green-fix реального rowAction; связанный набор PASS 75.3 с на 8ba1758eb. Единственная следующая правка теста добавила fake claude. Canonical rehearse на 0787cff9a: свежие дерево/HOME, 12 утилит, один явный synthetic step, PASS 7.5 с. Независимый DOM на c2637bda3 PASS 3.8 с: обе перестановки default, обе цели, смена/отказ до POST, manual/auto и Check. Исходный регресс groom/default и общий production-код не менялись; ранее проверенные результаты первого прохода применимы к нему."
         }
       ]
     },
@@ -1843,13 +1844,13 @@
       "evidence": [
         {
           "object": "groomAssign, handleHarnessPick, handleDraftGroom",
-          "location": "tools/dashboard/harnesses.go:363-406; drafts.go:598-629; server.go:406",
-          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; глобальный runAssign/agentctl pick не менялись."
+          "location": "tools/dashboard/harnesses.go:groomAssign,handleHarnessPick; drafts.go:handleDraftGroom; server.go:handler",
+          "observation": "Один серверный resolver выбирает byDefault или явный want, проверяет hooks_gap и tier, возвращает пару и HTTP-ошибку. Оба обработчика используют его; в дельте второго прохода серверный код и глобальный runAssign/agentctl pick не менялись."
         },
         {
-          "object": "Установленная проверка и документация API",
-          "location": "docs/tasks/DK-1731.md:150-233; tools/dashboard/README.md:905,2060; tools/taskctl/README.md:951-972",
-          "observation": "Буквальный login через CookieJar дал 200, GET JS/harnesses/healthz дали 200; новый preview до выката 404. DEVKIT_PREVIEW_APP передаётся: с заведомо отсутствующим абсолютным файлом тест падает ENOENT на нём. Полный installed-QA не выполнен. Для rehearse многострочный heredoc требует явного --step; fresh HOME не содержит live-авторизации."
+          "object": "Установленная проверка и явная synthetic rehearse",
+          "location": "docs/tasks/DK-1731.md:Сценарий проверки,Проверка; tools/dashboard/README.md:API и выбор модели; tools/taskctl/README.md:rehearse",
+          "observation": "Сценарий теперь явно задаёт --step с DOM/серверными фикстурами для свежего дерева и временного HOME; live heredoc исключён из этой обкатки. В журнале есть зелёный вывод canonical rehearse на 0787cff9a. Полный installed-QA новой версии не заявлен и остаётся отдельной проверке после выката. Из первого прохода применимы login CookieJar 200, GET JS/harnesses/healthz 200, preview 404 до выката и доказанная передача DEVKIT_PREVIEW_APP отрицательным ENOENT. Модельные ходы и live POST /groom не выполнялись."
         }
       ]
     }

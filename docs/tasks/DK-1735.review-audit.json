@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1735",
-  "base_sha": "9772d1f9da2d6e49fe21bbd59cc2efbadb409212",
-  "head_sha": "0504711ed37a443f5e5a5b7a5a2156738670ea4a",
-  "code_hash": "a18c3e741181d7c36c171cc79986545172487e0238fc19e8d07e2abb1d8c0482",
+  "base_sha": "13cd25aaa43bae253219af0c4d0eb12fa3ee2786",
+  "head_sha": "23b2aca5ef80053498abf8ef8c4c574df93d3b5d",
+  "code_hash": "424d5f28a20723fb8a3e0f22153d252239f666efac173a5c7b9ca1d5eefbc1c7",
   "task_hash": "2c470e225fae963947dd245ce1bf17cfc9f0d4ef7bfd8bea011eb056352dbce5",
   "sources": [
     {
@@ -28,7 +28,7 @@
       "name": "project-architecture",
       "path": "project:docs/ARCHITECTURE.md",
       "status": "present",
-      "hash": "b6f195b40e263bc5ea615ebf006902266d3674f60d67902474e1e0ca1556908e"
+      "hash": "7dfd9787d5886b70cbe3f589bdc2967a36a52de7bc0951b2924901cf915bd4be"
     },
     {
       "name": "project-style",
@@ -42,7 +42,7 @@
     "decision": "Убрать условие automatic из выбора policy и проверки результата единственного appSpawn. Протокольный ответ подтверждает все три поля до первого хода.",
     "boundaries": "Codex исполняет sandbox/approval; dashboard запрашивает и проверяет контракт, выводит ошибки. taskhead/appTaskOwns управляют владельцем и токеном независимо. chatStore владеет прежним thread/model, appChats процессом.",
     "alternative": "Дополнительная кнопка, режимы по происхождению или миграция сохранённых записей сложнее и нарушают прямой выбор пользователя. Переиспользование appSpawn минимально; файловые разрешения и roots не меняются.",
-    "justification": "Пользователь в DK1733 явно выбрал одинаковые возможности без кнопки. Строгая изоляция проекта не обещается: approved unsandboxed и чтение шире. Внешний контракт требует failclosed, это обоснованное неизменяемое ограничение, а не новая конфигурация.",
+    "justification": "Пользователь в DK1733 явно выбрал одинаковые возможности без кнопки. Строгая изоляция проекта не обещается: approved unsandboxed и чтение шире. Внешний контракт требует failclosed, это обоснованное неизменяемое ограничение, а не новая конфигурация. После rebase учтён upstream DK1736: сохранение модели политикой1735 означает отсутствие самостоятельной миграции; устаревшие версии получают видимый отказ до явной смены по отдельному контракту каталога. README описывает этот порядок в разделе выбора моделей.",
     "result": "checked",
     "evidence": [
       "appSpawn start/resume; tools/dashboard/appchat.go:201-299; Все входы отправляют workspace-write/on-request/auto_review; отсутствие/подмена любого поля ответа убивает процесс до регистрации и turn/start. Resume передаёт прежний threadId; config содержит только прежние shell_environment_policy.set.*.",
@@ -50,7 +50,8 @@
       "policy и ownership integration; tools/dashboard/appchat_test.go:700-837; apptask_test.go:163; apptask_continuation_test.go:220; Reviewer прогнал TestApp(Chat(ApprovalPolicy|Policy)|GroomUnsupportedReviewer|Task(EndedChat|ManualBinding|Continuation)): PASS 16.207s. Проверены start/resume, legacy thread, 7 вариантов неподтверждения, ручная привязка и закрытая задача.",
       "отдельный бинарь; tools/dashboard/appchat_artifact_test.go:84-155; Reviewer TestAppChatPolicyInstalledArtifact PASS, бинарь /private/tmp/dashboard-dk1735 SHA256 18da212f2e67ee9b011ce53f915a19e14f5eb7c123e0983d9ce5b28786509901: start/resume/restart/history/model/denied/failclosed. Фикстура не доказывает живую песочницу.",
       "документация и сценарий; tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78; Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен.",
-      "сценарий и приёмка doc delta0504711ed; docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78; Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+      "сценарий и приёмка doc delta0504711ed; docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78; Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен.",
+      "delta rebase DK1735 на main13cd25aaa с DK1736; tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204; Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
     ]
   },
   "rules": [
@@ -76,6 +77,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -101,6 +107,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -126,6 +137,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -151,6 +167,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -176,6 +197,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -201,6 +227,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -226,6 +257,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -251,6 +287,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -276,6 +317,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -301,6 +347,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -326,6 +377,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -351,6 +407,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -376,6 +437,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -401,6 +467,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -526,6 +597,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -551,6 +627,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -576,6 +657,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -601,6 +687,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -626,6 +717,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -651,6 +747,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -676,6 +777,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -701,6 +807,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -726,6 +837,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -751,6 +867,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -776,6 +897,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -801,6 +927,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -826,6 +957,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -851,6 +987,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -876,6 +1017,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -901,6 +1047,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -926,6 +1077,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -951,6 +1107,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -976,6 +1137,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1001,6 +1167,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1026,6 +1197,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1051,6 +1227,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1076,6 +1257,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1101,6 +1287,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1126,6 +1317,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1156,6 +1352,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1186,6 +1387,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1216,6 +1422,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1246,6 +1457,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1276,6 +1492,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1331,6 +1552,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1486,6 +1712,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1516,6 +1747,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1591,6 +1827,21 @@
           "object": "документация и сценарий",
           "location": "tools/dashboard/README.md:204-278; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Единый режим и отказ описаны. Отдельно названы обычная запись, возможное чтение вне проекта и отсутствие строгой границы у одобренной команды. Сценарий запускает установленный command -v dashboard, сверяет hash, изолирует git/common и HOME, не расширяет roots; outside вынесен из temp. sh -n и diff --check PASS. Живой вызов модели выполняет отдельная сессия после выката, сейчас не проверен."
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новый upstream-инвариант проверен в совместном сценарии: chatModelCurrent не меняет policy и не отправляет ход со старым ID, исторический ID хранится до явной смены. chatHarnessOf использует Current для поиска подписки; operational task не мигрирует. Policy1735 применяется в appSpawn независимо от модели/automatic.",
+      "evidence": [
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1821,6 +2072,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1851,6 +2107,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1881,6 +2142,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1936,6 +2202,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -1991,6 +2262,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2021,6 +2297,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2301,6 +2582,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2331,6 +2617,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2356,6 +2647,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2386,6 +2682,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2466,6 +2767,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     },
@@ -2496,6 +2802,11 @@
           "object": "сценарий и приёмка doc delta0504711ed",
           "location": "docs/tasks/DK-1735.md:135-204; docs/tasks/DK-1735-check.sh:1-78",
           "observation": "Связный сценарий повторно прочитан целиком и вычитан. Первый shell шаг проверяет именно HTTP контракт установленного бинаря, SKIP исключён; live sandbox/служебное одобрение отдельно после выката. Обкатка23:24 на fresh tree0ca647a714a6 PASS, scenario d769c3b3 совпадает с актуальной секцией, artifact SHA256 f771af2bbab020cc95fd7950e52c4051ff979155113d6a0dd96d3b3b2543627b. Agent-приёмка выполнима отдельной сессией без исключений; новый UI/человеческий барьер не введён. Живой вызов модели ещё не выполнен."
+        },
+        {
+          "object": "delta rebase DK1735 на main13cd25aaa с DK1736",
+          "location": "tools/dashboard/appchat.go:201-299,448-456; chats.go:998-1014; chatmodels_test.go:127-201; docs/tasks/DK-1735.md:135-204",
+          "observation": "Reviewer сравнил собственный diff с base13cd25aaa и upstream delta против470745482. appSpawn production дельта1735 идентична: единые on-request/auto_review/workspace-write и failclosed start/resume; automatic/ownership/token прежние. Upstream chatModelCurrent отклоняет устаревший model до запуска и записи реплики, не переводит его молча; явная смена модели сохраняет историю. Fake configured echoes requested policy/reviewer, sandbox workspaceWrite; negative modes отдельно подменяют/удаляют каждое поле. Адресный combined integration policy/lifecycle/catalog/legacy-model/operational-task PASS17.084s после rebase. Новая rehearsal00:08 наc4a7ba04f521 PASS, scenario d769c3b3, artifact SHA256 afc3f3468f1edf5066247028f3eac613822c633bf590a61eba5c5839d8b2c79d. Автор обновил regcheck против main после rebase PASS00:08. Live happy path по check.sh после выката всё ещё не выполнен."
         }
       ]
     }

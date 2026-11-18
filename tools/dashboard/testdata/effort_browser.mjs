@@ -72,6 +72,9 @@ try {
     await page.goto(base + "/#demo");
     await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 });
     await page.waitForFunction(() => boardPainted.screen && document.querySelector("#groups").children.length, null, { timeout: 5000 });
+    await page.route("**/api/projects/demo/tasks/XR-4/pick", (route) => route.fulfill({
+      json: { tier: "pro", via: "stand-alpha", effort: "high" },
+    }));
     await page.evaluate(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       document.querySelector("#effort-geometry")?.remove();
@@ -108,6 +111,8 @@ try {
     const runMenu = runHost.locator(".hpop");
     await runHost.locator(".more2").click();
     assert(await runMenu.isVisible(), "стрелка кнопки не открыла меню модели");
+    await page.waitForFunction(() =>
+      document.querySelector("#effort-geometry .mrow.on")?.dataset.harness === "stand-alpha");
     const read = (menu) => menu.evaluate((n) => {
       const groups = [...n.querySelectorAll(".grow")];
       return {
@@ -130,12 +135,12 @@ try {
         switch: Boolean(n.querySelector("label.auto")),
       };
     });
-    // Меню задачи открылось автоматическим видом: группа умолчания развёрнута
-    // и яркая, прочие погашены, и полоски квот стоят на группе, а не на моделях.
+    // После вердикта группа назначенной пары развёрнута и яркая,
+    // прочие погашены. Полоски квот стоят на группе, а не на моделях.
     let comp = await read(runMenu);
     assert(comp.isAuto && comp.switch, "у меню задачи нет включённого переключателя");
     assert.deepEqual(comp.names, ["stand-alpha", "stand-beta", "stand-gamma"], "группы первого уровня не подписки");
-    assert.deepEqual(comp.open, ["stand-alpha"], "до вердикта развёрнута не группа умолчания");
+    assert.deepEqual(comp.open, ["stand-alpha"], "развёрнута не группа вердикта");
     assert.deepEqual(comp.verdgrp, ["stand-alpha"], "яркая при погашенных не группа пары");
     assert.deepEqual(comp.meters, { "stand-alpha": 2, "stand-beta": 0, "stand-gamma": 1 },
       "полоски остатка не доехали до строки группы");

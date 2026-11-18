@@ -612,56 +612,15 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Имя подписки сверяется с раскладкой машины той же проверкой, что у
-	// запуска задачи: экран, устаревший на смену конфига, поднимал бы разбор
-	// неизвестно на чём.
+	own, tier, model, why, status := s.harnesses().groomAssign(want, wantTier)
+	if why != "" {
+		s.logf("груминг %s в %s отклонён: %s", id, found.Name, why)
+		writeJSON(w, status, map[string]string{"error": why})
+		return
+	}
 	var harness *Harness
 	if want != "" {
-		h, why := s.harnesses().pick(want)
-		if h == nil {
-			s.logf("груминг %s в %s отклонён: %s", id, found.Name, why)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-			return
-		}
-		harness = h
-	}
-	// Ярус разворачивается в модель раскладкой машины, и сверяется он с ней же:
-	// имени яруса, которого у подписки нет, верить нельзя, как и имени подписки.
-	// Названного яруса в теле может не быть вовсе, тогда берётся pro.
-	view := s.harnesses()
-	own := harness
-	if own == nil {
-		own = view.byDefault()
-	}
-	if own == nil {
-		gap := "подписка не определилась: agentctl harness --json не назвал её, " +
-			"а разбор мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
-		s.logf("груминг %s в %s отклонён: %s", id, found.Name, gap)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
-		return
-	}
-	if gap := hooksGapNote(own); gap != "" {
-		s.logf("груминг %s в %s отклонён: %s", id, found.Name, gap)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
-		return
-	}
-	tier := wantTier
-	if tier == "" {
-		tier = groomTier
-	}
-	model := ""
-	if own != nil {
-		model = own.tierModel(tier)
-	}
-	if model == "" && wantTier != "" {
-		known := "у подписки нет ни одного яруса"
-		if own != nil && len(own.tierNames()) > 0 {
-			known = "ярусы подписки: " + strings.Join(own.tierNames(), ", ")
-		}
-		why := fmt.Sprintf("яруса %s в раскладке машины нет, %s", wantTier, known)
-		s.logf("груминг %s в %s отклонён: %s", id, found.Name, why)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-		return
+		harness = own
 	}
 	path, rel := draftPathOf(found.Path, id)
 	if !isFile(path) {

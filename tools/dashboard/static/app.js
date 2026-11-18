@@ -1922,10 +1922,11 @@ function runPickBody(into, opts) {
   const autoMenu = Boolean(opts.auto);
   let auto = autoMenu;
   // autoPick это пара, которую работа получит без выбора человека: у задачи её
-  // называет вердикт pick, у черновика вердикта нет, и там стоит умолчание
-  // лестницы.
+  // называет вердикт pick, у черновика сервер разрешает ярус подписки
+  // по умолчанию тем же способом, что при запуске.
   let autoPick = now;
   let picked = null;
+  let pickedByHand = false;
   let whyNote = null;
   let autoInput = null;
   const head = el("div", "hhead");
@@ -1979,12 +1980,10 @@ function runPickBody(into, opts) {
   // включённом переключателе, ручного выбора при выключенном. Точка у имени
   // группы называет, где эта пара стоит, а группа пары машины при включённом
   // переключателе остаётся яркой среди погашенных. До ответа ручки pick пара
-  // машины неизвестна, и группой тогда стоит умолчание лестницы: раскрытым
-  // обязан быть кто-то, молчащее меню читалось бы поломкой.
+  // машины неизвестна, и раскрывается группа умолчания без отметки выбора.
   const foldPaint = () => {
-    const pair = (auto ? autoPick : picked) || autoPick ||
-      ladder.find((m) => m.pin) || ladder[0] || null;
-    openGroup(groupByModel(pair));
+    const pair = (auto ? autoPick : picked) || autoPick;
+    openGroup(groupByModel(pair || ladder.find((m) => m.pin) || ladder[0]));
     for (const g of groups) {
       const hold = Boolean(pair) && g.name === (pair.harness || "");
       g.row.classList.toggle("hold", hold);
@@ -2018,6 +2017,7 @@ function runPickBody(into, opts) {
     if (autoInput) autoInput.checked = auto;
     into.classList.toggle("is-auto", auto);
     picked = null;
+    pickedByHand = false;
     hand.clear();
     curKey = keyOf(autoPick);
     slider.setLevels((autoPick && autoPick.levels) || []);
@@ -2051,6 +2051,7 @@ function runPickBody(into, opts) {
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (auto) return;
+      pickedByHand = true;
       pickRow(m);
       highlight();
       if (opts.onModel) opts.onModel(m);
@@ -2096,39 +2097,57 @@ function runPickBody(into, opts) {
     setVerdict(v) {
       const body = typeof v === "string" ? { effort: v } : (v || {});
       slider.setVerdict(body.effort || "");
-      const row = body.tier
-        ? ladder.find((m) => m.tier === body.tier &&
-          (m.harness || "") === (body.via || "")) || null
-        : null;
+      const via = opts.pinned || body.via || "";
+      const row = now || (body.tier
+        ? ladder.find((m) => (m.harness || "") === via &&
+          (opts.pinned ? m.tier === body.tier
+            : body.model ? m.model === body.model : m.tier === body.tier)) || null
+        : null);
+      if (whyNote) {
+        whyNote.remove();
+        whyNote = null;
+      }
       if (!row) {
         // Причина отказа стоит в самом меню: включённый переключатель без пары
         // выглядел бы штатной работой, только погашенной.
-        if (body.note && !whyNote) {
-          whyNote = el("span", "mwhy", body.note);
-          into.append(whyNote);
+        autoPick = null;
+        if (!pickedByHand) picked = null;
+        if (auto || !pickedByHand) {
+          slider.setLevels([]);
+          slider.repaint();
         }
-        return;
+        highlight();
+        whyNote = el("span", "mwhy", body.note || "назначенная модель отсутствует в списке подписок; обновите страницу");
+        into.append(whyNote);
+        return null;
       }
       // Прикреплённая подписка строки Check сильнее вердикта: запуск едет ею,
       // и подсветка обязана стоять на ней. Вердикт тогда называет только
       // уровень.
-      if (!now) autoPick = row;
+      autoPick = row;
       // В ручном виде вердикт всё равно называет пару без выбора человека, и
       // точка группы обязана переехать на неё.
       if (!auto) {
-        foldPaint();
-        return;
+        if (!autoMenu && !pickedByHand) {
+          pickRow(autoPick);
+          highlight();
+        } else foldPaint();
+        return row;
       }
       curKey = keyOf(autoPick);
       slider.setLevels((autoPick && autoPick.levels) || []);
       slider.repaint();
       highlight();
       if (opts.onEffort) opts.onEffort("");
+      return row;
     },
+    pair() { return autoPick; },
+    reason() { return whyNote ? whyNote.textContent : ""; },
     // Выбор модели и глубины жил один запуск (DK-1570): пуск возвращает меню к
     // паре машины, и подсветка выбора уходит вместе с ним.
     reset() {
       picked = null;
+      pickedByHand = false;
       hand.clear();
       auto = autoMenu;
       if (autoInput) autoInput.checked = auto;
@@ -2151,11 +2170,19 @@ function runPickBody(into, opts) {
 // стоит одной функцией: вердикт зависит от строки задачи, и рисовать его заранее
 // значило бы показать кольцо устаревшей правки. У цели вердикта на весь цикл
 // нет, кольца там не будет.
+function readPick(path, menu) {
+  const request = (menu.request || 0) + 1;
+  menu.request = request;
+  const accept = (body) => menu.request === request ? menu.setVerdict(body) : null;
+  return api(path)
+    .then((r) => accept(r.ok ? (r.body || {})
+      : { note: (r.body && (r.body.error || r.body.note)) || "назначение модели недоступно" }))
+    .catch(() => accept({ note: "назначение модели недоступно: нет ответа сервера" }));
+}
+
 function armPickRing(project, id, menu) {
-  api("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
-    encodeURIComponent(id) + "/pick")
-    .then((r) => { if (r.ok && menu) menu.setVerdict(r.body || {}); })
-    .catch(() => {});
+  return readPick("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
+    encodeURIComponent(id) + "/pick", menu);
 }
 
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
@@ -2191,8 +2218,21 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   const modeList = (modes && modes.list) || [];
   let mode = (modes && modes.now) || (modeList[0] && modeList[0][0]) || "";
   const modeOut = () => mode;
-  const fire = (node) => {
+  const fixedTier = Boolean(tier) && tier !== TIER_VERDICT;
+  const refreshPick = () => readPick("/api/harnesses/pick?tier=" + encodeURIComponent(tier), menu);
+  const fire = async (node) => {
     node.disabled = true;
+    if (!model && fixedTier && !pinned) {
+      const before = menu.pair();
+      const next = await refreshPick();
+      if (!next || (before && (before.harness !== next.harness || before.model !== next.model))) {
+        sayResult(next
+          ? "назначение изменилось: " + next.harness + " / " + next.model + "; проверьте модель и повторите запуск"
+          : menu.reason() || "назначение модели недоступно", true);
+        node.disabled = false;
+        return;
+      }
+    }
     const harness = harnessOut();
     const said = tierOut();
     const depth = effort;
@@ -2230,8 +2270,8 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   };
   menu = runPickBody(pop, {
     auto: Boolean(tiers && tiers.auto),
-    now: tier === TIER_VERDICT ? null
-      : modelLadder().find((m) => m.tier === tier && (!pinned || m.harness === pinned)) || null,
+    now: pinned ? modelLadder().find((m) => m.tier === tier && m.harness === pinned) || null : null,
+    pinned: pinned || "",
     onModel: (m) => { model = m; },
     getEffort: () => effort,
     onEffort: (lv) => { effort = lv; },
@@ -2272,8 +2312,10 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     // Кольцо вердикта спрашивается открытием меню: вердикт зависит от строки
     // задачи, и стоять ему заранее значило бы показать кольцо устаревшей
     // правки. У цели вердикта на весь цикл нет, кольца там не будет.
-    if (!isGoal && id && menu) armPickRing(project, id, menu);
+    if (fixedTier && !pinned) refreshPick();
+    else if (!isGoal && id && menu) armPickRing(project, id, menu);
   });
+  if (fixedTier && !pinned) refreshPick();
   grp.append(more, pop);
   return wireDisabled(grp, wide, more);
 }
@@ -2693,6 +2735,7 @@ function rowAction(project, row, sect) {
           ? (pin ? (modelLadder().find((m) => m.harness === pin && m.tier === RUN_TIER) ||
               modelLadder().find((m) => m.harness === pin) || null) : null)
           : modelLadder().find((m) => m.tier === tier && (!pin || m.harness === pin)) || null,
+        pinned: pin,
         onModel: (m) => { model = m; },
         getEffort: () => effort,
         onEffort: (lv) => { effort = lv; },

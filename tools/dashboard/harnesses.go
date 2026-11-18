@@ -357,3 +357,49 @@ func (s *server) harnesses() HarnessView {
 func (s *server) handleHarnesses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.harnesses())
 }
+
+// groomAssign используется предпросмотром и подъёмом разбора. Пустой выбор
+// сохраняет прежнее назначение: подписка по умолчанию и ярус pro.
+func (v HarnessView) groomAssign(want, wantTier string) (*Harness, string, string, string, int) {
+	own := v.byDefault()
+	if want != "" {
+		var why string
+		own, why = v.pick(want)
+		if own == nil {
+			return nil, "", "", why, http.StatusBadRequest
+		}
+	}
+	if own == nil {
+		return nil, "", "", "подписка не определилась: agentctl harness --json не назвал её, " +
+			"а разбор мимо обвязки не идёт; разложить слой: devkitctl doctor --fix", http.StatusBadGateway
+	}
+	if gap := hooksGapNote(own); gap != "" {
+		return nil, "", "", gap, http.StatusBadGateway
+	}
+	tier := wantTier
+	if tier == "" {
+		tier = groomTier
+	}
+	model := own.tierModel(tier)
+	if model == "" && wantTier != "" {
+		known := "у подписки нет ни одного яруса"
+		if len(own.tierNames()) > 0 {
+			known = "ярусы подписки: " + strings.Join(own.tierNames(), ", ")
+		}
+		return nil, "", "", fmt.Sprintf("яруса %s в раскладке машины нет, %s", wantTier, known), http.StatusBadRequest
+	}
+	return own, tier, model, "", http.StatusOK
+}
+
+func (s *server) handleHarnessPick(w http.ResponseWriter, r *http.Request) {
+	tier := r.URL.Query().Get("tier")
+	if tier == "" {
+		tier = groomTier
+	}
+	own, tier, model, why, status := s.harnesses().groomAssign("", tier)
+	if why != "" {
+		writeJSON(w, status, map[string]string{"error": why})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"tier": tier, "via": own.Name, "model": model})
+}

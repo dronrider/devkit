@@ -445,3 +445,24 @@ func TestHarnessesCarriesChat(t *testing.T) {
 		t.Fatalf("список чата второй подписки %q", got)
 	}
 }
+
+func TestHarnessPickRefusesUnavailableAssignment(t *testing.T) {
+	for _, tc := range []struct {
+		name, layout, tier, why string
+		status                  int
+	}{
+		{"нет подписок", `{"harnesses":[]}`, "pro", "подписка не определилась", http.StatusBadGateway},
+		{"нет яруса", harnessTiersFixture, "missing", "яруса missing", http.StatusBadRequest},
+		{"нет хуков", `{"harnesses":[{"name":"broken-test","enabled":true,"default":true,"bin":"client-test","hooks_gap":"нужны хуки","models":[{"tier":"pro","model":"test-pro"}]}]}`, "pro", "нужны хуки", http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, c, _ := draftsEnv(t)
+			writeAgentctlFake(t, e.bin, tc.layout)
+			resp := doReq(t, c, "GET", e.srv.URL+"/api/harnesses/pick?tier="+tc.tier, "")
+			got := body(t, resp)
+			if resp.StatusCode != tc.status || !strings.Contains(got, tc.why) {
+				t.Fatalf("preview: %d %s", resp.StatusCode, got)
+			}
+		})
+	}
+}

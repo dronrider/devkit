@@ -403,6 +403,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
 	mux.HandleFunc("GET /api/resources", s.auth(s.handleResources))
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
+	mux.HandleFunc("GET /api/harnesses/pick", s.auth(s.handleHarnessPick))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAsk))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAskAnswer))
 	// Ответ на вопрос помощника пароля идёт своей ручкой, а не общей ask: там

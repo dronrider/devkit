@@ -2255,3 +2255,66 @@ func TestDraftGroomAppServerFailure(t *testing.T) {
 	}
 	appWaitFeed(t, e, rows[0].ID, "нет входа в клиент")
 }
+
+// Первая pro-строка чужой подписки не должна становиться автовыбором формы.
+func TestStaticDraftRunPreview(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд предпросмотра пропущен")
+	}
+	app := os.Getenv("DEVKIT_PREVIEW_APP")
+	if app == "" {
+		app = filepath.Join("static", "app.js")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_runpreview.mjs"), app).CombinedOutput()
+	if err != nil {
+		t.Fatalf("предпросмотр запуска: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+func TestDraftGroomPreviewAssignment(t *testing.T) {
+	for _, defaultFirst := range []bool{false, true} {
+		t.Run(strconv.FormatBool(defaultFirst), func(t *testing.T) {
+			e, c, _ := draftsEnv(t)
+			log := filepath.Join(e.home, "tmux.log")
+			writeTmuxFake(t, e.bin, log, "")
+			writeClientFakes(t, e.bin, "клиент-1", "клиент-2")
+			var fixture map[string]any
+			if err := json.Unmarshal([]byte(harnessTiersFixture), &fixture); err != nil {
+				t.Fatal(err)
+			}
+			list := fixture["harnesses"].([]any)
+			if !defaultFirst {
+				list[0], list[1] = list[1], list[0]
+			}
+			raw, err := json.Marshal(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeAgentctlFake(t, e.bin, string(raw))
+			var pick struct{ Tier, Via, Model string }
+			resp := doReq(t, c, "GET", e.srv.URL+"/api/harnesses/pick?tier=pro", "")
+			text := body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("preview: %d %s", resp.StatusCode, text)
+			}
+			if err := json.Unmarshal([]byte(text), &pick); err != nil {
+				t.Fatal(err)
+			}
+			if pick.Tier != "pro" || pick.Via != "перваяtest" || pick.Model != "модель-pro" {
+				t.Fatalf("preview: %s", text)
+			}
+			id := makeDraft(t, c, e, "назначение разбора")
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"tier":"pro"}`)
+			text = body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("groom: %d %s", resp.StatusCode, text)
+			}
+			got := readFile(t, log)
+			if !strings.Contains(got, "exec --harness '"+pick.Via+"'") || !strings.Contains(got, "--model '"+pick.Model+"'") {
+				t.Fatalf("назначение предпросмотра не совпало с запуском: %s\n%s", text, got)
+			}
+		})
+	}
+}

@@ -250,10 +250,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	for key, value := range toolEnv {
 		config["shell_environment_policy.set."+key] = value
 	}
-	policy := map[string]any{"approvalPolicy": "never", "config": config, "sandbox": "workspace-write"}
-	if c.automatic {
-		policy["approvalPolicy"], policy["approvalsReviewer"] = "on-request", "auto_review"
-	}
+	policy := map[string]any{"approvalPolicy": "on-request", "approvalsReviewer": "auto_review", "config": config, "sandbox": "workspace-write"}
 	var configured json.RawMessage
 	if thread != "" {
 		policy["threadId"], policy["excludeTurns"] = thread, true
@@ -282,17 +279,15 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		}
 		c.thread = got.Thread.ID
 	}
-	if c.automatic {
-		var actual struct {
-			ApprovalPolicy string `json:"approvalPolicy"`
-			Reviewer       string `json:"approvalsReviewer"`
-			Sandbox        struct {
-				Type string `json:"type"`
-			} `json:"sandbox"`
-		}
-		if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
-			return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
-		}
+	var actual struct {
+		ApprovalPolicy string `json:"approvalPolicy"`
+		Reviewer       string `json:"approvalsReviewer"`
+		Sandbox        struct {
+			Type string `json:"type"`
+		} `json:"sandbox"`
+	}
+	if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
+		return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
 	}
 	s.appMu.Lock()
 	s.appChats[sid] = c

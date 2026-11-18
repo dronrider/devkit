@@ -80,3 +80,76 @@ func TestAppChatInstalledArtifact(t *testing.T) {
 	}
 	t.Log("artifact: HTTP writer conflict, refused, unchanged history/settings, same-thread retry and duplicate refusal passed")
 }
+
+func TestAppChatPolicyInstalledArtifact(t *testing.T) {
+	e, client, restart := appArtifactRestartable(t, "")
+	sid := appStartChat(t, e, client, "первый ход с единой политикой")
+	appWaitBusy(t, e, client, sid, false)
+	before := e.s.chatStoreRead(sid)
+	feed := readFile(t, e.s.appFeedFile(sid))
+	restart()
+	client = e.loggedClient(t)
+	r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжение сохранённого разговора"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusOK {
+		t.Fatalf("resume: %d %s", r.StatusCode, raw)
+	}
+	appWaitBusy(t, e, client, sid, false)
+	after := e.s.chatStoreRead(sid)
+	if before.Thread != after.Thread || before.Model != after.Model || before.Harness != after.Harness || !strings.HasPrefix(readFile(t, e.s.appFeedFile(sid)), feed) {
+		t.Fatal("после рестарта изменены нить, модель или история")
+	}
+	policies := 0
+	for _, line := range strings.Split(readFile(t, filepath.Join(e.proj, "fake-app-log")), "\n") {
+		if !strings.HasPrefix(line, "policy ") {
+			continue
+		}
+		var p map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "policy ")), &p); err != nil {
+			t.Fatal(err)
+		}
+		if p["approvalPolicy"] != "on-request" || p["approvalsReviewer"] != "auto_review" || p["sandbox"] != "workspace-write" {
+			t.Fatalf("artifact policy: %v", p)
+		}
+		config := p["config"].(map[string]any)
+		for key := range config {
+			if !strings.HasPrefix(key, "shell_environment_policy.set.") {
+				t.Fatalf("расширена конфигурация: %s", key)
+			}
+		}
+		policies++
+	}
+	if policies != 2 {
+		t.Fatalf("нет start и resume: %d", policies)
+	}
+	r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
+	body(t, r)
+	appMode(t, e, "approval-denied")
+	r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"запрос служебного доступа"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusOK {
+		t.Fatalf("denied request: %d %s", r.StatusCode, raw)
+	}
+	appWaitFeed(t, e, sid, "automatic approval review rejected")
+	appWaitBusy(t, e, client, sid, false)
+	denied := false
+	for _, item := range e.s.appFeedRead(sid) {
+		if strings.Contains(item.Text, "service access denied") && item.Fail {
+			denied = true
+		}
+	}
+	if !denied {
+		t.Fatal("отказ проверки прав не отмечен ошибкой")
+	}
+	r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
+	body(t, r)
+	restart()
+	client = e.loggedClient(t)
+	appMode(t, e, "ignored-policy")
+	r = doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"не выполнять с другой политикой"}`)
+	if raw := body(t, r); r.StatusCode != http.StatusBadGateway || !strings.Contains(raw, "клиент не подтвердил workspace-write") {
+		t.Fatalf("artifact fail-closed: %d %s", r.StatusCode, raw)
+	}
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Count(log, "turn ") != 3 {
+		t.Fatalf("ход после отказа: %s", log)
+	}
+	t.Log("artifact: единая политика start/resume, история после рестарта, отказ до хода; песочницу и auto_review проверяет живой сценарий")
+}

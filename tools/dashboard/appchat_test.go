@@ -81,6 +81,16 @@ def configure_tools(params):
     log("groom " + env.get("DEVKIT_GROOM_SOURCE", "") + " " + env.get("DEVKIT_GROOM_MODE", ""))
     log("session " + env.get("DEVKIT_CHAT_SESSION_ID", ""))
 
+def configured(params, thread):
+    result = {"thread": {"id": thread}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}
+    field = mode().removeprefix("missing-")
+    if mode().startswith("missing-"):
+        result.pop(field, None)
+    if mode() == "ignored-reviewer": result["approvalsReviewer"] = "user"
+    if mode() == "ignored-policy": result["approvalPolicy"] = "never"
+    if mode() == "ignored-sandbox": result["sandbox"] = {"type": "dangerFullAccess"}
+    return result
+
 for raw in sys.stdin:
     raw = raw.strip()
     if not raw:
@@ -102,7 +112,7 @@ for raw in sys.stdin:
         configure_tools(params)
         log("start " + str(params.get("model", "")))
         log("policy " + json.dumps(params))
-        emit({"id": mid, "result": {"thread": {"id": "th-1"}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": "user" if mode() == "ignored-reviewer" else params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
+        emit({"id": mid, "result": configured(params, "th-1")})
     elif m == "thread/resume":
         if mode() == "resume-barrier":
             with open(os.path.join(os.getcwd(), "fake-app-handshake"), "w") as f: f.write(str(os.getpid()))
@@ -117,7 +127,7 @@ for raw in sys.stdin:
         configure_tools(params)
         log("resume " + str(params.get("threadId", "")))
         log("policy " + json.dumps(params))
-        emit({"id": mid, "result": {"thread": {"id": params.get("threadId")}, "approvalPolicy": params.get("approvalPolicy"), "approvalsReviewer": params.get("approvalsReviewer"), "sandbox": {"type": "workspaceWrite"}}})
+        emit({"id": mid, "result": configured(params, params.get("threadId"))})
     elif m == "turn/start":
         log("turn " + str(params.get("effort", "")))
         log("input " + json.dumps(params.get("input")))
@@ -131,6 +141,10 @@ for raw in sys.stdin:
             emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
             continue
         emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
+        if mode() == "approval-denied":
+            note("item/completed", {"item": {"type": "commandExecution", "command": "agentctl plan", "aggregatedOutput": "automatic approval review rejected: service access denied", "exitCode": 1}})
+            note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
+            continue
         if mode() == "task-child":
             note("turn/completed", {"threadId": "child-thread", "turn": {"id": "turn-1", "status": "completed"}})
             note("turn/completed", {"threadId": "th-1", "turn": {"id": "child-turn", "status": "completed"}})
@@ -686,7 +700,7 @@ func TestAppItemReplies(t *testing.T) {
 	}
 }
 
-func TestAppGroomApprovalPolicy(t *testing.T) {
+func TestAppChatApprovalPolicy(t *testing.T) {
 	for _, grooming := range []bool{false, true} {
 		t.Run(fmt.Sprint(grooming), func(t *testing.T) {
 			e, c := appEnv(t)
@@ -740,20 +754,8 @@ func TestAppGroomApprovalPolicy(t *testing.T) {
 				if grooming && (toolEnv["DEVKIT_TASK"] != "XR-77" || toolEnv["DEVKIT_GROOM_SOURCE"] != "XR-77" || toolEnv["DEVKIT_GROOM_MODE"] != "groom") {
 					t.Fatalf("groom tool env: %v", toolEnv)
 				}
-				want := "never"
-				if grooming {
-					want = "on-request"
-					if p["approvalsReviewer"] != "auto_review" {
-						t.Fatalf("reviewer: %v", p)
-					}
-				} else if p["approvalsReviewer"] != nil {
-					t.Fatalf("обычный чат поменял reviewer: %v", p)
-				}
-				if p["approvalPolicy"] != want {
+				if p["approvalPolicy"] != "on-request" || p["approvalsReviewer"] != "auto_review" || p["sandbox"] != "workspace-write" {
 					t.Fatalf("policy: %v", p)
-				}
-				if policies == 0 && p["sandbox"] != "workspace-write" {
-					t.Fatalf("песочница потеряна: %v", p)
 				}
 				policies++
 			}
@@ -761,6 +763,73 @@ func TestAppGroomApprovalPolicy(t *testing.T) {
 				t.Fatalf("нет старта и продолжения: %d", policies)
 			}
 		})
+	}
+}
+
+func TestAppChatPolicyFailClosed(t *testing.T) {
+	for _, thread := range []string{"", "legacy-never"} {
+		for _, mode := range []string{"unsupported-reviewer", "ignored-reviewer", "ignored-policy", "ignored-sandbox", "missing-approvalPolicy", "missing-approvalsReviewer", "missing-sandbox"} {
+			t.Run(thread+"/"+mode, func(t *testing.T) {
+				e, _ := appEnv(t)
+				appMode(t, e, mode)
+				sid := "aspolicy-refusal"
+				stored := chatStore{Project: "demo", Model: "модель-codex", Harness: "codextest", Thread: thread, Protocol: "codex"}
+				if err := e.s.chatStoreWrite(sid, stored); err != nil {
+					t.Fatal(err)
+				}
+				before := readFile(t, filepath.Join(chatStoreDir(e.home), sid+".json"))
+				c, err := e.s.appSpawn(sid, e.s.chatHarnessOf(stored.Model, stored.Harness), stored.Model, e.proj, "demo", thread)
+				if err == nil || c != nil || e.s.appLive(sid) != nil {
+					t.Fatalf("неподтверждённая политика принята: %+v %v", c, err)
+				}
+				want := "клиент не подтвердил workspace-write"
+				if mode == "unsupported-reviewer" {
+					want = "approvalsReviewer не поддерживается"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("причина потеряна: %v", err)
+				}
+				log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+				if strings.Contains(log, "turn ") || strings.Contains(log, "start ") && thread != "" {
+					t.Fatalf("ход или новая нить после отказа: %s", log)
+				}
+				if readFile(t, filepath.Join(chatStoreDir(e.home), sid+".json")) != before {
+					t.Fatal("сохранённый разговор изменился при отказе")
+				}
+			})
+		}
+	}
+}
+
+func TestAppChatPolicyIndependentOfBinding(t *testing.T) {
+	for _, binding := range []string{"", "XR-002", "XR-100"} {
+		for _, thread := range []string{"", "legacy-never"} {
+			t.Run(binding+"/"+thread, func(t *testing.T) {
+				e, _ := appEnv(t)
+				sid := "aspolicy-binding"
+				st := chatStore{Project: "demo", Task: binding, Model: "модель-codex", Harness: "codextest", Thread: thread, Protocol: "codex"}
+				if err := e.s.chatStoreWrite(sid, st); err != nil {
+					t.Fatal(err)
+				}
+				c, err := e.s.appSpawn(sid, e.s.chatHarnessOf(st.Model, st.Harness), st.Model, e.proj, "demo", thread)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer e.s.appDrop(sid, "конец теста")
+				log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+				for _, want := range []string{`"approvalPolicy": "on-request"`, `"approvalsReviewer": "auto_review"`, `"sandbox": "workspace-write"`} {
+					if !strings.Contains(log, want) {
+						t.Fatalf("политика зависит от привязки: %s", log)
+					}
+				}
+				if thread != "" && c.thread != thread {
+					t.Fatalf("нить изменена: %s", c.thread)
+				}
+				if c.automatic || strings.Contains(log, "DEVKIT_TASK_LOCK_FROM") {
+					t.Fatalf("выданы права владельца: %s", log)
+				}
+			})
+		}
 	}
 }
 

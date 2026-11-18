@@ -1,10 +1,10 @@
 {
   "version": 1,
   "id": "DK-1726",
-  "base_sha": "9bc8eaac5292e9ca7a646d2a5d433e91b4297920",
-  "head_sha": "fa1803ffada976a2a181d843a69971d7962c5583",
-  "code_hash": "456aefe09be4df741f30570074f75c2becfcf356af6aba7cc7b8f77cd7583305",
-  "task_hash": "9f34a8f59f5014b90a611420e31857b854a49736054b7b44a48a7ba33a2bf94e",
+  "base_sha": "d159eec329d952b7e54f954a7d8d055b45ddc1ac",
+  "head_sha": "06213f03ea15496c0b82c34fab4853a7b3bc0c24",
+  "code_hash": "69ce5d1de8649dce286852f65796775dd2d255e6eb5baab0ecda49db04f406e3",
+  "task_hash": "181e083599954062e3c1faab89512163b2bf6f34bda7b52458b51cce1079c7df",
   "sources": [
     {
       "name": "common-architecture",
@@ -39,20 +39,23 @@
   ],
   "architecture": {
     "goal": "Сохранить исходную задачу разговора после работы над препятствием и восстановить пострадавший разговор без повторной доставки.",
-    "decision": "Дашборд поверх общей свёртки реестра выбирает первый непустой заказ и последующие ручные изменения. API ставит эту задачу первой в Tasks, сохраняя рабочие задачи в Leads. Хронология заказов и ручных изменений сортируется устойчиво по Time внутри сессии. Существующий детектор квоты дополнен фактической строкой GLM1310; /status передаёт причину, production makeBusy показывает её вместо счётчика и возвращается к счётчику после busy.",
-    "boundaries": "internal/sessions владеет разбором журнала, Last и Works; registry.go задаёт политику основной задачи разговора. chats.go формирует проекцию API. Ручная привязка дописывает запись; чтение не меняет журнал. Доставка и нативный клиент не изменены. quotaRetryLine владеет проверкой строки терминала, quotaRetryWeekly не приписывает Monthly недельному окну. quotaWaitOf повторно использует существующий TTL-кеш под s.mu; /status выбирает подписку по корню транскрипта. Новых настроек, внешних записей, повторов и переключения модели нет.",
-    "alternative": "Переставить чип только в браузере проще по объёму, но API и sessionInfo продолжили бы возвращать соседнюю задачу. Менять sessions.Last глобально шире задачи и затрагивает учёт текущей работы других утилит. Для квоты можно было показать общую ошибку молчания, но реальный отказ провайдера доступен из существующего детектора; расширение этого механизма не требует новой службы или нового опроса клиента.",
-    "justification": "Неизменность исходной привязки до ручного выбора является пользовательским контрактом. Отдельная проекция разговора сохраняет существующий контракт учёта работы и формат журнала. Старые сессии без заказа используют прежнюю свёртку. Правка не является лечением отказа нативного клиента; операционное восстановление отдельно подтвердило одно принятие, ответ ограничен внешней квотой. Замечания 1/2 исправлены в 15fd7aea0/e4f157756 и проверены независимым прогоном на fa1803ffa; у Weekly/Monthly срок неизвестен, weekly-only сохраняет срок своей подписки. Mixed-приёмка оставляет реальный ответ и refresh открытыми до события снятия внешней квоты.",
+    "decision": "Дашборд выбирает первый непустой заказ по устойчивой хронологии Time, затем ручной выбор или полную отвязку как основную привязку разговора. Tasks ставит основную задачу первой и сохраняет историю касаний. Leads независимо от основной привязки вычисляется существующим headTasks(Last, suffix), строго как нативный владелец безадресного входа; taskHead использует Leads. Детектор GLM1310 и /status показывают причину квоты через существующий makeBusy.",
+    "boundaries": "internal/sessions владеет разбором журнала, Last и Off; registry.binds задаёт только основную привязку разговора. chats.go независимо вычисляет публичные Tasks и текущие Leads; taskHead и hooks/chat-in.py должны согласованно определять владельца входа. Исторические Works/касания не дают права владения. Quota parsing/status/UI остаются в существующих механизмах, без новых отправок или переключения модели.",
+    "alternative": "Можно было сохранить все исторические Leads для UI и отдельно дублировать ownership в taskHead. Это создало бы вторую семантику одного списка и лишнюю свёртку. История уже есть в Tasks, поэтому Leads возвращён к Last+неснятому дереву. Основная привязка отдельно нужна, чтобы побочная работа не меняла адрес разговора.",
+    "justification": "Пользовательский контракт основной задачи не требует отдавать её безадресные сообщения любой исторически связанной сессии. После полной сюиты выявлена и устранена регрессия расширения Leads. Безусловный headTasks(last,suffix) сохраняет согласие с native даже после полной отвязки, последующей работы и compact, когда основная привязка остаётся снятой. Старый TestTaskMessageRaisesDespiteNeighbourTouch сохранён; новые API/native пары проверяют точные ожидания независимо от основной привязки. Quota и mixed-приёмка прежние: реальный ответ и refresh остаются открытыми.",
     "result": "checked",
     "evidence": [
       "политика основной задачи | tools/dashboard/registry.go:205-228 | Parse сохраняет технические поля; последовательность All выбирает первый заказ, а рука/полная отвязка имеют последующий приоритет.",
-      "проекция и потребители | tools/dashboard/chats.go:1237-1290; tools/dashboard/sessions.go:3051; tools/dashboard/registry.go:449-460 | Tasks без дубля переносит origin вперёд; workTasks добавляет побочные Leads; sessionInfo и ручной выбор используют s.binds.",
       "достоверность и граница DoD | tools/dashboard/chat_test.go:3591; tools/dashboard/testdata/chat_sidework_browser.mjs; docs/tasks/DK-1726.md | API проверяет origin/manual/off/compact; production-композер подменяет только API и проверяет один /say, SID, текст, ключ, echo и draft. Это не доказательство принятия хода внешним клиентом.",
       "операционная проверка | /private/tmp/DK1726-recovery-verified.json; /private/tmp/dk1726-restart/result.json | Прочитан снимок same SID, model/harness, native/API exact1. Ответ отсутствует; провайдер вернул 429/1310. Живых действий ревьювер не выполнял.",
       "registry.go:208-209; registry_test.go:TestChatPrimaryUsesOrderTimeAcrossHomes | stable sort по Time исправляет произвольный порядок двух файлов; RED на a2cdf726c в /private/tmp/DK-1726-homes-regcheck.log.",
       "quotawait.go:quotaVendor1310Re/quotaRetryWeekly; chats.go:handleChatStatus; static/app.js:makeBusy | anchored vendor fixture, generic 429 и цитаты отвергаются, ambiguous Monthly не получает weekly reset. Подписка /status берётся по transcriptRoot=info.root.",
-      "Независимый прогон fa1803ffa: env GOWORK=off go test ./... -run TestChatKeepsOrderedTaskAfterSideWork|TestChatPrimaryUsesOrderTimeAcrossHomes|TestChatSideWorkComposer|TestQuota|TestSessionTask|TestRegistry|Test.*Bind|Test.*Lead|Test.*Off|TestLaunchSitesNameDir -count=1, tools/dashboard, PASS 5.946s.",
-      "/private/tmp/DK-1726-binding-regcheck.log; /private/tmp/DK-1726-binding-mutations.log; /private/tmp/DK-1726-quota-regcheck.log; /private/tmp/DK-1726-quota-mutations.log | RED/GREEN проверены; 4 binding и 5 quota мутаций KILLED конкретными assertion FAIL, не сборкой."
+      "Rebase: git diff fa1803ffa 1143899d6 -- registry.go chats.go quotawait.go static/app.js chat_test.go registry_test.go quotawait_test.go chatsideworkbrowser_test.go testdata/chat_sidework_browser.mjs testdata/quota_glm1310.txt пуст; изменения main до d159eec32 документационные. Рассмотрен полный source diff относительно d159eec32 и ownership-дельта e9f4f7a9b..cfb319da7.",
+      "tools/dashboard/chats.go:1281; chat.go:571; hooks/chat-in.py:owns_chat | Leads=headTasks(last,suffix) без workTasks expansion и без зависимости от primary bound. История остаётся в Tasks.",
+      "tools/dashboard/chat_test.go:TestTaskMessageRaisesDespiteNeighbourTouch (не изменён), TestChatPrimaryDoesNotClaimHistoricalTask (3 случая), TestChatLeadsMatchNativeAfterManualAndCompact (5 случаев) | legacy/order/tree и manual/off/work/compact проверены через настоящий HTTP, taskHead и реальный Python owns_chat с независимыми ожидаемыми наборами.",
+      "Независимый cfb319da7: env GOWORK=off go test ./... -run TestTaskMessage|TestChatPrimary|TestChatLeadsMatchNative|TestChatKeepsOrderedTaskAfterSideWork|TestChatSideWorkComposer|TestHeadTasksAnswersLikeTheHook|Test.*Bind|Test.*Lead|Test.*Off|TestQuota -count=1, tools/dashboard, PASS 8.134s. python3 -m unittest discover -s hooks -p chat_in*_test.py: 86 PASS 5.211s.",
+      "/private/tmp/DK-1726-ownership-regcheck.log | RED на e9f4f7a9b и GREEN на cfb319da7. /private/tmp/DK-1726-ownership-mutations.log: возврат expansion убит неизменённым TaskMessage тестом; возврат boundLead guard убит API/native случаями off+work и off+compact.",
+      "Текущие мутационные доказательства: binding manual/off/order (3), ownership expansion/guard (2), quota vendor/monthly/status/busy/UI (5). Старый leads-KILLED исключён: он доказывал ошибочное требование исторического ownership, найденное полной сюитой."
     ]
   },
   "rules": [
@@ -73,6 +76,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:68-89; chats.go:4912-4920; static/app.js:13194-13200",
           "observation": "Детекция внешнего отказа остаётся в quotawait.go; HTTP проекция в handleChatStatus, отображение в makeBusy. Нового несвязанного домена нет."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -93,6 +101,11 @@
           "object": "sessions и harnessOfRoot",
           "location": "registry.go:207-209; sessions.go:125-137; chats.go:handleChatStatus; quotawait_test.go:TestQuotaWeeklyStatusUsesTranscriptHarness",
           "observation": "Все вызовы uses sessions Parse/All/Works и quotaWaitOf/quotaResetOf соблюдают контракт. Для harnessOfRoot передан info.root, а не каталог проекта."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -113,6 +126,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:68-89,120-174; chats.go:4912",
           "observation": "Для квоты повторно используется единственный quotaRetryLine/quotaWaitOf и quotaWaitNote; новый частный парсер или снимок не создаётся."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -126,7 +144,7 @@
       "evidence": [
         {
           "object": "слои и зависимости",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых интерфейсов, зависимостей, настроек и слоёв нет; используется действующий журнал."
         }
       ]
@@ -148,6 +166,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:quotaWaitNote; chats.go:handleChatStatus; README.md:5949",
           "observation": "Новый optional quota является причиной ожидания; busy=false при подтверждённом лимите, а неизвестный смешанный срок явно неизвестен. Изменения только читают состояние."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -157,7 +180,7 @@
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Сервер /status отдаёт установленную причину и busy=false; браузер не угадывает лимит. Общий quotaRetryLine покрывает список и /say тем же правилом.",
+      "reason": "Сервер /status отдаёт установленную причину и busy=false; браузер не угадывает лимит. Общий quotaRetryLine покрывает список и /say тем же правилом. Замечание 4 исправлено: ownership отделён от основной привязки, совпадает с нативным подхватом на обоих входах; старый TaskMessage сценарий проверен без изменений.",
       "evidence": [
         {
           "object": "основная привязка",
@@ -168,6 +191,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:quotaRetryLine; chats.go:1377,3550,4912; static/app.js:13194",
           "observation": "Сервер /status отдаёт установленную причину и busy=false; браузер не угадывает лимит. Общий quotaRetryLine покрывает список и /say тем же правилом."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -177,12 +205,12 @@
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Совместимость рассмотрена по всем изменённым контрактам: формат реестра и API прежний, origin устойчив к двум домам; optional quota добавлен в /status, weekly-only reset сохраняется.",
+      "reason": "Совместимость рассмотрена по всем изменённым контрактам: формат реестра и API прежний, origin устойчив к двум домам; optional quota добавлен в /status, weekly-only reset сохраняется. Замечание 4 исправлено: ownership отделён от основной привязки, совпадает с нативным подхватом на обоих входах; старый TaskMessage сценарий проверен без изменений.",
       "evidence": [
         {
           "object": "сохранённые журналы и JSON",
           "location": "tools/dashboard/registry.go:207-228; chats.go:1246-1290",
-          "observation": "Схема журнала и поля API прежние; сессии без заказа остаются на Parse, порядок Tasks исправлен без потери касаний и side Leads."
+          "observation": "Схема журнала и поля API прежние; сессии без заказа остаются на Parse, порядок Tasks исправлен без потери касаний; текущие Leads сохраняют native Last+tree."
         },
         {
           "object": "порядок нескольких журналов",
@@ -193,6 +221,11 @@
           "object": "origin/Tasks/Leads/status.quota",
           "location": "registry.go:208-229; chats.go:1246-1290,4848-4920; quotawait_test.go:TestQuotaWeeklyStatusUsesTranscriptHarness",
           "observation": "Совместимость рассмотрена по всем изменённым контрактам: формат реестра и API прежний, origin устойчив к двум домам; optional quota добавлен в /status, weekly-only reset сохраняется."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -218,6 +251,11 @@
           "object": "журнал/терминал/снимок",
           "location": "registry.go:208-229; quotawait.go:120-174; chats.go:handleChatStatus",
           "observation": "Источники истины разделены: журнал даёт привязку и хронологию, текущий терминал даёт причину отказа, снимок своей подписки даёт только известный weekly reset."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -258,6 +296,11 @@
           "object": "quota/status и общая политика",
           "location": "registry.go:208-209; quotawait.go:120-140",
           "observation": "Сортируются локальные slices All; quotaSeen является существующим кешем под s.mu, доступ и TTL не менялись."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -278,6 +321,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:68-81; quotawait_test.go:TestQuotaVendor1310",
           "observation": "Строка TUI проверяется anchored regexp с кодом 429/1310, полным признаком retry и номером попытки. Цитаты, generic 429 и неполная строка отвергаются независимыми negative tests."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -298,6 +346,11 @@
           "object": "quota/status и общая политика",
           "location": "chats.go:handleChatStatus; static/app.js:13194; docs/tasks/DK-1726.md:Приёмка",
           "observation": "Реальный ответ отделён от принятия ввода. Quota UI показывает внешнюю причину вместо имитации работы; tests не засчитывают живой DoD."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -391,7 +444,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "SQL/ORM и изменения нескольких данных отсутствуют; новый путь только читает единый буфер журнала."
         }
       ]
@@ -406,7 +459,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Нет запросов БД или ORM на элемент; два линейных прохода по уже прочитанному буферу."
         }
       ]
@@ -428,6 +481,11 @@
           "object": "quota/status и общая политика",
           "location": "quotawait.go:quotaRetryWeekly; quotawait_test.go:TestQuotaVendor1310,TestQuotaWeeklyStatusUsesTranscriptHarness",
           "observation": "Внешняя строка разбирается отдельно от API/UI; политику допустимого weekly reset можно проверить на fixture без внешней учётки."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -441,7 +499,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Действующая проекция разговоров не помечена legacy/deprecated и используется списком и адресным API."
         }
       ]
@@ -456,7 +514,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Изменение не добавляет поведение deprecated-механизму; сохраняются действующие sessions и chat API."
         }
       ]
@@ -471,7 +529,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -486,7 +544,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -516,7 +574,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -531,7 +589,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -546,7 +604,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -561,7 +619,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Новых или изменённых параметров конфигурации нет: выбор origin является обязательной политикой, управляется записями заказа/руки/снятия, а не опцией."
         }
       ]
@@ -583,6 +641,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "quotaVendor1310Re и transcriptRoot называют формат отказа и корень транскрипта; имена не расширяют смысл существующих weekly/Quota."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -603,6 +666,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "quotaRetryLine/Weekly возвращают классификацию без записи; /status и makeBusy соответственно показывают состояние, не выполняют отправку."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -623,6 +691,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "Quota/quota и quotaWaitNote использованы одинаково в списке, /say и /status; weekly исключает ambiguous Monthly."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -636,7 +709,7 @@
       "evidence": [
         {
           "object": "состав изменения",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Не добавлены длительности, размеры, суммы или значения с неоднозначными единицами."
         }
       ]
@@ -671,7 +744,7 @@
       "evidence": [
         {
           "object": "параметры",
-          "location": "git diff 9bc8eaac5..a2cdf726c -- tools/dashboard",
+          "location": "git diff d159eec32..cfb319da7 -- tools/dashboard",
           "observation": "Новых параметров функций нет, существующие data/records/task/tasks участвуют в результате."
         },
         {
@@ -698,6 +771,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "quota поля читаются makeBusy; weekly, line, retry и transcriptRoot имеют потребителей. Новых отладочных результатов в API нет."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -718,6 +796,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "Существующий status и технические поля сохранены; поле busy изменяется только при установленной квоте; старый regex и weekly-only поддержаны."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -738,6 +821,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "Парсер строки, выбор срока, HTTP-ответ и отображение разделены существующими функциями; новой смешанной операции нет."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -778,6 +866,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "В makeBusy причина квоты имеет явную раннюю ветку; после обычного busy старый путь lift/draw возвращает счётчик, проверено browser regression."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -858,6 +951,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "Комментарий quotaRetryLine по-прежнему объясняет извлечение одной строки; comment weekly соответствует исключению Monthly. Лишних комментариев не добавлено."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -878,6 +976,11 @@
           "object": "quotaRetryLine/Weekly, handleChatStatus, makeBusy и тесты",
           "location": "tools/dashboard/quotawait.go:68-89; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:13194; tools/dashboard/quotawait_test.go:207-270; tools/dashboard/README.md:5949",
           "observation": "README содержит форму внешней строки, ограничение обрезанного TUI, unknown Monthly, источник weekly reset и возврат счётчика."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -898,6 +1001,11 @@
           "object": "достоверность новых тестов",
           "location": "git show --stat d4739551b 15fd7aea0 e4f157756 fa1803ffa",
           "observation": "Source-коммиты d4739551b/15fd7aea0/e4f157756/fa1803ffa содержат соответствующие API/browser/registry/quota тесты."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -907,17 +1015,17 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Regcheck RED/GREEN подтверждён для binding (9bc8eaac5 -> a2cdf726c), homes (a2 -> sort), quota (15fd7 -> fix). Артефакты прочитаны; финальный source независимо GREEN.",
+      "reason": "Regcheck RED/GREEN подтверждён для binding (9bc8eaac5 -> a2cdf726c), homes (a2 -> sort), quota (15fd7 -> fix). Артефакты прочитаны; финальный source независимо GREEN. Ownership regcheck подтверждает RED e9f4f7a9b/GREEN cfb319da7; старый TaskMessage тест не ослаблен.",
       "evidence": [
-        {
-          "object": "RED/GREEN",
-          "location": "docs/tasks/DK-1726.md:70-73",
-          "observation": "Ожидается проверка точных артефактов regcheck автора."
-        },
         {
           "object": "достоверность новых тестов",
           "location": "/private/tmp/DK-1726-binding-regcheck.log; /private/tmp/DK-1726-homes-regcheck.log; /private/tmp/DK-1726-quota-regcheck.log",
           "observation": "Regcheck RED/GREEN подтверждён для binding (9bc8eaac5 -> a2cdf726c), homes (a2 -> sort), quota (15fd7 -> fix). Артефакты прочитаны; финальный source независимо GREEN."
+        },
+        {
+          "object": "regcheck ownership",
+          "location": "/private/tmp/DK-1726-ownership-regcheck.log; tools/dashboard/chat_test.go:3397-3416",
+          "observation": "RED на прежней версии, GREEN после исправления; unchanged TestTaskMessageRaisesDespiteNeighbourTouch отдельно ловит возврат expansion."
         }
       ]
     },
@@ -938,6 +1046,11 @@
           "object": "достоверность новых тестов",
           "location": "quotawait_test.go:207-270; testdata/chat_sidework_browser.mjs:quota",
           "observation": "Логика vendor/weekly покрыта прямыми тестами; список и /status API-интеграцией с реальным busy fixture; production browser проверяет причину и возврат к busy."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -958,6 +1071,11 @@
           "object": "достоверность новых тестов",
           "location": "docs/tasks/DK-1726.md:Сценарий проверки; quotawait_test.go; chatsideworkbrowser_test.go",
           "observation": "Отдельно доступны чистые regex-тесты, HTTP-интеграция и browser test по -run; браузер подменяет только API и не проверяет принятие провайдером."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -978,6 +1096,11 @@
           "object": "достоверность новых тестов",
           "location": "testdata/quota_glm1310.txt; quotawait_test.go:writePeerTmux; testdata/chat_sidework_browser.mjs",
           "observation": "Vendor fixture снят с фактического TUI; ожидаемые unknown/15:00/busy=false заданы прямо. Исходный peer усилен busy, поэтому снятие busy=false обнаруживается. Браузер исполняет production makeBusy."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -987,17 +1110,12 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Прочитаны 4 binding и 5 quota mutation логи: manual/off/order/leads и vendor/monthly/status/busy/UI дают конкретные assertions FAIL; все KILLED, не ошибки сборки.",
+      "reason": "Текущие доказательства содержат 3 binding, 2 ownership и 5 quota мутаций KILLED assertion-падениями. Прежний historical-leads мутант исключён как закреплявший ошибочное требование.",
       "evidence": [
         {
-          "object": "мутации",
-          "location": "docs/tasks/DK-1726.md:70-73",
-          "observation": "Ожидается проверка точных артефактов четырёх мутаций автора."
-        },
-        {
-          "object": "достоверность новых тестов",
-          "location": "/private/tmp/DK-1726-binding-mutations.log; /private/tmp/DK-1726-quota-mutations.log",
-          "observation": "Прочитаны 4 binding и 5 quota mutation логи: manual/off/order/leads и vendor/monthly/status/busy/UI дают конкретные assertions FAIL; все KILLED, не ошибки сборки."
+          "object": "актуальные смысловые мутации",
+          "location": "/private/tmp/DK-1726-binding-mutations.log (только manual/off/order); /private/tmp/DK-1726-ownership-mutations.log; /private/tmp/DK-1726-quota-mutations.log",
+          "observation": "Текущие доказательства содержат 3 binding, 2 ownership и 5 quota мутаций KILLED assertion-падениями. Прежний historical-leads мутант исключён как закреплявший ошибочное требование."
         }
       ]
     },
@@ -1018,6 +1136,11 @@
           "object": "достоверность новых тестов",
           "location": "quotawait_test.go:TestQuotaWeeklyStatusUsesTranscriptHarness; testdata/chat_sidework_browser.mjs",
           "observation": "Weekly reset проверен с фиксированным e.s.now; browser ждёт микрозадачи/условие без sleep; политика order uses fixture Time, quota cache clocks не меняются."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1058,6 +1181,11 @@
           "object": "достоверность новых тестов",
           "location": "quotawait_test.go:TestQuotaVendor1310Status,TestQuotaWeeklyStatusUsesTranscriptHarness; say_test.go:termSayEnv",
           "observation": "Новые status-тесты используют termSayEnv с временными каталогами и fake tmux; host process PID служит только live fixture, отправок в него нет. Изоляция suites прежняя."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1093,6 +1221,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1128,6 +1261,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1148,6 +1286,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1168,6 +1311,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1188,6 +1336,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1208,6 +1361,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1243,6 +1401,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1256,7 +1419,7 @@
       "evidence": [
         {
           "object": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой",
-          "location": "git diff 9bc8eaac5..a2cdf726c; tools/dashboard/sessions.go:parseReplies",
+          "location": "git diff d159eec32..cfb319da7; tools/dashboard/sessions.go:parseReplies",
           "observation": "Изменение не разбирает и не рисует tool_use/текст реплик; parseReplies и представление инструментов остаются прежними."
         }
       ]
@@ -1278,6 +1441,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1351,7 +1519,7 @@
       "evidence": [
         {
           "object": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой",
-          "location": "tools/dashboard/chatsideworkbrowser_test.go:22; git diff 9bc8eaac5..a2cdf726c",
+          "location": "tools/dashboard/chatsideworkbrowser_test.go:22; git diff d159eec32..cfb319da7",
           "observation": "Правка не поднимает производственные чаты, не выбирает profile_dir и не меняет launchEnv; единственный новый процесс является браузером тестового стенда."
         }
       ]
@@ -1388,6 +1556,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1453,6 +1626,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1473,6 +1651,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1501,7 +1684,7 @@
       "evidence": [
         {
           "object": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка",
-          "location": "git diff 9bc8eaac5..a2cdf726c; docs/tasks/DK-1726.md",
+          "location": "git diff d159eec32..cfb319da7; docs/tasks/DK-1726.md",
           "observation": "Ветка не меняет taskhead.Raise, владение PID, замки задач и состояние остановки; операционный repair проведён диспетчером через имеющиеся команды."
         }
       ]
@@ -1516,7 +1699,7 @@
       "evidence": [
         {
           "object": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.",
-          "location": "git diff 9bc8eaac5..a2cdf726c; docs/tasks/DK-1726.md",
+          "location": "git diff d159eec32..cfb319da7; docs/tasks/DK-1726.md",
           "observation": "Автоматический recovery.py и лимиты его запуска не изменены. Операционная сверка записана отдельно и не выдаётся за новый автоматический путь."
         }
       ]
@@ -1568,6 +1751,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1611,7 +1799,7 @@
       "evidence": [
         {
           "object": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт",
-          "location": "git diff 9bc8eaac5..a2cdf726c",
+          "location": "git diff d159eec32..cfb319da7",
           "observation": "Нового hook-рубежа и сообщений его stderr нет."
         }
       ]
@@ -1633,6 +1821,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1653,6 +1846,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1673,6 +1871,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1682,7 +1885,7 @@
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Regcheck артефакты для binding/homes/quota прочитаны, новые тесты RED на старом и GREEN на исправлении; финальный fa1803ffa независимо GREEN.",
+      "reason": "Regcheck артефакты для binding/homes/quota прочитаны, новые тесты RED на старом и GREEN на исправлении; финальный cfb319da7 независимо GREEN.",
       "evidence": [
         {
           "object": "- Тест бага падает на старом коде и проходит на исправленном. Прогон",
@@ -1692,12 +1895,17 @@
         {
           "object": "regcheck",
           "location": "/private/tmp/DK-1726-binding-regcheck.log; /private/tmp/DK-1726-homes-regcheck.log; /private/tmp/DK-1726-quota-regcheck.log",
-          "observation": "Regcheck артефакты для binding/homes/quota прочитаны, новые тесты RED на старом и GREEN на исправлении; финальный fa1803ffa независимо GREEN."
+          "observation": "Regcheck артефакты для binding/homes/quota прочитаны, новые тесты RED на старом и GREEN на исправлении; финальный cfb319da7 независимо GREEN."
         },
         {
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1718,6 +1926,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1738,6 +1951,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1773,6 +1991,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     },
@@ -1793,6 +2016,11 @@
           "object": "quota-дельта и новые fixture",
           "location": "tools/dashboard/quotawait.go; tools/dashboard/chats.go:handleChatStatus; tools/dashboard/static/app.js:makeBusy; tools/dashboard/quotawait_test.go; tools/dashboard/testdata/quota_glm1310.txt",
           "observation": "Проверено расширение существующей семьи: сервер считает причину, UI рисует существующий блок, DTO обратно совместим; новых маршрутов, общей памяти, производственных запусков и сетевых источников нет. Новые тесты рядом с модулем, TUI fixture в testdata, временные среды termSayEnv, production UI запускается из app.js."
+        },
+        {
+          "object": "основная привязка, исторические Tasks и текущие Leads/владелец входа",
+          "location": "tools/dashboard/chats.go:1281; tools/dashboard/chat.go:taskHead; hooks/chat-in.py:owns_chat; tools/dashboard/chat_test.go:TestChatPrimaryDoesNotClaimHistoricalTask,TestChatLeadsMatchNativeAfterManualAndCompact",
+          "observation": "Повторно проверен полный путь HTTP -> Leads -> taskHead -> native owns_chat. Текущие Leads вычисляются только Last+неснятым деревом и независимо от primary bound, поэтому legacy/side history не подавляют запуск новой головы, а off+work/compact не теряют реального владельца. История остаётся Tasks. Два новых теста имеют 8 независимых ожидаемых случаев; вся TaskMessage и 86 native chat_in тестов прошли на cfb319da7."
         }
       ]
     }

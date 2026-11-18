@@ -232,7 +232,7 @@ func TestQuotaVendor1310Status(t *testing.T) {
 	}
 	sid := "aaaa1310-1111-4111-8111-111111111111"
 	e, c, _ := termSayEnv(t, sid, string(raw))
-	writePeer(t, e.home, sid, os.Getpid())
+	writePeerTmux(t, e.home, sid, "chat-9", "busy")
 	writeQuota(t, e.home, "перваяtest", "taken = 2026-09-07T11:00\nweek_all = 100% сброс 2026-09-07T15:00\n")
 	list := chatsOf(t, e, c)
 	if len(list) != 1 || !strings.Contains(list[0].Quota, quotaWaitWord) {
@@ -254,7 +254,7 @@ func TestQuotaVendor1310Status(t *testing.T) {
 func TestQuotaWeeklyStatusUsesTranscriptHarness(t *testing.T) {
 	sid := "aaaa1311-1111-4111-8111-111111111111"
 	e, c, _ := termSayEnv(t, sid, quotaRetryPane)
-	writePeer(t, e.home, sid, os.Getpid())
+	writePeerTmux(t, e.home, sid, "chat-9", "busy")
 	e.s.now = func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.Local) }
 	writeQuota(t, e.home, "перваяtest", "taken = 2026-09-07T11:00\nweek_all = 100% сброс 2026-09-07T15:00\n")
 	r := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/status", "")

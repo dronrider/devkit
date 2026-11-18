@@ -3595,7 +3595,7 @@ func TestChatKeepsOrderedTaskAfterSideWork(t *testing.T) {
 	writeBinds(t, e.home,
 		bindRecord(e.home, "2026-11-17T20:00:00", sid, "XR-4", bindOrder),
 		bindRecord(e.home, "2026-11-17T21:00:00", sid, "XR-5", "работа"))
-	check := func(want string) {
+	check := func(want, lead string) {
 		t.Helper()
 		for _, ch := range chatsOf(t, e, c) {
 			if ch.ID != sid {
@@ -3604,23 +3604,23 @@ func TestChatKeepsOrderedTaskAfterSideWork(t *testing.T) {
 			if len(ch.Tasks) != 2 || ch.Tasks[0] != want {
 				t.Fatalf("основная задача/касания: %+v", ch.Tasks)
 			}
-			if !hasTask(ch.Leads, "XR-5") {
-				t.Fatalf("побочная работа потеряна: %+v", ch.Leads)
+			if len(ch.Leads) != 1 || ch.Leads[0] != lead {
+				t.Fatalf("текущий владелец не совпал с реестром: %+v", ch.Leads)
 			}
 			return
 		}
 		t.Fatal("нет разговора")
 	}
-	check("XR-4")
+	check("XR-4", "XR-5")
 	path := e.s.bindsPath()
 	if err := appendBind(path, bindRecord(e.home, "2026-11-17T22:00:00", sid, "XR-5", bindHand)); err != nil {
 		t.Fatal(err)
 	}
-	check("XR-5")
+	check("XR-5", "XR-5")
 	if err := appendBind(path, bindRecord(e.home, "2026-11-17T23:00:00", sid, "XR-4", bindOrder)); err != nil {
 		t.Fatal(err)
 	}
-	check("XR-5")
+	check("XR-5", "XR-4")
 	if err := appendBind(path, bindRecord(e.home, "2026-11-17T23:10:00", sid, "-", bindOff)); err != nil {
 		t.Fatal(err)
 	}
@@ -3632,5 +3632,101 @@ func TestChatKeepsOrderedTaskAfterSideWork(t *testing.T) {
 	}
 	if b := e.s.binds()[sid]; b.Task != "" || b.Source != bindOff {
 		t.Fatalf("compact отменил отвязку: %+v", b)
+	}
+}
+
+func TestChatPrimaryDoesNotClaimHistoricalTask(t *testing.T) {
+	for _, tc := range []struct {
+		name, suffix      string
+		order, ownsOrigin bool
+		primary           string
+	}{
+		{"старый журнал без заказа", "", false, false, "XR-4"},
+		{"заказ без дерева", "", true, false, "XR-9"},
+		{"заказ в дереве исходной задачи", "-xr-9", true, true, "XR-9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, c, _ := replyEnv(t)
+			sid := "aaaa1727-1111-4111-8111-111111111111"
+			if tc.suffix != "" {
+				sideTree(t, e.proj, strings.TrimPrefix(tc.suffix, "-"))
+			}
+			writeSession(t, e.home, e.proj, tc.suffix, sid, plainTalk, time.Now())
+			source := "работа"
+			if tc.order {
+				source = bindOrder
+			}
+			writeBinds(t, e.home, bindRecord(e.home, "2026-11-17T20:00:00", sid, "XR-9", source), bindRecord(e.home, "2026-11-17T21:00:00", sid, "XR-4", "работа"))
+			found := false
+			for _, entry := range chatsOf(t, e, c) {
+				if entry.ID != sid {
+					continue
+				}
+				found = true
+				if len(entry.Tasks) != 2 || entry.Tasks[0] != tc.primary || !hasTask(entry.Tasks, "XR-9") || !hasTask(entry.Tasks, "XR-4") {
+					t.Fatalf("основная задача и история: %+v", entry.Tasks)
+				}
+				if !hasTask(entry.Leads, "XR-4") || hasTask(entry.Leads, "XR-9") != tc.ownsOrigin {
+					t.Fatalf("ownership не совпал с последней работой и деревом: %+v", entry.Leads)
+				}
+			}
+			if !found {
+				t.Fatal("нет разговора")
+			}
+			if owns := e.s.taskHead(e.proj, "XR-9") != ""; owns != tc.ownsOrigin {
+				t.Fatalf("taskHead ошибся в хозяине исходной задачи: %v", owns)
+			}
+			if e.s.taskHead(e.proj, "XR-4") == "" {
+				t.Fatal("владелец текущей побочной задачи потерян")
+			}
+		})
+	}
+}
+
+func TestChatLeadsMatchNativeAfterManualAndCompact(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events [][2]string
+		want   []string
+	}{
+		{"после полной отвязки работа по соседней", [][2]string{{bindOrder, "XR-4"}, {bindOff, "-"}, {"работа", "XR-5"}}, []string{"XR-5"}},
+		{"ручной выбор затем compact", [][2]string{{bindOrder, "XR-4"}, {bindHand, "XR-9"}, {bindOrder, "XR-4"}}, []string{"XR-4"}},
+		{"побочная работа затем compact", [][2]string{{bindOrder, "XR-4"}, {"работа", "XR-5"}, {bindOrder, "XR-4"}}, []string{"XR-4"}},
+		{"полная отвязка затем compact", [][2]string{{bindOrder, "XR-4"}, {bindOff, "-"}, {bindOrder, "XR-4"}}, []string{"XR-4"}},
+		{"полная отвязка", [][2]string{{bindOrder, "XR-4"}, {bindOff, "-"}}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, c, _ := replyEnv(t)
+			sid := "bbbb1727-1111-4111-8111-111111111111"
+			writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+			var records string
+			for i, event := range tc.events {
+				records += bindRecord(e.home, fmt.Sprintf("2026-11-17T20:0%d:00", i), sid, event[1], event[0])
+			}
+			writeBinds(t, e.home, records)
+			var leads []string
+			found := false
+			for _, entry := range chatsOf(t, e, c) {
+				if entry.ID == sid {
+					leads = entry.Leads
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("нет разговора")
+			}
+			for _, task := range []string{"XR-4", "XR-5", "XR-9"} {
+				want := hasTask(tc.want, task)
+				if native := hookOwnsChat(t, e.home, sid, "", task); native != want {
+					t.Fatalf("ожидание не совпало с native %s: %v != %v", task, native, want)
+				}
+				if got := hasTask(leads, task); got != want {
+					t.Fatalf("API ownership %s: %v != %v (leads %v)", task, got, want, leads)
+				}
+				if got := e.s.taskHead(e.proj, task) != ""; got != want {
+					t.Fatalf("taskHead %s: %v != %v", task, got, want)
+				}
+			}
+		})
 	}
 }

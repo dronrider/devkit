@@ -24,9 +24,9 @@ python3 - "$dash_home/.devkit/dashboard.local" "$project" "$port" <<'PYCONFIG'
 import pathlib, secrets, sys
 pathlib.Path(sys.argv[1]).write_text("root = " + sys.argv[2] + "\naddr = 127.0.0.1\nport = " + sys.argv[3] + "\ntoken = " + secrets.token_urlsafe(32) + "\ncatchup_interval = 24h\n")
 PYCONFIG
-git init -q --separate-git-dir "$suite/common.git" "$project"
+git init -q "$project"
 taskctl -C "$project" init --prefix ZZ --here
-# Общий git-каталог и outside находятся за границей проекта.
+# Песочница защищает .git от записи, outside находится за границей проекта.
 cat <<EOF
 Живой сценарий использует установленный dashboard и настоящий профиль Codex.
 Конфиг отдельного экземпляра создан в $dash_home/.devkit/dashboard.local.
@@ -44,7 +44,7 @@ DEVKIT_DASH_HOME='$dash_home' HOME='$dash_home' DEVKIT_HOME='$kit' '$artifact' s
 Выполни taskctl -C $project list и taskctl -C $project draft list.
 Сохрани один черновик: taskctl -C $project draft --prio low 'DK1735 live probe'.
 Веди план agentctl plan с --sid из DEVKIT_CHAT_SESSION_ID и --label DK1735-live.
-Если служебный замок $suite/common.git/devkit или план за пределами
+Если служебный замок $project/.git/devkit или план за пределами
 песочницы недоступны, запроси require_escalated с точным назначением команды.
 Одобрение оставь штатной автоматической проверке. Не меняй разрешения файлов,
 не расширяй writable roots, не делай push и не запускай общий конвейер задачи.
@@ -74,5 +74,5 @@ if test -e "$outside/ordinary-write"; then
     exit 1
 fi
 taskctl -C "$project" draft list
-printf 'Синтетический проект: %s\nОбщий git-каталог: %s\n' "$project" "$suite/common.git"
+printf 'Синтетический проект: %s\nОбщий git-каталог: %s\n' "$project" "$project/.git"
 printf '%s\n' 'Файл внешней пробы отсутствует. Одобрение/политику/историю сверяют по ленте.'

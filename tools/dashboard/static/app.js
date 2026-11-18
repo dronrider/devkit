@@ -10169,23 +10169,28 @@ async function archiveChat(project, sid, on) {
 // Выбор модели хранится парой «модель+подписка»: одно имя у двух подписок
 // ничего не выбирает, и квота едет с именем от списка до подъёма (DK-1281).
 // Прежняя запись была голым именем, и она читается как выбор без подписки.
-function chatModelPref() {
+function chatModelPref(models) {
   let raw = "";
   try {
     raw = localStorage.getItem(CHAT_MODEL_KEY);
   } catch (err) {
     raw = "";
   }
-  if (!raw) return { model: "opus", harness: "" };
+  let pick = { model: raw || "opus", harness: "" };
   try {
     const v = JSON.parse(raw);
     if (v && typeof v.model === "string") {
-      return { model: v.model, harness: typeof v.harness === "string" ? v.harness : "" };
+      pick = { model: v.model, harness: typeof v.harness === "string" ? v.harness : "" };
     }
   } catch (err) {
     // голое имя из прежней записи: читается ниже как выбор без подписки
   }
-  return { model: raw, harness: "" };
+  if (models && models.length) {
+    const available = models.find((m) => m.model === pick.model && (!pick.harness || m.harness === pick.harness)) ||
+      models.find((m) => m.default) || models[0];
+    return { model: available.model, harness: available.harness || "" };
+  }
+  return pick;
 }
 
 function chatModelSet(model, harness) {
@@ -11201,7 +11206,7 @@ function modelPick(project, st) {
   // харнесов, как прежде.
   const cur = st.entry && st.entry.model
     ? { model: st.entry.model, harness: st.entry.pickHarness || "" }
-    : chatModelPref();
+    : chatModelPref(st.models);
   const isLive = Boolean(st.entry && st.entry.state === "live");
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
@@ -11226,7 +11231,7 @@ function modelPick(project, st) {
     // про одну квоту, и человек снова гадает, чем платится разговор
     // (замечание 1 ревью DK-1281).
     if (!pick.harness && opts.some((m) => m.model === pick.model)) continue;
-    opts.unshift({ model: pick.model, tier: "", harness: pick.harness || "" });
+    opts.unshift({ model: pick.model, tier: "", harness: pick.harness || "", disabled: true });
   }
   // Выбор без подписки ложится на первую строку своего имени: владелец по
   // порядку харнессов у безымянного подъёма и у этой строки один.
@@ -11241,6 +11246,7 @@ function modelPick(project, st) {
     // одного value на различие не хватает.
     o.dataset.model = m.model;
     o.dataset.harness = m.harness || "";
+    o.disabled = Boolean(m.disabled);
     if (m.tier) o.title = m.tier + ", " + m.harness;
     if (i === chosen) o.selected = true;
     model.append(o);
@@ -11324,7 +11330,7 @@ function modelPick(project, st) {
   // пуска, и выбирает разговор ровно то же меню. Строка называет подписку с
   // моделью и ярусом, ползунок глубину на один запуск.
   const pickMenu = runPickBody(menu, {
-    ladder: opts,
+    ladder: opts.filter((m) => !m.disabled),
     now: opts.find((m) => same(m, shown)) || null,
     onModel: (m) => applyPick({ model: m.model, harness: m.harness || "" }),
     getEffort: () => chatEffortOf(project, armKey),
@@ -11337,7 +11343,7 @@ function modelPick(project, st) {
     // Запертый список это текст, а не действие: у чужого окна менять отсюда
     // нечего, и молча писать выбор в память диалога значило бы обещать
     // смену, которой не будет.
-    if (model.disabled) return;
+    if (model.disabled || model.selectedOptions[0]?.disabled) return;
     const sel = model.selectedOptions[0];
     applyPick({
       model: sel && sel.dataset.model ? sel.dataset.model : model.value,
@@ -13020,7 +13026,12 @@ function chatSayFocusFresh(st) {
 // человек не мог ни увидеть его в списке, ни завести рядом второй, ни
 // набрать в них разное (жалоба пользователя).
 async function chatBlankMake(project, task) {
-  const pick = chatModelPref();
+  const listed = await api(chatsURL(project));
+  if (!listed.ok) {
+    sayResult(listed.body.error || "список моделей не прочитался", true);
+    return "";
+  }
+  const pick = chatModelPref(listed.body.models);
   const r = await api(chatsURL(project) + "/blank",
     { method: "POST", body: { id: task || "", model: pick.model, harness: pick.harness } });
   if (!r.ok || !r.body.id) {
@@ -14972,7 +14983,7 @@ function chatPanel(project, st) {
 
   const post = (text, sel, withClips, key, took, wireHint, scenario, proposal, selection, launchHint) => {
     const launch = launchHint || (way.kind === "new" ? {
-      ...(st.entry && st.entry.model ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref()),
+      ...(st.entry && st.entry.model ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(st.models)),
       effort: chatEffortOf(project, st.task || st.addr), chat: st.blank || "", id: st.task || ""
     } : null);
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать

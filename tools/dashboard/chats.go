@@ -19,6 +19,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/modelcatalog"
 	"github.com/dronrider/devkit/internal/sessions"
 )
 
@@ -69,6 +70,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 	home := map[string]map[string]bool{}
 	for _, h := range view.Harnesses {
 		for _, m := range h.Models {
+			m.Model = modelcatalog.Current(m.Model)
 			if m.Via == "" {
 				if home[m.Model] == nil {
 					home[m.Model] = map[string]bool{}
@@ -81,6 +83,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 	for _, h := range view.Harnesses {
 		seen := map[string]bool{}
 		for _, m := range h.Models {
+			m.Model = modelcatalog.Current(m.Model)
 			if seen[m.Model] {
 				continue
 			}
@@ -96,6 +99,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 		// лестнице, и в списке чата, второй строки не даёт. Честный повтор у
 		// двух подписок остаётся: это разные квоты (DK-1177).
 		for _, model := range h.Chat {
+			model = modelcatalog.Current(model)
 			if seen[model] {
 				continue
 			}
@@ -138,6 +142,7 @@ func (s *server) chatModelNote() string {
 // чат всё равно поднимается обвязкой agentctl exec, а не голым клиентом
 // (DK-1271).
 func (s *server) chatHarnessOf(model, harness string) *Harness {
+	model = modelcatalog.Current(model)
 	view := s.harnesses()
 	if harness != "" {
 		for i := range view.Harnesses {
@@ -145,7 +150,7 @@ func (s *server) chatHarnessOf(model, harness string) *Harness {
 				continue
 			}
 			for _, m := range view.Harnesses[i].Models {
-				if m.Model == model {
+				if modelcatalog.Current(m.Model) == model {
 					return &view.Harnesses[i]
 				}
 			}
@@ -158,7 +163,7 @@ func (s *server) chatHarnessOf(model, harness string) *Harness {
 	for i := range view.Harnesses {
 		h := &view.Harnesses[i]
 		for _, m := range h.Models {
-			if m.Model != model {
+			if modelcatalog.Current(m.Model) != model {
 				continue
 			}
 			if m.Via == "" {
@@ -968,6 +973,9 @@ func chatModelName(model, harness string) string {
 // поднять разговор подпиской-владельцем значило бы отправить его на чужую квоту
 // (DK-1281), честнее отказать и дождаться свежего списка.
 func (s *server) chatPairKnown(model, harness string) bool {
+	if modelcatalog.Current(model) != model {
+		return false
+	}
 	if harness == "" {
 		return true
 	}
@@ -977,7 +985,7 @@ func (s *server) chatPairKnown(model, harness string) bool {
 			continue
 		}
 		for _, m := range view.Harnesses[i].Models {
-			if m.Model == model {
+			if modelcatalog.Current(m.Model) == model {
 				return true
 			}
 		}
@@ -986,6 +994,21 @@ func (s *server) chatPairKnown(model, harness string) bool {
 		}
 	}
 	return false
+}
+
+func chatModelError(model string) error {
+	if current := modelcatalog.Current(model); current != model {
+		return fmt.Errorf("модель %s сохранена в истории: перед продолжением выберите %s в меню модели", model, current)
+	}
+	return nil
+}
+
+func chatModelCurrent(w http.ResponseWriter, model string) bool {
+	if err := chatModelError(model); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return false
+	}
+	return true
 }
 
 // chatFile это транскрипт вместе с проектом, из чьего обхода он пришёл: общий
@@ -3277,6 +3300,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	guardLast := sessions.Last(records)
 	taskIDs := sessions.Works(records)
 	stored := s.chatStoreRead(sid)
+	chosenModel, _ := s.chatChoice(sid, guardLast.Tmux)
+	if !chatModelCurrent(w, chosenModel) {
+		return
+	}
 	if stored.Blank && stored.Task != "" {
 		taskIDs = append(taskIDs, stored.Task)
 	}
@@ -4257,6 +4284,10 @@ func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, s
 // плана приезжает заказом, как у любого подъёма. Effort едет парой окружения,
 // когда человек взвёл ползунок глубины в меню модели (DK-1570).
 func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
+	model, _ := s.chatChoice(sid, "")
+	if !chatModelCurrent(w, model) {
+		return
+	}
 	if strings.HasPrefix(sid, chatBlankMark) {
 		st := s.chatStoreRead(sid)
 		model, harness := s.chatChoice(sid, "")

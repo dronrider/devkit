@@ -314,7 +314,7 @@ func TestAppChatStartTurnFeed(t *testing.T) {
 }
 
 func TestAppChatCatalogModelsReachClient(t *testing.T) {
-	for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol"} {
+	for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
 		t.Run(model, func(t *testing.T) {
 			e, c := appEnv(t)
 			catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
@@ -332,6 +332,9 @@ esac`)
 			}
 			found := false
 			for _, option := range listed.Models {
+				if option.Model == "gpt-6.1-sol" {
+					t.Fatalf("прежняя модель осталась в выборе: %+v", listed.Models)
+				}
 				if option.Model == model && option.Harness == "codextest" {
 					found = true
 					if option.Default || option.Tier != "" {

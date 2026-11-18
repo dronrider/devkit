@@ -3587,3 +3587,50 @@ func TestTaskMessageLeavesBacklogRowAlone(t *testing.T) {
 		t.Fatalf("реплика мёртвого окна легла в доставку: %v", err)
 	}
 }
+
+func TestChatKeepsOrderedTaskAfterSideWork(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1726-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home,
+		bindRecord(e.home, "2026-11-17T20:00:00", sid, "XR-4", bindOrder),
+		bindRecord(e.home, "2026-11-17T21:00:00", sid, "XR-5", "работа"))
+	check := func(want string) {
+		t.Helper()
+		for _, ch := range chatsOf(t, e, c) {
+			if ch.ID != sid {
+				continue
+			}
+			if len(ch.Tasks) != 2 || ch.Tasks[0] != want {
+				t.Fatalf("основная задача/касания: %+v", ch.Tasks)
+			}
+			if !hasTask(ch.Leads, "XR-5") {
+				t.Fatalf("побочная работа потеряна: %+v", ch.Leads)
+			}
+			return
+		}
+		t.Fatal("нет разговора")
+	}
+	check("XR-4")
+	path := e.s.bindsPath()
+	if err := appendBind(path, bindRecord(e.home, "2026-11-17T22:00:00", sid, "XR-5", bindHand)); err != nil {
+		t.Fatal(err)
+	}
+	check("XR-5")
+	if err := appendBind(path, bindRecord(e.home, "2026-11-17T23:00:00", sid, "XR-4", bindOrder)); err != nil {
+		t.Fatal(err)
+	}
+	check("XR-5")
+	if err := appendBind(path, bindRecord(e.home, "2026-11-17T23:10:00", sid, "-", bindOff)); err != nil {
+		t.Fatal(err)
+	}
+	if b := e.s.binds()[sid]; b.Task != "" || b.Source != bindOff {
+		t.Fatalf("отвязка отменена заказом: %+v", b)
+	}
+	if err := appendBind(path, bindRecord(e.home, "2026-11-17T23:20:00", sid, "XR-4", bindOrder)); err != nil {
+		t.Fatal(err)
+	}
+	if b := e.s.binds()[sid]; b.Task != "" || b.Source != bindOff {
+		t.Fatalf("compact отменил отвязку: %+v", b)
+	}
+}

@@ -1243,9 +1243,15 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// чип не идёт по той же причине, по которой её не пускает ownTasks:
 		// прогон зовёт утилиты доски с вымышленной задачей фикстуры под своим
 		// же ID, и чужой префикс тут не привязка, а шум работы (DK-860).
-		if bound == boundLead && task != "" && !hasTask(tasks, task) &&
+		if bound == boundLead && task != "" &&
 			(prefix == "" || strings.HasPrefix(task, prefix+"-")) {
-			tasks = append([]string{task}, tasks...)
+			ordered := []string{task}
+			for _, id := range tasks {
+				if id != task {
+					ordered = append(ordered, id)
+				}
+			}
+			tasks = ordered
 		}
 		if task != "" && prefix != "" && !strings.HasPrefix(task, prefix+"-") {
 			note = foreignTaskNote
@@ -1274,6 +1280,11 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		}
 		if bound == boundLead {
 			e.Leads = headTasks(last, f.suffix)
+			for _, id := range workTasks(recs[f.ID], f.suffix) {
+				if !hasTask(e.Leads, id) {
+					e.Leads = append(e.Leads, id)
+				}
+			}
 		}
 		// Ключ склейки заходов считается до того, как устаревшее имя снимут:
 		// прошлый заход узнаётся именно по нему (chatGlue ниже). Жильцы имени

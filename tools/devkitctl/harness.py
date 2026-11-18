@@ -46,6 +46,7 @@ PROFILE_SCHEMA = (
 # оси, обязан читаться и дальше, а отсутствие секции значит сегодняшнюю полную
 # вклейку правил.
 OPTIONAL_SCHEMA = (
+    ("chat", (("models", ARR),)),
     ("skills", (("dir", STR), ("format", STR), ("discovery", STR))),
     # Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
     # internal/taskhead, тут она сверяется только типами. wait_cap это потолок

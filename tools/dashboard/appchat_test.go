@@ -313,6 +313,57 @@ func TestAppChatStartTurnFeed(t *testing.T) {
 	}
 }
 
+func TestAppChatCatalogModelsReachClient(t *testing.T) {
+	for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol"} {
+		t.Run(model, func(t *testing.T) {
+			e, c := appEnv(t)
+			catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
+				`"chat": ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol"], "protocol": "codex", "models":`, 1)
+			writeScript(t, e.bin, "agentctl", `case "$1" in
+  exec) shift 4; exec "$@" ;;
+  *) printf '%s' '`+catalog+`' ;;
+esac`)
+			resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+			var listed struct {
+				Models []chatModelOpt `json:"models"`
+			}
+			if err := json.Unmarshal([]byte(body(t, resp)), &listed); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, option := range listed.Models {
+				if option.Model == model && option.Harness == "codextest" {
+					found = true
+					if option.Default || option.Tier != "" {
+						t.Fatalf("модель каталога стала ярусной: %+v", option)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("модель %s отсутствует в выборе: %+v", model, listed.Models)
+			}
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats", fmt.Sprintf(`{"text":"проверка каталога", "model":%q, "harness":"codextest"}`, model))
+			var started struct {
+				Session string `json:"session"`
+			}
+			got := body(t, resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("запуск %s: %d %s", model, resp.StatusCode, got)
+			}
+			if err := json.Unmarshal([]byte(got), &started); err != nil {
+				t.Fatal(err)
+			}
+			appWaitFeed(t, e, started.Session, "ответ на реплику")
+			if st := e.s.chatStoreRead(started.Session); st.Model != model || st.Harness != "codextest" {
+				t.Fatalf("выбор не сохранился: %+v", st)
+			}
+			if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start "+model+"\n") {
+				t.Fatalf("точный ID не передан клиенту: %s", log)
+			}
+		})
+	}
+}
+
 // Конец хода может прийти вплотную к ответу на turn/start и даже раньше него:
 // поток не обещает порядок между ответами и уведомлениями, и занятость,
 // открытая после ответа, опаздывает за собственным погашением и висит «ход

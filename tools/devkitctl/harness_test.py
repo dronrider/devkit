@@ -32,6 +32,14 @@ class ProfileParserTest(SandboxCase):
             self.assertEqual(out, want, "отчёт по %s разошёлся с ожидаемым" % f.stem)
         self.assertGreaterEqual(seen, 10, "фикстур парсера найдено %d, набор потерялся" % seen)
 
+    def test_profile_chat_models_schema(self):
+        profile = harness.parse("profile-chat.toml", EMBED_TOOL + '\n[chat]\nmodels = ["sol", "astra"]\n')
+        self.assertEqual(harness.validate_profile(profile), [])
+        self.assertEqual(profile.arr_of("chat", "models"), ["sol", "astra"])
+        broken = harness.parse("profile-chat.toml", EMBED_TOOL + '\n[chat]\nmodels = "sol"\n')
+        with self.assertRaises(harness.ProfileError):
+            harness.validate_profile(broken)
+
 
 class ProfileValidationTest(SandboxCase):
     """Профиль сегодняшнего харнеса валиден, и доктор это проверяет на каждом

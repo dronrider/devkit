@@ -954,6 +954,61 @@ chat = ["вторая-чата", ""]
 	}
 }
 
+func TestCmdHarnessJSONProfileChatModels(t *testing.T) {
+	kit := fakeKit(t)
+	data, err := os.ReadFile(filepath.Join("..", "..", "kit", "harness", "codex.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, kit, "kit/harness/codex.toml", string(data))
+	for _, machine := range []string{
+		"enabled = [\"codex\"]\ndefault = \"codex\"\n",
+		"enabled = [\"codex\"]\ndefault = \"codex\"\n[codex]\nmini = \"old-mini\"\nbase = \"old-base\"\npro = \"gpt-6.1-sol\"\nmax = \"gpt-6-astra\"\nchat = [\"saved-model\", \"gpt-6.2-sol\"]\n",
+	} {
+		writeMachine(t, kit, machine)
+		text, err := cmdHarnessJSON(kit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Harnesses []struct {
+				Name   string                         `json:"name"`
+				Chat   []string                       `json:"chat"`
+				Models []struct{ Tier, Model string } `json:"models"`
+			} `json:"harnesses"`
+			Warns []string `json:"warns"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Warns) != 0 || len(got.Harnesses) != 1 {
+			t.Fatalf("каталог не прочитан: %s", text)
+		}
+		h := got.Harnesses[0]
+		for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
+			count := 0
+			for _, item := range h.Chat {
+				if item == model {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("модель %s встречается %d раз: %s", model, count, text)
+			}
+		}
+		if strings.Contains(machine, "saved-model") {
+			if !slices.Contains(h.Chat, "saved-model") {
+				t.Fatalf("машинная модель потеряна: %s", text)
+			}
+			for _, m := range h.Models {
+				if (m.Tier == "pro" && m.Model != "gpt-6.1-sol") || (m.Tier == "max" && m.Model != "gpt-6-astra") {
+					t.Fatalf("лестница изменилась: %s", text)
+				}
+			}
+		}
+	}
+}
+
 // TestCmdHarnessJSONEmpty: пустой включённый список говорит о себе словами, а
 // не пустым массивом. Молчание тут неотличимо от отработавшей команды, и экран
 // показал бы «выбора нет» без причины.

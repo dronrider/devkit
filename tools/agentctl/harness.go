@@ -128,6 +128,7 @@ var profileSchema = []sectionSpec{
 // оси, обязан читаться и дальше, а отсутствие секции значит сегодняшнюю полную
 // вклейку правил.
 var optionalSchema = []sectionSpec{
+	{"chat", []keySpec{{"models", subtoml.KindArr}}},
 	{"skills", []keySpec{{"dir", subtoml.KindStr}, {"format", subtoml.KindStr}, {"discovery", subtoml.KindStr}}},
 	// Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
 	// internal/taskhead, тут она сверяется только типами. Профиль без неё
@@ -1486,7 +1487,7 @@ func cmdHarnessJSON(start string) (string, error) {
 					Levels: effortLevelsOf(l.Profiles[name], tier)})
 			}
 		}
-		h.Chat = l.Setup[name].chatOf()
+		h.Chat = chatModelsOf(l.Profiles[name], l.Setup[name])
 		v.Harnesses = append(v.Harnesses, h)
 	}
 	if len(l.Enabled) == 0 {
@@ -1497,6 +1498,20 @@ func cmdHarnessJSON(start string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func chatModelsOf(p *profile, s *setup) []string {
+	models := append([]string{}, s.chatOf()...)
+	if p != nil {
+		models = append(models, p.section("chat").Arr("models")...)
+	}
+	var out []string
+	for _, model := range models {
+		if model != "" && !inList(out, model) {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 // envOf отдаёт пары окружения секции, переживая её отсутствие: харнес бывает

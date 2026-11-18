@@ -38,6 +38,9 @@ map_base = "gpt-6.1-terra"
 map_pro = "gpt-6.1-sol"
 map_max = "gpt-6-astra"
 
+[chat]
+models = ["gpt-6.2-sol", "gpt-6.2-astra"]
+
 [hooks]
 # Чужой протокол: у клиента нет настроек хуков формата claude-code, обвязку
 # журнала и сторожей ему не раскладывают, и разрыва хуков у него не бывает.

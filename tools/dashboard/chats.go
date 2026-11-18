@@ -44,10 +44,11 @@ const chatModelDefault = "opus"
 // (agentctl harness --json), а не пишется в коде: имён поставщиков в дашборде
 // нет ни одного, и новая подписка появляется в выборе сама.
 type chatModelOpt struct {
-	Model   string `json:"model"`
-	Tier    string `json:"tier"`
-	Harness string `json:"harness"`
-	Default bool   `json:"default,omitempty"`
+	Model    string   `json:"model"`
+	Tier     string   `json:"tier"`
+	Harness  string   `json:"harness"`
+	Default  bool     `json:"default,omitempty"`
+	Replaces []string `json:"replaces,omitempty"`
 	// Levels это набор ступеней глубины подписки на этом ярусе (DK-1570,
 	// макет шкалы v4). Пусто у строки сверх лестницы и у подписки без набора.
 	Levels []string `json:"levels,omitempty"`
@@ -92,7 +93,8 @@ func (s *server) chatModelOpts() []chatModelOpt {
 			}
 			seen[m.Model] = true
 			out = append(out, chatModelOpt{Model: m.Model, Tier: m.Tier,
-				Harness: h.Name, Default: h.Default && m.Tier == "pro", Levels: m.Levels})
+				Harness: h.Name, Default: h.Default && m.Tier == "pro", Levels: m.Levels,
+				Replaces: modelcatalog.Replaces(m.Model)})
 		}
 		// Модели чата сверх лестницы идут следом строками без яруса. Свод с
 		// лестницей той же подписки ведёт один seen: модель, которая стоит и в
@@ -104,7 +106,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 				continue
 			}
 			seen[model] = true
-			out = append(out, chatModelOpt{Model: model, Harness: h.Name})
+			out = append(out, chatModelOpt{Model: model, Harness: h.Name, Replaces: modelcatalog.Replaces(model)})
 		}
 	}
 	return out

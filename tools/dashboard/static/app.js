@@ -10186,7 +10186,9 @@ function chatModelPref(models) {
     // голое имя из прежней записи: читается ниже как выбор без подписки
   }
   if (models && models.length) {
-    const available = models.find((m) => m.model === pick.model && (!pick.harness || m.harness === pick.harness)) ||
+    const available = models.find((m) =>
+      (m.model === pick.model || (m.replaces || []).includes(pick.model)) &&
+      (!pick.harness || m.harness === pick.harness)) ||
       models.find((m) => m.default) || models[0];
     return { model: available.model, harness: available.harness || "" };
   }

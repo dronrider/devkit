@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1734",
   "base_sha": "5f44b6e3bbcad0779dc7e25d03e543f2a9901565",
-  "head_sha": "458578ef0ebb45388d84078a74e03f48a2890261",
-  "code_hash": "2f65951b7142266266ea50ca4234dc7ff395d608e22585ab5d8ee6ab6d5a30bf",
-  "task_hash": "4400933debf4351491061831de47bad37aae575687a5b9ee43dadec2f6e4978a",
+  "head_sha": "7c6d14946d1f459022492ebf990d5121a20a207d",
+  "code_hash": "50e311df34a153f67eced8f1b2ac0b7d5e129f6e72669708fcaaf77092a6d077",
+  "task_hash": "1151e066c6390a346b36c25c44f3934624c7d4226ca91d2a3a318eb2b75eb1d1",
   "sources": [
     {
       "name": "common-architecture",
@@ -39,20 +39,27 @@
   ],
   "architecture": {
     "goal": "Показать вложения и команды с полным выводом, реальные состояния субагентов и связь событий с нитями в новой и старой ленте Codex. Исходный ввод модели и границы файловой ручки сохраняются.",
-    "decision": "Существующий cutWraps строит видимую проекцию при сохранении Wire. JSONL reply получает optional appFeedEvent с исходным item, method, threadId/turnId и полученными метками времени. appToolPair передаёт данные в готовые Bash/Agent карточки. Индекс identity+offset читает исходный журнал один раз и затем внешний хвост под существующим file lock.",
-    "boundaries": "App-server создаёт события в отдельном процессе каждого чата. appSpawn открывает в нём основную нить через start либо resume и подтверждает единые workspace-write/on-request/auto_review до хода. Право владеть запуском задачи проверяется отдельно. appNote сохраняет реальные поля и дочерний threadId как Sub. JSONL служит источником истины, индекс в server содержит восстанавливаемую копию identity. Перед записью нового ввода appSay проверяет актуальность модели через modelcatalog. Исторический ID сохраняется до явной смены. Лента и UI не меняют эти правила.",
-    "alternative": "Можно хранить только заранее выбранные поля и не сохранять raw item, но это потребует отдельного перехода при расширении протокола и снова рискует потерять сведения. Здесь сохранение полученных полей прямо входит в границы задачи. Можно удалять индекс при остановке appChat; текущий индекс сохраняется в течение работы сервера и позволяет не сканировать историю повторно при resume. Полное перечитывание при каждом событии отклонено замечанием 1 и заменено индексом.",
-    "justification": "Пользовательский результат DK-1734, сохранность полученных событий и ввода и границы файловой ручки остаются прежними. На новой базе DK-1735 задаёт единую политику start/resume, DK-1736 задаёт каталог выбора модели и запрет скрытой замены исторического ID. Код ленты не обходит эти проверки. Range-diff сохранил feature patches, изменился контекст README. Ранее проверенные 12 backend и 6 UI функций совпадают byte-for-byte с e37bd7741. Индекс сохраняет линейное чтение новых байтов, большой вывод сохраняется целиком. Новый полный merge-прогон и выкат не выполнялись. Живая установленная браузерная приёмка DK-1734 остаётся обязательной после выката. Повторное слияние и полный merge-прогон выполняет диспетчер после финальной обкатки автора.",
+    "decision": "Существующий cutWraps строит видимую проекцию при сохранении Wire. JSONL reply получает optional appFeedEvent с исходным item, method, threadId/turnId и полученными метками времени. appToolPair передаёт данные в готовые Bash/Agent карточки. Индекс identity+offset читает исходный журнал один раз и затем внешний хвост под существующим file lock. Дополнительно общий chatPanel.fire пропускает вложение без текста в существующий post, если чат не использует текстовую очередь цели.",
+    "boundaries": "App-server создаёт события в отдельном процессе каждого чата. appSpawn открывает в нём основную нить через start либо resume и подтверждает единые workspace-write/on-request/auto_review до хода. Право владеть запуском задачи проверяется отдельно. appNote сохраняет реальные поля и дочерний threadId как Sub. JSONL служит источником истины, индекс в server содержит восстанавливаемую копию identity. Перед записью нового ввода appSay проверяет актуальность модели через modelcatalog. Исторический ID сохраняется до явной смены. Лента и UI не меняют эти правила. Вложения принадлежат chatPanel; post загружает их и добавляет attachPrefix перед существующим транспортом. goalOut обходит post и принимает только текст. Guard сохраняет эту границу, а также прежние selection, proposal и disabled.",
+    "alternative": "Изменение одного guard использует готовый путь отправки. Отдельный транспорт вложений не нужен. Простая проверка !attach.length без !goalOut отклонена после мутации: она создаёт пустое сообщение цели и запись в сохраняемой очереди. Ранее проверенные преобразование событий и индекс не менялись.",
+    "justification": "Установленная независимая проверка выявила пропущенный прежним ревью вход через composer. Прежний тест готового chatItem подтверждал отображение, но не отправку снимка без текста. Коммит 7c6d14946 исправляет этот вход и добавляет тест настоящих paste/send обработчиков. Относительно прежнего проверенного 458578ef0 production отличается только условием guard; backend, индекс, права DK-1735, каталог DK-1736 и остальные UI функции совпадают. Источники и все 96 ID/text правил совпали после штатного refresh, исходная база 5f44b6e3 сохранена. Ранее проверенные выводы используются для неизменного кода; новая поверхность проверена отдельно. После выката необходим повтор image-only сценария в установленном UI. Этот аудит не означает успешную установленную приёмку.",
     "result": "checked",
     "evidence": [
-      "Текущая база 5f44b6e3bbcad0779dc7e25d03e543f2a9901565; HEAD 458578ef0ebb45388d84078a74e03f48a2890261 после штатного rebase. Diff tools/dashboard, internal/modelcatalog и всех источников 96 правил относительно проверенного fcf90b21c пуст. Содержательная постановка не изменилась, task_hash совпал. Ранее выполненные проверки a7933b214 остаются применимыми к этому же коду.",
-      "Адресная группа автора на a7933b214: devkitctl test tools/dashboard -run TestApp|TestChatModel|TestChatLegacy|TestStaticShot|TestStaticChatClips|TestStaticFeed -count=1; PASS 39.104 с. Это интеграционная группа, не новый полный merge-прогон.",
-      "Новый regcheck от 9aa75d67d по TestAppFeed(Attachments|Events|Legacy|Cards)$ подтвердил красноту прежнего кода и зелёный результат a7933b214.",
-      "Независимый Go overlay TestDK1734Review на a7933b214: output 540029 байт, JSONL 1120421 байт; полное сохранение appNote/append/reload/newLines/marshalReply, 12 concurrent append через два server-instance дают одну identity. PASS, пакет 3.694 с.",
-      "JS probe текущего app.js: 600010 символов вывода в настоящем toolPair сохранены, completed wait не подменяет running ребёнка. node --check и git diff --check новой дельты прошли.",
-      "Ранее выполненные фактическая схема Codex 0.163.0 и ephemeral process probe остаются применимыми: appServerStart и process/thread ownership не менялись. Реальные дочерние модельные item events и установленный браузер этим probe не проверялись.",
-      "Сценарий taskfile по-прежнему требует после выката живые 1/2/screenshot-only сообщения, просмотр PNG, parent/subagent Bash успех+exit7, reload, raw сравнение и файловую защиту. Финальный rehearsal автора должен пройти после коммита этого audit JSON. Повторное слияние и полный merge-прогон выполняет диспетчер после финальной обкатки автора.",
-      "Причина устаревания: codeSnapshot хеширует всё дерево, excluded() исключает docs/tasks/**/*.md и audit JSON, но включает .sh. Между 9aa75d67d и 5f44b6e3 изменены путь/содержимое архивного DK-1735-check.sh и добавлен archive/2026/DK-1735-check_test.sh. Поэтому code_hash изменился с 1210fbab525a5d275ff101f2e83e7ef3ba1d7f07eb98f2cf47d09703234323f7 на 2f65951b7142266266ea50ca4234dc7ff395d608e22585ab5d8ee6ab6d5a30bf. Сценарии прочитаны как upstream QA helpers; production ленты ими не меняется. Task hash, источники и 96 rule ID/text совпали."
+      "Delta 7c6d14946 относительно parent 8e181dfb2: static/app.js меняет только empty-input guard в chatPanel.fire; добавлены chatcomposer_test.go и testdata/poc_composerclips.mjs. Относительно предыдущего audit HEAD 458578ef0 production меняется теми же тремя файлами. Прочие изменения только в board/task/audit metadata. Источники правил сравнены инструментом и совпали.",
+      "Независимый прогон в чистом detached tree 7c6d14946: devkitctl test tools/dashboard -run TestStaticChatAttachmentOnlyComposer|TestStaticAskPicksInReply|TestProposalHelpersNode|TestStaticChatClipsFoldDedupAndOrder|TestStaticChatFirstSay|TestAppFeed -count=1. PASS, пакет 4.796 с. node --check app.js/fixture, gofmt -d chatcomposer_test.go и git diff --check прошли.",
+      "Независимый повтор окончательного repo fixture через node на неизменной копии прежнего app.js дал 24 отказа image-only, exit 1. Копия с широким !attach.length дала пустые goal /message и persisted queue на четырёх способах отправки, exit 1. Безопасное условие в настоящем app.js прошло тот же fixture. Production не мутировался.",
+      "Автор сообщил штатный regcheck на 7c6d14946 от 8e181dfb2 с explicit chatcomposer_test.go и poc_composerclips.mjs: старый код красный, исправленный зелёный. Это результат автора; независимый контроль красноты выполнен отдельным node прогоном выше.",
+      "Тест вызывает настоящие chatPanel/paste/FileReader/putClip/post с изолированным HTTP. Проверены 24 image-only и 24 обычные текстовые отправки: ordinary/task-bound, new/say/resume, click/Enter/CtrlEnter/CmdEnter. Проверены screenshot wire, адрес, task ID нового чата, msg_id продолжения, пустой/пробельный ввод и disabled. Четыре goal пути сохраняют текстовый контракт. Реальная модель и установленный браузер этим стендом не проверяются.",
+      "Независимая установленная QA записана в taskfile parent 8e181dfb2. Шаг 2 image-only FAIL; остальные фактические шаги, включая реальные parent/child Bash, занятость родителя после завершения ребёнка, legacy/reload и защиту файлов, прошли в указанном отчёте. Interacted в живом прогоне не получен. Отчёт сохранён без изменения; smoke/close не ставились. После нового выката необходим отдельный повтор исправленного сценария.",
+      "Автоматическая команда сценария ДО refresh дополнена TestStaticChatAttachmentOnlyComposer рядом с TestAppFeed. Новый task_hash получен штатно. FINAL rehearse автора обязателен после коммита этого audit JSON.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Текущая база 5f44b6e3bbcad0779dc7e25d03e543f2a9901565; HEAD 458578ef0ebb45388d84078a74e03f48a2890261 после штатного rebase. Diff tools/dashboard, internal/modelcatalog и всех источников 96 правил относительно проверенного fcf90b21c пуст. Содержательная постановка не изменилась, task_hash совпал. Ранее выполненные проверки a7933b214 остаются применимыми к этому же коду.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Адресная группа автора на a7933b214: devkitctl test tools/dashboard -run TestApp|TestChatModel|TestChatLegacy|TestStaticShot|TestStaticChatClips|TestStaticFeed -count=1; PASS 39.104 с. Это интеграционная группа, не новый полный merge-прогон.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Новый regcheck от 9aa75d67d по TestAppFeed(Attachments|Events|Legacy|Cards)$ подтвердил красноту прежнего кода и зелёный результат a7933b214.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Независимый Go overlay TestDK1734Review на a7933b214: output 540029 байт, JSONL 1120421 байт; полное сохранение appNote/append/reload/newLines/marshalReply, 12 concurrent append через два server-instance дают одну identity. PASS, пакет 3.694 с.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: JS probe текущего app.js: 600010 символов вывода в настоящем toolPair сохранены, completed wait не подменяет running ребёнка. node --check и git diff --check новой дельты прошли.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Ранее выполненные фактическая схема Codex 0.163.0 и ephemeral process probe остаются применимыми: appServerStart и process/thread ownership не менялись. Реальные дочерние модельные item events и установленный браузер этим probe не проверялись.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Сценарий taskfile по-прежнему требует после выката живые 1/2/screenshot-only сообщения, просмотр PNG, parent/subagent Bash успех+exit7, reload, raw сравнение и файловую защиту. Финальный rehearsal автора должен пройти после коммита этого audit JSON. Повторное слияние и полный merge-прогон выполняет диспетчер после финальной обкатки автора.",
+      "Историческое доказательство предыдущего прохода, применимо к неизменному коду: Причина устаревания: codeSnapshot хеширует всё дерево, excluded() исключает docs/tasks/**/*.md и audit JSON, но включает .sh. Между 9aa75d67d и 5f44b6e3 изменены путь/содержимое архивного DK-1735-check.sh и добавлен archive/2026/DK-1735-check_test.sh. Поэтому code_hash изменился с 1210fbab525a5d275ff101f2e83e7ef3ba1d7f07eb98f2cf47d09703234323f7 на 2f65951b7142266266ea50ca4234dc7ff395d608e22585ab5d8ee6ab6d5a30bf. Сценарии прочитаны как upstream QA helpers; production ленты ими не меняется. Task hash, источники и 96 rule ID/text совпали."
     ]
   },
   "rules": [
@@ -62,12 +69,17 @@
       "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Изменения относятся к существующим семьям ленты app-server, общей модели reply и её отображению. Новый домен или несвязанная операция не добавлены.",
+      "reason": "Изменения относятся к существующим семьям ленты app-server, общей модели reply и её отображению. Новый домен или несвязанная операция не добавлены. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "appFeedEvent, appFeedIndex, appFeedDisplay, appFirst, appToolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Хранение/нормализация остаются в appchat, JSON-поле в reply, выбор карточки в renderer."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -77,12 +89,17 @@
       "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Границы компонентов сохранены: общая проекция reply дополняется optional app; браузер использует прежние карточки и не пишет историю.",
+      "reason": "Границы компонентов сохранены: общая проекция reply дополняется optional app; браузер использует прежние карточки и не пишет историю. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "reply.App и потребители",
           "location": "tools/dashboard/sessions.go:977; tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Нулевой App не сериализуется. appFeedParse и SSE дают одинаковую проекцию."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -92,12 +109,17 @@
       "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Разбор обёрток и карточки не скопированы. Их общие владельцы используются на новом пути.",
+      "reason": "Разбор обёрток и карточки не скопированы. Их общие владельцы используются на новом пути. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "cutWraps; bashCard/bodyCard/reportCard; appEventIdentity",
           "location": "tools/dashboard/sessions.go:2569; tools/dashboard/static/app.js:8073-8144; tools/dashboard/appchat.go:85-97",
           "observation": "Wire отделён от Text общим cutWraps; appEventIdentity общий для event и индекса."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -107,12 +129,17 @@
       "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Индекс решает подтверждённую проблему повторного полного разбора. Иных слоёв или зависимостей нет.",
+      "reason": "Индекс решает подтверждённую проблему повторного полного разбора. Иных слоёв или зависимостей нет. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "appFeedIndex",
           "location": "tools/dashboard/appchat.go:100-169; tools/dashboard/server.go:201",
           "observation": "Индекс восстанавливается под lock один раз, затем читается только новый хвост. TestAppFeedIndexReadsOnlyNewBytes подтверждает фактические байты, а не время."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -122,7 +149,7 @@
       "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Входы и результаты новых операций определены протоколом и текущим append-only журналом. Ошибки диска возвращаются из refresh/append, некорректные события не становятся карточками.",
+      "reason": "Входы и результаты новых операций определены протоколом и текущим append-only журналом. Ошибки диска возвращаются из refresh/append, некорректные события не становятся карточками. Guard допускает вложение без текста только для пути post и сохраняет контракт очереди цели.",
       "evidence": [
         {
           "object": "appFeedIndex.refresh/appFeedAppend; appNote/appItemReplies",
@@ -133,6 +160,11 @@
           "object": "интеграция на базе DK-1735/DK-1736",
           "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
           "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Пустой/пробельный ввод без вложений и disabled не создают запросов. Обычный чат отправляет исходный screenshot wire через прежний post. goalOut без текста не создаёт /message или persisted queue; ошибка загрузки по-прежнему обрабатывается post до транспорта."
         }
       ]
     },
@@ -142,7 +174,7 @@
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Идентичность события проверяется при серверной записи, а не только на клиенте. Фильтрация userMessage и разбор обёрток действуют для истории и потока.",
+      "reason": "Идентичность события проверяется при серверной записи, а не только на клиенте. Фильтрация userMessage и разбор обёрток действуют для истории и потока. Guard допускает вложение без текста только для пути post и сохраняет контракт очереди цели.",
       "evidence": [
         {
           "object": "appFeedAppend, appFeedDisplay",
@@ -153,6 +185,11 @@
           "object": "интеграция на базе DK-1735/DK-1736",
           "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
           "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Пустой/пробельный ввод без вложений и disabled не создают запросов. Обычный чат отправляет исходный screenshot wire через прежний post. goalOut без текста не создаёт /message или persisted queue; ошибка загрузки по-прежнему обрабатывается post до транспорта."
         }
       ]
     },
@@ -162,7 +199,7 @@
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "История без app остаётся читаемой; новые поля optional. Изменение Text компенсируется сохранением Wire для идентичности пользователя.",
+      "reason": "История без app остаётся читаемой; новые поля optional. Изменение Text компенсируется сохранением Wire для идентичности пользователя. Guard допускает вложение без текста только для пути post и сохраняет контракт очереди цели.",
       "evidence": [
         {
           "object": "старый JSONL, reply.App/Wire, toolPair fallback",
@@ -173,6 +210,11 @@
           "object": "интеграция на базе DK-1735/DK-1736",
           "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
           "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Пустой/пробельный ввод без вложений и disabled не создают запросов. Обычный чат отправляет исходный screenshot wire через прежний post. goalOut без текста не создаёт /message или persisted queue; ошибка загрузки по-прежнему обрабатывается post до транспорта."
         }
       ]
     },
@@ -182,12 +224,17 @@
       "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "JSONL остаётся источником истины; индекс является восстанавливаемой копией identity. Исходное событие сохраняется в app, текст доставки в Wire.",
+      "reason": "JSONL остаётся источником истины; индекс является восстанавливаемой копией identity. Исходное событие сохраняется в app, текст доставки в Wire. Guard допускает вложение без текста только для пути post и сохраняет контракт очереди цели.",
       "evidence": [
         {
           "object": "appFeedIndex и reply.App/Wire",
           "location": "tools/dashboard/appchat.go:100-233,647-654",
           "observation": "Перезапуск перечитывает журнал один раз. Чужой хвост читается по offset; усечение, новая inode и перезапись того же размера сбрасывают индекс."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Пустой/пробельный ввод без вложений и disabled не создают запросов. Обычный чат отправляет исходный screenshot wire через прежний post. goalOut без текста не создаёт /message или persisted queue; ошибка загрузки по-прежнему обрабатывается post до транспорта."
         }
       ]
     },
@@ -247,12 +294,17 @@
       "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Ошибки refresh/append не превращаются в успешную запись. appNote/appSayRecord пишут контекст sid/method в logf.",
+      "reason": "Ошибки refresh/append не превращаются в успешную запись. appNote/appSayRecord пишут контекст sid/method в logf. Guard допускает вложение без текста только для пути post и сохраняет контракт очереди цели.",
       "evidence": [
         {
           "object": "ошибки файловой записи",
           "location": "tools/dashboard/appchat.go:140-169,183-233,578-584,647-654",
           "observation": "Индекс обновляется после полной записи строки. При повторе после отказа внешний хвост перечитывается. Результат отправки модели по-прежнему отдельно от записи истории."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Пустой/пробельный ввод без вложений и disabled не создают запросов. Обычный чат отправляет исходный screenshot wire через прежний post. goalOut без текста не создаёт /message или persisted queue; ошибка загрузки по-прежнему обрабатывается post до транспорта."
         }
       ]
     },
@@ -372,12 +424,17 @@
       "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Файловая история и отображение имеют явную границу; реальной БД или новых SQL/ORM операций нет.",
+      "reason": "Файловая история и отображение имеют явную границу; реальной БД или новых SQL/ORM операций нет. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "appFeedAppend/appFeedParse/appToolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Парсер/преобразователь событий и UI проверяются отдельно от сети; интеграционный appEnv поднимает собственный HTTP сервер и fake app-server."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -402,12 +459,17 @@
       "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Исправление существующей истории ограничено отображением и не добавляет новый интерфейс старой дороги.",
+      "reason": "Исправление существующей истории ограничено отображением и не добавляет новый интерфейс старой дороги. Дельта composer использует существующий путь без нового слоя или копии транспорта.",
       "evidence": [
         {
           "object": "legacy projection",
           "location": "tools/dashboard/appfeed_test.go:223-229; tools/dashboard/testdata/poc_appfeed.mjs:65-76",
           "observation": "Старые command/output, включая равные строки, проверены. Общая карточка использована и для новых событий."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Изменён только guard общего fire. post, attachPrefix и goalOut остаются прежними владельцами отправки и очереди; добавлены только изолированные проверки."
         }
       ]
     },
@@ -522,12 +584,17 @@
       "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые имена описывают событие, индекс, проекцию и первый пользовательский текст.",
+      "reason": "Новые имена описывают событие, индекс, проекцию и первый пользовательский текст. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "appFeedEvent/appFeedIndex/appFeedDisplay/appFirst/appToolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Смысл имён соответствует вызовам: append пишет, refresh читает хвост, identity строит ключ."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Имена composer и routeIsOwn обозначают форму и проверку адреса; именованные payload/bound/way/trigger описывают варианты."
         }
       ]
     },
@@ -582,12 +649,17 @@
       "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Локальные короткие имена имеют небольшую область; публичные для пакета объекты называют предмет.",
+      "reason": "Локальные короткие имена имеют небольшую область; публичные для пакета объекты называют предмет. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "idx/info/items/event/details",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Функции относятся к одной семье; новых manager/data/result типов с неопределённой ответственностью нет."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Короткое c используется внутри одного тестового случая; функции composer/routeIsOwn имеют предметные имена."
         }
       ]
     },
@@ -597,12 +669,17 @@
       "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Параметры новых функций влияют на ключ, файл, видимый текст или результат.",
+      "reason": "Параметры новых функций влияют на ключ, файл, видимый текст или результат. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "appEventIdentity/remember/refresh/appFeedDisplay/appFirst/appStateWord/appToolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "method/thread/turn/id формируют ключ; sid выбирает журнал; список appFirst задаёт название; state определяет подпись."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Параметры way/bound/trigger определяют состояние чата, task ID и способ отправки; все параметры влияют на наблюдаемый результат."
         }
       ]
     },
@@ -612,12 +689,17 @@
       "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые возвращаемые значения потребляются во всех добавленных вызовах.",
+      "reason": "Новые возвращаемые значения потребляются во всех добавленных вызовах. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "identity/refresh/appFeedDisplay/appFirst/appToolPair",
           "location": "tools/dashboard/appchat.go:121-303,580-584,963-997,1061; tools/dashboard/static/app.js:8008-8011",
           "observation": "identity служит seen, refresh errors возвращаются, Display фильтрует read/SSE; его bool в appSayRecord не нужен, так как Role=user всегда отображается. appFirst задаёт title/first."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Результаты composer, deliveries и routeIsOwn потребляются assertions; лишние данные production API не добавлены."
         }
       ]
     },
@@ -647,12 +729,17 @@
       "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые функции выполняют связные операции и разделяют преобразование, индекс и представление.",
+      "reason": "Новые функции выполняют связные операции и разделяют преобразование, индекс и представление. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "appFeedIndex.refresh; appFeedDisplay; appItemReplies; appToolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Refresh синхронизирует один индекс с файлом; ItemReplies выбирает проекцию; UI строит готовую карточку без записи серверных данных."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "fire остаётся связной отправкой; helper composer собирает собственную изолированную форму для одного случая."
         }
       ]
     },
@@ -662,12 +749,17 @@
       "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Строковые литералы являются названиями событий/состояний проверенного протокола и JSON полей, произвольных числовых настроек нет.",
+      "reason": "Строковые литералы являются названиями событий/состояний проверенного протокола и JSON полей, произвольных числовых настроек нет. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "appEventIdentity; switch item.type; appStateWord",
           "location": "tools/dashboard/appchat.go:85-97,590-642; tools/dashboard/static/app.js:7970-7997",
           "observation": "NUL разделяет части внутреннего ключа. Нулевые code/duration не заменены truthy проверкой."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Тестовые варианты image/text, new/say/resume и четыре trigger названы явно; bound определяет наличие task ID."
         }
       ]
     },
@@ -677,12 +769,17 @@
       "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Основной путь и ошибки выделены ранними return. Остаток старого generic renderer используется только для событий без подходящей новой карточки.",
+      "reason": "Основной путь и ошибки выделены ранними return. Остаток старого generic renderer используется только для событий без подходящей новой карточки. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "refresh/appFeedAppend/appNote/toolPair",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7970-8060,8570-8619",
           "observation": "Неверный JSON/nil item не записываются, failed/declined/nonzero exit выставляют Fail; generic fallback сохранён для остальных типов."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Ранний guard сохраняет прежний порядок действий. goalOut исключён из разрешения attachment-only до очистки textarea и записи очереди."
         }
       ]
     },
@@ -692,12 +789,17 @@
       "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Go-код форматирован в принятой форме, JS проходит синтаксическую проверку.",
+      "reason": "Go-код форматирован в принятой форме, JS проходит синтаксическую проверку. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "изменённые Go/JS файлы",
           "location": "git diff --check 11a177cd5..559544d1; node --check tools/dashboard/static/app.js",
           "observation": "Обе проверки прошли. Добавлены существующие map/slice/struct idioms без новых библиотек."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "gofmt -d нового Go теста пуст, node --check app.js и fixture завершились с кодом 0."
         }
       ]
     },
@@ -707,12 +809,17 @@
       "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые ошибки файловых операций возвращают исходную причину; сообщения appNote/appSayRecord добавляют sid и method.",
+      "reason": "Новые ошибки файловых операций возвращают исходную причину; сообщения appNote/appSayRecord добавляют sid и method. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "f.Stat/ReadAll/Marshal/Write errors",
           "location": "tools/dashboard/appchat.go:140-233,580-584,647-654",
           "observation": "Неполная запись даёт io.ErrShortWrite, новый refresh не подставляет пустой индекс вместо read error."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "CombinedOutput нового node теста сохраняет исходные ошибки assertions; production error path не менялся."
         }
       ]
     },
@@ -722,12 +829,17 @@
       "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Сообщения при новой неудачной записи называют событие/разговор и исходную ошибку.",
+      "reason": "Сообщения при новой неудачной записи называют событие/разговор и исходную ошибку. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "logf записи ленты",
           "location": "tools/dashboard/appchat.go:580-584,647-654",
           "observation": "Лог сообщает, что событие или реплика не записались; секреты конфигурации не добавлены к диагностике."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Ошибки fixture называют payload, привязку, путь и trigger, затем нарушенное ожидание."
         }
       ]
     },
@@ -737,12 +849,17 @@
       "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новый комментарий объясняет протокол блокировок индекса, а не повторяет присваивания.",
+      "reason": "Новый комментарий объясняет протокол блокировок индекса, а не повторяет присваивания. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "комментарий appFeedIndex",
           "location": "tools/dashboard/appchat.go:107-108",
           "observation": "Файловый lock защищает поля, appMu защищает таблицу. Старые комментарии append-only и смены потока остаются верны."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Комментарии fixture объясняют остановку после HTTP запуска и текстовую границу goalOut; production комментарии остались верны."
         }
       ]
     },
@@ -752,12 +869,17 @@
       "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Изменённое поведение имеет рабочий пользовательский вход и ограничения в документации.",
+      "reason": "Изменённое поведение имеет рабочий пользовательский вход и ограничения в документации. Новая поверхность composer проверена отдельно.",
       "evidence": [
         {
           "object": "Первый запуск Codex; сценарий проверки",
           "location": "tools/dashboard/README.md: раздел Первый запуск Codex; docs/tasks/DK-1734.md: Сценарий проверки",
           "observation": "Объяснены миниатюры, повторное открытие, раскрытие Bash/Agent и отсутствующие поля; политика доступа отнесена к отдельной задаче."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Сценарий дополнен actual composer тестом; повторная установленная проверка требуется явно."
         }
       ]
     },
@@ -767,12 +889,17 @@
       "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Исправление идёт с серверными и UI регрессионными тестами, рядом с изменяемой семьёй.",
+      "reason": "Исправление идёт с серверными и UI регрессионными тестами, рядом с изменяемой семьёй. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "состав diff",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "Тестируются реальные функции преобразования/append и настоящий app.js в DOM sandbox."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Три файла code commit содержат production guard и его Go/JS регрессионный тест; отдельный этап дописывания тестов не требуется."
         }
       ]
     },
@@ -782,7 +909,7 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Исходные симптомы подтверждены красным прогоном прежнего кода и зелёным исправленного. Для новой цены индекса использована отдельная целевая мутация со счётчиком.",
+      "reason": "Исходные симптомы подтверждены красным прогоном прежнего кода и зелёным исправленного. Для новой цены индекса использована отдельная целевая мутация со счётчиком. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "regcheck и mutation",
@@ -793,6 +920,11 @@
           "object": "новый regcheck на актуальной базе",
           "location": "regcheck -C /Users/rider/projects/devkit-dk-1734 --base 9aa75d67d -- devkitctl test tools/dashboard -run TestAppFeed(Attachments|Events|Legacy|Cards)$ -count=1",
           "observation": "Автор подтвердил red на 9aa75d67d и green на a7933b214. Production после rebase не менялся; команда и результат записаны в Ходе работы."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Авторский regcheck от 8e181dfb2 дал red old/green current. Независимый final repo fixture на old app.js дал 24 отказа image-only."
         }
       ]
     },
@@ -802,7 +934,7 @@
       "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Логика событий покрыта assertions по JSON, стыки HTTP/process и UI получают отдельные адресные сценарии. Живой установленный браузер остаётся приёмке после выката.",
+      "reason": "Логика событий покрыта assertions по JSON, стыки HTTP/process и UI получают отдельные адресные сценарии. Живой установленный браузер остаётся приёмке после выката. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "уровни проверок",
@@ -813,6 +945,11 @@
           "object": "проверка сохранности ленты после rebase",
           "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
           "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Настоящие paste/FileReader/putClip/post и тело HTTP проверены на стыке UI/транспорта. Реальная установленная модель остаётся повторной приёмке."
         }
       ]
     },
@@ -822,12 +959,17 @@
       "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые проверки имеют фактические интеграционные зависимости и запускаемую группу TestAppFeed; они не представлены как изолированные unit.",
+      "reason": "Новые проверки имеют фактические интеграционные зависимости и запускаемую группу TestAppFeed; они не представлены как изолированные unit. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "TestAppFeedAttachments/Events/Index/Cards",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "appEnv создаёт httptest server/fake клиент, Cards запускает node; отдельный -run TestAppFeed позволяет гонять эту группу. Дом и проект синтетические."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "TestStaticChatAttachmentOnlyComposer запускает node с DOM sandbox и выделяется отдельным -run; это проверка стыка с внешним node, без живой сети или браузера."
         }
       ]
     },
@@ -837,7 +979,7 @@
       "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Ожидания проверяют результат и исходные данные. Реальная fixture отмечена происхождением, синтетические rich/missing события не выдаются за захваченные.",
+      "reason": "Ожидания проверяют результат и исходные данные. Реальная fixture отмечена происхождением, синтетические rich/missing события не выдаются за захваченные. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "appfeed_items.json и asserts",
@@ -848,6 +990,11 @@
           "object": "интеграционные assertions исходного контракта",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/testdata/appfeed_items.json; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "Файлы feature tests/fixture сохранены без изменений при rebase. Raw fields/thread ownership, Wire, PNG blank alias, title и full output требуют прежние точные значения; новая policy fake setup принадлежит базе DK-1735."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Ожидания screenshot wire, адреса, task ID и msg_id заданы явно. Старый guard и широкое разрешение без goalOut действительно обнаружены."
         }
       ]
     },
@@ -857,12 +1004,17 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Типовые ошибочные ветки действительно обнаруживаются тестами; не используются только позитивные snapshots.",
+      "reason": "Типовые ошибочные ветки действительно обнаруживаются тестами; не используются только позитивные snapshots. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "мутации и регрессионные прогоны",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs; /tmp/dk1734_fail_overlay.json; /tmp/dk1734_zero_mutant.js; /tmp/dk1734_shot_mutant.js",
           "observation": "Независимо удалены Fail, отображение exitCode=0, ветка screenshot-only: все три прогона красные с целевыми assertions. Авторский full-reread mutant также красный; исходный код не изменялся."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Удаление разрешения вложений даёт 24 красных случая; снятие защиты goalOut создаёт пустые /message и persisted queue на четырёх trigger."
         }
       ]
     },
@@ -872,7 +1024,7 @@
       "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Смена файлов проверяется без ожидания времени; concurrent dedup синхронизируется WaitGroup. Проверки protocol/UI используют ответы/события, а не случайную паузу.",
+      "reason": "Смена файлов проверяется без ожидания времени; concurrent dedup синхронизируется WaitGroup. Проверки protocol/UI используют ответы/события, а не случайную паузу. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "TestAppFeedIndexResetsChangedFile; concurrent probe",
@@ -883,6 +1035,11 @@
           "object": "проверка сохранности ленты после rebase",
           "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
           "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Случаи используют settle существующего DOM sandbox для обработки очереди задач; новой гонки, произвольного sleep или порога времени нет."
         }
       ]
     },
@@ -892,12 +1049,17 @@
       "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Исключение для тонкого UI не используется: изменения карточек и screenshot-only проходят через настоящий app.js.",
+      "reason": "Исключение для тонкого UI не используется: изменения карточек и screenshot-only проходят через настоящий app.js. Добавлена проверка реального composer, отсутствовавшая в прежнем ревью.",
       "evidence": [
         {
           "object": "TestAppFeedCards",
           "location": "tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "DOM sandbox проверяет содержимое и click expand/reload; отдельной непроверяемой UI ветки не добавлено."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Исключение для тонкого UI не использовано: проверяется настоящий chatPanel, а не уже построенный chatItem. Прежний пропуск composer отражён отдельно."
         }
       ]
     },
@@ -907,12 +1069,17 @@
       "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "В пределах изменения новые тесты используют существующую полную изоляцию пакета и не пишут в боевой runs. Замена общепакетного TestMain не входит в diff.",
+      "reason": "Новые тесты используют изолированные временные каталоги и данные в памяти. Явного runsguard в существующем TestMain нет; это унаследованное состояние вне дельты composer. Новый тест не пишет в боевой runs и не запускает реальные процессы чата.",
       "evidence": [
         {
           "object": "TestMain/newTestEnv/appEnv",
           "location": "tools/dashboard/tasks_test.go:124-162; tools/dashboard/server_test.go:123-188; tools/dashboard/appchat_test.go:169-202",
           "observation": "TestMain подменяет realHome/clientHome и очищает session env; newTestEnv даёт t.TempDir, fake PATH и synthetic DEVKIT_HOME. Явного runsguard в унаследованном TestMain нет; это прежнее состояние вне правки, не новое исключение или регрессия."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Каждый makeSandbox изолирует DOM/storage/HTTP в памяти; реальные процессы чата не запускаются. В tools/dashboard/tasks_test.go:124 TestMain подменяет окружение, но runsguard.Guard отсутствует. Прежний долг не исправлялся и наличие package Guard не заявляется."
         }
       ]
     },
@@ -1107,12 +1274,17 @@
       "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Поверхность чата остаётся разговором, вложениями и карточками. Новых служебных кнопок/панелей/плашек нет.",
+      "reason": "Поверхность чата остаётся разговором, вложениями и карточками. Новых служебных кнопок/панелей/плашек нет. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "chatItem/appToolPair",
           "location": "tools/dashboard/static/app.js:7970-8060,8582-8619",
           "observation": "Использованы bashCard/bodyCard/reportCard/shotThumb; новый дизайн не вводится."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Новое оформление или элементы управления не добавлены; существующая отправка теперь принимает вложение без текста."
         }
       ]
     },
@@ -1247,12 +1419,17 @@
       "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новой production дороги запуска нет; существующий appServerStart явно задаёт cmd.Dir. У теста node рабочий каталог наследуется от пакета dashboard.",
+      "reason": "Новой production дороги запуска нет; существующий appServerStart явно задаёт cmd.Dir. У теста node рабочий каталог наследуется от пакета dashboard. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "exec sites",
           "location": "tools/dashboard/appserver.go:73-77; tools/dashboard/appfeedui_test.go:16-17",
           "observation": "Процессная граница и cwd сохранены. Cards проверяет интерфейс в изолированном стенде."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Node запускается существующей формой тестов dashboard, cwd наследуется от пакета; fixture/app.js передаются явными относительными путями внутри пакета."
         }
       ]
     },
@@ -1277,12 +1454,17 @@
       "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Раскладка сохранена по README. Новых команд или источников скиллов нет.",
+      "reason": "Раскладка сохранена по README. Новых команд или источников скиллов нет. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "новые тесты/fixture",
           "location": "README.md:323-423; tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata",
           "observation": "Все файлы лежат рядом с существующим инструментом; testdata разрешает JS fixture."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Новые файлы принадлежат семье chat* рядом с dashboard и testdata/poc_* рядом с существующими JS стендами."
         }
       ]
     },
@@ -1457,12 +1639,17 @@
       "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Тесты находятся рядом с существующей семьёй app; UI fixture в её testdata.",
+      "reason": "Тесты находятся рядом с существующей семьёй app; UI fixture в её testdata. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "расположение тестов",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "Файлы appfeed_test.go и appfeedui_test.go разделяют backend и JS subprocess. Новых общих тестовых файлов нескольких инструментов нет."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "chatcomposer_test.go лежит рядом с модулем chat, JS fixture в testdata. Отдельный тест выбирается TestStaticChatAttachmentOnlyComposer."
         }
       ]
     },
@@ -1472,12 +1659,17 @@
       "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Каждая синтетическая лента/проект/загрузка создаётся в t.TempDir через appEnv/newTestEnv; overlay также использует t.TempDir.",
+      "reason": "Каждая синтетическая лента/проект/загрузка создаётся в t.TempDir через appEnv/newTestEnv; overlay также использует t.TempDir. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "appEnv/newTestEnv/TestAppFeedIndex",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs; tools/dashboard/server_test.go:123-188",
           "observation": "Временный путь к fake клиенту и uploads не относится к боевому дому. Protocol probe использовал ephemeral нити без модельного хода."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Новый стенд не пишет пользовательские файлы: DOM, localStorage и HTTP в памяти makeSandbox, реальные процессы чата не запускаются."
         }
       ]
     },
@@ -1487,12 +1679,17 @@
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Краснота прежних симптомов и мутации цены индекса записаны автором, независимые контрольные мутации воспроизведены.",
+      "reason": "Краснота прежних симптомов и мутации цены индекса записаны автором, независимые контрольные мутации воспроизведены. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "regcheck/mutations",
           "location": "docs/tasks/DK-1734.md: Regcheck; tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "Три независимые мутации (Fail, code=0, screenshot-only) дают ожидаемую красноту. Результаты фиксируются по конкретному коду 4a808/559544, без повторного запуска неизменённой широкой группы."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Штатный regcheck автора от 8e181 и независимый repo fixture на old/unsafe копиях подтверждают целевую красноту; текущая группа прошла."
         }
       ]
     },
@@ -1502,12 +1699,17 @@
       "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Существующий общий TestMain и newTestEnv полностью подменяют session/home/PATH для новых тестов.",
+      "reason": "Существующий общий TestMain и newTestEnv полностью подменяют session/home/PATH для новых тестов. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "тестовое окружение",
           "location": "tools/dashboard/tasks_test.go:124-162; tools/dashboard/server_test.go:123-188",
           "observation": "Модельный клиент fake, DEVKIT_HOME очищен. Ни реальная доска, ни боевой реестр в TestAppFeed не используются."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Новая проверка использует существующий TestMain dashboard и makeSandbox с отдельными DOM/storage/HTTP для каждого случая."
         }
       ]
     },
@@ -1517,12 +1719,17 @@
       "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Новый живой браузерный тест не добавляется. DOM sandbox с node является изолированным стендом; установленная браузерная приёмка явно отложена до выката.",
+      "reason": "Новый живой браузерный тест не добавляется. DOM sandbox с node является изолированным стендом; установленная браузерная приёмка явно отложена до выката. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "TestAppFeedCards и Сценарий проверки",
           "location": "tools/dashboard/appfeedui_test.go; docs/tasks/DK-1734.md: Сценарий проверки",
           "observation": "Существующий playwright cache/setup не меняется. Нельзя считать fixture заменой живой проверки вложений и child Bash."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "Живой браузер в новом тесте не запускается. Предыдущая установленная QA дала image-only FAIL; повтор после выката обязателен, DOM-стенд его не заменяет."
         }
       ]
     },
@@ -1547,12 +1754,17 @@
       "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новые имена файлов продолжают доменную семью app*, HTTP handlers не переименовываются.",
+      "reason": "Новые имена файлов продолжают доменную семью app*, HTTP handlers не переименовываются. Новая дельта проверена с учётом composer.",
       "evidence": [
         {
           "object": "appfeed_test.go/appfeedui_test.go/appchat.go",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs; tools/dashboard/appchat.go:76-303,515-654",
           "observation": "Новая команда/handler/step не добавлены."
+        },
+        {
+          "object": "Отправка вложения без текста из composer после установленного FAIL",
+          "location": "tools/dashboard/static/app.js:15257; tools/dashboard/chatcomposer_test.go; tools/dashboard/testdata/poc_composerclips.mjs",
+          "observation": "chatcomposer_test.go продолжает семью chat*; testdata/poc_composerclips.mjs соответствует текущим UI стендам."
         }
       ]
     },

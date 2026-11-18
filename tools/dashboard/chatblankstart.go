@@ -39,6 +39,9 @@ func (s *server) chatStartReceiptPath(blank string) string {
 // не должны стереть уже начатый внешний запуск. Файловый замок общий для
 // /chats и /say и действует после перезапуска сервера.
 func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id, text, model, harness, effort, claim, way string) {
+	if !chatModelCurrent(w, model) {
+		return
+	}
 	fail := func(err error) { writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()}) }
 	hold := func(err error) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error(), "unknown": true})

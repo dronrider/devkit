@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/modelcatalog"
 )
 
 // Подписки машины: GET /api/harnesses отдаёт список, из которого человек
@@ -264,7 +266,7 @@ func (h *Harness) tierModel(tier string) string {
 // ступени для этого есть поле Via, а тут его нет.
 func (h *Harness) hasChat(model string) bool {
 	for _, c := range h.Chat {
-		if c == model {
+		if modelcatalog.Current(c) == modelcatalog.Current(model) {
 			return true
 		}
 	}

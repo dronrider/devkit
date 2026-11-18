@@ -453,6 +453,9 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	if model == "" {
 		model, harness = s.chatChoice(sid, "")
 	}
+	if !chatModelCurrent(w, model) {
+		return
+	}
 	h := s.chatHarnessOf(model, harness)
 	if h == nil || !h.foreign() {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(

@@ -200,9 +200,29 @@ func (s *server) bindAlienLog(line string) {
 // binds читает реестр целиком. Файл капается по длине самим писателем
 // (hookio.append_capped), и памяти процесса тут не заводится: строка ложится
 // на каждом старте сессии, а устаревшая привязка врёт дороже, чем стоит чтение
-// сотни килобайт.
+// сотни килобайт. Основная привязка берётся из первого заказа. Работа над
+// соседней задачей её не меняет, а ручная привязка и отвязка переживают compact.
 func (s *server) binds() sessionBinds {
-	return sessions.Parse(s.bindsData())
+	data := s.bindsData()
+	out := sessions.Parse(data)
+	for sid, records := range sessions.All(data) {
+		b := out[sid]
+		ordered, manual := false, false
+		for _, r := range records {
+			if r.Source == bindOff && r.Task == "" {
+				b.Task, b.Source = "", bindOff
+				manual = true
+			} else if r.Source == bindHand {
+				b.Task, b.Source = r.Task, r.Source
+				manual = true
+			} else if r.Source == bindOrder && r.Task != "" && !ordered && !manual {
+				ordered = true
+				b.Task, b.Source = r.Task, r.Source
+			}
+		}
+		out[sid] = b
+	}
+	return out
 }
 
 // bindsAll это тот же склеенный журнал списком записей на сессию.

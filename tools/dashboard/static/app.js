@@ -7503,7 +7503,7 @@ async function wireFeed(project, sid, opts) {
       // работу агента так же, как её видно в vscode. Принадлежность помечена
       // скромно: отступ с полосой слева и точка с подсказкой, чей это ход.
       const next = talk[i + 1];
-      if (item.role === "tool" && next && next.role === "toolout" && opts.pair &&
+      if (item.role === "tool" && !item.app && next && next.role === "toolout" && opts.pair &&
         item.sub === next.sub) {
         const mark = (marks[i] + " " + marks[i + 1]).trim();
         items.push({
@@ -7519,7 +7519,7 @@ async function wireFeed(project, sid, opts) {
       items.push({
         key: itemKey(item),
         thread: threadOf(i, i),
-        sign: [item.role, item.time, item.text, item.sub || "", item.fail, marks[i]].join("|"),
+        sign: [item.role, item.time, item.text, item.sub || "", item.fail, marks[i], item.app ? JSON.stringify(item.app) : ""].join("|"),
         make: () => feedRow(safeItem(opts.item, item), item, null, marks[i]),
       });
     }
@@ -7967,6 +7967,33 @@ function chatBubble(who, text, meta, tip, quote, mark, extra) {
   return wrap;
 }
 
+function appStateWord(state) {
+  return ({ inProgress: "выполняется", pendingInit: "запускается", running: "работает",
+    completed: "завершено", failed: "ошибка", errored: "ошибка", declined: "отклонено",
+    interrupted: "прервано", shutdown: "остановлено", notFound: "не найден", started: "запущен",
+    interacted: "получил сообщение" })[state] || state || "";
+}
+
+function appToolPair(call) {
+  const item = call.app.item;
+  const details = [appStateWord(item.status), item.cwd || ""];
+  if (item.exitCode !== null && item.exitCode !== undefined) details.push("код " + item.exitCode);
+  if (item.durationMs !== null && item.durationMs !== undefined) details.push(item.durationMs + " мс");
+  if (call.app.threadId) details.push(call.app.threadId);
+  if (item.type === "commandExecution") {
+    return bashCard("Bash", Object.assign({}, call, { text: item.command || call.note || "",
+      about: details.filter(Boolean).join(", ") }), { text: item.aggregatedOutput || "", fail: call.fail });
+  }
+  if (item.type === "collabAgentToolCall") {
+    const who = [item.tool, appStateWord(item.status), item.model, item.reasoningEffort,
+      ...(item.receiverThreadIds || [])].filter(Boolean).join(", ");
+    const states = Object.entries(item.agentsStates || {}).map(([id, state]) =>
+      [id, appStateWord(state.status), state.message].filter(Boolean).join(": "));
+    return bodyCard("Agent", who, [item.prompt || "", ...states].filter(Boolean).join("\n"));
+  }
+  return null;
+}
+
 // Реплика в ленте панели: слова человека и агента идут пузырями, а свёрнутый
 // вызов инструмента и размышления строкой между ними. Лента тут одна на оба
 // прежних экрана (решение 6 LLD DK-430): по пузырям читают разговор, по
@@ -7977,6 +8004,10 @@ function chatBubble(who, text, meta, tip, quote, mark, extra) {
 // другом, и лента распухала вдвое на ровном месте. Склейка идёт по соседству:
 // вывод инструмента всегда стоит следом за своим вызовом.
 function toolPair(call, out) {
+  if (call.app && call.app.item) {
+    const card = appToolPair(call);
+    if (card) return card;
+  }
   const name = call.tool || "инструмент";
   const args = call.args || {};
   // Каждый инструмент рисуется по-своему, как в vscode: чтение файла одной
@@ -8017,6 +8048,9 @@ function toolPair(call, out) {
     return bodyCard(name, said, args.prompt || call.text || "");
   }
   if (name !== "Bash") return toolOneLine(name, call.about || call.note || "");
+  if (!out && String(call.key || "").startsWith("app:") && call.note && call.text) {
+    return bashCard(name, Object.assign({}, call, { text: call.note }), { text: call.text, fail: call.fail });
+  }
   return bashCard(name, call, out);
 }
 
@@ -8538,6 +8572,8 @@ function dotKind(item, out) {
   // служебная строка из бокового журнала носит ту же метку, что и вызов.
   if (item.role === "note" && (item.mark === "agent" || item.sub)) return "deleg";
   if (item.role !== "tool") return item.role === "toolout" && item.fail ? "bad" : "";
+  if (!out && item.app && item.app.method === "item/completed") return item.fail ? "bad" : "ok";
+  if (!out && String(item.key || "").startsWith("app:") && item.fail) return "bad";
   if (!out) return "";
   return out.fail ? "bad" : "ok";
 }
@@ -8547,7 +8583,8 @@ function chatItem(item) {
   // сервер видел закрытый вызов.
   if (item.role === "toolout" && !item.text) return el("span", "");
   if (item.role === "note") return replyEl(item);
-  if ((item.role === "user" || item.role === "assistant") && (item.text || item.selection || item.proposal)) {
+  if ((item.role === "user" || item.role === "assistant") && (item.text || item.selection || item.proposal ||
+    (item.shots || []).length || (item.frags || []).length || item.sel || item.pick)) {
     // Реплика, пришедшая каналом живых сессий, подписана источником: «с
     // дашборда» это реплика самого человека, он её и написал, а дашборд только
     // донёс. Обёртку канала сервер уже снял, тут остаётся чистый текст.

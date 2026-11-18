@@ -71,6 +71,26 @@ func (s *server) appAutomaticReview(sid string, st chatStore) bool {
 	return st.GroomSource != "" || s.appTaskOwns(sid, st)
 }
 
+type appFeedEvent struct {
+	Method        string         `json:"method"`
+	ThreadID      string         `json:"threadId,omitempty"`
+	TurnID        string         `json:"turnId,omitempty"`
+	Item          map[string]any `json:"item"`
+	StartedAtMS   *int64         `json:"startedAtMs,omitempty"`
+	CompletedAtMS *int64         `json:"completedAtMs,omitempty"`
+}
+
+func (e *appFeedEvent) identity() string {
+	if e == nil {
+		return ""
+	}
+	id, _ := e.Item["id"].(string)
+	if id == "" {
+		return ""
+	}
+	return e.Method + "\x00" + e.ThreadID + "\x00" + e.TurnID + "\x00" + id
+}
+
 // appFeedDir это каталог лент дороги app-server, рядом с записями разговоров.
 func appFeedDir(home string) string {
 	return filepath.Join(chatStoreDir(home), "appserver")
@@ -98,7 +118,19 @@ func (s *server) appFeedAppend(sid string, items []reply) error {
 		return err
 	}
 	defer f.Close()
+	seen := map[string]bool{}
+	for _, it := range s.appFeedRead(sid) {
+		if id := it.App.identity(); id != "" {
+			seen[id] = true
+		}
+	}
 	for _, it := range items {
+		if id := it.App.identity(); id != "" {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+		}
 		body, err := json.Marshal(it)
 		if err != nil {
 			return err
@@ -134,9 +166,56 @@ func appFeedParse(data []byte) []reply {
 			continue
 		}
 		it.Seq, it.Key = i, fmt.Sprintf("app:%d", i)
-		out = append(out, it)
+		if appFeedDisplay(&it) {
+			out = append(out, it)
+		}
 	}
 	return out
+}
+
+func appFeedDisplay(it *reply) bool {
+	if it.Role == "user" {
+		if it.Wire == "" {
+			it.Wire = it.Text
+		}
+		w := cutWraps(it.Text)
+		it.Text = w.rest
+		if len(w.shots) > 0 {
+			it.Shots = w.shots
+		}
+		if len(w.frags) > 0 {
+			it.Frags = w.frags
+		}
+		if w.sel != "" {
+			it.Sel, it.SelFile = w.sel, w.file
+		}
+		if w.pick != "" {
+			it.Pick, it.PickScreen = w.pick, w.screen
+		}
+	}
+	if it.Role == "tool" && (it.Tool == "userMessage" ||
+		((it.Tool == "collabAgentToolCall" || it.Tool == "subAgentActivity") && it.App == nil && strings.TrimSpace(it.Text+it.Note) == "")) {
+		return false
+	}
+	return true
+}
+
+func appFirst(items []reply) string {
+	for _, it := range items {
+		if it.Role != "user" {
+			continue
+		}
+		if text := strings.TrimSpace(it.Text); text != "" {
+			return truncate(text, 200)
+		}
+		if len(it.Shots) > 0 {
+			return "Снимок экрана"
+		}
+		if len(it.Frags) > 0 {
+			return "Текстовый фрагмент"
+		}
+	}
+	return ""
 }
 
 // appLive отдает живой процесс разговора. Мёртвый процесс вычищается на месте:
@@ -338,7 +417,7 @@ func (s *server) appTurn(c *appChat, text string) error {
 // appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец
 // хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.
 func (s *server) appNote(sid, method string, params json.RawMessage) {
-	if method != "item/completed" && method != "turn/completed" {
+	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
 		return
 	}
 	s.appMu.Lock()
@@ -357,14 +436,15 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 	now := s.now().UTC().Format(time.RFC3339)
 	if method == "turn/completed" {
 		var p struct {
-			Turn struct {
+			ThreadID string `json:"threadId"`
+			Turn     struct {
 				Status string `json:"status"`
 				Error  string `json:"error"`
 			} `json:"turn"`
 		}
 		json.Unmarshal(params, &p)
 		s.appMu.Lock()
-		if c := s.appChats[sid]; c != nil {
+		if c := s.appChats[sid]; c != nil && (p.ThreadID == "" || p.ThreadID == c.thread) {
 			c.mu.Lock()
 			if c.taskNotes == nil {
 				c.busy = false
@@ -378,28 +458,43 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		}
 		return
 	}
-	var p struct {
-		Item map[string]any `json:"item"`
-	}
-	if json.Unmarshal(params, &p) != nil || p.Item == nil {
+	var event appFeedEvent
+	if json.Unmarshal(params, &event) != nil || event.Item == nil {
 		return
 	}
-	items := appItemReplies(p.Item, now)
+	event.Method = method
+	kind, _ := event.Item["type"].(string)
+	if method == "item/started" && kind != "commandExecution" && kind != "collabAgentToolCall" && kind != "subAgentActivity" {
+		return
+	}
+	items := appItemReplies(event.Item, now)
+	s.appMu.Lock()
+	owner := ""
+	if c := s.appChats[sid]; c != nil {
+		owner = c.thread
+	}
+	s.appMu.Unlock()
+	for i := range items {
+		items[i].App = &event
+		if event.ThreadID != "" && owner != "" && event.ThreadID != owner {
+			items[i].Sub = event.ThreadID
+		}
+	}
 	if len(items) > 0 {
-		s.appFeedAppend(sid, items)
+		if err := s.appFeedAppend(sid, items); err != nil {
+			s.logf("событие %s разговора %s не записалось: %v", method, sid, err)
+		}
 	}
 }
 
-// appItemReplies переводит элемент хода клиента в записи ленты. Проверенный
-// контракт называет agentMessage и commandExecution, а прочие виды остаются
-// воротами инструментов: неизвестное не выбрасывается молча, а ложится ходом с
-// именем вида.
 func appItemReplies(item map[string]any, now string) []reply {
 	str := func(k string) string {
 		v, _ := item[k].(string)
 		return v
 	}
 	switch str("type") {
+	case "userMessage":
+		return nil
 	case "agentMessage":
 		if text := str("text"); strings.TrimSpace(text) != "" {
 			return []reply{{Role: "assistant", Text: text, Time: now}}
@@ -408,10 +503,35 @@ func appItemReplies(item map[string]any, now string) []reply {
 	case "commandExecution":
 		out := reply{Role: "tool", Tool: "Bash", Time: now,
 			Note: str("command"), Text: str("aggregatedOutput")}
+		out.Args = map[string]string{"command": str("command")}
+		out.Fail = str("status") == "failed" || str("status") == "declined"
 		if code, ok := item["exitCode"].(float64); ok && code != 0 {
 			out.Fail = true
 		}
 		return []reply{out}
+	case "collabAgentToolCall":
+		args := map[string]string{}
+		for _, key := range []string{"prompt", "model", "reasoningEffort", "tool", "status"} {
+			if v := str(key); v != "" {
+				args[key] = v
+			}
+		}
+		return []reply{{Role: "tool", Tool: "Agent", Time: now, About: str("tool"), Text: str("prompt"), Args: args, Fail: str("status") == "failed"}}
+	case "subAgentActivity":
+		if str("agentPath") == "" && str("agentThreadId") == "" {
+			return nil
+		}
+		word := map[string]string{"started": "запущен", "interacted": "получил сообщение", "interrupted": "прерван", "completed": "завершён"}[str("kind")]
+		if word == "" {
+			word = str("kind")
+		}
+		details := []string{}
+		for _, key := range []string{"agentPath", "agentThreadId", "model", "reasoningEffort"} {
+			if v := str(key); v != "" {
+				details = append(details, v)
+			}
+		}
+		return []reply{{Role: "note", Mark: "agent", Time: now, Note: "Субагент: " + word, Sub: str("agentPath"), Text: strings.Join(details, "\n")}}
 	case "reasoning":
 		if text := str("text"); strings.TrimSpace(text) != "" {
 			return []reply{{Role: "thinking", Text: text, Time: now}}
@@ -431,8 +551,11 @@ func appItemReplies(item map[string]any, now string) []reply {
 // appSayRecord кладёт реплику человека в ленту: она и есть эхо отправки,
 // транскрипта клиента дорога не читает.
 func (s *server) appSayRecord(sid, text string) {
-	s.appFeedAppend(sid, []reply{{Role: "user", Text: text,
-		Wire: text, Time: s.now().UTC().Format(time.RFC3339)}})
+	it := reply{Role: "user", Text: text, Wire: text, Time: s.now().UTC().Format(time.RFC3339)}
+	appFeedDisplay(&it)
+	if err := s.appFeedAppend(sid, []reply{it}); err != nil {
+		s.logf("реплика разговора %s не записалась: %v", sid, err)
+	}
 }
 
 // appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
@@ -745,15 +868,10 @@ func (s *server) appListRows(proj string) []chatEntry {
 		e.Mtime = fi.ModTime().UTC().Format(time.RFC3339)
 		e.Protocol = st.Protocol
 		items := s.appFeedRead(sid)
-		for _, it := range items {
-			if it.Role == "user" && strings.TrimSpace(it.Text) != "" {
-				e.First = truncate(strings.TrimSpace(it.Text), 200)
-				e.Title = e.First
-				if st.GroomSource != "" {
-					e.Title = st.GroomSource + " груминг"
-				}
-				break
-			}
+		e.First = appFirst(items)
+		e.Title = e.First
+		if st.GroomSource != "" {
+			e.Title = st.GroomSource + " груминг"
 		}
 		out = append(out, e)
 	}
@@ -780,12 +898,7 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 	head := sessionInfo{ID: sid, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
 		Task: st.Task, Reply: "session", Harness: st.Harness, Protocol: st.Protocol,
 		Live: s.appLive(sid) != nil}
-	for _, it := range items {
-		if it.Role == "user" && strings.TrimSpace(it.Text) != "" {
-			head.First = truncate(strings.TrimSpace(it.Text), 200)
-			break
-		}
-	}
+	head.First = appFirst(items)
 	n := intParam(r, "n", repliesDefault, repliesMax)
 	total := len(items)
 	kept := beforeCut(items, r.URL.Query().Get("before"))
@@ -852,7 +965,9 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file stri
 				}
 				it.Seq, it.Key = line, fmt.Sprintf("app:%d", line)
 				line++
-				sseEvent(w, f, "", marshalReply(it))
+				if appFeedDisplay(&it) {
+					sseEvent(w, f, "", marshalReply(it))
+				}
 			}
 		}
 	}

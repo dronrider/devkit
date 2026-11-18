@@ -974,6 +974,7 @@ func contentTexts(raw json.RawMessage) []string {
 // в одну строку, тянуть их содержимое на телефон незачем (LLD); размышления
 // сворачиваются в пометку без текста.
 type reply struct {
+	App       *appFeedEvent       `json:"app,omitempty"`
 	Proposal  *proposalAttachment `json:"proposal,omitempty"`
 	Selection *chat.Selection     `json:"selection,omitempty"`
 	Wire      string              `json:"wire,omitempty"`

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1734",
-  "base_sha": "9aa75d67da612d50486e2dd3a9c2064244571293",
-  "head_sha": "a7933b214a8bf6d275a565dd8defa65b84d9b760",
-  "code_hash": "1210fbab525a5d275ff101f2e83e7ef3ba1d7f07eb98f2cf47d09703234323f7",
+  "base_sha": "5f44b6e3bbcad0779dc7e25d03e543f2a9901565",
+  "head_sha": "458578ef0ebb45388d84078a74e03f48a2890261",
+  "code_hash": "2f65951b7142266266ea50ca4234dc7ff395d608e22585ab5d8ee6ab6d5a30bf",
   "task_hash": "4400933debf4351491061831de47bad37aae575687a5b9ee43dadec2f6e4978a",
   "sources": [
     {
@@ -42,16 +42,17 @@
     "decision": "Существующий cutWraps строит видимую проекцию при сохранении Wire. JSONL reply получает optional appFeedEvent с исходным item, method, threadId/turnId и полученными метками времени. appToolPair передаёт данные в готовые Bash/Agent карточки. Индекс identity+offset читает исходный журнал один раз и затем внешний хвост под существующим file lock.",
     "boundaries": "App-server создаёт события в отдельном процессе каждого чата. appSpawn открывает в нём основную нить через start либо resume и подтверждает единые workspace-write/on-request/auto_review до хода. Право владеть запуском задачи проверяется отдельно. appNote сохраняет реальные поля и дочерний threadId как Sub. JSONL служит источником истины, индекс в server содержит восстанавливаемую копию identity. Перед записью нового ввода appSay проверяет актуальность модели через modelcatalog. Исторический ID сохраняется до явной смены. Лента и UI не меняют эти правила.",
     "alternative": "Можно хранить только заранее выбранные поля и не сохранять raw item, но это потребует отдельного перехода при расширении протокола и снова рискует потерять сведения. Здесь сохранение полученных полей прямо входит в границы задачи. Можно удалять индекс при остановке appChat; текущий индекс сохраняется в течение работы сервера и позволяет не сканировать историю повторно при resume. Полное перечитывание при каждом событии отклонено замечанием 1 и заменено индексом.",
-    "justification": "Пользовательский результат DK-1734, сохранность полученных событий и ввода и границы файловой ручки остаются прежними. На новой базе DK-1735 задаёт единую политику start/resume, DK-1736 задаёт каталог выбора модели и запрет скрытой замены исторического ID. Код ленты не обходит эти проверки. Range-diff сохранил feature patches, изменился контекст README. Ранее проверенные 12 backend и 6 UI функций совпадают byte-for-byte с e37bd7741. Индекс сохраняет линейное чтение новых байтов, большой вывод сохраняется целиком. Новый полный merge-прогон и выкат не выполнялись. Живая установленная браузерная приёмка DK-1734 остаётся обязательной после выката; до smoke DK-1735 очередь удерживается диспетчером.",
+    "justification": "Пользовательский результат DK-1734, сохранность полученных событий и ввода и границы файловой ручки остаются прежними. На новой базе DK-1735 задаёт единую политику start/resume, DK-1736 задаёт каталог выбора модели и запрет скрытой замены исторического ID. Код ленты не обходит эти проверки. Range-diff сохранил feature patches, изменился контекст README. Ранее проверенные 12 backend и 6 UI функций совпадают byte-for-byte с e37bd7741. Индекс сохраняет линейное чтение новых байтов, большой вывод сохраняется целиком. Новый полный merge-прогон и выкат не выполнялись. Живая установленная браузерная приёмка DK-1734 остаётся обязательной после выката. Повторное слияние и полный merge-прогон выполняет диспетчер после финальной обкатки автора.",
     "result": "checked",
     "evidence": [
-      "База 9aa75d67da612d50486e2dd3a9c2064244571293; HEAD a7933b214a8bf6d275a565dd8defa65b84d9b760. Сопоставлен старый проверенный код e37bd7741 с rebased patch series; feature изменения сохранены, отличается только README context. Проверены актуальные общие стандарты и docs/ARCHITECTURE.md с новым каталогом и единой policy.",
+      "Текущая база 5f44b6e3bbcad0779dc7e25d03e543f2a9901565; HEAD 458578ef0ebb45388d84078a74e03f48a2890261 после штатного rebase. Diff tools/dashboard, internal/modelcatalog и всех источников 96 правил относительно проверенного fcf90b21c пуст. Содержательная постановка не изменилась, task_hash совпал. Ранее выполненные проверки a7933b214 остаются применимыми к этому же коду.",
       "Адресная группа автора на a7933b214: devkitctl test tools/dashboard -run TestApp|TestChatModel|TestChatLegacy|TestStaticShot|TestStaticChatClips|TestStaticFeed -count=1; PASS 39.104 с. Это интеграционная группа, не новый полный merge-прогон.",
       "Новый regcheck от 9aa75d67d по TestAppFeed(Attachments|Events|Legacy|Cards)$ подтвердил красноту прежнего кода и зелёный результат a7933b214.",
       "Независимый Go overlay TestDK1734Review на a7933b214: output 540029 байт, JSONL 1120421 байт; полное сохранение appNote/append/reload/newLines/marshalReply, 12 concurrent append через два server-instance дают одну identity. PASS, пакет 3.694 с.",
       "JS probe текущего app.js: 600010 символов вывода в настоящем toolPair сохранены, completed wait не подменяет running ребёнка. node --check и git diff --check новой дельты прошли.",
       "Ранее выполненные фактическая схема Codex 0.163.0 и ephemeral process probe остаются применимыми: appServerStart и process/thread ownership не менялись. Реальные дочерние модельные item events и установленный браузер этим probe не проверялись.",
-      "Сценарий taskfile по-прежнему требует после выката живые 1/2/screenshot-only сообщения, просмотр PNG, parent/subagent Bash успех+exit7, reload, raw сравнение и файловую защиту. Финальный rehearsal автора должен пройти после коммита этого audit JSON. HOLD до smoke DK-1735 не снимается этим ревью."
+      "Сценарий taskfile по-прежнему требует после выката живые 1/2/screenshot-only сообщения, просмотр PNG, parent/subagent Bash успех+exit7, reload, raw сравнение и файловую защиту. Финальный rehearsal автора должен пройти после коммита этого audit JSON. Повторное слияние и полный merge-прогон выполняет диспетчер после финальной обкатки автора.",
+      "Причина устаревания: codeSnapshot хеширует всё дерево, excluded() исключает docs/tasks/**/*.md и audit JSON, но включает .sh. Между 9aa75d67d и 5f44b6e3 изменены путь/содержимое архивного DK-1735-check.sh и добавлен archive/2026/DK-1735-check_test.sh. Поэтому code_hash изменился с 1210fbab525a5d275ff101f2e83e7ef3ba1d7f07eb98f2cf47d09703234323f7 на 2f65951b7142266266ea50ca4234dc7ff395d608e22585ab5d8ee6ab6d5a30bf. Сценарии прочитаны как upstream QA helpers; production ленты ими не меняется. Task hash, источники и 96 rule ID/text совпали."
     ]
   },
   "rules": [
@@ -1221,7 +1222,7 @@
         {
           "object": "policy/lifecycle integration tests",
           "location": "tools/dashboard/appchat_test.go:706-837; tools/dashboard/appchat_artifact_test.go:84-160; tools/dashboard/apptask_test.go; tools/dashboard/apptask_continuation_test.go",
-          "observation": "Focused TestApp на a7933b214 прошёл. Покрыты start/resume, неподтверждённые/отсутствующие policy fields, произвольная привязка без токена владельца, рестарт с историей, отказ auto_review в ленте и отсутствие turn после policy failure. Живой smoke установленного DK-1735 остаётся отдельной QA и условием HOLD."
+          "observation": "Focused TestApp на a7933b214 прошёл. Покрыты start/resume, неподтверждённые/отсутствующие policy fields, произвольная привязка без токена владельца, рестарт с историей, отказ auto_review в ленте и отсутствие turn после policy failure. Живой smoke установленного DK-1735 не подменяется кодовым ревью; его статус проверяет диспетчер."
         }
       ]
     },

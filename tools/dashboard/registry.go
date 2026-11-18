@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -206,6 +207,7 @@ func (s *server) binds() sessionBinds {
 	data := s.bindsData()
 	out := sessions.Parse(data)
 	for sid, records := range sessions.All(data) {
+		sort.SliceStable(records, func(i, j int) bool { return records[i].Time < records[j].Time })
 		b := out[sid]
 		ordered, manual := false, false
 		for _, r := range records {

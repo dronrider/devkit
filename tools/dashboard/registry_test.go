@@ -819,3 +819,18 @@ print("да" if mod.owns_chat(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 	}
 	return answer == "да"
 }
+
+func TestChatPrimaryUsesOrderTimeAcrossHomes(t *testing.T) {
+	e := newTestEnv(t)
+	sid := "aaaa1726-1111-4111-8111-111111111111"
+	// Второй дом склеивается после первого, но заказ в нём старше.
+	second := t.TempDir()
+	old := realHomeFn
+	realHomeFn = func() string { return second }
+	t.Cleanup(func() { realHomeFn = old })
+	writeBinds(t, e.home, bindRecord(e.home, "2026-11-18T12:00:00", sid, "XR-5", bindOrder))
+	writeBinds(t, second, bindRecord(second, "2026-11-17T12:00:00", sid, "XR-4", bindOrder))
+	if got := e.s.binds()[sid].Task; got != "XR-4" {
+		t.Fatalf("взялся первый файл вместо первого заказа: %s", got)
+	}
+}

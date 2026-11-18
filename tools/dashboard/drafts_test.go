@@ -2279,7 +2279,7 @@ func TestDraftGroomPreviewAssignment(t *testing.T) {
 			e, c, _ := draftsEnv(t)
 			log := filepath.Join(e.home, "tmux.log")
 			writeTmuxFake(t, e.bin, log, "")
-			writeClientFakes(t, e.bin, "клиент-1", "клиент-2")
+			writeClientFakes(t, e.bin, "claude", "клиент-1", "клиент-2")
 			var fixture map[string]any
 			if err := json.Unmarshal([]byte(harnessTiersFixture), &fixture); err != nil {
 				t.Fatal(err)

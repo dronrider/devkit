@@ -195,10 +195,11 @@ type server struct {
 	// подпроцесс, и держать за ним сканы корней нельзя.
 	// Проверка занятости и подъём грумера выполняются под одним замком.
 	// appMu при этом берётся внутри appStartRecord.
-	groomStartMu sync.Mutex
-	appMu        sync.Mutex
-	appChats     map[string]*appChat
-	appTasks     map[string]*appTask
+	groomStartMu   sync.Mutex
+	appMu          sync.Mutex
+	appChats       map[string]*appChat
+	appFeedIndexes map[string]*appFeedIndex
+	appTasks       map[string]*appTask
 
 	// Вопросы помощника пароля askpass (askpass.go, DK-772): ID запроса ->
 	// ожидание. Пароль живёт тут, в памяти, и в ответе помощнику; в журнал,

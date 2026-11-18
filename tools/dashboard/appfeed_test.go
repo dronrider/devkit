@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func appFeedJSON(t *testing.T, value any) map[string]any {
@@ -225,5 +226,146 @@ func TestAppFeedLegacy(t *testing.T) {
 	got := appFeedParse(data)
 	if len(got) != 2 || got[0].Text != "слова" || len(got[0].Shots) != 1 || !strings.Contains(got[0].Wire, "<screenshot") || got[1].Key != "app:4" {
 		t.Fatalf("старая история: %+v", got)
+	}
+}
+
+func appIndexReply(t *testing.T, id, text string) reply {
+	t.Helper()
+	raw := appFeedBody(t, map[string]any{"role": "tool", "tool": "Bash", "text": text, "app": map[string]any{"method": "item/completed", "threadId": "parent", "turnId": "turn", "item": map[string]any{"id": id, "type": "commandExecution", "command": "pwd", "aggregatedOutput": text}}})
+	var it reply
+	if err := json.Unmarshal([]byte(raw), &it); err != nil {
+		t.Fatal(err)
+	}
+	return it
+}
+
+func appIndexLine(t *testing.T, it reply) []byte {
+	t.Helper()
+	return []byte(appFeedBody(t, it) + "\n")
+}
+
+func TestAppFeedIndexReadsOnlyNewBytes(t *testing.T) {
+	e, _ := appEnv(t)
+	sid := "as-index-cost"
+	file := e.s.appFeedFile(sid)
+	if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+		t.Fatal(err)
+	}
+	seed := []byte{}
+	for i := 0; i < 16; i++ {
+		seed = append(seed, appIndexLine(t, appIndexReply(t, fmt.Sprintf("seed-%d", i), strings.Repeat("x", 64<<10)))...)
+	}
+	if err := os.WriteFile(file, seed, 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, before := feedIOStat()
+	for i := 0; i < 32; i++ {
+		it := appIndexReply(t, fmt.Sprintf("new-%d", i), strings.Repeat("y", 8<<10))
+		if err := e.s.appFeedAppend(sid, []reply{it, it}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, after := feedIOStat()
+	if read := after - before; read != int64(len(seed)) {
+		t.Fatalf("индекс перечитал историю: %d байт, начальная лента %d", read, len(seed))
+	}
+	// Другой писатель добавляет событие под тем же файловым соглашением.
+	external := appIndexReply(t, "external", "другой писатель")
+	extra := appIndexLine(t, external)
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(extra); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	_, before = feedIOStat()
+	if err := e.s.appFeedAppend(sid, []reply{external, appIndexReply(t, "after-external", "готово")}); err != nil {
+		t.Fatal(err)
+	}
+	_, after = feedIOStat()
+	if read := after - before; read != int64(len(extra)) {
+		t.Fatalf("внешнее добавление перечитало %d байт вместо хвоста %d", read, len(extra))
+	}
+	if got := len(e.s.appFeedRead(sid)); got != 50 {
+		t.Fatalf("дедуп при добавлении: %d записей вместо 50", got)
+	}
+	// Новый процесс восстанавливает индекс один раз и узнаёт прежние identity.
+	restarted := &server{cfg: e.s.cfg}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, before = feedIOStat()
+	if err := restarted.appFeedAppend(sid, []reply{external}); err != nil {
+		t.Fatal(err)
+	}
+	_, after = feedIOStat()
+	if read := after - before; read != info.Size() {
+		t.Fatalf("перезапуск: %d байт вместо %d", read, info.Size())
+	}
+	_, before = feedIOStat()
+	if err := restarted.appFeedAppend(sid, []reply{external}); err != nil {
+		t.Fatal(err)
+	}
+	_, after = feedIOStat()
+	if after != before {
+		t.Fatal("после восстановления индекс снова прочёл файл")
+	}
+	if got := len(e.s.appFeedRead(sid)); got != 50 {
+		t.Fatalf("повтор после перезапуска: %d", got)
+	}
+}
+
+func TestAppFeedIndexResetsChangedFile(t *testing.T) {
+	for _, change := range []string{"truncate", "replace", "same-size"} {
+		t.Run(change, func(t *testing.T) {
+			e, _ := appEnv(t)
+			sid := "as-index-reset"
+			file := e.s.appFeedFile(sid)
+			old := appIndexReply(t, "old", strings.Repeat("o", 1024))
+			if err := e.s.appFeedAppend(sid, []reply{old}); err != nil {
+				t.Fatal(err)
+			}
+			fresh := appIndexReply(t, "new", "новая лента")
+			switch change {
+			case "truncate":
+				if err := os.WriteFile(file, appIndexLine(t, fresh), 0644); err != nil {
+					t.Fatal(err)
+				}
+			case "replace":
+				other := file + ".new"
+				if err := os.WriteFile(other, appIndexLine(t, fresh), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(other, file); err != nil {
+					t.Fatal(err)
+				}
+			case "same-size":
+				fresh = appIndexReply(t, "new", strings.Repeat("o", 1024))
+				if err := os.WriteFile(file, appIndexLine(t, fresh), 0644); err != nil {
+					t.Fatal(err)
+				}
+				// Метка меняется явно, без ожидания разрешения файловой системы.
+				at := time.Unix(1700000000, 0)
+				if err := os.Chtimes(file, at, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantRead := len(appIndexLine(t, fresh))
+			_, before := feedIOStat()
+			if err := e.s.appFeedAppend(sid, []reply{fresh, old}); err != nil {
+				t.Fatal(err)
+			}
+			_, after := feedIOStat()
+			if read := after - before; read != int64(wantRead) {
+				t.Fatalf("смена файла: %d байт вместо %d", read, wantRead)
+			}
+			got := e.s.appFeedRead(sid)
+			if len(got) != 2 || got[0].Text != fresh.Text || got[1].Text != old.Text {
+				t.Fatalf("старый индекс пережил смену файла: %+v", got)
+			}
+		})
 	}
 }

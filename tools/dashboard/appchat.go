@@ -8,9 +8,11 @@ package main
 // protocol, дашборд имён протоколов не сочиняет.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -80,15 +82,90 @@ type appFeedEvent struct {
 	CompletedAtMS *int64         `json:"completedAtMs,omitempty"`
 }
 
+func appEventIdentity(method, thread, turn, id string) string {
+	if id == "" {
+		return ""
+	}
+	return method + "\x00" + thread + "\x00" + turn + "\x00" + id
+}
+
 func (e *appFeedEvent) identity() string {
 	if e == nil {
 		return ""
 	}
 	id, _ := e.Item["id"].(string)
-	if id == "" {
-		return ""
+	return appEventIdentity(e.Method, e.ThreadID, e.TurnID, id)
+}
+
+type appFeedIndex struct {
+	info    os.FileInfo
+	offset  int64
+	pending []byte
+	seen    map[string]bool
+}
+
+// Поля индекса меняются под файловым замком appFeedAppend. appMu защищает
+// только таблицу индексов, чтение диска не задерживает остальные разговоры.
+func (s *server) appFeedIndex(sid string) *appFeedIndex {
+	s.appMu.Lock()
+	defer s.appMu.Unlock()
+	if s.appFeedIndexes == nil {
+		s.appFeedIndexes = map[string]*appFeedIndex{}
 	}
-	return e.Method + "\x00" + e.ThreadID + "\x00" + e.TurnID + "\x00" + id
+	if s.appFeedIndexes[sid] == nil {
+		s.appFeedIndexes[sid] = &appFeedIndex{}
+	}
+	return s.appFeedIndexes[sid]
+}
+
+func (idx *appFeedIndex) remember(line []byte) {
+	var record struct {
+		App struct {
+			Method   string `json:"method"`
+			ThreadID string `json:"threadId"`
+			TurnID   string `json:"turnId"`
+			Item     struct {
+				ID string `json:"id"`
+			} `json:"item"`
+		} `json:"app"`
+	}
+	if json.Unmarshal(line, &record) == nil {
+		app := record.App
+		if id := appEventIdentity(app.Method, app.ThreadID, app.TurnID, app.Item.ID); id != "" {
+			idx.seen[id] = true
+		}
+	}
+}
+
+func (idx *appFeedIndex) refresh(f *os.File) error {
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if idx.info == nil || !os.SameFile(idx.info, info) || info.Size() < idx.offset ||
+		(info.Size() == idx.offset && !info.ModTime().Equal(idx.info.ModTime())) {
+		idx.offset, idx.pending, idx.seen = 0, nil, map[string]bool{}
+	}
+	if info.Size() > idx.offset {
+		data, err := io.ReadAll(io.NewSectionReader(f, idx.offset, info.Size()-idx.offset))
+		feedIO.opens.Add(1)
+		feedIO.bytes.Add(int64(len(data)))
+		if err != nil {
+			return err
+		}
+		idx.offset += int64(len(data))
+		data = append(idx.pending, data...)
+		lines := bytes.Split(data, []byte{'\n'})
+		for _, line := range lines[:len(lines)-1] {
+			idx.remember(line)
+		}
+		idx.pending = bytes.Clone(lines[len(lines)-1])
+		if len(idx.pending) > 0 {
+			idx.remember(idx.pending)
+		}
+	}
+	idx.info = info
+	return nil
 }
 
 // appFeedDir это каталог лент дороги app-server, рядом с записями разговоров.
@@ -113,33 +190,47 @@ func (s *server) appFeedAppend(sid string, items []reply) error {
 		return err
 	}
 	defer lock.Close()
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	seen := map[string]bool{}
-	for _, it := range s.appFeedRead(sid) {
-		if id := it.App.identity(); id != "" {
-			seen[id] = true
+	idx := s.appFeedIndex(sid)
+	if err := idx.refresh(f); err != nil {
+		return err
+	}
+	if len(idx.pending) > 0 {
+		if _, err := f.Write([]byte{'\n'}); err != nil {
+			return err
 		}
+		idx.offset++
+		idx.pending = nil
 	}
 	for _, it := range items {
 		if id := it.App.identity(); id != "" {
-			if seen[id] {
+			if idx.seen[id] {
 				continue
 			}
-			seen[id] = true
 		}
 		body, err := json.Marshal(it)
 		if err != nil {
 			return err
 		}
-		if _, err := f.Write(append(body, '\n')); err != nil {
+		line := append(body, '\n')
+		n, err := f.Write(line)
+		if err != nil {
 			return err
 		}
+		if n != len(line) {
+			return io.ErrShortWrite
+		}
+		idx.offset += int64(n)
+		if id := it.App.identity(); id != "" {
+			idx.seen[id] = true
+		}
 	}
-	return nil
+	idx.info, err = f.Stat()
+	return err
 }
 
 // appFeedRead читает ленту разговора целиком: файл это и есть разговор, он

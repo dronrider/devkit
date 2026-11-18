@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1734",
-  "base_sha": "11a177cd57f1132736ccf998660a36112fa69c61",
-  "head_sha": "559544d1bbd7a83cd4065ee2e738aeb92db880f2",
-  "code_hash": "a6b34cba4a92cee7644d78d3cfdc34270bf9b0e37a1665323647ae4871a314a8",
+  "base_sha": "9aa75d67da612d50486e2dd3a9c2064244571293",
+  "head_sha": "a7933b214a8bf6d275a565dd8defa65b84d9b760",
+  "code_hash": "1210fbab525a5d275ff101f2e83e7ef3ba1d7f07eb98f2cf47d09703234323f7",
   "task_hash": "4400933debf4351491061831de47bad37aae575687a5b9ee43dadec2f6e4978a",
   "sources": [
     {
@@ -28,7 +28,7 @@
       "name": "project-architecture",
       "path": "project:docs/ARCHITECTURE.md",
       "status": "present",
-      "hash": "44a0bfaf8ade236d54cd6f6ed8810436d8cc51a2ca644a60b05b6a7201790306"
+      "hash": "7dfd9787d5886b70cbe3f589bdc2967a36a52de7bc0951b2924901cf915bd4be"
     },
     {
       "name": "project-style",
@@ -39,19 +39,19 @@
   ],
   "architecture": {
     "goal": "Показать вложения и команды с полным выводом, реальные состояния субагентов и связь событий с нитями в новой и старой ленте Codex. Исходный ввод модели и границы файловой ручки сохраняются.",
-    "decision": "Существующий cutWraps строит видимую проекцию при сохранении Wire. JSONL reply получает optional appFeedEvent с исходным item, method, threadId/turnId и полученными timestamp. appToolPair передаёт данные в готовые Bash/Agent карточки. Индекс identity+offset читает исходный журнал один раз и затем внешний хвост под существующим file lock.",
-    "boundaries": "App-server создаёт события в отдельном процессе каждого чата. appSpawn открывает в нём одну основную нить через start либо resume; произвольные чаты в этот процесс не загружаются. appNote сохраняет реальные поля, помечает дочерние threadId как Sub. JSONL служит источником истины. Индекс в server содержит восстанавливаемую копию только identity. appFeedParse/SSE готовят одинаковую проекцию, браузер только рисует. Файловая ручка/авторизация/approval policy не меняются.",
+    "decision": "Существующий cutWraps строит видимую проекцию при сохранении Wire. JSONL reply получает optional appFeedEvent с исходным item, method, threadId/turnId и полученными метками времени. appToolPair передаёт данные в готовые Bash/Agent карточки. Индекс identity+offset читает исходный журнал один раз и затем внешний хвост под существующим file lock.",
+    "boundaries": "App-server создаёт события в отдельном процессе каждого чата. appSpawn открывает в нём основную нить через start либо resume и подтверждает единые workspace-write/on-request/auto_review до хода. Право владеть запуском задачи проверяется отдельно. appNote сохраняет реальные поля и дочерний threadId как Sub. JSONL служит источником истины, индекс в server содержит восстанавливаемую копию identity. Перед записью нового ввода appSay проверяет актуальность модели через modelcatalog. Исторический ID сохраняется до явной смены. Лента и UI не меняют эти правила.",
     "alternative": "Можно хранить только заранее выбранные поля и не сохранять raw item, но это потребует отдельного перехода при расширении протокола и снова рискует потерять сведения. Здесь сохранение полученных полей прямо входит в границы задачи. Можно удалять индекс при остановке appChat; текущий индекс сохраняется в течение работы сервера и позволяет не сканировать историю повторно при resume. Полное перечитывание при каждом событии отклонено замечанием 1 и заменено индексом.",
-    "justification": "Обязателен пользовательский результат, сохранность полученных событий/ввода и границ доступа; отдельный новый UI или политика прав не требуются. Выбрана совместимая optional проекция и существующие компоненты. Двойное хранение output в Text и raw item увеличивает размер JSONL примерно вдвое, зато сохраняет старый reply-контракт и полный источник для новых карточек; ограничения строки на пути нет. После исправления обычный append не повторяет полный decode. Индекс проверяет inode/size/mtime, читает неизвестный хвост под lock и восстанавливается после рестарта. Самостоятельные браузерные проверки установленного артефакта в этот проход не входили; они обязательны отдельной сессии после выката.",
+    "justification": "Пользовательский результат DK-1734, сохранность полученных событий и ввода и границы файловой ручки остаются прежними. На новой базе DK-1735 задаёт единую политику start/resume, DK-1736 задаёт каталог выбора модели и запрет скрытой замены исторического ID. Код ленты не обходит эти проверки. Range-diff сохранил feature patches, изменился контекст README. Ранее проверенные 12 backend и 6 UI функций совпадают byte-for-byte с e37bd7741. Индекс сохраняет линейное чтение новых байтов, большой вывод сохраняется целиком. Новый полный merge-прогон и выкат не выполнялись. Живая установленная браузерная приёмка DK-1734 остаётся обязательной после выката; до smoke DK-1735 очередь удерживается диспетчером.",
     "result": "checked",
     "evidence": [
-      "База 11a177cd57f1132736ccf998660a36112fa69c61; проверена production-версия 4a8085917 и финальный docs SHA 559544d1bbd7a83cd4065ee2e738aeb92db880f2. Дельта 4a808..559544 только docs/tasks/DK-1734.md.",
-      "559544d1; независимый прогон TestAppFeedIndex|TestAppFeedEvents|TestAppFeedCards|TestAppFeedLegacy|TestAppTaskChildCompletionDoesNotFinishPass|TestAppTaskCompletion: PASS, 4.016 с",
-      "Временный Go overlay TestDK1734ReviewLongOutput: 540029 байт вывода, 1120421 байт JSONL; appNote -> append -> appFeedRead/newLines/marshalReply без потерь. JS toolPair сохранил 600010 символов.",
-      "Установленный codex-cli 0.163.0, generate-json-schema --experimental: CollabAgentToolCall.status описывает вызов, agentsStates.status описывает агента; interacted является отдельным SubAgentActivityKind. JS probe подтвердил completed wait с running ребёнком. Схемы /tmp/dk-1734-review-schema.",
-      "Фактический protocol probe /tmp/dk1734_protocol_probe.py: два процесса app-server --stdio, только ephemeral thread/start, никаких turn/start. A получил 2 собственных thread/started, B получил 1; пересечение нулевое. appSpawn/appServerStart подтверждают отдельный процесс и один root на sid. Реальные дочерние модельные item события этим probe не проверялись.",
-      "TestDK1734ReviewConcurrentDedupe: 12 конкурентных append через 2 server-instance с разными индексами дали одну строку одной identity.",
-      "Сценарий docs/tasks/DK-1734.md требует после выката новый свободный чат, 1/2/screenshot-only сообщения, открытие миниатюр, parent/subagent Bash успех+exit7, reload, сравнение с исходными событиями и проверку файловой ручки. Стенд/rehearse не объявлены установленной приёмкой."
+      "База 9aa75d67da612d50486e2dd3a9c2064244571293; HEAD a7933b214a8bf6d275a565dd8defa65b84d9b760. Сопоставлен старый проверенный код e37bd7741 с rebased patch series; feature изменения сохранены, отличается только README context. Проверены актуальные общие стандарты и docs/ARCHITECTURE.md с новым каталогом и единой policy.",
+      "Адресная группа автора на a7933b214: devkitctl test tools/dashboard -run TestApp|TestChatModel|TestChatLegacy|TestStaticShot|TestStaticChatClips|TestStaticFeed -count=1; PASS 39.104 с. Это интеграционная группа, не новый полный merge-прогон.",
+      "Новый regcheck от 9aa75d67d по TestAppFeed(Attachments|Events|Legacy|Cards)$ подтвердил красноту прежнего кода и зелёный результат a7933b214.",
+      "Независимый Go overlay TestDK1734Review на a7933b214: output 540029 байт, JSONL 1120421 байт; полное сохранение appNote/append/reload/newLines/marshalReply, 12 concurrent append через два server-instance дают одну identity. PASS, пакет 3.694 с.",
+      "JS probe текущего app.js: 600010 символов вывода в настоящем toolPair сохранены, completed wait не подменяет running ребёнка. node --check и git diff --check новой дельты прошли.",
+      "Ранее выполненные фактическая схема Codex 0.163.0 и ephemeral process probe остаются применимыми: appServerStart и process/thread ownership не менялись. Реальные дочерние модельные item events и установленный браузер этим probe не проверялись.",
+      "Сценарий taskfile по-прежнему требует после выката живые 1/2/screenshot-only сообщения, просмотр PNG, parent/subagent Bash успех+exit7, reload, raw сравнение и файловую защиту. Финальный rehearsal автора должен пройти после коммита этого audit JSON. HOLD до smoke DK-1735 не снимается этим ревью."
     ]
   },
   "rules": [
@@ -127,6 +127,11 @@
           "object": "appFeedIndex.refresh/appFeedAppend; appNote/appItemReplies",
           "location": "tools/dashboard/appchat.go:121-233,515-642",
           "observation": "refresh проверяет inode/size/mtime; append возвращает ошибку записи; неизвестные значения состояния отображаются исходным словом; пропущенные поля не заполняются фиктивными значениями."
+        },
+        {
+          "object": "интеграция на базе DK-1735/DK-1736",
+          "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
+          "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
         }
       ]
     },
@@ -142,6 +147,11 @@
           "object": "appFeedAppend, appFeedDisplay",
           "location": "tools/dashboard/appchat.go:183-233,267-303,1014-1064",
           "observation": "Identity содержит method/thread/turn/item.id. Собственный и внешний append проверяются под общим файловым lock."
+        },
+        {
+          "object": "интеграция на базе DK-1735/DK-1736",
+          "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
+          "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
         }
       ]
     },
@@ -157,6 +167,11 @@
           "object": "старый JSONL, reply.App/Wire, toolPair fallback",
           "location": "tools/dashboard/appchat.go:76-303,515-654; tools/dashboard/static/app.js:7421-7439,8051-8053",
           "observation": "TestAppFeedLegacy и TestAppFeedCards проверяют старый Bash, включая одинаковые command/output; прежняя Bash/toolout пара сохранена."
+        },
+        {
+          "object": "интеграция на базе DK-1735/DK-1736",
+          "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
+          "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
         }
       ]
     },
@@ -217,6 +232,11 @@
           "object": "shotURL/handleChatShotGet; appSpawn/appServerStart",
           "location": "tools/dashboard/static/app.js:8753; tools/dashboard/chats.go:5261-5285; tools/dashboard/server.go:373-374; tools/dashboard/appchat.go:370-469",
           "observation": "Маршруты и политика файлов не изменены. Тесты TestAppFeedAttachments проверяют blank-путь и попытку ../чужой.png. Доступ к новым путям не расширен."
+        },
+        {
+          "object": "интеграция на базе DK-1735/DK-1736",
+          "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
+          "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
         }
       ]
     },
@@ -247,6 +267,11 @@
           "object": "индекс и повтор событий",
           "location": "tools/dashboard/appchat.go:140-233; internal/chat/chat.go:107-131; tools/dashboard/appfeed_test.go:247-369",
           "observation": "Фактический счётчик байтов проверяет initial read, внешний хвост, restart и invalidation. Мутация сброса индекса дала 75441895 байт вместо 2100438. Повторы не вызывают модель заново."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -277,6 +302,11 @@
           "object": "appFeedIndex.remember/refresh; reply projection",
           "location": "tools/dashboard/appchat.go:121-169,238-264,557-584",
           "observation": "Новый индекс не разворачивает aggregatedOutput в map при каждом append. Однократный initial scan и хвост необходимы для restart/cross-writer дедупликации. Временный Go overlay TestDK1734ReviewLongOutput: 540029 байт вывода, 1120421 байт JSONL; appNote -> append -> appFeedRead/newLines/marshalReply без потерь. JS toolPair сохранил 600010 символов."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -292,6 +322,11 @@
           "object": "refresh -> append -> stat",
           "location": "tools/dashboard/appchat.go:183-233",
           "observation": "Перед записью читается только неизвестный хвост. После записи f.Stat обновляет размер/mtime. Тест считает байты и обнаруживает возврат к full reread."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -322,6 +357,11 @@
           "object": "цикл items",
           "location": "tools/dashboard/appchat.go:198-231",
           "observation": "32 appends читают только initial seed; внешний append даёт только extra bytes. N+1 полного чтения устранён."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -592,6 +632,11 @@
           "object": "reply.Text/Wire/App",
           "location": "tools/dashboard/static/app.js:7421-7439,14441; tools/dashboard/appchat.go:267-303,647-654",
           "observation": "Старые Bash/toolout и legacy app: читаются. Передача appTurn получает исходную строку text; тест отражает точный ввод модели."
+        },
+        {
+          "object": "интеграция на базе DK-1735/DK-1736",
+          "location": "9aa75d67d..a7933b214; tools/dashboard/appchat.go:423-463,658-669; tools/dashboard/chats.go:1001-1020",
+          "observation": "Policy принимается до хода, legacy model continuation отклоняется до записи user echo. appNote/индекс/проекция вложений и карточки byte-identical ранее проверенной реализации. Адресная интеграционная группа и новый regcheck от новой базы зелёные."
         }
       ]
     },
@@ -742,6 +787,11 @@
           "object": "regcheck и mutation",
           "location": "docs/tasks/DK-1734.md: записи Regcheck и Доработка замечания 1",
           "observation": "Авторский regcheck от 11a177cd5 по TestAppFeed(Attachments|Events|Legacy|Cards)$: red base / green current. Полное перечитывание: 75441895 байт вместо 2100438; обычный индекс проходит."
+        },
+        {
+          "object": "новый regcheck на актуальной базе",
+          "location": "regcheck -C /Users/rider/projects/devkit-dk-1734 --base 9aa75d67d -- devkitctl test tools/dashboard -run TestAppFeed(Attachments|Events|Legacy|Cards)$ -count=1",
+          "observation": "Автор подтвердил red на 9aa75d67d и green на a7933b214. Production после rebase не менялся; команда и результат записаны в Ходе работы."
         }
       ]
     },
@@ -757,6 +807,11 @@
           "object": "уровни проверок",
           "location": "tools/dashboard/appfeed_test.go; tools/dashboard/appfeedui_test.go; tools/dashboard/testdata/poc_appfeed.mjs; docs/tasks/DK-1734.md: Сценарий проверки",
           "observation": "AppEnv проверяет upload/start/say/history через HTTP и fake app-server. Cards запускает настоящий JS в subprocess. Установленный дашборд не объявлен проверенным."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -787,6 +842,11 @@
           "object": "appfeed_items.json и asserts",
           "location": "tools/dashboard/appfeed_test.go:141-229; tools/dashboard/testdata/appfeed_items.json; tools/dashboard/testdata/poc_appfeed.mjs",
           "observation": "Fixture снята thread/read исходной нити DK-1732. Assertions сравнивают полный item, Wire, количество пользователей, заголовки, paths, полный output и null/zero состояния."
+        },
+        {
+          "object": "интеграционные assertions исходного контракта",
+          "location": "tools/dashboard/appfeed_test.go; tools/dashboard/testdata/appfeed_items.json; tools/dashboard/testdata/poc_appfeed.mjs",
+          "observation": "Файлы feature tests/fixture сохранены без изменений при rebase. Raw fields/thread ownership, Wire, PNG blank alias, title и full output требуют прежние точные значения; новая policy fake setup принадлежит базе DK-1735."
         }
       ]
     },
@@ -817,6 +877,11 @@
           "object": "TestAppFeedIndexResetsChangedFile; concurrent probe",
           "location": "tools/dashboard/appfeed_test.go:321-369; /tmp/dk1734_review_probe_test.go",
           "observation": "Chtimes устанавливает другую метку явно. Прогон двух server-instance ждёт завершения всех писателей. Нет нового sleep для гонки индекса."
+        },
+        {
+          "object": "проверка сохранности ленты после rebase",
+          "location": "tools/dashboard/appchat.go:76-303,510-650; /tmp/dk1734_review_overlay.json",
+          "observation": "12 backend и 6 UI функций сравнились byte-for-byte с e37bd7741. Независимый Go overlay на a7933b214 сохранил 540029 байт output в JSONL/reload/API/tail и одну identity при 12 конкурентных append двух server-instance; PASS 3.694 с."
         }
       ]
     },
@@ -971,6 +1036,26 @@
       ]
     },
     {
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Каталог DK-1736 сохранён при интеграции. Новая лента не переписывает сохранённый ID модели, не добавляет прежний ID в выбор и не меняет назначения рабочих агентов.",
+      "evidence": [
+        {
+          "object": "modelcatalog.Current/Replaces, chatModelOpts, appSay model gate",
+          "location": "internal/modelcatalog/models.go; tools/dashboard/chats.go:68-109,147-175,977-1020; tools/dashboard/appchat.go:658-669",
+          "observation": "Список и browser preference проецируют известные прежние ID в текущие. chatModelCurrent выполняется до appSayRecord/appTurn и не меняет историю при отклонённом продолжении. Явная смена модели остаётся отдельной операцией."
+        },
+        {
+          "object": "catalog integration tests",
+          "location": "tools/dashboard/chatmodels_test.go:127-205; tools/dashboard/appchat_test.go:330-386",
+          "observation": "TestChatLegacyModelPreservedUntilExplicitChange требует неизменность historical ID/записи и отсутствия нового хода при 409. После явной смены клиент получает текущий ID. TestChatModelCatalogPreservesOperationalTask сохраняет operational ID фоновой задачи. Focused group на a7933b214 прошла за 39.104 с."
+        }
+      ]
+    },
+    {
       "id": "project-architecture:block-feefa59680bc01df",
       "source": "project-architecture",
       "text": "## Инварианты",
@@ -1121,17 +1206,22 @@
       ]
     },
     {
-      "id": "project-architecture:block-71c48ce43f26ae0a",
+      "id": "project-architecture:block-b6ca4d1bc2e089cd",
       "source": "project-architecture",
-      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Автопроверка дополнительных прав включена для груминга и работающего\n  конвейера с формы. Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  получает `never` без токена замка. Закрытая задача продолжает обычный\n  разговор с `never`. Недоступная задача и сменившийся запуск приводят\n  к видимому отказу.",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Доставка проходов задачи и политика прав не изменены. Фильтр дочернего завершения совместим с прежней точной проверкой нити/хода task carrier.",
+      "reason": "Единая политика DK-1735 и отдельная проверка права владеть рабочим запуском сохранены. Лента не влияет на policy negotiation, task lock и точную проверку завершения основного хода.",
       "evidence": [
         {
-          "object": "appTaskCompletion/appAutomaticReview",
-          "location": "tools/dashboard/apptask.go:394-413; tools/dashboard/appchat.go:72-74,515-555",
-          "observation": "Новый display App не влияет на taskNotes и lock taskhead. TestAppTaskCompletion и child completion проходят. Изменения единой политики прав вынесены из DK-1734."
+          "object": "appSpawn policy negotiation and appTaskCompletion",
+          "location": "tools/dashboard/appchat.go:370-465,510-550; tools/dashboard/apptask.go:394-413",
+          "observation": "И start, и resume посылают workspace-write/on-request/auto_review. Ответ клиента проверяется до регистрации appChat и отправки turn/start. c.automatic используется для принадлежности рабочего запуска, но не для выбора policy. Родительский turn/task completion остаётся привязан к thread/turn."
+        },
+        {
+          "object": "policy/lifecycle integration tests",
+          "location": "tools/dashboard/appchat_test.go:706-837; tools/dashboard/appchat_artifact_test.go:84-160; tools/dashboard/apptask_test.go; tools/dashboard/apptask_continuation_test.go",
+          "observation": "Focused TestApp на a7933b214 прошёл. Покрыты start/resume, неподтверждённые/отсутствующие policy fields, произвольная привязка без токена владельца, рестарт с историей, отказ auto_review в ленте и отсутствие turn после policy failure. Живой smoke установленного DK-1735 остаётся отдельной QA и условием HOLD."
         }
       ]
     },

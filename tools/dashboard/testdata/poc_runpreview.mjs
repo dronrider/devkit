@@ -16,7 +16,7 @@ const selected = (pop, text) => {
   }
 };
 
-async function setup(list, { pinned = "", task = false, fresh = false, goal = false } = {}) {
+async function setup(list, { pinned = "", task = false, fresh = false, goal = false, row = false } = {}) {
   let answer = { tier: "pro", via: "owntest", model: "own-pro" };
   const posts = [], reads = [];
   const { sandbox: s } = makeSandbox(app, (path, init) => {
@@ -33,13 +33,17 @@ async function setup(list, { pinned = "", task = false, fresh = false, goal = fa
   await settle();
   await s.loadHarnesses();
   let wide;
-  const control = s.runControl("demo", fresh ? "" : "XR-1", (label) => {
+  const control = row ? s.rowAction("demo", {
+    id: "XR-1", title: goal ? "Цель: тестовый запуск" : "Тестовая задача",
+    harness: pinned, accept: "agent",
+  }, pinned ? "check" : "backlog") : s.runControl("demo", fresh ? "" : "XR-1", (label) => {
     wide = s.barBtn("btn", label, "i-play"); return wide;
   }, "Разобрать", goal, "", "", pinned,
   (h, t, m, e) => s.groomDraft("demo", "XR-1", "", h, t, m, e),
   { list: task ? ["вердикт", "pro"] : ["pro"], now: task ? "вердикт" : "pro", auto: !goal });
-  const pop = byClass(control, "hpop");
-  const open = async () => { click(byClass(control, "more2")); await settle(); };
+  if (row) wide = byClass(control, "rmain");
+  const pop = byClass(control, row ? "rpick" : "hpop");
+  const open = async () => { click(byClass(control, row ? "rdots" : "more2")); await settle(); };
   const fire = async () => { click(wide); await settle(); };
   return { s, control, pop, posts, reads, open, fire, answer: (v) => { answer = v; } };
 }
@@ -123,4 +127,53 @@ for (const task of [false, true]) {
   if (c.posts.length !== 1) fail("подтверждённое новое назначение не запущено");
 }
 
-console.log("предпросмотр запуска: default в обеих перестановках, новая запись, ручной/auto, Check, отказ, смена пары; реальных запусков 0");
+// Меню строки цели открывается своим rowAction, без составной кнопки формы.
+for (const list of [[first, own], [own, first]]) {
+  const c = await setup(list, { row: true, goal: true });
+  await c.open();
+  if (!c.reads.some((p) => p.startsWith("/api/harnesses/pick?"))) {
+    fail("rowAction цели не запрашивает серверное назначение");
+  }
+  if (c.reads.some((p) => p.includes("/tasks/"))) fail("rowAction цели спрашивает вердикт задачи");
+  selected(c.pop, "own-pro");
+  await c.fire();
+  if (c.posts.length !== 1 || c.posts[0].path !== "/api/projects/demo/runs" ||
+      c.posts[0].body.id !== "XR-1" || c.posts[0].body.tier !== "pro" || c.posts[0].body.harness) {
+    fail("автоматический заказ rowAction цели изменён: " + JSON.stringify(c.posts));
+  }
+}
+
+{
+  const c = await setup([first, own], { row: true, goal: true });
+  await c.open();
+  selected(c.pop, "own-pro");
+  c.answer({ tier: "pro", via: "firsttest", model: "first-pro" });
+  await c.fire();
+  if (c.posts.length) fail("rowAction цели запустил сменившуюся пару до её показа");
+  selected(c.pop, "first-pro");
+  await c.fire();
+  if (c.posts.length !== 1) fail("rowAction цели не запустил подтверждённую пару");
+  c.answer({ raw: { status: 502, text: JSON.stringify({ error: "назначение недоступно" }) } });
+  await c.fire();
+  if (c.posts.length !== 1 || active(c.pop).length) fail("отказ rowAction цели оставил назначение или поднял работу");
+  if (!dump(c.s.document.getElementById("flashes")).includes("назначение недоступно")) fail("нет видимого отказа rowAction цели");
+  click(allByClass(c.pop, "hrow").find((r) => dump(r).includes("first-pro")));
+  await c.fire();
+  if (c.posts.length !== 2 || c.posts[1].body.harness !== "firsttest") fail("ручной выбор rowAction цели потерян при отказе default");
+}
+
+for (const pinned of ["", "firsttest"]) {
+  const c = await setup([first, own], { row: true, task: true, pinned });
+  await c.open();
+  selected(c.pop, pinned ? "first-pro" : "own-pro");
+  if (!c.reads.some((p) => p.includes("/tasks/XR-1/pick")) ||
+      c.reads.some((p) => p.startsWith("/api/harnesses/pick?"))) fail("rowAction задачи заменил источник вердикта");
+  autoSet(c.pop, false);
+  click(allByClass(c.pop, "hrow").find((r) => dump(r).includes("first-pro")));
+  autoSet(c.pop, true);
+  selected(c.pop, pinned ? "first-pro" : "own-pro");
+  await c.fire();
+  if (c.posts[0]?.body.harness !== (pinned || undefined) || c.posts[0]?.body.tier) fail("rowAction задачи потерял auto или Check");
+}
+
+console.log("предпросмотр запуска: default в обеих перестановках, новая запись, ручной/auto, Check, отказ, смена пары, реальный rowAction цели; реальных запусков 0");

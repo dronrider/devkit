@@ -2185,6 +2185,22 @@ function armPickRing(project, id, menu) {
     encodeURIComponent(id) + "/pick", menu);
 }
 
+function armDefaultPick(tier, menu) {
+  return readPick("/api/harnesses/pick?tier=" + encodeURIComponent(tier), menu);
+}
+
+async function confirmDefaultPick(tier, menu) {
+  const before = menu.pair();
+  const next = await armDefaultPick(tier, menu);
+  if (!next || (before && (before.harness !== next.harness || before.model !== next.model))) {
+    sayResult(next
+      ? "назначение изменилось: " + next.harness + " / " + next.model + "; проверьте модель и повторите запуск"
+      : menu.reason() || "назначение модели недоступно", true);
+    return false;
+  }
+  return true;
+}
+
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
@@ -2219,19 +2235,12 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   let mode = (modes && modes.now) || (modeList[0] && modeList[0][0]) || "";
   const modeOut = () => mode;
   const fixedTier = Boolean(tier) && tier !== TIER_VERDICT;
-  const refreshPick = () => readPick("/api/harnesses/pick?tier=" + encodeURIComponent(tier), menu);
+  const refreshPick = () => armDefaultPick(tier, menu);
   const fire = async (node) => {
     node.disabled = true;
-    if (!model && fixedTier && !pinned) {
-      const before = menu.pair();
-      const next = await refreshPick();
-      if (!next || (before && (before.harness !== next.harness || before.model !== next.model))) {
-        sayResult(next
-          ? "назначение изменилось: " + next.harness + " / " + next.model + "; проверьте модель и повторите запуск"
-          : menu.reason() || "назначение модели недоступно", true);
-        node.disabled = false;
-        return;
-      }
+    if (!model && fixedTier && !pinned && !(await confirmDefaultPick(tier, menu))) {
+      node.disabled = false;
+      return;
     }
     const harness = harnessOut();
     const said = tierOut();
@@ -2704,8 +2713,12 @@ function rowAction(project, row, sect) {
       withTip(main, [label + ".", hint,
         "Модель и глубину размышления выбирают под тремя точками.", talkWarn(row)]
         .filter(Boolean).join(" "));
-      const fire = () => {
+      const fire = async () => {
         main.disabled = true;
+        if (!model && goal && !pin && !(await confirmDefaultPick(tier, menu))) {
+          main.disabled = false;
+          return;
+        }
         const harness = harnessOut();
         const depth = effort;
         const said = tierOut();
@@ -2731,17 +2744,16 @@ function rowAction(project, row, sect) {
         auto: !goal,
         // Подсветка называет запуск по умолчанию: у Check это пара прикреплённой
         // подписки на рабочем ярусе, у очереди вердикт, и строка не подсвечена.
-        now: tier === TIER_VERDICT
-          ? (pin ? (modelLadder().find((m) => m.harness === pin && m.tier === RUN_TIER) ||
-              modelLadder().find((m) => m.harness === pin) || null) : null)
-          : modelLadder().find((m) => m.tier === tier && (!pin || m.harness === pin)) || null,
+        now: pin ? (modelLadder().find((m) => m.harness === pin && m.tier === RUN_TIER) ||
+          modelLadder().find((m) => m.harness === pin) || null) : null,
         pinned: pin,
         onModel: (m) => { model = m; },
         getEffort: () => effort,
         onEffort: (lv) => { effort = lv; },
       });
       rowPickMenu = () => {
-        if (!goal && menu) armPickRing(project, row.id, menu);
+        if (goal && !pin) armDefaultPick(tier, menu);
+        else if (!goal && menu) armPickRing(project, row.id, menu);
       };
       pick = box;
     }

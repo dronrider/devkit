@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1725",
   "base_sha": "28c741545cc1e39511913def87e65cd6de32c9af",
-  "head_sha": "f9e0b210bb6cdd4c0f157af11cd9dd45e444a7bc",
+  "head_sha": "4bf2d6ba04dcfd9ddc3d46ba19ca0f65385541a7",
   "code_hash": "a83f619a41f41fb2d11448e31a8d33998adcce563e8dcb1f6422849410c43c5e",
-  "task_hash": "afec7343542b7fb74818334df9c8a27c0853d1bdfeca58183bdf7be8993ede4a",
+  "task_hash": "c81ac3e889726d186f2daaa7d6f6cb62e3c07c807fda79047ac006070d1bddfe",
   "sources": [
     {
       "name": "common-architecture",
@@ -49,9 +49,9 @@
       "в телах стаба CLIENT_BODY и TMUX_BODY (строки 115-180) нет r-строк и b-литералов, кириллица только в комментариях и докстрингах; re используется в коде утилиты вне стабов и на текст стаба не влияет: tools/devkitctl/waitcheck.py",
       "все поля идут через %r, backslash у repr удвоен, экранирование не меняет значений (шапка стаба): tools/devkitctl/waitcheck.py, stubs(), строки 225-230",
       "код байт в байт тот же на 33218bb95 и на HEAD (blob-хеши dd5e6515c и 1cb1a4cf5), выводы по коду прошлого аудита применимы: git ls-tree 33218bb95 и HEAD",
-      "тест краснеет на main и проходит на текущем коде, оба теста названы в команде (regcheck): .devkit/cmdout/20261118T011940-env, exit 0",
       "обкатка обоих шагов 2026-11-18 02:15 в свежем дереве 2dd0556ff02e: шаг 1 Ran 10 tests OK на CommandLineTools python 3.9.6 (127с), шаг 2 «три ожидания прошли»: docs/tasks/DK-1725.md, «Проверка»",
-      "SyntaxError Non-UTF-8 \\xd1 на строке 6 стаба bin/claude, симптом совпадает с задачей (красный прогон поезда): .devkit/cmdout/20261118T004649-test"
+      "SyntaxError Non-UTF-8 \\xd1 на строке 6 стаба bin/claude, симптом совпадает с задачей (красный прогон поезда): .devkit/cmdout/20261118T004649-test",
+      "Независимая проверка: blob-хеши waitcheck.py и waitcheck_test.py совпадают у f9e0b210 и 4bf2d6ba; /usr/bin/python3 -m unittest waitcheck_test.WaitMarksTest -v: 4 теста OK; regcheck на базе 28c741545: тест красный на базе и зелёный на текущем коде."
     ]
   },
   "rules": [
@@ -761,12 +761,12 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Регрессионный тест падает на старом коде и проходит на исправленном, подтверждено regcheck.",
+      "reason": "Новый тест красный на базе 28c741545 и зелёный на текущем коде; повторный regcheck выполнен независимо.",
       "evidence": [
         {
-          "object": "regcheck",
-          "location": ".devkit/cmdout/20261118T011940-env, exit 0",
-          "observation": "«тест краснеет на main и проходит на текущем коде, регрессия закрыта (тесты: tools/devkitctl/waitcheck_test.py)», тесты названы в команде"
+          "object": "test_stub_is_pure_ascii",
+          "location": "tools/devkitctl/waitcheck_test.py; regcheck --base 28c741545 --tests tools/devkitctl/waitcheck_test.py",
+          "observation": "regcheck завершился успешно: тест красный на базе и зелёный на текущем коде"
         }
       ]
     },
@@ -835,7 +835,7 @@
       "evidence": [
         {
           "object": "regcheck",
-          "location": ".devkit/cmdout/20261118T011940-env",
+          "location": "regcheck --base 28c741545 --tests tools/devkitctl/waitcheck_test.py",
           "observation": "красный на main по обоим названным тестам"
         },
         {
@@ -1436,12 +1436,12 @@
       "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Тест бага краснеет на старом и зелёный на исправленном, подтверждено regcheck.",
+      "reason": "Новый тест красный на базе 28c741545 и зелёный на текущем коде; повторный regcheck выполнен независимо.",
       "evidence": [
         {
-          "object": "regcheck",
-          "location": ".devkit/cmdout/20261118T011940-env, exit 0",
-          "observation": "красный на main, зелёный на текущем"
+          "object": "test_stub_is_pure_ascii",
+          "location": "tools/devkitctl/waitcheck_test.py; regcheck --base 28c741545 --tests tools/devkitctl/waitcheck_test.py",
+          "observation": "regcheck завершился успешно: тест красный на базе и зелёный на текущем коде"
         }
       ]
     },

@@ -65,13 +65,16 @@ func quotaWaitNote(reset string) string {
 var quotaRetryLineRe = regexp.MustCompile(
 	`(?i)^[a-z0-9][a-z0-9 .-]{0,40}limit reached,?\s+retrying in\s+.{1,60}attempt\s+\d+/\d+\s*$`)
 
+var quotaVendor1310Re = regexp.MustCompile(
+	`(?i)^[\x{273b}\x{273d}\x{2736}\x{2733}\x{2722}\x{b7}*] 429 \[1310\]\[Weekly/Monthly Limit Exhau(?:sted[^\r\n]{0,160}|\x{2026}|\.\.\.)\s+\x{b7}\s+Retrying in [a-z0-9 ]{1,24}\s+\x{b7}\s+attempt \d+/\d+\s*$`)
+
 // quotaRetryLine находит строку ретрая в тексте пейна и отдаёт её целиком:
 // weekly читает недельное окно из неё же, а не из всего текста пейна, чтобы
 // «weekly» в соседнем абзаце не приписалось строке пятичасового ретрая.
 func quotaRetryLine(text string) (line string, ok bool) {
 	for _, ln := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(ln)
-		if quotaRetryLineRe.MatchString(trimmed) {
+		if quotaRetryLineRe.MatchString(trimmed) || quotaVendor1310Re.MatchString(trimmed) {
 			return trimmed, true
 		}
 	}
@@ -82,7 +85,8 @@ func quotaRetryLine(text string) (line string, ok bool) {
 // ретрая. Срок сброса известен только для него (quotaResetOf), а для прочих
 // строк ретрая (пятичасовая сессия, к примеру) бакет не угадывается.
 func quotaRetryWeekly(line string) bool {
-	return strings.Contains(strings.ToLower(line), "weekly")
+	line = strings.ToLower(line)
+	return strings.Contains(line, "weekly") && !strings.Contains(line, "monthly")
 }
 
 // quotaWaitTTL держит память снимка пейна. Снимок берётся не на каждую

@@ -43,5 +43,22 @@ try {
  assert.ok(result.calls[0].body.msg_id);
  assert.ok(result.echo.includes("давай, довози поезд"));
  assert.equal(result.draft,"");
+ const quota=await page.evaluate(async()=>{
+  api=async()=>({ok:true,body:{live:true,busy:false,quota:"лимит подписки исчерпан, срок сброса неизвестен"}});
+  const host=document.createElement("div");document.body.append(host);
+  const busy=makeBusy("demo",host);busy.watch("aaaa1310-1111-4111-8111-111111111111");
+  await Promise.resolve();await Promise.resolve();
+  const row=host.querySelector(".busyrow");
+  const result={text:row.textContent,hidden:row.hidden,clock:host.querySelector(".bclock").textContent};
+  api=async()=>({ok:true,body:{live:true,busy:true,sec:10}});
+  busy.watch("aaaa1310-1111-4111-8111-111111111111");
+  await Promise.resolve();await Promise.resolve();
+  result.resumed=!host.querySelector(".busyrow").classList.contains("note") && !host.querySelector(".busyrow").hidden;
+  busy.shut();return result;
+ });
+ assert.ok(quota.text.includes("лимит подписки исчерпан"));
+ assert.equal(quota.hidden,false);
+ assert.equal(quota.clock,"");
+ assert.equal(quota.resumed,true);
  console.log("live idle + side task waiting: один /say в SID, текст и ключ сохранены");
 } finally {await browser.close();}

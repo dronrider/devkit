@@ -13191,6 +13191,12 @@ function makeBusy(project, box) {
       " посреди хода: реплика поднимет разговор снова", true);
   };
   const apply = (b) => {
+    if (b.quota) {
+      hold = "";
+      stop = Date.now() + LIMIT;
+      said(b.quota, true);
+      return;
+    }
     if (b.consent) { off(); return; }
     if (b.gone) return gone(b.at);
     if (!b.live) {

@@ -4837,6 +4837,7 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	tail := time.Time{}
 	path := ""
+	transcriptRoot := ""
 	// Признаки входа едут тем же ответом (DK-920). Панель собирает блок входа
 	// один раз, а признак приходит и позже: разговор умер, поднялся заново и не
 	// подключился к серверу макетов. Опрос этот идёт и так, шапка разговора
@@ -4845,6 +4846,7 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	design := designUnseen
 	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
 		path = info.path
+		transcriptRoot = info.root
 		tail = s.busyEntryOf(path).last
 		head := s.sessionHeadCached(path, info.stamp)
 		bye, design = head.Bye, head.Design
@@ -4907,6 +4909,14 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	out := loginFlags(map[string]any{"session": sid, "live": true,
 		"busy": busy, "status": said, "where": peerWord(p), "consent": consent})
+	term := s.sayTermOf(sid, s.bindsAll())
+	if term != "" {
+		if retry, weekly := s.quotaWaitOf(term); retry {
+			harness := harnessOfRoot(s.harnesses(), s.cfg.Home, transcriptRoot)
+			out["quota"] = quotaWaitNote(s.quotaResetOf(harness, weekly))
+			out["busy"] = false
+		}
+	}
 	// Выходные токены хода (DK-919): сумма output_tokens ассистентских записей
 	// с последней реплики человека. Размышления уже лежат внутри выхода:
 	// output_tokens_details это разбивка выхода, а не слагаемое, и отдельного

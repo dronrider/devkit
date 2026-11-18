@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1736",
   "base_sha": "c373a7edda87748cd5cd28088fd1d98b625c6a50",
-  "head_sha": "74347e16e53cb6d63def8333740ec575c3bfa6f4",
-  "code_hash": "4425009584c0afbe0a5673619506edfb6a5546c7d3c09a72fafb395506dd66d4",
-  "task_hash": "9c87fed549709ffd4f1234d2f1c9a9e3ccf00626572e44166b74cef08213d3ac",
+  "head_sha": "fec43572b7c331090468525bc6a2c6449075e419",
+  "code_hash": "3772596da9cb29ec7d0bcbc4f9f940c661b1bd13dff893a81f55b1c07cc8ceb0",
+  "task_hash": "803508c3c2c1627a7a38d44f2fea4b6ffd434cca6e1c0afeab0b3828b3786a86",
   "sources": [
     {
       "name": "common-architecture",
@@ -39,19 +39,19 @@
   ],
   "architecture": {
     "goal": "Заменить прежние Sol/Astra в новом выборе дашборда на точные IDs 6.2; сохранить прежний ID у существующего чата до явной смены. Фоновые назначения агентов остаются поддержанными прежними IDs.",
-    "decision": "Чистый modelcatalog.Current задаёт четыре alias замены. Dashboard проецирует Models/Chat в список с прежними metadata и сверяет новые пары по этой проекции; ручные chat endpoints отвергают прежние IDs. UI использует актуальный серверный список и показывает прежнюю пару только недоступной подписью.",
+    "decision": "Единственный modelcatalog.replacements задаёт четыре alias замены для Current и обратных Replaces. Dashboard проецирует Models/Chat в список с прежними metadata и необязательным replaces, сверяет новые пары по проекции; ручные chat endpoints отвергают прежние IDs. UI восстанавливает exact/replacement в сохранённом harness до глобального fallback и показывает историческую пару недоступной подписью.",
     "boundaries": "Agentctl и профиль владеют raw operational Map/Chat; dashboard не переписывает их. Единственный сохранённый выбранный ID принадлежит chatStore и меняется только явной сменой. Лента принадлежит прежнему адресу чата, у app-server смена использует существующее удаление Thread/процесса и разделитель. Каталог замены статичен и применяется при запросе, не вводит кэшей/ресурсов.",
     "alternative": "Первоначально рассматривалась нормализация общей operational Map и defaults. Ревью выявило расширение области: это переводило бы фоновых исполнителей на IDs, которые живой клиент текущего аккаунта отклоняет model_not_found. Вариант снят; regression подтверждает старый рабочий ID у appTaskStart. Скрытая нормализация saved Model при say также отвергнута: она исказила бы подпись и не меняла бы модель существующей app-server нити. Прямые локальные замены во всех потребителях проще лишь по числу файлов, но дублировали бы правила catalog/API/harness matching.",
-    "justification": "Обязательны новый список и исторический ID, а общая миграция рабочих назначений пользователем не запрошена. Проекция сохраняет tier/default/levels/quota и не ломает фоновые запуски; явная смена использует уже имеющийся честный переход в истории. Неизвестные модели, Terra и Luna каталогом не меняются. Provider success ограничен доступностью аккаунта, проверена передача точных IDs и видимый отказ клиента.",
+    "justification": "Обязательны новый список и исторический ID, а общая миграция рабочих назначений пользователем не запрошена. Проекция сохраняет tier/default/levels/quota и не ломает фоновые запуски; явная смена использует существующий переход истории. Дополнительная проверка выявила пропущенный прежней fixture дефект: старый Codex preference уходил на foreign global default. Необязательный replaces исправляет его без второй таблицы в JS; новая browser fixture различает обе семьи/квоту, а JSON boundary проверен независимой struct. Неизвестные модели, Terra и Luna каталогом не меняются. Provider success ограничен доступностью аккаунта, проверена передача точных IDs и видимый отказ клиента.",
     "result": "checked",
     "evidence": [
-      "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent: Каталог замены Sol/Astra. Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна.",
-      "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat: Проекция списка и маршрутизация подписки. Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары.",
+      "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent: Каталог замены Sol/Astra. Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет.",
+      "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat: Проекция списка и маршрутизация подписки. Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted.",
       "tools/dashboard/chats.go:handleChatStart, handleChatBlank, handleChatModel, handleChatSay, chatRaiseSay; chatblankstart.go:chatBlankStart; appchat.go:appSay: Ручные HTTP-входы чата. Новые start/blank/model отвергают четыре прежних ID через chatPairKnown до записи/запуска, включая пустую подписку. Say проверяет chatChoice с tmux fallback и возвращает 409 до принятия реплики; helper-пути также проверены. Universal task/goal carriers в финальном диффе не менялись.",
       "tools/dashboard/chats.go:chatStore, chatChoice, handleChatModel; appchat.go:appSpawn, appTurn, appFeedAppend: Сохранённый выбор и история. Чтение оставляет chatStore.Model прежним. Явная смена пользуется штатным разделителем old -> new; у app-server очищается Thread и снимается процесс, лента сохраняется. Resume/turn не передают новый model в существующую нить, поэтому скрытая нормализация Model при say была бы некорректна.",
-      "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel: Предпочтение и меню модели. Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST.",
+      "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel: Предпочтение и меню модели. Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST.",
       "tools/dashboard/chatmodels_test.go:TestChatModelCatalogPreservesOperationalTask; tools/dashboard/apptask.go:appTaskTurn; git c373a7edd..8baf8f057: Сохранение фоновых запусков. Новый regression проходит через appTaskStart, завершение штатного конвейера и fake-app-log start gpt-6.1-sol. Agentctl harness/code/tests/README, профиль codex, runs.go, chatlift.go и chatwatch.go не входят в итоговый diff; глобальные appSpawn/appTurn/appCarrierTurn guards сняты.",
-      "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs: HTTP, браузер и операционный запуск. Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper.",
+      "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs: HTTP, браузер и операционный запуск. Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper.",
       "docs/tasks/DK-1736.md:Чего хотим, DoD, Ход работы, Сценарий проверки; docs/ARCHITECTURE.md:Границы; tools/dashboard/README.md:раздел выбора модели около 3136: Документированный сценарий и границы. Описаны замена выбора, сохранность ID до явной смены, 409 и разделитель, прежняя operational Map и отдельная доступность провайдера. Реальный клиент вернул model_not_found для обеих 6.2 на текущем аккаунте; транспортные assertions проверены подменным клиентом, успешная генерация провайдера не утверждается."
     ]
   },
@@ -66,8 +66,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Расположение новых файлов",
@@ -86,18 +86,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -111,18 +111,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -136,13 +136,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         }
       ]
     },
@@ -156,8 +156,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -167,12 +167,12 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -196,8 +196,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -207,8 +207,13 @@
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Схема сохранённых данных не меняется. Старый ID читается и показывается; переход выполняется существующим /model с разделителем и сохранением ленты.",
+      "reason": "Схема сохранённых данных не меняется. Старый ID читается и показывается; переход выполняется существующим /model. Необязательное поле ответа replaces обратно совместимо, прежние поля сохранены; browser consumer и независимый HTTP JSON test проверяют новый контракт.",
       "evidence": [
+        {
+          "object": "Проекция списка и маршрутизация подписки",
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
+        },
         {
           "object": "Сохранённый выбор и история",
           "location": "tools/dashboard/chats.go:chatStore, chatChoice, handleChatModel; appchat.go:appSpawn, appTurn, appFeedAppend",
@@ -217,12 +222,12 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -236,8 +241,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -247,7 +252,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -271,8 +276,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -282,17 +287,17 @@
       "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Нового конкурентно изменяемого состояния нет: Current чистый, m в range и строки каталога копируются. Ранее защищённые receipt/chatStore изменения не переписаны.",
+      "reason": "Нового конкурентно изменяемого состояния нет: приватный replacements только читается, Current чистый, Replaces возвращает новый slice, m в range копируется. Ранее защищённые receipt/chatStore изменения не переписаны.",
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -316,8 +321,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -337,12 +342,12 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -356,8 +361,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -367,7 +372,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -387,7 +392,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Документированный сценарий и границы",
@@ -406,13 +411,13 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -426,13 +431,13 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -446,8 +451,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -471,13 +476,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         }
       ]
     },
@@ -491,13 +496,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -506,8 +511,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -566,8 +571,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранение фоновых запусков",
@@ -576,8 +581,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Документированный сценарий и границы",
@@ -596,18 +601,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -621,8 +626,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -652,7 +657,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Документированный сценарий и границы",
@@ -671,13 +676,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранение фоновых запусков",
@@ -697,7 +702,7 @@
       "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Retired новый ввод не исправляется молча: API даёт 409. Явный выбор 6.2 проверяет проецируемую пару. Fallback браузерного предпочтения не переписывает сохранённый чат, историческая запись остаётся прежней до /model.",
+      "reason": "Retired новый ввод не исправляется молча: API даёт 409. Явный выбор 6.2 проверяет проецируемую пару. Известное прежнее preference заменяется внутри семьи/подписки; unknown сохраняет прежний fallback. Сохранённый чат не переписывается до /model.",
       "evidence": [
         {
           "object": "Ручные HTTP-входы чата",
@@ -707,7 +712,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -716,8 +721,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -727,17 +732,17 @@
       "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Проверены старые raw назначения, текущий список с default/levels, локальное предпочтение, пустая/названная подписка, прямой неверный retired ввод и явный переход. Шаги воспроизведения записаны для установленного дашборда.",
+      "reason": "Проверены старые raw назначения, текущий список с default/levels, preference всех четырёх aliases при foreign default, сохранение подписки, обе blank POST, Terra/Luna/unknown, пустая/названная подписка и неверный retired ввод. Сценарий включает новый JSON metadata test.",
       "evidence": [
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Регрессионный прогон",
-          "location": "parent session 50599; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
-          "observation": "regcheck -C /Users/rider/projects/devkit-dk-1736 --base HEAD --tests tools/dashboard/appchat_test.go,tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' завершился успешно: база HEAD тогда c373a7edd красная, исправление зелёное. Финальные code/tests от 0c24189d7 не менялись."
+          "location": "parent sessions 50599, 21834, 32518; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
+          "observation": "Первоначальный regcheck --base c373a7edd с appchat_test.go,chatmodels_test.go,browser.mjs и scoped feature набором подтвердил old red/new green. Для delta отдельный regcheck --base 97f5aba24 --tests tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacyModelDisplayBrowser|ChatModelPreferenceReplacementMetadata)$' PASS old red/new green (session 32518). Прежние доказательства перенесены после чтения delta, новый wire/preference контракт проверен на новой базе."
         },
         {
           "object": "Документированный сценарий и границы",
@@ -756,8 +761,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -781,8 +786,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -792,7 +797,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -806,13 +811,13 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -826,18 +831,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -851,18 +856,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -876,8 +881,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -887,7 +892,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -901,13 +906,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -917,7 +922,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -931,13 +936,13 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -951,13 +956,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -967,7 +972,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -981,8 +986,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -992,7 +997,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1017,7 +1022,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1027,22 +1032,22 @@
       "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Новая Go функция использует обычный switch, range меняет только локальный m; формат совпадает с Go файлами. JS использует существующие el/option/runPickBody/api patterns, новых библиотек нет.",
+      "reason": "Go использует обычные array/range и возвращает отдельный slice; gofmt выровнял новый opt и независимую test struct. JS использует существующие el/option/runPickBody/api patterns, новых библиотек нет.",
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1062,7 +1067,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1082,7 +1087,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Документированный сценарий и границы",
@@ -1101,18 +1106,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1122,12 +1127,17 @@
       "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Комментарий Current задаёт политику неизвестного ввода; README описывает ручной 409/явную смену и ограничение провайдера. JSON модели выбора сохранил metadata, новый публичный RPC не добавлен.",
+      "reason": "Комментарии Current/Replaces задают направление соответствия и назначение для preference; README описывает семейство/подписку, 409/явную смену и ограничение провайдера. JSON сохранил прежние metadata и добавил необязательный replaces, нового RPC нет.",
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
+        },
+        {
+          "object": "Проекция списка и маршрутизация подписки",
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1151,13 +1161,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1167,12 +1177,12 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Для исправления реально подтверждены old red/current green с тремя явными testfiles, включая browser fixture. Версия базы известна, текущий код после прогона не менялся.",
+      "reason": "Для исходного исправления и preference delta реально подтверждены old red/current green с явными testfiles/browser fixture и известными разными базами. Новый browser тест не зеленеет на прежнем foreign-default дефекте.",
       "evidence": [
         {
           "object": "Регрессионный прогон",
-          "location": "parent session 50599; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
-          "observation": "regcheck -C /Users/rider/projects/devkit-dk-1736 --base HEAD --tests tools/dashboard/appchat_test.go,tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' завершился успешно: база HEAD тогда c373a7edd красная, исправление зелёное. Финальные code/tests от 0c24189d7 не менялись."
+          "location": "parent sessions 50599, 21834, 32518; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
+          "observation": "Первоначальный regcheck --base c373a7edd с appchat_test.go,chatmodels_test.go,browser.mjs и scoped feature набором подтвердил old red/new green. Для delta отдельный regcheck --base 97f5aba24 --tests tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacyModelDisplayBrowser|ChatModelPreferenceReplacementMetadata)$' PASS old red/new green (session 32518). Прежние доказательства перенесены после чтения delta, новый wire/preference контракт проверен на новой базе."
         }
       ]
     },
@@ -1186,13 +1196,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Сохранение фоновых запусков",
@@ -1216,13 +1226,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Изоляция стенда",
@@ -1241,18 +1251,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Смысл assertions и мутации",
-          "location": "/private/tmp/dk1736-mutations.py; parent session 97104",
-          "observation": "Прочитаны все семь точных мутаций: неверная константа, потеря alias границы, обратная ветка допуска, удаление проекции, пустой результат списка, обход при пустой подписке, снятие disabled option. Диспетчер подтвердил 7/7 caught; runner требует --- FAIL без build/setup failure и восстанавливает каждый файл finally. Это покрывает шесть TEST-006 категорий и UI-признак."
+          "location": "/private/tmp/dk1736-mutations.py; /private/tmp/dk1736-pref-mutations.py; parent sessions 97104 и 72513",
+          "observation": "После смены switch на единственный массив выполнены три актуальные мутации: неверный current ID в строке массива, потеря прежнего alias в массиве, удаление replaces lookup из preference. Все 3/3 пойманы TestCurrent либо browser test. Для неизменённых объектов сохраняются пять проверенных прежних мутаций: обратная ветка допуска, удаление проекции, пустой список, обход при пустой подписке, снятие disabled option; их места сверены с delta. Оба runner требуют --- FAIL без build/setup failure и восстанавливают файлы finally. Покрыты шесть TEST-006 категорий, UI и новый preference дефект."
         }
       ]
     },
@@ -1262,12 +1272,12 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Все шесть требуемых типов и отдельный UI-признак проверены семью временными мутациями; ни одна не зачтена по ошибке сборки. Файлы restored, code unchanged перед commit.",
+      "reason": "Все шесть требуемых типов и UI-признак подтверждены: три мутации перезапущены для новой таблицы/preference, пять доказательств неизменённых объектов сверены и перенесены. Ошибки сборки не засчитываются, каждый файл restored finally.",
       "evidence": [
         {
           "object": "Смысл assertions и мутации",
-          "location": "/private/tmp/dk1736-mutations.py; parent session 97104",
-          "observation": "Прочитаны все семь точных мутаций: неверная константа, потеря alias границы, обратная ветка допуска, удаление проекции, пустой результат списка, обход при пустой подписке, снятие disabled option. Диспетчер подтвердил 7/7 caught; runner требует --- FAIL без build/setup failure и восстанавливает каждый файл finally. Это покрывает шесть TEST-006 категорий и UI-признак."
+          "location": "/private/tmp/dk1736-mutations.py; /private/tmp/dk1736-pref-mutations.py; parent sessions 97104 и 72513",
+          "observation": "После смены switch на единственный массив выполнены три актуальные мутации: неверный current ID в строке массива, потеря прежнего alias в массиве, удаление replaces lookup из preference. Все 3/3 пойманы TestCurrent либо browser test. Для неизменённых объектов сохраняются пять проверенных прежних мутаций: обратная ветка допуска, удаление проекции, пустой список, обход при пустой подписке, снятие disabled option; их места сверены с delta. Оба runner требуют --- FAIL без build/setup failure и восстанавливают файлы finally. Покрыты шесть TEST-006 категорий, UI и новый preference дефект."
         }
       ]
     },
@@ -1281,13 +1291,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Изоляция стенда",
@@ -1306,8 +1316,8 @@
       "evidence": [
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1321,8 +1331,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Изоляция стенда",
@@ -1411,8 +1421,8 @@
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1431,8 +1441,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1442,7 +1452,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1481,18 +1491,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1506,8 +1516,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1521,8 +1531,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Сохранение фоновых запусков",
@@ -1561,8 +1571,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1577,7 +1587,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -1597,12 +1607,12 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1637,7 +1647,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1657,7 +1667,7 @@
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -1676,13 +1686,13 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         }
       ]
     },
@@ -1696,8 +1706,8 @@
       "evidence": [
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Сохранённый выбор и история",
@@ -1706,8 +1716,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Сохранение фоновых запусков",
@@ -1736,8 +1746,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1756,8 +1766,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1771,18 +1781,18 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Проекция списка и маршрутизация подписки",
-          "location": "tools/dashboard/chats.go:chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
-          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары."
+          "location": "tools/dashboard/chats.go:chatModelOpt, chatModelOpts, chatPairKnown, chatHarnessOf; tools/dashboard/harnesses.go:hasChat",
+          "observation": "Замена применяется к локальным копиям Models/Chat, затем выполняются прежние dedupe/Via правила. Tier, Harness, Default и Levels сохраняются; raw Harness Models/Chat не перезаписываются. Pair validation сопоставляет новый ID с проекцией машинной пары. У tier и extraChat options добавлен необязательный JSON replaces из modelcatalog.Replaces; пустой результат omitted."
         },
         {
           "object": "Предпочтение и меню модели",
           "location": "tools/dashboard/static/app.js:chatModelPref, modelPick, chatBlankMake, chatPanel",
-          "observation": "Все три вызова chatModelPref передают серверный список; устаревшее предпочтение выбирает доступный/default вариант. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
+          "observation": "Все три вызова chatModelPref передают серверный список. Exact ID либо option.replaces сопоставляются только в сохранённом harness, если он указан; известная старая Sol/Astra переходит в свою 6.2 на прежней квоте до глобального default fallback. Unknown сохраняет прежний default fallback. Историческая отсутствующая пара добавляется выбранной disabled option и исключается из runPickBody. Новый blank сначала получает актуальный список, а при ошибке GET показывает ошибку и не делает POST."
         }
       ]
     },
@@ -1806,8 +1816,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -1976,8 +1986,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -2041,8 +2051,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Расположение новых файлов",
@@ -2051,8 +2061,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -2071,8 +2081,8 @@
         },
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         }
       ]
     },
@@ -2086,8 +2096,8 @@
       "evidence": [
         {
           "object": "Регрессионный прогон",
-          "location": "parent session 50599; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
-          "observation": "regcheck -C /Users/rider/projects/devkit-dk-1736 --base HEAD --tests tools/dashboard/appchat_test.go,tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' завершился успешно: база HEAD тогда c373a7edd красная, исправление зелёное. Финальные code/tests от 0c24189d7 не менялись."
+          "location": "parent sessions 50599, 21834, 32518; tools/dashboard/appchat_test.go, chatmodels_test.go, testdata/chat_models_browser.mjs",
+          "observation": "Первоначальный regcheck --base c373a7edd с appchat_test.go,chatmodels_test.go,browser.mjs и scoped feature набором подтвердил old red/new green. Для delta отдельный regcheck --base 97f5aba24 --tests tools/dashboard/chatmodels_test.go,tools/dashboard/testdata/chat_models_browser.mjs -- devkitctl test tools/dashboard -run 'Test(ChatLegacyModelDisplayBrowser|ChatModelPreferenceReplacementMetadata)$' PASS old red/new green (session 32518). Прежние доказательства перенесены после чтения delta, новый wire/preference контракт проверен на новой базе."
         }
       ]
     },
@@ -2121,8 +2131,8 @@
       "evidence": [
         {
           "object": "HTTP, браузер и операционный запуск",
-          "location": "tools/dashboard/chatmodels_test.go; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
-          "observation": "Диспетчер подтвердил на финальном неизменном коде: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelCatalog|AppChatCatalog)' -v, PASS 4.500s, session 42443. Проверены HTTP409, сохранность записи/отсутствие turn при отказе, точный новый ID клиента, реальный DOM/menu/localStorage, raw Map и task appTaskStart со старым рабочим ID. Окружение macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
+          "location": "tools/dashboard/chatmodels_test.go:TestChatModelPreferenceReplacementMetadata и остальные feature tests; appchat_test.go:TestAppChatCatalogModelsReachClient; testdata/chat_models_browser.mjs",
+          "observation": "Диспетчер подтвердил final delta: devkitctl test tools/dashboard -run 'Test(ChatLegacy|ChatModelPreference|ChatModelCatalog|AppChatCatalog)' -v, PASS 3.902s, session 5356. Независимая test struct literal json:replaces декодирует настоящий GET /chats для tier Sol и extraChat Astra. Реальный DOM/preference тест проверяет все четыре aliases, обе blank POST, семейство и Codex harness при foreign GLM default, Terra/Luna/unknown. Также проверены HTTP409, store/log неизменность, точный ID клиента, raw Map и appTaskStart со старым рабочим ID. macOS, временные HOME/fixtures, Node/Chrome/Playwright, один слот wrapper."
         },
         {
           "object": "Изоляция стенда",
@@ -2161,8 +2171,8 @@
         },
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Ручные HTTP-входы чата",
@@ -2181,8 +2191,8 @@
       "evidence": [
         {
           "object": "Каталог замены Sol/Astra",
-          "location": "internal/modelcatalog/models.go:Current; models_test.go:TestCurrent",
-          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Функция чистая, таблица замены одна."
+          "location": "internal/modelcatalog/models.go:replacements, Current, Replaces; models_test.go:TestCurrent",
+          "observation": "Четыре прежних ID отображаются в два точных ID 6.2; неизвестные ID, Terra, Luna и пустая строка возвращаются без изменения. Единственный приватный массив replacements читается обеими функциями; Replaces возвращает новый slice прежних IDs либо nil, общего изменяемого результата нет."
         },
         {
           "object": "Документированный сценарий и границы",

@@ -1278,14 +1278,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			Goal:        goalTurnGoal(store.Hidden, head.First),
 			Parent:      last.Parent,
 		}
-		if bound == boundLead {
-			e.Leads = headTasks(last, f.suffix)
-			for _, id := range workTasks(recs[f.ID], f.suffix) {
-				if !hasTask(e.Leads, id) {
-					e.Leads = append(e.Leads, id)
-				}
-			}
-		}
+		e.Leads = headTasks(last, f.suffix)
 		// Ключ склейки заходов считается до того, как устаревшее имя снимут:
 		// прошлый заход узнаётся именно по нему (chatGlue ниже). Жильцы имени
 		// делятся моментом подъёма окна: номер чата дашборд отдаёт заново, и

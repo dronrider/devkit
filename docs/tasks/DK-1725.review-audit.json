@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1725",
-  "base_sha": "28c741545cc1e39511913def87e65cd6de32c9af",
-  "head_sha": "4bf2d6ba04dcfd9ddc3d46ba19ca0f65385541a7",
-  "code_hash": "a83f619a41f41fb2d11448e31a8d33998adcce563e8dcb1f6422849410c43c5e",
+  "base_sha": "5a687e426957be3e87b9806443f43ec7fab72f93",
+  "head_sha": "2d98329f93ff9d879b8d57e1eabf51ea5000d063",
+  "code_hash": "9620a2e23ab6ff60d6c77cecac895e50b8fd5b4068c3dcc2b6f73f6d146707a5",
   "task_hash": "c81ac3e889726d186f2daaa7d6f6cb62e3c07c807fda79047ac006070d1bddfe",
   "sources": [
     {
@@ -51,7 +51,8 @@
       "код байт в байт тот же на 33218bb95 и на HEAD (blob-хеши dd5e6515c и 1cb1a4cf5), выводы по коду прошлого аудита применимы: git ls-tree 33218bb95 и HEAD",
       "обкатка обоих шагов 2026-11-18 02:15 в свежем дереве 2dd0556ff02e: шаг 1 Ran 10 tests OK на CommandLineTools python 3.9.6 (127с), шаг 2 «три ожидания прошли»: docs/tasks/DK-1725.md, «Проверка»",
       "SyntaxError Non-UTF-8 \\xd1 на строке 6 стаба bin/claude, симптом совпадает с задачей (красный прогон поезда): .devkit/cmdout/20261118T004649-test",
-      "Независимая проверка: blob-хеши waitcheck.py и waitcheck_test.py совпадают у f9e0b210 и 4bf2d6ba; /usr/bin/python3 -m unittest waitcheck_test.WaitMarksTest -v: 4 теста OK; regcheck на базе 28c741545: тест красный на базе и зелёный на текущем коде."
+      "Независимая проверка: blob-хеши waitcheck.py и waitcheck_test.py совпадают у f9e0b210 и 4bf2d6ba; /usr/bin/python3 -m unittest waitcheck_test.WaitMarksTest -v: 4 теста OK; regcheck на базе 28c741545: тест красный на базе и зелёный на текущем коде.",
+      "После ребейза: diff 047dc98b1..2d98329f9 не меняет waitcheck.py, waitcheck_test.py и источники правил; diff 5a687e426..2d98329f9 сохраняет проверенную правку. Обкатка на 047dc98b19cd: 10 тестов Python 3.14 и стенд прошли."
     ]
   },
   "rules": [

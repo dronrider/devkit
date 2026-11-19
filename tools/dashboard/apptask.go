@@ -310,7 +310,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		}
 		s.appDrop(sid, "возобновление рабочего запуска задачи")
 	}
-	go s.appTaskServe(a, p)
+	s.appWorkers.Go(func() { s.appTaskServe(a, p) })
 	res, err := taskhead.Raise(q)
 	a.pid = res.PID
 	st.TaskRunPID = res.PID
@@ -341,7 +341,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		return
 	}
 	s.mainChatAssign(id, sid, p.Name, "работа")
-	go func() {
+	s.appWorkers.Go(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
 		for {
@@ -355,7 +355,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 				}
 			}
 		}
-	}()
+	})
 	select {
 	case err = <-a.ready:
 	case <-a.stop:

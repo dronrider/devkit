@@ -110,7 +110,7 @@ class NewProjectTest(SandboxCase):
 
     def test_fresh_project_is_clean(self):
         rc, out = self.box.doctor(self.proj)
-        self.assertEqual(rc, 0, "doctor нашёл находки на чистом проекте: %s" % out)
+        self.assertDoctorClean(rc, out)
 
 
 class ProjectFindingsTest(SandboxCase):
@@ -3473,7 +3473,7 @@ class CmdoutCleanTest(SandboxCase):
 
     def test_3_repeat_doctor_is_clean(self):
         rc, out = self.box.doctor(self.proj)
-        self.assertEqual(rc, 0, "повторный doctor нашёл находку: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertTrue(self.fresh_dir.exists(), "свежий каталог пропал после повтора")
 
 

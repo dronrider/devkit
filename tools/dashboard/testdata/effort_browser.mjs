@@ -69,29 +69,29 @@ try {
     // движком: гашение и разворачивание это computed-стили, а не классы на
     // бумаге.
     await page.setViewportSize({ width: 1280, height: 800 });
+    await page.route("**/api/harnesses", (route) => route.fulfill({ json: { harnesses: [
+      { name: "stand-alpha", default: true, models: [
+        { model: "модель-а1", tier: "base", levels: ["low", "medium", "high", "xhigh", "max"] },
+        { model: "модель-а2", tier: "pro", levels: ["low", "medium", "high", "xhigh", "max"] }] },
+      { name: "stand-beta", models: [
+        { model: "модель-б1", tier: "base", levels: ["low", "high"] }] },
+      { name: "stand-gamma", models: [
+        { model: "модель-в1", tier: "pro", levels: ["low", "high", "max"] }] },
+    ] } }));
+    await page.route("**/api/quota", (route) => route.fulfill({ json: { harnesses: [
+      { name: "stand-alpha", age_sec: 120, buckets: [
+        { name: "window5h_all", used_pct: 21 }, { name: "week_all", used_pct: 43 }] },
+      { name: "stand-gamma", age_sec: 7200, buckets: [{ name: "week_all", used_pct: 9 }] },
+    ] } }));
     await page.goto(base + "/#demo");
     await page.waitForFunction(() => typeof runControl === "function" && typeof modelPick === "function", null, { timeout: 5000 });
-    await page.waitForFunction(() => boardPainted.screen && document.querySelector("#groups").children.length, null, { timeout: 5000 });
+    await page.waitForFunction(() => quotaView && boardPainted.screen && document.querySelector("#groups").children.length, null, { timeout: 5000 });
     await page.route("**/api/projects/demo/tasks/XR-4/pick", (route) => route.fulfill({
       json: { tier: "pro", via: "stand-alpha", effort: "high" },
     }));
     await page.evaluate(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       document.querySelector("#effort-geometry")?.remove();
-      harnessView = { harnesses: [
-        { name: "stand-alpha", default: true, models: [
-          { model: "модель-а1", tier: "base", levels: ["low", "medium", "high", "xhigh", "max"] },
-          { model: "модель-а2", tier: "pro", levels: ["low", "medium", "high", "xhigh", "max"] }] },
-        { name: "stand-beta", models: [
-          { model: "модель-б1", tier: "base", levels: ["low", "high"] }] },
-        { name: "stand-gamma", models: [
-          { model: "модель-в1", tier: "pro", levels: ["low", "high", "max"] }] },
-      ] };
-      quotaView = { harnesses: [
-        { name: "stand-alpha", age_sec: 120, buckets: [
-          { name: "window5h_all", used_pct: 21 }, { name: "week_all", used_pct: 43 }] },
-        { name: "stand-gamma", age_sec: 7200, buckets: [{ name: "week_all", used_pct: 9 }] },
-      ] };
       const host = el("div");
       host.id = "effort-geometry";
       host.style.cssText = "position:absolute;right:24px;top:70px;width:180px;z-index:30";

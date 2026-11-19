@@ -131,11 +131,14 @@ CLI покажет ошибку устаревания. Файл и ожидан
 Для первого прогона на временной записи есть исполнимый
 [сценарий DK-1446](../../docs/tasks/archive/2026/DK-1446-check.sh). Нужны `node`, пакет
 `playwright`, Chrome для стенда и исходники devkit для запуска проверки.
+Для замеров на ширине телефона нужен `chrome-headless-shell`, потому что полный
+Chrome на Linux открывает окно шириной от 500 пикселей. В [CI](../../.github/workflows/ci.yml)
+браузер и системные шрифты ставятся командой `playwright install --with-deps --only-shell chromium`.
 Укажите пакет через `NODE_PATH`, если он не установлен в обычном пути Node:
 
 ```sh
 export NODE_PATH=/путь/к/node_modules
-export DASHBOARD_CHROME='/путь/к/Chrome'
+export DASHBOARD_CHROME='/путь/к/chrome-headless-shell'
 docs/tasks/archive/2026/DK-1446-check.sh
 ```
 

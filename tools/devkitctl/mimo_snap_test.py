@@ -28,7 +28,7 @@ USAGE = {"data": {"monthUsage": {"items": [
     {"name": "Token Plan", "used": 40, "limit": 100, "percent": 40}]}}}
 
 STUB_SECRETCTL = """#!/bin/sh
-# Заглушка secretctl для стенда. set пишет stdin в файл, exec печатает файл.
+# Заглушка secretctl хранит значения только во временном HOME стенда.
 dir="$HOME/.devkit/stub-secrets"
 mkdir -p "$dir"
 case "$1" in
@@ -38,7 +38,14 @@ set)
 	;;
 exec)
 	[ -f "$dir/$2" ] || exit 1
-	cat "$dir/$2"
+	name=$2
+	[ "$3" = "--" ] || exit 2
+	shift 3
+	if [ "$name" = "mimo-cabinet-cookie" ] && [ "$1" != printenv ]; then
+		[ -z "${STUB_COOKIE_INJECTED:-}" ] || exit 3
+		export STUB_COOKIE_INJECTED=1
+	fi
+	exec env "$name=$(cat "$dir/$name")" "$@"
 	;;
 *)
 	exit 2
@@ -208,6 +215,16 @@ class MimoSnapTest(unittest.TestCase):
     def secret(self, home, name):
         return (home / ".devkit" / "stub-secrets" / name).read_text(
             encoding="utf-8")
+
+    def test_missing_cookie_restarts_with_stored_value(self):
+        home, stub = self.make_home(with_passport=False)
+        store = home / ".devkit" / "stub-secrets"
+        store.mkdir()
+        (store / "mimo-cabinet-cookie").write_text("api-platform_serviceToken=valid-stend")
+        rc, out = self.snap(home, stub)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("spent_cred = 40 кред", out)
+        self.assertIn("/tokenPlan/usage", Cab.calls)
 
     def test_live_cookie_renews_before_usage(self):
         """Живая кука. Плановое продление переиздаёт сессию до запроса

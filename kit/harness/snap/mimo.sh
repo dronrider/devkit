@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Съёмщик использования Token Plan для agentctl quota refresh. Контракт съёмщика
 # в docs/lld/DK-033-universal-kit.md, раздел «Контракт съёмщика».
 #
@@ -49,11 +49,12 @@ if [ -z "${DEVKIT_HARNESS:-}" ]; then
 	exit 1
 fi
 
-# Куки приезжают переменной окружения с дефисом в имени. Поэтому наличие
+# Bash сохраняет имена переменных окружения с дефисом при запуске потомка.
+# Куки приезжают такой переменной, поэтому наличие
 # проверяется printenv, а не подстановкой оболочки. Перезапуск через secretctl
 # идёт один раз. После него переменная уже стоит.
 if ! printenv mimo-cabinet-cookie >/dev/null 2>&1; then
-	exec secretctl exec mimo-cabinet-cookie -- /bin/sh "$0"
+	exec secretctl exec mimo-cabinet-cookie -- "$0"
 fi
 
 python3 - <<'PY'

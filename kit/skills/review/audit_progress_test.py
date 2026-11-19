@@ -103,6 +103,10 @@ elif phase == "summary":
     assert state["ready_for_summary"] and state["files_ready"] == 3 and state["closed"] == 3
     if job["coverage_issue"]:
         audit["architecture"] = dict(result="pending", reason="Только STYLE-001.", heading="## Scope")
+        for other in audit["rules"]:
+            if other["id"] != rule["id"]:
+                other["reason"] = "Только STYLE-001."
+                other["evidence"] = [dict(result="pending", heading="## Scope", observation="Только STYLE-001.")]
         path.write_text(json.dumps(audit))
     summary.write_text("## Scope\\n\\nТолько STYLE-001.\\n" +
         ("## Name\\n\\nalpha.go:3 createInvoice возвращает архивы, имя обещает счёт.\\n" if sys.argv[2] == "conclusion" else ""))

@@ -21,6 +21,11 @@ jobs:
       # живого tmux и taskctl ему не нужно.
       - name: тесты го-модулей tools
         run: python3 tools/devkitctl/parallel.py --only-go
+      - name: тесты аудита и обхода имён с taskctl
+        run: |
+          (cd internal && go test ./reviewaudit)
+          (cd tools/taskctl && go build -o "$RUNNER_TEMP/review-taskctl" .)
+          DEVKIT_TEST_TASKCTL="$RUNNER_TEMP/review-taskctl" python3 kit/skills/review/audit_progress_test.py
       - name: тесты хуков
         run: python3 -m unittest discover -p '*_test.py'
         working-directory: hooks

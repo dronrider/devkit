@@ -34,6 +34,9 @@ jobs:
       # (smoke_test.go): чужие программы он изображает своими фикстурами,
       # живого tmux и taskctl ему не нужно.
       - name: тесты го-модулей tools
+        # Вложенные go build в тестах с временным HOME используют тот же кеш.
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: python3 tools/devkitctl/parallel.py --only-go
       - name: тесты хуков
         run: python3 -m unittest discover -p '*_test.py'

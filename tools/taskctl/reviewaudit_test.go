@@ -11,6 +11,144 @@ import (
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
+func TestReviewAuditTemplateShowsTypedEvidence(t *testing.T) {
+	body, err := cmdReviewAuditTemplate(".", "ARCH-016", "", "export.go:9", "checked", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []reviewaudit.Evidence
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Check != "with_consumer" || entries[1].Check != "without_consumer" ||
+		entries[1].ReadScenario == nil || entries[1].ReadScenario.CallAt != "export.go:9" {
+		t.Fatalf("неверные заготовки чтения: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "STYLE-001", "result", "export.go:9", "violated", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ResultEvidence == nil || entries[0].ResultEvidence.Word == nil || entries[0].ObjectComparison == nil {
+		t.Fatalf("неверная заготовка имени: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "STYLE-001", "result", "export.go:9", "checked", "flow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ObjectComparison == nil || entries[0].ObjectComparison.EquivalentFlow == nil {
+		t.Fatalf("нет заготовки для цепочки результата: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "STYLE-001", "result", "export.go:9", "pending", "contract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries = nil
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Kind != "contract" || len(entries[0].Facts["question"]) != 1 {
+		t.Fatalf("нет заготовки для открытого вопроса об имени: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "ARCH-019", "proposed_binding", "запрос", "checked", "collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].SQLProposal == nil || entries[0].SQLProposal.ProbeFile == "" {
+		t.Fatalf("в заготовке запроса нет файла пробы: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "ARCH-019", "parameters", "query.sql:1", "violated", "collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	filters := entries[0].Facts["filter"]
+	if len(filters) != 1 || filters[0].SQLLiteral == nil || filters[0].SQLLiteral.Source != "constant" ||
+		filters[0].Quote == "" || filters[0].Parameter == "" {
+		t.Fatalf("в заготовке запроса нет доказательства для литерала: %s", body)
+	}
+	body, err = cmdReviewAuditTemplate(".", "ARCH-018", "", "repo.go:9", "checked", "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 || entries[0].QueryCalls == nil || entries[0].QueryCalls.Probe == nil ||
+		entries[0].QueryCalls.Probe.File == "" || entries[1].QueryInputs == nil || entries[1].QueryInputs.TwoScenario == nil {
+		t.Fatalf("в заготовке цикла нет файла замера или штатного входа: %s", body)
+	}
+	if _, err := cmdReviewAuditTemplate(".", "ARCH-016", "unknown", "", "checked", ""); err == nil {
+		t.Fatal("неизвестная подпроверка принята")
+	}
+}
+
+func TestReviewAuditTemplateKeepsCompleteName(t *testing.T) {
+	body, err := cmdReviewAuditTemplate(".", "STYLE-001", "writes", "export.go:9#Service.exportSingleToken", "checked", "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []reviewaudit.Evidence
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	pair := entries[0].ObjectComparison
+	if strings.Join(pair.Expected, " ") != "Single Token" || len(pair.Proof.Words) != 2 || *entries[0].WriteEvidence.Word != "Token" {
+		t.Fatalf("потеряны слова исходного имени: %s", body)
+	}
+}
+
+func TestReviewAuditTemplateShowsAllCommentFragments(t *testing.T) {
+	root := t.TempDir()
+	gitOut(t, root, "init", "-q")
+	file := filepath.Join(root, "export.go")
+	body := "package sample\n\n// Сохраняет SQL NULL. Общий конвертер\n// сохраняет прежнее поведение.\nfunc export() {}\n"
+	if err := os.WriteFile(file, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdReviewAuditTemplate(root, "STYLE-015", "", "export.go:3", "pending", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []reviewaudit.Evidence
+	if err := json.Unmarshal([]byte(out), &entries); err != nil {
+		t.Fatal(err)
+	}
+	claims := entries[0].Facts["claim"]
+	if len(claims) != 2 || claims[0].Quote != "Сохраняет SQL NULL." ||
+		claims[1].Quote != "Общий конвертер сохраняет прежнее поведение." {
+		t.Fatalf("в заготовке нужны оба фрагмента: %s", out)
+	}
+}
+
+func TestReviewAuditTemplateShowsCLICountAndExitCode(t *testing.T) {
+	body, err := cmdReviewAuditTemplate(".", "STYLE-001", "writes", "export.go:9", "checked", "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []reviewaudit.Evidence
+	if err := json.Unmarshal([]byte(body), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ObjectComparison == nil || entries[0].ObjectComparison.Proof == nil {
+		t.Fatalf("отсутствует заготовка CLI: %s", body)
+	}
+	cli := entries[0].ObjectComparison.Proof.CLI
+	if cli == nil || cli.CountAt == "" || cli.Count == "" || cli.SuccessCodeAt == "" {
+		t.Fatalf("в заготовке CLI отсутствуют проверки количества или кода завершения: %s", body)
+	}
+}
+
 // Existing workflow tests supply an assessed report; gate failures below call
 // production commands directly so this fixture cannot mask a missing gate.
 func completeReviewAudit(t *testing.T, root, id string) string {
@@ -55,7 +193,13 @@ func fillReviewAudit(t *testing.T, path string) {
 		r.Rules[i].Applicability = "applicable"
 		r.Rules[i].Result = "checked"
 		r.Rules[i].Reason = "Относится к операции"
-		r.Rules[i].Evidence = []reviewaudit.Evidence{{Object: "операция", Location: "code.txt:1", Observation: "состояние сохраняется"}}
+		evidence := reviewaudit.Evidence{Object: "операция", Location: "code.txt:1", Observation: "состояние сохраняется"}
+		if r.Rules[i].ID == "common-style:STYLE-001" {
+			r.Rules[i].Applicability = "not_applicable"
+			r.Rules[i].Reason = "Фикстура конвейера не меняет имён или обязанностей символов"
+			continue
+		}
+		r.Rules[i].Evidence = []reviewaudit.Evidence{evidence}
 	}
 	b, e = json.MarshalIndent(r, "", "  ")
 	if e != nil {
@@ -119,17 +263,17 @@ func TestReviewAuditCLIWorkflow(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	path := completeReviewAudit(t, root, "XR-005")
-	if _, e := cmdReviewAudit(root, root, "XR-005", "", false, true); e != nil {
+	if _, e := cmdReviewAudit(root, root, "XR-005", "", "", "", false, true); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := cmdReviewAudit(root, root, "XR-005", "", false, false); e == nil {
+	if _, e := cmdReviewAudit(root, root, "XR-005", "", "", "", false, false); e == nil {
 		t.Fatal("overwrote report")
 	}
-	out, e := cmdReviewAudit(root, root, "XR-005", "", true, false)
+	out, e := cmdReviewAudit(root, root, "XR-005", "", "", "", true, false)
 	if e != nil || !strings.Contains(out, path) {
 		t.Fatalf("refresh: %s %v", out, e)
 	}
-	if _, e := cmdReviewAudit(root, root, "XR-005", "", false, true); e == nil {
+	if _, e := cmdReviewAudit(root, root, "XR-005", "", "", "", false, true); e == nil {
 		t.Fatal("pending refresh accepted")
 	}
 }
@@ -180,7 +324,7 @@ func TestReviewAuditCorporateCodeRoot(t *testing.T) {
 	if _, e := cmdReviewCleanFrom(board, code, "XR-005", "", false, CommitOpts{}); e == nil {
 		t.Fatal("board snapshot accepted for corporate code")
 	}
-	if _, e := cmdReviewAudit(board, code, "XR-005", "HEAD", true, false); e != nil {
+	if _, e := cmdReviewAudit(board, code, "XR-005", "HEAD", "", "", true, false); e != nil {
 		t.Fatal(e)
 	}
 	fillReviewAudit(t, path)
@@ -287,7 +431,7 @@ func TestReviewCleanNewRoundRechecksChangedRulesAndTask(t *testing.T) {
 			if _, e := cmdReviewClean(root, "XR-005", "second", true, CommitOpts{}); e == nil {
 				t.Fatal("new-round bypassed stale audit")
 			}
-			if _, e := cmdReviewAudit(root, root, "XR-005", "", true, false); e != nil {
+			if _, e := cmdReviewAudit(root, root, "XR-005", "", "", "", true, false); e != nil {
 				t.Fatal(e)
 			}
 			fillReviewAudit(t, path)

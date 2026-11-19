@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,18 +27,48 @@ type Source struct {
 	Hash   string `json:"hash"`
 }
 type Evidence struct {
-	Object      string `json:"object"`
-	Location    string `json:"location"`
-	Observation string `json:"observation"`
+	Object       string                  `json:"object"`
+	Check        string                  `json:"check,omitempty"`
+	Location     string                  `json:"location"`
+	Observation  string                  `json:"observation"`
+	Result       string                  `json:"result,omitempty"`
+	Heading      string                  `json:"heading,omitempty"`
+	CommentQuote string                  `json:"comment_quote,omitempty"`
+	MissingFile  *MissingFileEvidence    `json:"missing_file,omitempty"`
+	Kind         string                  `json:"kind,omitempty"`
+	Facts        map[string][]ReviewFact `json:"facts,omitempty"`
+
+	Symbol             string                `json:"symbol,omitempty"`
+	WordChecks         []WordCheck           `json:"word_checks,omitempty"`
+	ObjectComparison   *NameObjectComparison `json:"object_comparison,omitempty"`
+	ResultEvidence     *ResultEvidence       `json:"result_evidence,omitempty"`
+	WriteEvidence      *WriteEvidence        `json:"write_evidence,omitempty"`
+	QueryCalls         *QueryCalls           `json:"query_calls,omitempty"`
+	QueryInputs        *QueryInputs          `json:"query_inputs,omitempty"`
+	QueryJustification string                `json:"query_justification,omitempty"`
+	ListDecision       string                `json:"list_decision,omitempty"`
+	BindingChange      *bool                 `json:"binding_change,omitempty"`
+	SQLProposal        *SQLBindingProposal   `json:"sql_proposal,omitempty"`
+	ReadScenario       *ReadScenario         `json:"read_scenario,omitempty"`
+}
+
+type MissingFileEvidence struct {
+	Path     string `json:"path"`
+	Revision string `json:"revision"`
 }
 type Rule struct {
-	ID            string     `json:"id"`
-	Source        string     `json:"source"`
-	Text          string     `json:"text"`
-	Applicability string     `json:"applicability"`
-	Result        string     `json:"result"`
-	Reason        string     `json:"reason"`
-	Evidence      []Evidence `json:"evidence"`
+	ID            string                        `json:"id"`
+	Source        string                        `json:"source"`
+	Text          string                        `json:"text"`
+	Applicability string                        `json:"applicability"`
+	Result        string                        `json:"result"`
+	Reason        string                        `json:"reason"`
+	Checks        []string                      `json:"checks,omitempty"`
+	Files         []FileReview                  `json:"files,omitempty"`
+	Targets       []Target                      `json:"targets,omitempty"`
+	QueryEntries  map[string][]QueryEntryTarget `json:"query_entries,omitempty"`
+	Objects       []string                      `json:"objects,omitempty"`
+	Evidence      []Evidence                    `json:"evidence"`
 }
 type Architecture struct {
 	Goal          string   `json:"goal"`
@@ -47,6 +78,8 @@ type Architecture struct {
 	Justification string   `json:"justification"`
 	Result        string   `json:"result"`
 	Evidence      []string `json:"evidence"`
+	Reason        string   `json:"reason,omitempty"`
+	Heading       string   `json:"heading,omitempty"`
 }
 type Report struct {
 	Version      int          `json:"version"`
@@ -55,9 +88,11 @@ type Report struct {
 	HeadSHA      string       `json:"head_sha"`
 	CodeHash     string       `json:"code_hash"`
 	TaskHash     string       `json:"task_hash"`
+	RequestPath  string       `json:"request_path,omitempty"`
 	Sources      []Source     `json:"sources"`
 	Architecture Architecture `json:"architecture"`
 	Rules        []Rule       `json:"rules"`
+	taskText     string
 }
 
 func digest(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -113,6 +148,18 @@ func readReport(path string) (Report, error) {
 
 // Create never silently replaces evidence. Refresh archives it and resets conclusions.
 func Create(root, path, id, base string, refresh bool) (string, error) {
+	return CreateWithRequest(root, path, id, base, "", refresh)
+}
+
+func CreateWithRequest(root, path, id, base, request string, refresh bool) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", err
+	}
+	lock, err := lockAuditDirectory(path)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
 	old, e := readReport(path)
 	exists := e == nil
 	if e != nil && !os.IsNotExist(e) {
@@ -130,10 +177,13 @@ func Create(root, path, id, base string, refresh bool) (string, error) {
 	if base == "" && exists {
 		base = old.BaseSHA
 	}
+	if request == "" && exists {
+		request = old.RequestPath
+	}
 	if base == "" {
 		return "", fmt.Errorf("первый отчёт требует явный --base <база всей правки>")
 	}
-	r, e := snapshot(root, path, id, base, "")
+	r, e := snapshot(root, path, id, base, "", request)
 	if e != nil {
 		return "", e
 	}
@@ -143,15 +193,15 @@ func Create(root, path, id, base string, refresh bool) (string, error) {
 		r.Rules[i].Applicability = "pending"
 		r.Rules[i].Result = "pending"
 		r.Rules[i].Evidence = []Evidence{}
+		for _, target := range r.Rules[i].Targets {
+			r.Rules[i].Objects = append(r.Rules[i].Objects, target.Object)
+		}
 	}
 	data, e := json.MarshalIndent(r, "", "  ")
 	if e != nil {
 		return "", e
 	}
 	data = append(data, '\n')
-	if e = os.MkdirAll(filepath.Dir(path), 0755); e != nil {
-		return "", e
-	}
 	backup := ""
 	if exists {
 		f, e := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".previous-")
@@ -171,20 +221,7 @@ func Create(root, path, id, base string, refresh bool) (string, error) {
 			return "", ce
 		}
 	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".audit-write-")
-	if e != nil {
-		return "", e
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, e = f.Write(data); e != nil {
-		f.Close()
-		return "", e
-	}
-	if e = f.Close(); e != nil {
-		return "", e
-	}
-	if e = os.Rename(tmp, path); e != nil {
+	if e = replaceAuditFile(path, data, 0600); e != nil {
 		return "", e
 	}
 	msg := path
@@ -194,7 +231,7 @@ func Create(root, path, id, base string, refresh bool) (string, error) {
 	return msg, nil
 }
 
-func snapshot(root, path, id, base, standards string) (Report, error) {
+func snapshot(root, path, id, base, standards, request string) (Report, error) {
 	r := Report{Version: 1, ID: id}
 	top, e := git(root, "rev-parse", "--show-toplevel")
 	if e != nil {
@@ -218,7 +255,13 @@ func snapshot(root, path, id, base, standards string) (Report, error) {
 	if e != nil {
 		return r, e
 	}
-	r.CodeHash, r.TaskHash, e = codeSnapshot(root, path)
+	if e = r.loadTask(path, request); e != nil {
+		return r, e
+	}
+	r.CodeHash, e = codeSnapshot(root, path, "")
+	if e == nil {
+		e = collectTargets(root, path, r.BaseSHA, "", r.Rules)
+	}
 	return r, e
 }
 
@@ -227,6 +270,41 @@ func taskPath(report string) string {
 		return strings.TrimSuffix(report, ".review-audit.json") + ".md"
 	}
 	return ""
+}
+
+func (r *Report) loadTask(report, request string) error {
+	path := taskPath(report)
+	if request != "" {
+		if path != "" {
+			return fmt.Errorf("--request используется для ревью вне доски задач")
+		}
+		var err error
+		path, err = filepath.Abs(request)
+		if err != nil {
+			return err
+		}
+		r.RequestPath = path
+	}
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("файл постановки %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("файл постановки %s должен быть обычным файлом", path)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("файл постановки %s: %w", path, err)
+	}
+	r.taskText = string(body)
+	if request == "" {
+		r.taskText = taskContent(r.taskText)
+	}
+	r.TaskHash = digest(r.taskText)
+	return nil
 }
 func canonicalPath(p string) string {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
@@ -254,19 +332,23 @@ func excluded(root, report, rel string) bool {
 			return true
 		}
 	}
-	return p == report || strings.HasPrefix(p, report+".previous-") || p == taskPath(report) || p == strings.TrimSuffix(taskPath(report), ".md")+".review.md" || rel == "docs/TASKS.md" || rel == "docs/TASKS-archive.md"
+	return p == report || strings.HasPrefix(p, report+".previous-") ||
+		strings.HasPrefix(p, report+".bindings"+string(filepath.Separator)) ||
+		strings.HasPrefix(p, report+".queries"+string(filepath.Separator)) ||
+		p == taskPath(report) || p == strings.TrimSuffix(taskPath(report), ".md")+".review.md" ||
+		rel == "docs/TASKS.md" || rel == "docs/TASKS-archive.md"
 }
-func codeSnapshot(root, report string) (string, string, error) {
+func codeSnapshot(root, report, output string) (string, error) {
 	out, e := gitRaw(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	if e != nil {
-		return "", "", e
+		return "", e
 	}
 	names := strings.Split(out, "\x00")
 	sort.Strings(names)
 	var data strings.Builder
 	seen := map[string]bool{}
 	for _, name := range names {
-		if name == "" || seen[name] || excluded(root, report, name) {
+		if name == "" || name == output || seen[name] || excluded(root, report, name) {
 			continue
 		}
 		seen[name] = true
@@ -276,12 +358,12 @@ func codeSnapshot(root, report string) (string, string, error) {
 			// Sparse entries and uninitialized submodules remain reviewed content.
 			stage, err := gitRaw(root, "ls-files", "--stage", "--", name)
 			if err != nil {
-				return "", "", err
+				return "", err
 			}
 			fields := strings.Fields(stage)
 			if len(fields) >= 3 {
 				if fields[2] != "0" {
-					return "", "", fmt.Errorf("неразрешённый конфликт индекса: %s", name)
+					return "", fmt.Errorf("неразрешённый конфликт индекса: %s", name)
 				}
 				if fields[0] == "160000" {
 					fmt.Fprintf(&data, "%s\x00gitlink\x00%s\x00", name, fields[1])
@@ -289,12 +371,12 @@ func codeSnapshot(root, report string) (string, string, error) {
 				}
 				flags, err := gitRaw(root, "ls-files", "-v", "--", name)
 				if err != nil {
-					return "", "", err
+					return "", err
 				}
 				if strings.HasPrefix(flags, "S ") || strings.HasPrefix(flags, "s ") {
 					blob, err := gitRaw(root, "cat-file", "blob", fields[1])
 					if err != nil {
-						return "", "", err
+						return "", err
 					}
 					mode := os.FileMode(0)
 					if fields[0] == "100755" {
@@ -309,36 +391,36 @@ func codeSnapshot(root, report string) (string, string, error) {
 			continue
 		}
 		if e != nil {
-			return "", "", e
+			return "", e
 		}
 		var b []byte
 		if info.Mode()&os.ModeSymlink != 0 {
 			v, e := os.Readlink(p)
 			if e != nil {
-				return "", "", e
+				return "", e
 			}
 			b = []byte(v)
 		} else if info.IsDir() {
 			stage, err := gitRaw(root, "ls-files", "--stage", "--", name)
 			if err != nil {
-				return "", "", err
+				return "", err
 			}
 			fields := strings.Fields(stage)
 			if len(fields) < 3 || fields[0] != "160000" {
-				return "", "", fmt.Errorf("неожиданный каталог в индексе: %s", name)
+				return "", fmt.Errorf("неожиданный каталог в индексе: %s", name)
 			}
 			sha := fields[1]
 			if _, err := os.Stat(filepath.Join(p, ".git")); err == nil {
 				head, err := git(p, "rev-parse", "HEAD")
 				if err != nil {
-					return "", "", err
+					return "", err
 				}
 				status, err := git(p, "status", "--porcelain", "--untracked-files=all")
 				if err != nil {
-					return "", "", err
+					return "", err
 				}
 				if strings.TrimSpace(status) != "" {
-					return "", "", fmt.Errorf("подмодуль %s содержит незакоммиченные изменения; завершите его отдельное ревью", name)
+					return "", fmt.Errorf("подмодуль %s содержит незакоммиченные изменения; завершите его отдельное ревью", name)
 				}
 				sha = strings.TrimSpace(head)
 			}
@@ -347,20 +429,12 @@ func codeSnapshot(root, report string) (string, string, error) {
 		} else {
 			b, e = os.ReadFile(p)
 			if e != nil {
-				return "", "", e
+				return "", e
 			}
 		}
 		fmt.Fprintf(&data, "%s\x00%v\x00%s\x00", name, info.Mode()&(os.ModeSymlink|0111), digest(string(b)))
 	}
-	taskHash := ""
-	if p := taskPath(report); p != "" {
-		b, e := os.ReadFile(p)
-		if e != nil {
-			return "", "", fmt.Errorf("файл задачи отчёта: %w", e)
-		}
-		taskHash = digest(taskContent(string(b)))
-	}
-	return digest(data.String()), taskHash, nil
+	return digest(data.String()), nil
 }
 func taskContent(text string) string {
 	lines := strings.Split(text, "\n")
@@ -589,7 +663,7 @@ func parseRules(source, text string, common bool) ([]Rule, error) {
 			return nil, fmt.Errorf("повтор правила %s", id)
 		}
 		seen[id] = true
-		rules = append(rules, Rule{ID: id, Source: source, Text: b})
+		rules = append(rules, Rule{ID: id, Source: source, Text: b, Checks: requiredChecks(id)})
 	}
 	if common && len(rules) == 0 {
 		return nil, fmt.Errorf("%s: источник не содержит правил с ID", source)
@@ -598,23 +672,15 @@ func parseRules(source, text string, common bool) ([]Rule, error) {
 }
 
 func Validate(root, path, id string) error {
-	top, err := git(root, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return err
-	}
-	root = strings.TrimSpace(top)
-	r, e := readReport(path)
-	if e != nil {
-		return fmt.Errorf("отчёт ревью не читается (%s): %w; создайте review audit %s --base <база>", path, e, id)
-	}
-	if r.Version != 1 || r.ID != id {
-		return fmt.Errorf("версия или ID отчёта не совпадают")
-	}
-	now, e := snapshot(root, path, id, r.BaseSHA, "")
+	return ValidateWithRequest(root, path, id, "")
+}
+
+func ValidateWithRequest(root, path, id, request string) error {
+	root, r, now, e := currentSnapshot(root, path, id, request)
 	if e != nil {
 		return e
 	}
-	if e = validateSnapshot(r, now, id); e != nil {
+	if e = validateSnapshot(root, path, path, r, now, id); e != nil {
 		return e
 	}
 	// A verdict is attached to HEAD, so reviewed working files must have reached it.
@@ -634,46 +700,103 @@ func Validate(root, path, id string) error {
 	return nil
 }
 
-func validateSnapshot(r, now Report, id string) error {
+func currentSnapshot(root, path, id, request string) (string, Report, Report, error) {
+	top, err := git(root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", Report{}, Report{}, err
+	}
+	root = strings.TrimSpace(top)
+	r, e := readReport(path)
+	if e != nil {
+		return "", Report{}, Report{}, fmt.Errorf("отчёт ревью не читается (%s): %w; создайте review audit %s --base <база>", path, e, id)
+	}
 	if r.Version != 1 || r.ID != id {
-		return fmt.Errorf("версия или ID отчёта не совпадают")
+		return "", Report{}, Report{}, fmt.Errorf("версия или ID отчёта не совпадают")
+	}
+	if request == "" {
+		request = r.RequestPath
+	} else if r.RequestPath == "" {
+		return "", Report{}, Report{}, fmt.Errorf("постановка не привязана к аудиту; review audit %s --refresh --request <файл>", id)
+	}
+	now, e := snapshot(root, path, id, r.BaseSHA, "", request)
+	return root, r, now, e
+}
+
+func validateInventory(r, now Report, id string) (gaps, invalid error) {
+	if r.Version != 1 || r.ID != id {
+		return nil, fmt.Errorf("версия или ID отчёта не совпадают")
 	}
 	if r.BaseSHA != now.BaseSHA {
-		return fmt.Errorf("base_sha должен быть полным SHA, а не перемещаемой ссылкой")
+		return nil, fmt.Errorf("base_sha должен быть полным SHA, а не перемещаемой ссылкой")
 	}
 	if now.CodeHash != r.CodeHash || now.TaskHash != r.TaskHash {
-		return fmt.Errorf("код или постановка изменились после отчёта; review audit %s --refresh", id)
+		return nil, fmt.Errorf("код или постановка изменились после отчёта; review audit %s --refresh", id)
 	}
 	if len(now.Sources) != len(r.Sources) {
-		return fmt.Errorf("неполный перечень источников")
+		return nil, fmt.Errorf("неполный перечень источников")
 	}
 	for i, s := range now.Sources {
 		if s != r.Sources[i] {
-			return fmt.Errorf("источник %s изменён, отсутствует или подменён; обновите отчёт", s.Name)
+			return nil, fmt.Errorf("источник %s изменён, отсутствует или подменён; обновите отчёт", s.Name)
 		}
 	}
 	if len(now.Rules) != len(r.Rules) {
-		return fmt.Errorf("отчёт не покрывает все правила: нужно %d, записано %d", len(now.Rules), len(r.Rules))
+		return nil, fmt.Errorf("отчёт не покрывает все правила: нужно %d, записано %d", len(now.Rules), len(r.Rules))
 	}
 	expected := map[string]Rule{}
 	for _, rr := range now.Rules {
 		expected[rr.ID] = rr
 	}
 	seen := map[string]bool{}
+	var issues []error
 	for _, rr := range r.Rules {
 		want, ok := expected[rr.ID]
 		if !ok || seen[rr.ID] {
-			return fmt.Errorf("лишнее или повторное правило %q", rr.ID)
+			return nil, fmt.Errorf("лишнее или повторное правило %q", rr.ID)
 		}
 		seen[rr.ID] = true
 		if rr.Source != want.Source || rr.Text != want.Text {
-			return fmt.Errorf("содержание правила %s изменено в отчёте", rr.ID)
+			return nil, fmt.Errorf("содержание правила %s изменено в отчёте", rr.ID)
 		}
+		if err := validateTargetList(rr, want.Targets); err != nil {
+			return nil, err
+		}
+		if err := validateQueryEntries(rr, want.QueryEntries); err != nil {
+			return nil, err
+		}
+		issues = append(issues, validateTargetCoverage(rr, want.Targets), validateFileReviews(rr, want.Files))
+	}
+	return errors.Join(issues...), nil
+}
+
+func validateSnapshot(root, path, auditPath string, r, now Report, id string) error {
+	if gaps, invalid := validateInventory(r, now, id); gaps != nil || invalid != nil {
+		return errors.Join(invalid, gaps)
+	}
+	if r.Architecture.Result != "checked" {
+		return fmt.Errorf("архитектурная оценка не завершена или выявила нарушение")
+	}
+	if err := checkArchitecture(r.Architecture); err != nil {
+		return err
+	}
+	for _, rr := range r.Rules {
 		if rr.Result != "checked" {
 			return fmt.Errorf("правило %s не завершено или нарушено (%s)", rr.ID, rr.Result)
 		}
 		if strings.TrimSpace(rr.Reason) == "" {
 			return fmt.Errorf("у правила %s нет основания вывода", rr.ID)
+		}
+		if checks := objectChecks(rr.ID); len(checks) > 0 {
+			if err := errors.Join(checkSplitRule(rr, checks)...); err != nil {
+				return err
+			}
+			continue
+		}
+		if rr.Applicability == "applicable" && requiresReviewFacts(rr.ID, "") {
+			if err := errors.Join(checkObjects(rr, []string{""})...); err != nil {
+				return err
+			}
+			continue
 		}
 		switch rr.Applicability {
 		case "not_applicable":
@@ -690,23 +813,33 @@ func validateSnapshot(r, now Report, id string) error {
 			return fmt.Errorf("применимость правила %s не разобрана", rr.ID)
 		}
 	}
-	a := r.Architecture
-	if a.Result != "checked" {
-		return fmt.Errorf("архитектурная оценка не завершена или выявила нарушение")
-	}
-	for _, v := range []string{a.Goal, a.Decision, a.Boundaries, a.Alternative, a.Justification} {
-		if strings.TrimSpace(v) == "" {
-			return fmt.Errorf("архитектурная оценка неполна")
+	return errors.Join(checkNames(root, path, "", r), checkQueryEvidence(root, path, "", auditPath, r),
+		checkComments(root, path, "", r), checkMissingFiles(root, r, now),
+		checkReviewFacts(root, path, "", auditPath, r, now.taskText))
+}
+
+func checkArchitecture(a Architecture) error {
+	switch a.Result {
+	case "checked":
+		for _, field := range []string{a.Goal, a.Decision, a.Boundaries, a.Alternative, a.Justification} {
+			if strings.TrimSpace(field) == "" {
+				return fmt.Errorf("архитектурная оценка неполна")
+			}
 		}
+	case "violated", "pending":
+		if strings.TrimSpace(a.Reason) == "" {
+			return fmt.Errorf("архитектурная оценка %s: укажите дефект или недостающий факт", a.Result)
+		}
+	default:
+		return fmt.Errorf("архитектурная оценка: укажите checked, violated или pending")
 	}
-	if len(a.Evidence) == 0 {
+	if a.Result != "pending" && len(a.Evidence) == 0 {
 		return fmt.Errorf("нет свидетельств архитектурной оценки")
 	}
-	for _, v := range a.Evidence {
-		if strings.TrimSpace(v) == "" {
+	for _, item := range a.Evidence {
+		if strings.TrimSpace(item) == "" {
 			return fmt.Errorf("пустое свидетельство архитектурной оценки")
 		}
 	}
-
 	return nil
 }

@@ -75,7 +75,24 @@ func completed(t *testing.T, root, path string) Report {
 		r.Rules[i].Applicability = "applicable"
 		r.Rules[i].Result = "checked"
 		r.Rules[i].Reason = "Инвариант относится к операции"
-		r.Rules[i].Evidence = []Evidence{{Object: "операция", Location: "code.go:1", Observation: "ветка ошибки сохраняет состояние"}}
+		evidence := Evidence{Object: "операция", Location: "code.go:1", Observation: "ветка ошибки сохраняет состояние"}
+		if len(r.Rules[i].Checks) == 0 {
+			r.Rules[i].Evidence = []Evidence{evidence}
+			continue
+		}
+		r.Rules[i].Objects = []string{evidence.Object}
+		for _, check := range r.Rules[i].Checks {
+			evidence.Check, evidence.Result = check, "checked"
+			if r.Rules[i].ID == namingRule {
+				evidence = Evidence{Object: "операция", Location: "code.go:1", Check: check,
+					Observation: "Имя модуля соответствует имени файла.", Result: "not_applicable"}
+				if check == "meaning" {
+					evidence.Symbol, evidence.Result = "code", "checked"
+					evidence.WordChecks = []WordCheck{{Word: "code", Meaning: "модуль кода", Fact: "файл объявляет пакет", Location: "code.go:1"}}
+				}
+			}
+			r.Rules[i].Evidence = append(r.Rules[i].Evidence, evidence)
+		}
 	}
 	save(t, path, r)
 	return r
@@ -97,6 +114,29 @@ func TestReviewAuditIntegrationCompleteAndMetadataCommit(t *testing.T) {
 	if e := Validate(root, path, "XR-1"); e != nil {
 		t.Fatal(e)
 	}
+}
+
+func TestReviewAuditIntegrationRequiresSubchecksForClean(t *testing.T) {
+	root, path := fixture(t)
+	r := completed(t, root, path)
+	for i := range r.Rules {
+		rule := &r.Rules[i]
+		if rule.ID != "common-style:STYLE-001" {
+			continue
+		}
+		if strings.Join(rule.Checks, " ") != "meaning result writes" {
+			t.Fatalf("подпроверки в снимке: %v", rule.Checks)
+		}
+		rule.Evidence = rule.Evidence[:1]
+		save(t, path, r)
+		if err := Validate(root, path, "XR-1"); err == nil ||
+			!strings.Contains(err.Error(), "операция / result: нет записи в evidence") ||
+			!strings.Contains(err.Error(), "операция / writes: нет записи в evidence") {
+			t.Fatalf("ожидается отказ по двум пропущенным подпроверкам, получено %v", err)
+		}
+		return
+	}
+	t.Fatal("в снимке отсутствует STYLE-001")
 }
 func TestReviewAuditIntegrationRejectsIncompleteAndForged(t *testing.T) {
 	cases := map[string]func(*Report){
@@ -175,7 +215,13 @@ func TestReviewAuditIntegrationRefreshAndMissingInputs(t *testing.T) {
 func TestReviewAuditIntegrationDirtySnapshotSurvivesCommit(t *testing.T) {
 	root, path := fixture(t)
 	write(t, filepath.Join(root, "code.go"), "package improved\n")
-	completed(t, root, path)
+	report := completed(t, root, path)
+	for i := range report.Rules {
+		if report.Rules[i].ID == namingRule {
+			report.Rules[i].Files[0].Objects = []string{"операция"}
+		}
+	}
+	save(t, path, report)
 	if e := Validate(root, path, "XR-1"); e == nil || !strings.Contains(e.Error(), "не закоммичен") {
 		t.Fatalf("dirty: %v", e)
 	}

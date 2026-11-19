@@ -3035,7 +3035,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// Лента разговора чужого протокола живёт файлом на стороне дашборда:
 	// транскриптов у дороги нет, и адрес ленты тот же, что адрес разговора.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
-		s.appFeedServe(w, r, sid)
+		s.appFeedServe(w, r, sid, found)
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)

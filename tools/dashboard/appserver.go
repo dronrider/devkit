@@ -275,7 +275,11 @@ func (p *appServer) notify(method string, params any) error {
 // kill снимает процесс: им кончают ход, на который клиент не отвечает, и
 // снимают живой процесс под смену модели. Повторный вызов безобиден.
 func (p *appServer) kill() {
-	p.cmd.Process.Kill()
+	if p.cmd == nil {
+		p.in.Close()
+	} else {
+		p.cmd.Process.Kill()
+	}
 	select {
 	case <-p.dead:
 	case <-time.After(5 * time.Second):

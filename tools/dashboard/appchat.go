@@ -39,10 +39,12 @@ type appChat struct {
 	thread    string
 	project   string
 	automatic bool
+	shared    bool
 
 	mu        sync.Mutex
 	busy      bool
 	turnAt    time.Time
+	turnID    string
 	taskNotes chan appTaskNote
 }
 
@@ -348,7 +350,7 @@ func (s *server) appDead(sid string, expected *appChat) {
 	c.busy = false
 	why := c.proc.errWhyFmt()
 	c.mu.Unlock()
-	if busy {
+	if busy && !c.shared {
 		s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true,
 			Text: "ход прерван: процесс клиента вышел (" + why + ")",
 			Time: s.now().UTC().Format(time.RFC3339)}})
@@ -395,6 +397,11 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 		"input":    []map[string]string{{"type": "text", "text": text}},
 		"effort":   appEffort(effort),
 	}
+	if c.shared {
+		params["cwd"], params["model"] = c.dir, c.model
+		params["approvalPolicy"], params["approvalsReviewer"] = "on-request", "auto_review"
+		params["sandboxPolicy"] = map[string]any{"type": "workspaceWrite"}
+	}
 	if s.chatStoreRead(c.sid).Task == "" {
 		return params
 	}
@@ -440,6 +447,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
 	c.automatic = s.appAutomaticReview(sid, st)
+	c.shared = st.SharedSocket != "" && !c.automatic && !st.TaskRun
 	toolEnv := map[string]string{"DEVKIT_CHAT_SESSION_ID": sid, "DEVKIT_HARNESS": h.Name}
 	if st.GroomSource != "" {
 		toolEnv["DEVKIT_TASK"], toolEnv["DEVKIT_GROOM_SOURCE"], toolEnv["DEVKIT_GROOM_MODE"] = st.GroomSource, st.GroomSource, st.GroomMode
@@ -449,9 +457,18 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	for key, value := range toolEnv {
 		env = append(env, key+"="+value)
 	}
-	proc, err := s.appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
-		s.appNote(sid, method, params)
-	}, env...)
+	receive := func(method string, params json.RawMessage) { s.appNote(sid, method, params) }
+	var proc *appServer
+	var err error
+	var buffered appSharedNotifications
+	if c.shared {
+		if !appSharedHarness(h) {
+			return nil, errors.New("подписка общего чата Codex изменилась")
+		}
+		proc, err = s.appServerConnect(st.SharedSocket, buffered.add)
+	} else {
+		proc, err = s.appServerStart(h, dir, binPath(agentctlBin), receive, env...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -475,11 +492,15 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		}
 		return nil, err
 	}
-	if _, err := proc.call("initialize", map[string]any{
+	hello, err := proc.call("initialize", map[string]any{
 		"clientInfo":   map[string]string{"name": "devkit-dashboard", "version": "0"},
 		"capabilities": map[string]any{"experimentalApi": true},
-	}); err != nil {
+	})
+	if err != nil {
 		return fail(fmt.Errorf("клиент не поднялся: %w", err))
+	}
+	if c.shared && !appSharedHomeMatches(hello, h) {
+		return fail(errors.New("общий сервер Codex открыл другой каталог настроек"))
 	}
 	if err := proc.notify("initialized", map[string]any{}); err != nil {
 		return fail(fmt.Errorf("клиент не принял приветствие: %w", err))
@@ -495,7 +516,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		configured, err = proc.call("thread/resume", policy)
 		if err != nil {
 			var rejected *appError
-			if errors.As(err, &rejected) && strings.Contains(rejected.Message, "thread already has an active writer") {
+			if errors.As(err, &rejected) && strings.Contains(rejected.Message, "already has an active writer") {
 				return fail(&appThreadWriterConflict{thread: thread, cause: err})
 			}
 			return fail(fmt.Errorf("нить разговора не продолжилась: %w", err))
@@ -520,16 +541,42 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	var actual struct {
 		ApprovalPolicy string `json:"approvalPolicy"`
 		Reviewer       string `json:"approvalsReviewer"`
-		Sandbox        struct {
+		Thread         struct {
+			ID     string `json:"id"`
+			Cwd    string `json:"cwd"`
+			Status struct {
+				Type string `json:"type"`
+			} `json:"status"`
+		} `json:"thread"`
+		Sandbox struct {
 			Type string `json:"type"`
 		} `json:"sandbox"`
 	}
 	if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
 		return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
 	}
+	if c.shared {
+		if actual.Thread.ID != c.thread || !appSamePath(actual.Thread.Cwd, dir) {
+			return fail(errors.New("общий сервер Codex вернул другую нить или рабочий каталог"))
+		}
+		c.busy = actual.Thread.Status.Type == "active"
+		if thread != "" {
+			if err := s.appSharedBackfill(c); err != nil {
+				return fail(fmt.Errorf("история общего разговора не прочиталась: %w", err))
+			}
+		}
+	}
 	s.appMu.Lock()
 	s.appChats[sid] = c
 	s.appMu.Unlock()
+	if c.shared {
+		if err := buffered.flush(c.thread, receive); err != nil {
+			s.appMu.Lock()
+			delete(s.appChats, sid)
+			s.appMu.Unlock()
+			return fail(err)
+		}
+	}
 	// Смерть процесса после подъёма: о ней узнаёт лента сразу же, а не следующим
 	// заходом человека в разговор.
 	s.appWorkers.Go(func() {
@@ -555,7 +602,19 @@ func appEffort(effort string) string {
 // ответом и даже раньше него, и занятость, открытая после ответа, опаздывает
 // за собственным погашением и висит вечно. Ручка отвечает сразу: реплика у
 // клиента.
-func (s *server) appTurn(c *appChat, text string, record bool) error {
+func (s *server) appTurn(c *appChat, text string, record bool, claims ...string) error {
+	claim := ""
+	if len(claims) != 0 {
+		claim = claims[0]
+	}
+	if c.shared && claim != "" {
+		if s.appSharedDelivered(c, claim) {
+			return nil
+		}
+		if s.appSharedPending(c, claim) {
+			return errAppSharedUnknown
+		}
+	}
 	c.mu.Lock()
 	if c.busy {
 		c.mu.Unlock()
@@ -563,22 +622,60 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 	}
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
-	if record {
+	if record && !c.shared {
 		s.appSayRecord(c.sid, text)
 	}
-	_, err := c.proc.call("turn/start", s.appTurnParams(c, text, c.effortNow()))
+	params := s.appTurnParams(c, text, c.effortNow())
+	var err error
+	if c.shared && claim != "" {
+		params["clientUserMessageId"] = claim
+		err = s.appSharedHold(c, claim)
+	}
+	if err == nil {
+		_, err = c.proc.call("turn/start", params)
+		if c.shared && err == nil && claim != "" {
+			if receiptErr := os.WriteFile(s.appSharedReceipt(c, claim), []byte("accepted\n"), 0600); receiptErr != nil {
+				s.logf("квитанция реплики %s разговора %s не записалась: %v", claim, c.sid, receiptErr)
+			}
+		}
+		if c.shared && err != nil {
+			var refused *appError
+			if errors.As(err, &refused) {
+				s.appSharedRelease(c, claim)
+			} else {
+				err = fmt.Errorf("%w: %v", errAppSharedUnknown, err)
+			}
+		}
+	}
 	if err != nil {
 		c.mu.Lock()
-		c.busy = false
+		if !c.shared || c.turnID == "" {
+			c.busy = false
+		}
 		c.mu.Unlock()
-		return err
 	}
-	return nil
+	return err
 }
 
 // appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец
 // хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.
 func (s *server) appNote(sid, method string, params json.RawMessage) {
+	s.appMu.Lock()
+	c := s.appChats[sid]
+	s.appMu.Unlock()
+	if method == "turn/started" && c != nil && c.shared {
+		var started struct {
+			Turn struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if json.Unmarshal(params, &started) == nil && started.Turn.ID != "" {
+			c.mu.Lock()
+			c.busy, c.turnID, c.turnAt = true, started.Turn.ID, s.now()
+			c.mu.Unlock()
+		}
+		return
+	}
 	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
 		return
 	}
@@ -600,23 +697,36 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		var p struct {
 			ThreadID string `json:"threadId"`
 			Turn     struct {
-				Status string `json:"status"`
-				Error  string `json:"error"`
+				ID     string          `json:"id"`
+				Status string          `json:"status"`
+				Error  json.RawMessage `json:"error"`
 			} `json:"turn"`
 		}
 		json.Unmarshal(params, &p)
 		s.appMu.Lock()
 		if c := s.appChats[sid]; c != nil && (p.ThreadID == "" || p.ThreadID == c.thread) {
 			c.mu.Lock()
-			if c.taskNotes == nil {
-				c.busy = false
+			if c.taskNotes == nil && (!c.shared || c.turnID == "" || c.turnID == p.Turn.ID) {
+				c.busy, c.turnID = false, ""
 			}
 			c.mu.Unlock()
 		}
 		s.appMu.Unlock()
-		if p.Turn.Error != "" {
-			s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true,
-				Text: "ход кончился отказом клиента: " + p.Turn.Error, Time: now}})
+		var message string
+		if json.Unmarshal(p.Turn.Error, &message) != nil {
+			var detail struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(p.Turn.Error, &detail) == nil {
+				message = detail.Message
+			}
+		}
+		if message != "" {
+			out := reply{Role: "assistant", Fail: true, Text: "ход кончился отказом клиента: " + message, Time: now}
+			if c != nil && c.thread != p.ThreadID {
+				out.Sub = p.ThreadID
+			}
+			s.appFeedAppend(sid, []reply{out})
 		}
 		return
 	}
@@ -630,6 +740,9 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		return
 	}
 	items := appItemReplies(event.Item, now)
+	if kind == "userMessage" && c != nil && c.shared && event.ThreadID == c.thread {
+		items = appSharedUserReplies(event.Item, now)
+	}
 	s.appMu.Lock()
 	owner := ""
 	if c := s.appChats[sid]; c != nil {
@@ -725,6 +838,10 @@ func (s *server) appSayRecord(sid, text string) {
 // называются словами, молчания тут не бывает.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
+	if st.SharedSocket != "" && st.Project != found.Name {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "общий разговор не найден в проекте"})
+		return
+	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
 		return
@@ -797,7 +914,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 				status = http.StatusConflict
 			}
 			body := map[string]string{"error": "чат не поднялся: " + msg}
-			if status == http.StatusConflict {
+			if status == http.StatusConflict || st.SharedSocket != "" {
 				body["refused"] = msg
 			}
 			writeJSON(w, status, body)
@@ -809,9 +926,16 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
 		if err := s.chatStoreWrite(sid, st); err != nil {
 			s.logf("настройки разговора %s не записались: %v", sid, err)
+			if c.shared {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "нить общего чата не сохранилась: " + err.Error()})
+				return
+			}
 		}
 	}
-	if err := s.appTurn(c, text, true); err != nil {
+	if err := s.appTurn(c, text, true, claim); err != nil {
+		if c.shared && s.appSharedTurnError(w, err) {
+			return
+		}
 		if errors.Is(err, errAppTurnBusy) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "stuck": "ход чужого протокола идёт, реплика не принята"})
 			return
@@ -844,13 +968,17 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	sid := "as" + msgID()
 	st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
 	st.Task, st.Project, st.Born, st.CxEffort = id, found.Name, s.now().Unix(), effort
+	st.SharedSocket = appNewSharedSocket(h, st)
+	if st.SharedSocket == "" {
+		st.SharedFirst = ""
+	}
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
-		if st.GroomSource != "" {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "контекст груминга не записался: " + err.Error()})
+		if st.SharedSocket != "" || st.GroomSource != "" {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "настройки разговора не записались: " + err.Error()})
 			return
 		}
 	}
@@ -861,10 +989,16 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 			bs.Blank, bs.Grown, bs.Lifted = false, sid, s.now().Unix()
 			if err := s.chatStoreWrite(blank, bs); err != nil {
 				s.logf("незачатая запись %s не пришилась к разговору %s: %v", blank, sid, err)
+				if st.SharedSocket != "" {
+					writeJSON(w, http.StatusBadGateway, map[string]string{"error": "общий чат не привязался к заготовке: " + err.Error()})
+					return
+				}
 			}
 		}
 	}
-	s.appSayRecord(sid, text)
+	if st.SharedSocket == "" {
+		s.appSayRecord(sid, text)
+	}
 	dir := chatTree(found.Path, id)
 	if st.GroomTree != "" {
 		dir = st.GroomTree
@@ -881,8 +1015,15 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	st.Thread = c.thread
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
+		if c.shared {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "нить общего чата не сохранилась: " + err.Error()})
+			return
+		}
 	}
-	if err := s.appTurn(c, text, false); err != nil {
+	if err := s.appTurn(c, text, false, st.SharedFirst); err != nil {
+		if c.shared && s.appSharedTurnError(w, err) {
+			return
+		}
 		msg := err.Error()
 		s.logf("первая реплика разговора %s не ушла: %s", sid, msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат поднялся, но реплика не ушла: " + msg})
@@ -913,6 +1054,21 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 	if c == nil || !c.busyNow() {
 		writeJSON(w, http.StatusOK, map[string]any{"way": "gone",
 			"message": "ход не идёт: останавливать нечего"})
+		return
+	}
+	if c.shared {
+		c.mu.Lock()
+		turnID := c.turnID
+		c.mu.Unlock()
+		if turnID == "" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "общий сервер пока не сообщил ID хода"})
+			return
+		}
+		if _, err := c.proc.call("turn/interrupt", map[string]any{"threadId": c.thread, "turnId": turnID}); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "общий сервер не прервал ход: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"way": "stopped", "message": "общий сервер принял запрос на прерывание"})
 		return
 	}
 	err := c.proc.notify("turn/interrupt", map[string]any{"threadId": c.thread})
@@ -1046,8 +1202,19 @@ func (s *server) appListRows(proj string) []chatEntry {
 // appFeedServe отвечает лентой разговора чужого протокола той же формой, что
 // лента транскрипта: шапка, окно записей и постраничная история по ключу. Лента
 // это файл, целиком собранный чтением, и «раньше» режется по его номерам.
-func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string) {
+func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string, project *Project) {
 	st := s.chatStoreRead(sid)
+	if st.SharedSocket != "" {
+		if st.Project != project.Name {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "общий разговор не найден в проекте"})
+			return
+		}
+		if st.Thread != "" {
+			if err := s.appSharedReconnect(project, sid, st); err != nil {
+				s.logf("общий разговор %s не переподключился: %v", sid, err)
+			}
+		}
+	}
 	file := s.appFeedFile(sid)
 	fi, err := os.Stat(file)
 	if err != nil {

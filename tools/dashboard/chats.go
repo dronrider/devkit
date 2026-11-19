@@ -714,7 +714,9 @@ func chatStoreDir(home string) string {
 }
 
 type chatStore struct {
-	Model string `json:"model,omitempty"`
+	Model        string `json:"model,omitempty"`
+	SharedSocket string `json:"sharedSocket,omitempty"`
+	SharedFirst  string `json:"sharedFirst,omitempty"`
 	// Harness называет подписку сохранённого выбора: ключ выбора с DK-1281
 	// двухчастный, и разговор поднимается квотой этого поля, а не первой, у
 	// которой модель домашняя. Пусто у старых записей и умолчания, и тогда
@@ -2442,7 +2444,8 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		// Chat называет незачатую запись, из которой человек пишет: подъём
 		// пришьёт к ней поднятую сессию, и разговор останется той же строкой
 		// списка, на которой он начался.
-		Chat string `json:"chat"`
+		Chat  string `json:"chat"`
+		MsgID string `json:"msg_id"`
 		// Effort это ручной уровень глубины размышления из ползунка меню модели
 		// (DK-1570): едет парой окружения в поднятую сессию и живёт этот подъём.
 		Effort string `json:"effort"`
@@ -2488,7 +2491,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if blank != "" {
-		s.chatBlankStart(w, found, blank, id, text, model, harness, body.Effort, "", "new")
+		s.chatBlankStart(w, found, blank, id, text, model, harness, body.Effort, body.MsgID, "new")
 		return
 	}
 	if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
@@ -4578,7 +4581,12 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			st.Protocol = h.Protocol
 		}
 		if wasModel != model || wasHarness != harness {
-			st.Thread = ""
+			if st.SharedSocket == "" {
+				st.Thread = ""
+			} else if !appSharedHarness(s.chatHarnessOf(model, harness)) || (wasHarness != "" && wasHarness != harness) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "общий чат сохраняет исходную подписку Codex"})
+				return
+			}
 			s.appDrop(sid, "смена модели")
 		}
 		if err := s.chatStoreWrite(sid, st); err != nil {
@@ -4860,6 +4868,19 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	// Состояние разговора чужого протокола это состояние его процесса: реестра
 	// транскриптов у дороги нет, и возраст хода считает сервер.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		if st.SharedSocket != "" {
+			if st.Project != found.Name {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "общий разговор не найден в проекте"})
+				return
+			}
+			if st.Thread != "" {
+				if err := s.appSharedReconnect(found, sid, st); err != nil {
+					writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": false,
+						"busy": false, "status": "общий сервер Codex недоступен", "reason": err.Error()})
+					return
+				}
+			}
+		}
 		s.appStatus(w, sid)
 		return
 	}

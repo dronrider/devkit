@@ -102,12 +102,24 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 		return
 	}
 	st := s.chatStoreRead(blank)
+	if way == "new" && st.Project == found.Name && st.Grown != "" {
+		grown := s.chatStoreRead(st.Grown)
+		if grown.SharedSocket != "" {
+			if claim == "" || claim != grown.SharedFirst {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "этот общий чат уже создан", "session": st.Grown})
+				return
+			}
+			s.appSay(w, found, st.Grown, text, claim, effort)
+			return
+		}
+	}
 	if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
 		if way == "new" {
-			s.appStart(w, found, id, blank, text, model, harness, effort)
+			s.appStartRecord(w, found, id, blank, text, model, harness, effort, chatStore{SharedFirst: claim})
 		} else {
 			if st.Protocol == "" {
 				st.Protocol, st.Blank, st.Lifted = h.Protocol, false, s.now().Unix()
+				st.SharedSocket = appNewSharedSocket(h, st)
 				if err := s.chatStoreWrite(blank, st); err != nil {
 					fail(err)
 					return

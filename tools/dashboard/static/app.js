@@ -13102,8 +13102,9 @@ function chatModelKeep(project, id, model, harness) {
     { method: "POST", body: { model, harness } }).catch(console.error);
 }
 
-async function chatRaise(project, st, text, pick, onTmux) {
+async function chatRaise(project, st, text, pick, onTmux, msgID) {
   const body = { text, model: pick.model, harness: pick.harness };
+  if (msgID) body.msg_id = msgID;
   if (st.task) body.id = st.task;
   // Ручная глубина едет подъёмом, а тратится его успехом: неудачный подъём
   // запуска не поднял, и выбор человека ждёт следующей попытки. Слова уровня
@@ -14450,8 +14451,14 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         if (m.refused) continue;
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
-        const hit = list.find((it) => it && it.role === "user" && !it.who && (it.text || it.selection || it.proposal) &&
-          !claimed.has(itemKey(it)) && (m.selection ? (sameSay(it.wire || it.text, m.wire) || sameSelection(it.selection, m.selection) && it.text === m.text) : (sameSay(it.wire || it.text, m.wire) || !it.selection && sameSay(it.text, m.text))));
+        const hit = list.find((it) => {
+          if (!it || it.role !== "user" || it.who || claimed.has(itemKey(it))) return false;
+          if (it.app?.item?.type === "userMessage") return it.app.item.clientId === m.id;
+          if (!(it.text || it.selection || it.proposal)) return false;
+          return m.selection
+            ? sameSay(it.wire || it.text, m.wire) || sameSelection(it.selection, m.selection) && it.text === m.text
+            : sameSay(it.wire || it.text, m.wire) || !it.selection && sameSay(it.text, m.text);
+        });
         if (!hit) continue;
         claimed.add(itemKey(hit));
         const at = mine.indexOf(m);
@@ -15044,7 +15051,7 @@ function chatPanel(project, st) {
     // исход удерживает пузырь с причиной, второй процесс не поднимается.
     const lift = (wire, tries) => {
       chatRaise(project, { ...st, blank: launch.chat, task: launch.id }, wire, launch,
-        (name) => echo.mark(m, name))
+        (name) => echo.mark(m, name), m.id)
         .then((got) => {
           if (got && got.held) { echo.held(m, got.held, undefined, true); busy.off(); return; }
           if (got === false) {
@@ -15142,6 +15149,10 @@ function chatPanel(project, st) {
             // пометкой и кнопкой повтора, а не пропадает молча, унося с собой
             // набранное. Удача молчит: реплика и так видна в ленте.
             busy.off();
+            if (r.body.unknown) {
+              echo.held(m, r.body.error || "доставка не подтверждена", "", true);
+              return;
+            }
             if (r.body.refused) {
               echo.refused(m, r.body.refused);
               sayResult(r.body.refused, true);

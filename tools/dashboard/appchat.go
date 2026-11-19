@@ -367,7 +367,7 @@ func (e *appThreadWriterConflict) Error() string {
 
 func (e *appThreadWriterConflict) Unwrap() error { return e.cause }
 
-func (s *server) appCommitInstruction() (string, error) {
+func (s *server) appAutonomousInstruction() (string, error) {
 	root := devkitOwnTree()
 	if profiles := s.harnesses().ProfileDir; profiles != "" {
 		root = filepath.Dir(filepath.Dir(profiles))
@@ -380,7 +380,7 @@ func (s *server) appCommitInstruction() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("не удалось прочитать правила чата задачи %s: %w", path, err)
 	}
-	const section = "Обычный коммит"
+	const section = "Автономная работа"
 	lines, found := obey.SectionBody(string(text), section)
 	body := strings.TrimSpace(strings.Join(lines, "\n"))
 	if !found || body == "" {
@@ -401,9 +401,9 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 	value := "autonomous = false"
 	if p, ok := s.projectByName(c.project); ok && deployconf.Autonomous(p.Path) {
 		value = "autonomous = true"
-		instruction, err := s.appCommitInstruction()
+		instruction, err := s.appAutonomousInstruction()
 		if err != nil {
-			message := "правило обычного коммита не обновилось: " + err.Error()
+			message := "правило автономной работы не обновилось: " + err.Error()
 			s.logf("разговор %s: %s", c.sid, message)
 			if err := s.appFeedAppend(c.sid, []reply{{Role: "note", Fail: true, Text: message, Time: s.now().UTC().Format(time.RFC3339)}}); err != nil {
 				s.logf("предупреждение разговора %s не записалось: %v", c.sid, err)

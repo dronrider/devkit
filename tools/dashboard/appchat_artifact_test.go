@@ -67,6 +67,9 @@ func TestAppChatInstalledArtifact(t *testing.T) {
 	if strings.Count(log, "start ") != 0 || strings.Count(log, "turn ") != 1 || strings.Count(log, "resume th-1") != 2 {
 		t.Fatalf("artifact потерял нить или повторил ход: %s", log)
 	}
+	if strings.Contains(log, `"additionalContext"`) {
+		t.Fatalf("artifact передал контекст задачи свободному чату: %s", log)
+	}
 	after := e.s.chatStoreRead(sid)
 	if after.Thread != stored.Thread || after.Model != stored.Model || after.Harness != stored.Harness || after.CxEffort != stored.CxEffort {
 		t.Fatalf("artifact после повтора изменил настройки: %+v", after)

@@ -130,6 +130,11 @@ def run():
             approvalPolicy="on-request", approvalsReviewer="auto_review",
             sandbox="workspace-write",
         )
+        fixture_bin = Path(os.environ["OBEY_HOME"]) / "bin"
+        if fixture_bin.is_dir():
+            policy["config"] = {
+                "shell_environment_policy.set.PATH": f"{fixture_bin}:{os.environ['PATH']}"
+            }
         if args.resume:
             result = server.call("thread/resume", threadId=args.resume, excludeTurns=True, **policy)
         else:
@@ -156,9 +161,9 @@ def run():
         autonomous = deploy.is_file() and "autonomous = true" in deploy.read_text().splitlines()
         context = ""
         if autonomous and (args.resume or cwd == project) and rules.is_file():
-            instruction = section(rules, "Обычный коммит")
+            instruction = section(rules, "Автономная работа")
             if instruction:
-                context = "autonomous = true\n\n## Обычный коммит\n\n" + instruction
+                context = "autonomous = true\n\n## Автономная работа\n\n" + instruction
                 params["additionalContext"] = {
                     "devkit-autonomous": {"kind": "application", "value": context}
                 }
@@ -222,7 +227,7 @@ def check(cwd):
         assert starts[0]["head"] == completed[0]["head"] == resumes[0]["head"], "коммит создан до возобновления"
         assert not (Path(cwd) / ".devkit/deploy.local").exists(), "в старом дереве появился файл настроек"
         old_agents = git(cwd, "show", "HEAD:AGENTS.md")
-        assert "## Обычный коммит" not in old_agents, "в старое дерево попало новое правило"
+        assert "## Автономная работа" not in old_agents, "в старое дерево попало новое правило"
         assert Path(cwd, ".git").is_file(), "ожидалось связанное рабочее дерево"
     else:
         assert not resumes and len(completed) == 1, "ожидался один свежий ход"

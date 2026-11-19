@@ -153,5 +153,56 @@ func TestAppTaskInstalledArtifact(t *testing.T) {
 	if !strings.Contains(log, "turn high") || !strings.Contains(log, `"approvalsReviewer": "auto_review"`) {
 		t.Fatalf("artifact не передал выбор/политику: %s", log)
 	}
-	t.Log("artifact: HTTP start, task binding, model/effort, duplicate refusal and stop passed")
+	if values := appContextValues(t, e.proj); len(values) != 1 || values[0] != "autonomous = true\n\n## Автономная работа\n\nSynthetic commit instruction." {
+		t.Fatalf("artifact не передал контекст автономной задачи: %q", values)
+	}
+	t.Log("artifact: HTTP start, task binding, model/effort, devkit-autonomous context, duplicate refusal and stop passed")
+}
+
+func TestAppTaskContextInstalledArtifact(t *testing.T) {
+	e, client, restart := appArtifactRestartable(t, "")
+	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
+	stale := e.proj + "-xr-002"
+	putDoc(t, stale, "RULES.board.core.md", "# Old rules\n\n## Автономная работа\n\nOld worktree instruction.\n")
+	putDoc(t, stale, "AGENTS.md", "Old embedded instructions.\n")
+	putDoc(t, kit, "RULES.board.core.md", "# Current rules\n\n## Автономная работа\n\nArtifact instruction.\n")
+	sid := "asartifact-context"
+	stored := chatStore{Project: "demo", Task: "XR-002", Model: "модель-codex", Harness: "codextest", Protocol: "codex", Thread: "th-1", CxEffort: "high", Born: e.s.now().Unix()}
+	if err := e.s.chatStoreWrite(sid, stored); err != nil {
+		t.Fatal(err)
+	}
+	say := func(id string) {
+		t.Helper()
+		r := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"проверь синтетическую запись","msg_id":"`+id+`"}`)
+		if raw := body(t, r); r.StatusCode != http.StatusOK {
+			t.Fatalf("artifact turn %s: %d %s", id, r.StatusCode, raw)
+		}
+		appWaitBusy(t, e, client, sid, false)
+	}
+	say("context-first")
+	before := e.s.chatStoreRead(sid)
+	putDoc(t, kit, "RULES.board.core.md", "# Current rules\n\n## Автономная работа\n\nUpdated artifact instruction.\n")
+	say("context-live")
+	restart()
+	client = e.loggedClient(t)
+	say("context-resume")
+	putDoc(t, e.proj, ".devkit/deploy.local", "autonomous = false\n")
+	say("context-disabled")
+	after := e.s.chatStoreRead(sid)
+	if before.Thread == "" || before.Thread != after.Thread || after.Task != "XR-002" || after.TaskRun {
+		t.Fatalf("artifact изменил нить или выдал роль конвейера: before=%+v after=%+v", before, after)
+	}
+	want := []string{
+		"autonomous = true\n\n## Автономная работа\n\nArtifact instruction.",
+		"autonomous = true\n\n## Автономная работа\n\nUpdated artifact instruction.",
+		"autonomous = true\n\n## Автономная работа\n\nUpdated artifact instruction.",
+		"autonomous = false",
+	}
+	if got := appContextValues(t, stale); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("artifact контекст старого дерева: got=%q, want=%q", got, want)
+	}
+	if readFile(t, filepath.Join(stale, "AGENTS.md")) != "Old embedded instructions.\n" {
+		t.Fatal("artifact изменил старое дерево")
+	}
+	t.Log("artifact: devkit-autonomous from current root, live update, same-thread resume and autonomous=false passed")
 }

@@ -187,7 +187,7 @@ func appEnv(t *testing.T) (*testEnv, *http.Client) {
 	e := newTestEnv(t)
 	kit := t.TempDir()
 	t.Setenv("DEVKIT_HOME", kit)
-	putDoc(t, kit, "RULES.board.core.md", "# Board rules\n\n## Обычный коммит\n\nSynthetic commit instruction.\n")
+	putDoc(t, kit, "RULES.board.core.md", "# Board rules\n\n## Автономная работа\n\nSynthetic commit instruction.\n")
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 не в PATH: подменному серверу приложения нечем выполниться")
 	}
@@ -1245,7 +1245,7 @@ func TestAppTaskInstructionsRefreshOnResume(t *testing.T) {
 				e.s.mu.Unlock()
 				t.Setenv("DEVKIT_HOME", e.proj)
 			}
-			const old = "# Board rules\n\n## Обычный коммит\n\nOld tree instruction.\n"
+			const old = "# Board rules\n\n## Автономная работа\n\nOld tree instruction.\n"
 			putDoc(t, stale, "RULES.board.core.md", old)
 			putDoc(t, stale, "AGENTS.md", "Old embedded instructions.\n")
 			sid := "astask-instructions"
@@ -1272,7 +1272,7 @@ func TestAppTaskInstructionsRefreshOnResume(t *testing.T) {
 			c := spawn("")
 			thread := c.thread
 			turn(c)
-			putDoc(t, root, "RULES.board.core.md", "# Board rules\n\n## Обычный коммит\n\nUpdated commit instruction.\n\n## Other rules\n\nUnrelated text.\n")
+			putDoc(t, root, "RULES.board.core.md", "# Board rules\n\n## Автономная работа\n\nUpdated commit instruction.\n\n## Other rules\n\nUnrelated text.\n")
 			turn(c)
 			e.s.appDrop(sid, "перезапуск теста")
 			c = spawn(thread)
@@ -1290,9 +1290,9 @@ func TestAppTaskInstructionsRefreshOnResume(t *testing.T) {
 				t.Fatalf("привязка получила другую нить или права исполнителя: %+v", c)
 			}
 			want := []string{
-				"autonomous = true\n\n## Обычный коммит\n\nSynthetic commit instruction.",
-				"autonomous = true\n\n## Обычный коммит\n\nUpdated commit instruction.",
-				"autonomous = true\n\n## Обычный коммит\n\nUpdated commit instruction.",
+				"autonomous = true\n\n## Автономная работа\n\nSynthetic commit instruction.",
+				"autonomous = true\n\n## Автономная работа\n\nUpdated commit instruction.",
+				"autonomous = true\n\n## Автономная работа\n\nUpdated commit instruction.",
 				"autonomous = false", "autonomous = false",
 			}
 			if got := appContextValues(t, stale); fmt.Sprint(got) != fmt.Sprint(want) {
@@ -1324,10 +1324,10 @@ func TestAppTaskInstructionsFailureKeepsTurn(t *testing.T) {
 			case "missing-section", "empty-section":
 				text := "# Board rules\n"
 				if mode == "empty-section" {
-					text += "\n## Обычный коммит\n\n"
+					text += "\n## Автономная работа\n\n"
 				}
 				putDoc(t, root, "RULES.board.core.md", text)
-				want = "нет раздела «Обычный коммит»"
+				want = "нет раздела «Автономная работа»"
 			}
 			st := chatStore{Project: "demo", Task: "XR-002", Model: "модель-codex", Harness: "codextest", Protocol: "codex"}
 			sid := "asbad-rules"

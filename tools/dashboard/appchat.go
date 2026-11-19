@@ -42,6 +42,7 @@ type appChat struct {
 
 	mu        sync.Mutex
 	busy      bool
+	detached  bool
 	turnAt    time.Time
 	taskNotes chan appTaskNote
 }
@@ -390,12 +391,18 @@ func (s *server) appAutonomousInstruction() (string, error) {
 }
 
 func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
+	st := s.chatStoreRead(c.sid)
+	model := st.Model
+	if model == "" {
+		model = c.model
+	}
 	params := map[string]any{
 		"threadId": c.thread,
+		"model":    model,
 		"input":    []map[string]string{{"type": "text", "text": text}},
 		"effort":   appEffort(effort),
 	}
-	if s.chatStoreRead(c.sid).Task == "" {
+	if st.Task == "" {
 		return params
 	}
 	value := "autonomous = false"
@@ -418,6 +425,7 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 
 var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
 var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
+var errAppDetached = errors.New("клиент разговора сменился: повторите отправку выбранной моделью")
 
 // appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
 // продолжением. Отказ на любом шаге убивает процесс и называется словами с
@@ -439,6 +447,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}()
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
+	if selected := s.chatHarnessOf(st.Model, st.Harness); selected != nil && selected.Name != h.Name {
+		return nil, errAppDetached
+	}
 	c.automatic = s.appAutomaticReview(sid, st)
 	toolEnv := map[string]string{"DEVKIT_CHAT_SESSION_ID": sid, "DEVKIT_HARNESS": h.Name}
 	if st.GroomSource != "" {
@@ -492,6 +503,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	var configured json.RawMessage
 	if thread != "" {
 		policy["threadId"], policy["excludeTurns"] = thread, true
+		policy["model"] = model
 		configured, err = proc.call("thread/resume", policy)
 		if err != nil {
 			var rejected *appError
@@ -557,6 +569,10 @@ func appEffort(effort string) string {
 // клиента.
 func (s *server) appTurn(c *appChat, text string, record bool) error {
 	c.mu.Lock()
+	if c.detached || c.proc.gone() {
+		c.mu.Unlock()
+		return errAppDetached
+	}
 	if c.busy {
 		c.mu.Unlock()
 		return errAppTurnBusy
@@ -768,7 +784,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		return
 	}
 	if wasTaskRun && !st.TaskRun {
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(st *chatStore) error { st.TaskRun = false; return nil }); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "состояние завершённого запуска не записалось: " + err.Error()})
 			return
 		}
@@ -806,9 +822,22 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	}
 	c.setEffort(st.CxEffort)
 	if st.Model != model || st.Harness != harness || st.Thread != c.thread || effortSet {
-		st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(current *chatStore) error {
+			if selected := s.chatHarnessOf(current.Model, current.Harness); selected != nil && selected.Name != h.Name {
+				return errAppDetached
+			}
+			if current.Model == "" {
+				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol
+			}
+			current.Thread = c.thread
+			if effortSet {
+				current.CxEffort = st.CxEffort
+			}
+			return nil
+		}); err != nil {
 			s.logf("настройки разговора %s не записались: %v", sid, err)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
+			return
 		}
 	}
 	if err := s.appTurn(c, text, true); err != nil {
@@ -879,7 +908,13 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	}
 	c.setEffort(st.CxEffort)
 	st.Thread = c.thread
-	if err := s.chatStoreWrite(sid, st); err != nil {
+	if err := s.chatStoreUpdate(sid, func(current *chatStore) error {
+		if selected := s.chatHarnessOf(current.Model, current.Harness); selected != nil && selected.Name != h.Name {
+			return errAppDetached
+		}
+		current.Thread = c.thread
+		return nil
+	}); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
 	}
 	if err := s.appTurn(c, text, false); err != nil {
@@ -940,8 +975,8 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 		"message": "клиент не принял прерывание, процесс снят: разговор продолжится новой репликой"})
 }
 
-// appDrop снимает процесс разговора целиком: под смену модели, уборку в архив
-// и перезапуск. Лента остаётся, нить клиента продолжится следующим подъёмом.
+// appDrop снимает процесс разговора целиком: под смену подписки, уборку в архив
+// и перезапуск. Лента остаётся; сохранённая нить продолжится следующим подъёмом.
 func (s *server) appDrop(sid, why string) {
 	s.appMu.Lock()
 	for s.appStarting[sid] != nil {
@@ -951,6 +986,11 @@ func (s *server) appDrop(sid, why string) {
 		s.appMu.Lock()
 	}
 	c := s.appChats[sid]
+	if c != nil {
+		c.mu.Lock()
+		c.detached = true
+		c.mu.Unlock()
+	}
 	delete(s.appChats, sid)
 	s.appMu.Unlock()
 	if c == nil {
@@ -1155,8 +1195,13 @@ func (s *server) appCarrierTurn(p *Project, sid, text string) error {
 		if err != nil {
 			return err
 		}
-		st.Thread = c.thread
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(st *chatStore) error {
+			if selected := s.chatHarnessOf(st.Model, st.Harness); selected != nil && selected.Name != h.Name {
+				return errAppDetached
+			}
+			st.Thread = c.thread
+			return nil
+		}); err != nil {
 			return err
 		}
 	}

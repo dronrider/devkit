@@ -140,6 +140,119 @@ func TestAppTaskContinuationLifecycle(t *testing.T) {
 	}
 }
 
+func TestAppTaskModelSwitchPreservesContinuation(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "saved", true: "legacy"}[legacy], func(t *testing.T) {
+			e, c := appTaskEnv(t, "task-check")
+			catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
+				`"chat": ["gpt-6.2-sol", "gpt-6.2-astra"], "protocol": "codex", "models":`, 1)
+			writeScript(t, e.bin, "agentctl", `case "$1" in
+  exec) shift 4; exec "$@" ;;
+  *) printf '%s' '`+catalog+`' ;;
+esac`)
+			code, got := appTaskStart(t, e, c)
+			if code != http.StatusOK {
+				t.Fatalf("start %d %+v", code, got)
+			}
+			sid := got["session"]
+			waitTaskStopped(t, e, sid)
+			appTaskBoard(t, e, "check")
+			before := e.s.chatStoreRead(sid)
+			before.Model, before.CxEffort = "gpt-6.1-sol", "medium"
+			if legacy {
+				before.TaskRunID, before.TaskRunRoot, before.TaskRunSession = "", "", ""
+			}
+			if err := e.s.chatStoreWrite(sid, before); err != nil {
+				t.Fatal(err)
+			}
+			g, err := taskstate.Acquire(e.home, e.proj, before.Task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g.State.Run.Model = before.Model
+			if err := g.Save(); err != nil {
+				t.Fatal(err)
+			}
+			g.Close()
+			feed := readFile(t, e.s.appFeedFile(sid))
+			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+				`{"model":"модель-codex2","harness":"codex2test"}`)
+			if resp.StatusCode != http.StatusConflict || readFile(t, e.s.appFeedFile(sid)) != feed {
+				t.Fatalf("task subscription changed %d %s", resp.StatusCode, body(t, resp))
+			}
+			resp.Body.Close()
+			if current := e.s.chatStoreRead(sid); current.Thread != before.Thread || current.Model != before.Model || current.Harness != before.Harness {
+				t.Fatalf("rejected task subscription changed record %+v", current)
+			}
+			code, raw := appTaskSay(t, e, c, sid, "не терять эту реплику", "legacy-held")
+			if code != http.StatusConflict || !strings.Contains(raw, "перед продолжением выберите") {
+				t.Fatalf("legacy turn started %d %s", code, raw)
+			}
+			choice := `{"model":"gpt-6.2-astra","harness":"codextest"}`
+			if legacy {
+				choice = `{"model":"gpt-6.2-astra"}`
+			}
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model", choice)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("switch %d %s", resp.StatusCode, body(t, resp))
+			}
+			resp.Body.Close()
+			after := e.s.chatStoreRead(sid)
+			if after.Thread != before.Thread || after.Task != before.Task || after.TaskRunPID != before.TaskRunPID || after.TaskRunID == "" || after.CxEffort != before.CxEffort {
+				t.Fatalf("task context lost %+v", after)
+			}
+			g, err = taskstate.Acquire(e.home, e.proj, before.Task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g.State.Run.Model != "gpt-6.1-sol" {
+				t.Fatal("historical run model rewritten")
+			}
+			g.Close()
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+				`{"text":"не терять эту реплику","msg_id":"legacy-held","effort":"high"}`)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("continuation %d %s", resp.StatusCode, body(t, resp))
+			}
+			resp.Body.Close()
+			waitTaskStopped(t, e, sid)
+			if after := e.s.chatStoreRead(sid); after.Thread != before.Thread || after.Model != "gpt-6.2-astra" || after.Task != before.Task || after.CxEffort != "high" {
+				t.Fatalf("continued in another context %+v", after)
+			}
+			if got := readFile(t, e.s.appFeedFile(sid)); !strings.HasPrefix(got, feed) {
+				t.Fatal("history lost")
+			}
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			deliveries := 0
+			for _, line := range strings.Split(log, "\n") {
+				if params, ok := strings.CutPrefix(line, "params "); ok {
+					var turn struct {
+						Input []struct {
+							Text string `json:"text"`
+						} `json:"input"`
+						Effort string `json:"effort"`
+					}
+					if err := json.Unmarshal([]byte(params), &turn); err != nil {
+						t.Fatal(err)
+					}
+					for _, part := range turn.Input {
+						if part.Text == "не терять эту реплику" {
+							deliveries++
+							if turn.Effort != "high" {
+								t.Fatalf("явная глубина не дошла клиенту: %+v", turn)
+							}
+						}
+					}
+				}
+			}
+			if strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume "+before.Thread) ||
+				!strings.Contains(log, `"model": "gpt-6.2-astra"`) || deliveries != 1 {
+				t.Fatalf("wrong model, thread or duplicate delivery: %s", log)
+			}
+		})
+	}
+}
+
 func TestAppTaskContinuationRefusesUnprovenState(t *testing.T) {
 	for _, kind := range []string{"missing", "unavailable", "changed-run", "other-chat", "other-head"} {
 		t.Run(kind, func(t *testing.T) {

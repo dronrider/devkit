@@ -51,9 +51,7 @@ func (s *server) appTaskClose(a *appTask) {
 		a.lifecycle.Lock()
 		defer a.lifecycle.Unlock()
 		s.appDrop(a.sid, "конвейер задачи остановлен")
-		st := s.chatStoreRead(a.sid)
-		st.TaskRun = false
-		if err := s.chatStoreWrite(a.sid, st); err != nil {
+		if err := s.chatStoreUpdate(a.sid, func(st *chatStore) error { st.TaskRun = false; return nil }); err != nil {
 			s.logf("конец конвейера %s не записался: %v", a.task, err)
 		}
 		s.appMu.Lock()
@@ -166,12 +164,16 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		default:
 		}
 		st.Thread = c.thread
-		if err = s.chatStoreWrite(a.sid, st); err != nil {
+		if err = s.chatStoreUpdate(a.sid, func(st *chatStore) error { st.Thread = c.thread; return nil }); err != nil {
 			return err
 		}
 	}
 	notes := make(chan appTaskNote, 128)
 	c.mu.Lock()
+	if c.detached || c.proc.gone() {
+		c.mu.Unlock()
+		return errAppDetached
+	}
 	if c.busy {
 		c.mu.Unlock()
 		return errAppTurnBusy
@@ -326,7 +328,12 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 				err = errors.New("состояние запуска задачи не подтверждено")
 			} else {
 				st.TaskRun, st.TaskRunRoot, st.TaskRunID, st.TaskRunSession = true, state.State.Root, state.State.Run.ID, sid
-				err = s.chatStoreWrite(sid, st)
+				err = s.chatStoreUpdate(sid, func(current *chatStore) error {
+					current.TaskRun, current.TaskRunPID = true, st.TaskRunPID
+					current.TaskRunRoot, current.TaskRunID, current.TaskRunSession = st.TaskRunRoot, st.TaskRunID, sid
+					current.CxEffort = st.CxEffort
+					return nil
+				})
 			}
 			state.Close()
 		}
@@ -469,7 +476,7 @@ func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (boo
 	}
 	defer state.Close()
 	run := state.State.Run
-	if run == nil || run.ID == "" || run.PID != st.TaskRunPID || run.Harness != st.Harness || run.Model != st.Model {
+	if run == nil || run.ID == "" || run.PID != st.TaskRunPID || run.Harness != st.Harness {
 		return false, errors.New("исходный запуск задачи изменился либо не подтверждён")
 	}
 	if st.TaskRunID != "" {
@@ -477,6 +484,9 @@ func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (boo
 			return false, errors.New("исходный запуск задачи относится к другому дереву либо запуску")
 		}
 	} else {
+		if run.Model != st.Model {
+			return false, errors.New("модель прежнего рабочего запуска не подтверждена")
+		}
 		bind := s.mainChatBind(st.Task)
 		if bind.Chat != sid || bind.Project != p.Name || bind.Source != mainchat.ByWork {
 			return false, errors.New("происхождение прежнего рабочего разговора не подтверждено")

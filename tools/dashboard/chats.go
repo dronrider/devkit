@@ -870,6 +870,20 @@ func (s *server) chatStoreRead(key string) chatStore {
 }
 
 func (s *server) chatStoreWrite(key string, st chatStore) error {
+	return s.chatStoreUpdate(key, func(previous *chatStore) error {
+		st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+		st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
+		if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
+			st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+		}
+		*previous = st
+		return nil
+	})
+}
+
+// chatStoreUpdate меняет только поля операции под файловым замком. Параллельная
+// отметка просмотра или конец запуска не должны откатывать выбор модели.
+func (s *server) chatStoreUpdate(key string, change func(*chatStore) error) error {
 	dir := chatStoreDir(s.cfg.Home)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -879,11 +893,9 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 		return err
 	}
 	defer lock.Close()
-	previous := s.chatStoreRead(key)
-	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
-	st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
-	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
-		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+	st := s.chatStoreRead(key)
+	if err := change(&st); err != nil {
+		return err
 	}
 	data, err := json.Marshal(st)
 	if err != nil {
@@ -922,8 +934,7 @@ func (s *server) chatSeenMark(sid string) {
 	if st.Seen > 0 && now.Sub(time.Unix(st.Seen, 0)) < chatSeenStep {
 		return
 	}
-	st.Seen = now.Unix()
-	s.chatStoreWrite(sid, st)
+	s.chatStoreUpdate(sid, func(st *chatStore) error { st.Seen = now.Unix(); return nil })
 }
 
 // chatKeyRe сито ключа настроек: ключом бывает ID сессии либо имя tmux-сессии,
@@ -1007,7 +1018,7 @@ func chatModelError(model string) error {
 
 func chatModelCurrent(w http.ResponseWriter, model string) bool {
 	if err := chatModelError(model); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
 		return false
 	}
 	return true
@@ -4454,8 +4465,7 @@ type archDone struct {
 // про несостоявшееся снятие сказано словами.
 func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	st := s.chatStoreRead(sid)
-	st.Archived = on
-	if err := s.chatStoreWrite(sid, st); err != nil {
+	if err := s.chatStoreUpdate(sid, func(st *chatStore) error { st.Archived = on; return nil }); err != nil {
 		return archDone{}, err
 	}
 	if !on {
@@ -4514,9 +4524,8 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	return archDone{dropped: true, tmux: name, message: "разговор убран в архив, сессия снята"}, nil
 }
 
-// handleChatModel меняет модель диалога. Смена действует на следующий подъём
-// или резюм: у идущего процесса модель уже выбрана его запуском, и подменить
-// её со стороны нечем.
+// handleChatModel сохраняет выбор для следующего хода. У Codex в той же
+// подписке модель задаётся turn/start, поэтому нить и идущий ход сохраняются.
 func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -4568,31 +4577,97 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
-	// новая нить заводится следующим ходом, а лента остаётся: это и есть
-	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
-		wasModel, wasHarness := st.Model, st.Harness
-		st.Model, st.Harness = model, harness
-		if h := s.chatHarnessOf(model, harness); h != nil {
-			st.Protocol = h.Protocol
+		// Старое происхождение PID-only подтверждается прежней моделью до
+		// смены выбора. После этого run ID отделяет запуск от выбранной модели.
+		if st.TaskRunPID > 0 && st.TaskRunID == "" {
+			if _, err := s.appTaskContinuation(found, sid, &st); err != nil {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
 		}
-		if wasModel != model || wasHarness != harness {
-			st.Thread = ""
-			s.appDrop(sid, "смена модели")
-		}
-		if err := s.chatStoreWrite(sid, st); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
+		next := s.chatHarnessOf(model, harness)
+		if next == nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "подписка модели изменилась: обновите список моделей"})
 			return
 		}
-		if wasModel != "" && (wasModel != model || wasHarness != harness) {
-			s.saidMark(saidSessionKey(sid), fmt.Sprintf("модель изменена: %s -> %s",
-				chatModelName(wasModel, wasHarness), chatModelName(model, harness)))
+		harness = next.Name
+		var wasModel, wasHarness string
+		var changed, keepThread bool
+		var dropped, locked *appChat
+		status := http.StatusBadGateway
+		// appMu защищает старт процесса, c.mu открывание хода. Между проверкой
+		// idle и отсоединением нельзя принять реплику в прежний процесс.
+		s.appMu.Lock()
+		err := s.chatStoreUpdate(sid, func(current *chatStore) error {
+			wasModel, wasHarness = current.Model, current.Harness
+			old := s.chatHarnessOf(current.Model, current.Harness)
+			sameHarness := current.Harness == next.Name
+			if current.Harness == "" {
+				sameHarness = old != nil && old.Name == next.Name
+			}
+			if live := s.appChats[sid]; live != nil && live.h.Name != next.Name {
+				sameHarness = false
+			}
+			keepThread = current.Protocol == "codex" && next.Protocol == "codex" && sameHarness
+			changed = wasModel != model || wasHarness != harness
+			if changed && !keepThread {
+				status = http.StatusConflict
+				if current.TaskRunPID > 0 || current.TaskRunID != "" || current.TaskRun {
+					return errors.New("рабочий разговор задачи сохраняет подписку: выберите модель в той же подписке Codex")
+				}
+				if s.appStarting[sid] != nil {
+					return errAppStarting
+				}
+				if live := s.appChats[sid]; live != nil {
+					live.mu.Lock()
+					locked = live
+					if live.busy {
+						return errors.New("ход ещё идёт: дождитесь ответа перед сменой подписки")
+					}
+					dropped = live
+				}
+				current.Thread = ""
+			}
+			if current.TaskRunID == "" && st.TaskRunID != "" {
+				if current.TaskRunPID != st.TaskRunPID || current.Task != st.Task || current.Model != st.Model {
+					status = http.StatusConflict
+					return errors.New("исходный запуск задачи изменился во время выбора модели")
+				}
+				current.TaskRunID, current.TaskRunRoot, current.TaskRunSession = st.TaskRunID, st.TaskRunRoot, st.TaskRunSession
+			}
+			status = http.StatusBadGateway
+			current.Model, current.Harness, current.Protocol = model, harness, next.Protocol
+			return nil
+		})
+		if err == nil && dropped != nil {
+			dropped.detached = true
+			delete(s.appChats, sid)
+		}
+		if locked != nil {
+			locked.mu.Unlock()
+		}
+		s.appMu.Unlock()
+		if err != nil {
+			writeJSON(w, status, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
+			return
+		}
+		if dropped != nil {
+			dropped.proc.kill()
+			s.logf("процесс app-server разговора %s снят: смена подписки", sid)
+		}
+		if wasModel != "" && changed {
+			if err := s.appFeedAppend(sid, []reply{{Role: roleMark, Text: fmt.Sprintf("модель выбрана для следующего хода: %s -> %s",
+				chatModelName(wasModel, wasHarness), chatModelName(model, harness)), Time: s.now().UTC().Format(time.RFC3339)}}); err != nil {
+				s.logf("отметка смены модели разговора %s не записалась: %v", sid, err)
+			}
 		}
 		s.logf("модель чата %s в %s теперь %s", sid, found.Name, chatModelName(model, harness))
-		writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model, "harness": harness,
-			"message": "модель разговора теперь " + chatModelName(model, harness) +
-				": она возьмётся следующим ходом, лента сохранится"})
+		message := "модель разговора теперь " + chatModelName(model, harness) + ": она возьмётся следующим ходом, лента сохранится"
+		if keepThread {
+			message += ", нить и контекст Codex сохранятся; текущий ход продолжится своей моделью"
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model, "harness": harness, "message": message})
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")

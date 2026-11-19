@@ -12,7 +12,7 @@ const { sandbox, timers, store } = makeSandbox(appPathArg(), (path) => {
   if (path.endsWith("/board")) return { board, works: [] };
   return {};
 });
-const reason = "Разговор открыт в другом клиенте Codex. Закройте этот разговор и повторите отправку здесь.";
+const reason = process.argv[3] || "Разговор открыт в другом клиенте Codex. Закройте этот разговор и повторите отправку здесь.";
 let tries = 0;
 let released = false;
 const plain = sandbox.fetch;

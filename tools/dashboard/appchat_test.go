@@ -514,12 +514,12 @@ func TestAppChatStopKillsDeafClient(t *testing.T) {
 	appWaitBusy(t, e, c, sid, false)
 }
 
-// Смена модели снимает живой процесс и чистит нить: модель зашита в нить
-// клиента, и новая заводится следующим ходом, а лента сохраняется.
+// Смена подписки требует свежей нити в другом хозяйстве клиента.
 func TestAppChatModelSwitch(t *testing.T) {
 	e, c := appEnv(t)
 	sid := appStartChat(t, e, c, "первый вопрос")
 	appWaitFeed(t, e, sid, "ответ на реплику")
+	appWaitBusy(t, e, c, sid, false)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
 		`{"model": "модель-codex2", "harness": "codex2test"}`)
@@ -540,6 +540,186 @@ func TestAppChatModelSwitch(t *testing.T) {
 	appWaitFeed(t, e, sid, "ответ на реплику")
 	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start модель-codex2") {
 		t.Fatalf("свежая нить поднялась не новой моделью: %s", log)
+	}
+}
+
+func TestAppChatDetachedCannotAcceptTurn(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "первый вопрос")
+	appWaitBusy(t, e, c, sid, false)
+	old := e.s.appLive(sid)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+		`{"model":"модель-codex2","harness":"codex2test"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("смена подписки: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	feed := readFile(t, e.s.appFeedFile(sid))
+	if err := e.s.appTurn(old, "не принятая реплика", true); err == nil {
+		t.Fatal("отсоединённый клиент принял ход")
+	}
+	if got := readFile(t, e.s.appFeedFile(sid)); got != feed {
+		t.Fatal("не принятая реплика попала в историю")
+	}
+}
+
+func TestAppChatModelChoiceDuringResume(t *testing.T) {
+	e, c := appEnv(t)
+	catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
+		`"chat": ["gpt-6.2-sol"], "protocol": "codex", "models":`, 1)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+  exec) shift 4; exec "$@" ;;
+  *) printf '%s' '`+catalog+`' ;;
+esac`)
+	sid := appStartChat(t, e, c, "начало")
+	appWaitBusy(t, e, c, sid, false)
+	thread := e.s.chatStoreRead(sid).Thread
+	e.s.appDrop(sid, "перезапуск")
+	appMode(t, e, "resume-barrier")
+	type result struct {
+		code int
+		body string
+	}
+	finished := make(chan result, 1)
+	go func() {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"следующий ход","effort":"high"}`)
+		finished <- result{resp.StatusCode, body(t, resp)}
+	}()
+	defer func() {
+		if err := os.WriteFile(filepath.Join(e.proj, "fake-app-release"), nil, 0600); err != nil {
+			t.Error(err)
+		}
+		if got := <-finished; got.code != http.StatusOK {
+			t.Errorf("принятый ход не продолжился: %d %s", got.code, got.body)
+		}
+	}()
+	deadline := time.Now().Add(8 * time.Second)
+	for !isFile(filepath.Join(e.proj, "fake-app-handshake")) {
+		if time.Now().After(deadline) {
+			t.Fatal("клиент не начал resume")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model", `{"model":"модель-codex2","harness":"codex2test"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("смена подписки во время старта: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model", `{"model":"gpt-6.2-sol","harness":"codextest"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("смена модели во время старта: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	if err := os.WriteFile(filepath.Join(e.proj, "fake-app-release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	appWaitFeed(t, e, sid, "следующий ход")
+	appWaitBusy(t, e, c, sid, false)
+	after := e.s.chatStoreRead(sid)
+	if after.Model != "gpt-6.2-sol" || after.Thread != thread || after.CxEffort != "high" || after.Harness != "codextest" {
+		t.Fatalf("завершение запуска откатило выбранные настройки: %+v", after)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if strings.Count(log, "start ") != 1 || strings.Count(log, "resume "+thread) != 1 || !strings.Contains(log, `"model": "gpt-6.2-sol"`) {
+		t.Fatalf("неверные запуск или модель следующего хода: %s", log)
+	}
+}
+
+func TestAppChatModelSwitchKeepsCodexContext(t *testing.T) {
+	e, c := appEnv(t)
+	catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
+		`"chat": ["gpt-6.2-sol", "gpt-6.2-astra"], "protocol": "codex", "models":`, 1)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+  exec) shift 4; exec "$@" ;;
+  *) printf '%s' '`+catalog+`' ;;
+esac`)
+	appMode(t, e, "mute")
+	sid := appStartChat(t, e, c, "сохранённый контекст")
+	appWaitBusy(t, e, c, sid, true)
+	before := e.s.chatStoreRead(sid)
+	before.Model, before.CxEffort = "gpt-6.1-sol", "high"
+	if err := e.s.chatStoreWrite(sid, before); err != nil {
+		t.Fatal(err)
+	}
+	live := e.s.appLive(sid)
+	feed := readFile(t, e.s.appFeedFile(sid))
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+		`{"model":"модель-codex2","harness":"codex2test"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("смена подписки прервала ход: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	if e.s.chatStoreRead(sid).Model != before.Model || e.s.appLive(sid) != live || !live.busyNow() {
+		t.Fatal("отказ смены подписки изменил разговор")
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+		`{"model":"gpt-6.2-astra","harness":"codextest"}`)
+	message := body(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(message, "контекст Codex сохранятся") {
+		t.Fatalf("переход не принят: %d %s", resp.StatusCode, message)
+	}
+	after := e.s.chatStoreRead(sid)
+	if after.Thread != before.Thread || after.CxEffort != "high" || after.Harness != before.Harness || after.Model != "gpt-6.2-astra" {
+		t.Fatalf("нить, глубина или подписка потеряны: %+v", after)
+	}
+	if e.s.appLive(sid) != live || !live.busyNow() {
+		t.Fatal("выбор модели прервал текущий ход")
+	}
+	if got := readFile(t, e.s.appFeedFile(sid)); !strings.HasPrefix(got, feed) {
+		t.Fatal("переписка потеряна")
+	}
+	for range 2 {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+		var history struct {
+			Items []reply `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(body(t, resp)), &history); err != nil {
+			t.Fatal(err)
+		}
+		marks := 0
+		for _, item := range history.Items {
+			if item.Role == roleMark && strings.Contains(item.Text, "выбрана для следующего хода") && strings.Contains(item.Text, "gpt-6.1-sol") && strings.Contains(item.Text, "gpt-6.2-astra") {
+				marks++
+			}
+		}
+		if marks != 1 {
+			t.Fatalf("история должна содержать один честный разделитель выбора: %+v", history)
+		}
+	}
+	if _, err := live.proc.call("test/finish", map[string]any{"keepOpen": true}); err != nil {
+		t.Fatal(err)
+	}
+	appWaitBusy(t, e, c, sid, false)
+	appMode(t, e, "")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"следующий ход"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("следующий ход не отправился: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	appWaitFeed(t, e, sid, "следующий ход")
+	appWaitBusy(t, e, c, sid, false)
+	logPath := filepath.Join(e.proj, "fake-app-log")
+	log := readFile(t, logPath)
+	if strings.Count(log, "start ") != 1 || strings.Contains(log, "interrupt") ||
+		!strings.Contains(log, `"model": "gpt-6.2-astra"`) || !strings.Contains(log, `"effort": "high"`) {
+		t.Fatalf("модель следующего хода не дошла в прежнюю нить: %s", log)
+	}
+	e.s.appDrop(sid, "проверка резюма")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"после перезапуска"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("резюм не отправился: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	appWaitFeed(t, e, sid, "после перезапуска")
+	log = readFile(t, logPath)
+	policyAt := strings.LastIndex(log, "policy ")
+	if policyAt < 0 {
+		t.Fatalf("резюм не назвал настройки: %s", log)
+	}
+	policy := strings.SplitN(log[policyAt:], "\n", 2)[0]
+	if strings.Count(log, "start ") != 1 || !strings.Contains(log, "resume "+before.Thread) ||
+		!strings.Contains(policy, `"model": "gpt-6.2-astra"`) || e.s.chatStoreRead(sid).Thread != before.Thread {
+		t.Fatalf("резюм потерял контекст или модель: %s", log)
 	}
 }
 

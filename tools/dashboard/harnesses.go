@@ -199,7 +199,7 @@ func readHarnesses() HarnessView {
 		}
 		for _, m := range h.Models {
 			if m.Model != "" {
-				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via, Levels: m.Levels})
+				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: modelcatalog.Current(m.Model), Via: m.Via, Levels: m.Levels})
 			}
 		}
 		for _, c := range h.Chat {

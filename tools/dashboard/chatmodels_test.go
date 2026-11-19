@@ -119,8 +119,8 @@ func TestChatModelCatalogProjectsLegacyAssignments(t *testing.T) {
 		}
 	}
 	raw := e.s.harnesses().Harnesses[0].Models
-	if raw[2].Model != "gpt-6.1-sol" || raw[3].Model != "gpt-6-astra" {
-		t.Fatalf("проекция чата переписала назначения фоновых агентов: %+v", raw)
+	if raw[2].Model != "gpt-6.2-sol" || raw[3].Model != "gpt-6.2-astra" {
+		t.Fatalf("назначения задач остались прежними: %+v", raw)
 	}
 }
 
@@ -154,7 +154,7 @@ esac`)
 			logBefore := readFile(t, logPath)
 			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"новый ход старой моделью"}`)
 			got := body(t, resp)
-			if resp.StatusCode != http.StatusConflict || !strings.Contains(got, "перед продолжением выберите") {
+			if resp.StatusCode != http.StatusConflict || !strings.Contains(got, "перед продолжением выберите") || !strings.Contains(got, `"refused"`) {
 				t.Fatalf("продолжение без актуального выбора: %d %s", resp.StatusCode, got)
 			}
 			if readFile(t, logPath) != logBefore || readFile(t, blankPath(e.home, sid)) != before {
@@ -180,7 +180,18 @@ esac`)
 	}
 }
 
-func TestChatModelCatalogPreservesOperationalTask(t *testing.T) {
+func TestChatLegacyModelRefusalKeepsDraft(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason := "модель gpt-6.1-sol сохранена в истории: перед продолжением выберите gpt-6.2-sol в меню модели"
+	if out, err := exec.Command(node, "testdata/appchat_conflict.mjs", "static/app.js", reason).CombinedOutput(); err != nil {
+		t.Fatalf("отклонённая реплика потеряна или повторена автоматически: %v\n%s", err, out)
+	}
+}
+
+func TestChatModelCatalogUpdatesOperationalTask(t *testing.T) {
 	e, c := appTaskEnv(t, "task-done")
 	catalog := strings.ReplaceAll(appHarnessJSON, "модель-codex", "gpt-6.1-sol")
 	writeScript(t, e.bin, "agentctl", `case "$1" in
@@ -188,11 +199,11 @@ func TestChatModelCatalogPreservesOperationalTask(t *testing.T) {
   *) printf '%s' '`+catalog+`' ;;
 esac`)
 	code, got := appTaskStart(t, e, c)
-	if code != http.StatusOK || got["model"] != "gpt-6.1-sol" {
-		t.Fatalf("каталог чата изменил запуск фоновой задачи: %d %+v", code, got)
+	if code != http.StatusOK || got["model"] != "gpt-6.2-sol" {
+		t.Fatalf("задача не получила актуальную модель: %d %+v", code, got)
 	}
 	waitTaskStopped(t, e, got["session"])
-	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start gpt-6.1-sol\n") {
-		t.Fatalf("фоновая задача не получила прежний operational ID: %s", log)
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); !strings.Contains(log, "start gpt-6.2-sol\n") {
+		t.Fatalf("задача не получила точный актуальный ID: %s", log)
 	}
 }

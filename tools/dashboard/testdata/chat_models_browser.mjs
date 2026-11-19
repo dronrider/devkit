@@ -76,6 +76,36 @@ try {
     { model: "gpt-6-luna", harness: "codextest" },
     { model: "glm-5.3", harness: "other-default" },
   ], "известные прежние ID сохраняют семейство и подписку, остальные предпочтения сохраняют прежнее поведение");
+  const transition = await page.evaluate(async () => {
+    const models = [{ model: "gpt-6.2-sol", harness: "codextest", tier: "pro" }];
+    const st = { models, addr: "live-task", sid: "as-live-task", entry: {
+      model: "gpt-6.1-sol", pickHarness: "codextest", protocol: "codex", state: "live", own: false,
+    } };
+    const picker = modelPick("demo", st);
+    document.body.append(picker);
+    const calls = [];
+    const originalFetch = window.fetch;
+    const originalPaint = repaintChat;
+    let paints = 0;
+    window.fetch = async (url, opts = {}) => {
+      calls.push({ path: String(url), method: opts.method, body: opts.body ? JSON.parse(opts.body) : null });
+      return new Response(JSON.stringify({ session: st.sid, model: "gpt-6.2-sol", harness: "codextest" }));
+    };
+    repaintChat = async () => { paints += 1; };
+    chatDraftWrite(st.addr, "моя непосланная реплика");
+    try {
+      await modelSwitch("demo", st, models[0], true);
+      return { disabled: picker.querySelector("select").disabled, calls, paints, draft: chatDraftRead(st.addr) };
+    } finally {
+      window.fetch = originalFetch;
+      repaintChat = originalPaint;
+    }
+  });
+  assert.equal(transition.disabled, false, "живой Codex задачи позволяет явно выбрать актуальную модель");
+  assert.deepEqual(transition.calls, [{ path: "/api/projects/demo/chats/as-live-task/model", method: "POST",
+    body: { model: "gpt-6.2-sol", harness: "codextest" } }], "выбор не останавливает ход и не шлёт служебную реплику");
+  assert.equal(transition.paints, 1);
+  assert.equal(transition.draft, "моя непосланная реплика");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify(got));
 } finally {

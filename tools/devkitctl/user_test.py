@@ -160,7 +160,7 @@ class GenderReachesTheSessionTest(SandboxCase):
         self.assertEqual(rc, 1, without_pockets(out))
         self.assertIn("страница рода первого лица", without_pockets(out))
         rc, out = self.box.doctor(self.proj, "--fix")
-        self.assertEqual(rc, 0, without_pockets(out))
+        self.assertDoctorClean(rc, out)
         self.assertEqual(read(page), user.page_text("мужской"))
 
     def test_unset_gender_is_a_machine_finding(self):

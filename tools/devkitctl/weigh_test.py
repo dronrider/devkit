@@ -755,10 +755,10 @@ class DoctorResidencyTest(SandboxCase):
         write(self.rdhome / ".claude" / "skills" / "tiny-skill" / "SKILL.md", text)
 
     def test_1_clean_checkout_prints_the_pockets(self):
-        # Доктор печатает вес по карманам и находок по весу не даёт, код
-        # возврата 0 (DK-029, сценарий проверки, шаг 1).
+        # Доктор печатает вес по карманам и находок по весу не даёт
+        # (DK-029, сценарий проверки, шаг 1).
         rc, out = self.rddoc()
-        self.assertEqual(rc, 0, "чистый самопроверочный чекаут devkit дал находки: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertRegex(out, r"(?m)^вес резидента devkit по карманам",
                          "doctor не печатает вес резидента")
         self.assertIn_("RULES.core.md", out, "в таблице карманов нет ядра")
@@ -772,7 +772,7 @@ class DoctorResidencyTest(SandboxCase):
                        "резать скилл надвое", out, "нет находки про разбухшее тело скилла")
         self.machine_skill(self.SKILL + "т" * 200)
         rc, out = self.rddoc()
-        self.assertEqual(rc, 0, "возврат тела скилла к норме не очистил находку: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_3_oversized_core(self):
         write(self.rdk / "RULES.core.md", "# ядро\n\n" + "я" * 5600)
@@ -809,7 +809,7 @@ class DoctorResidencyTest(SandboxCase):
             (self.rdk / "kit" / "agents" / "probe-agent.md").unlink()
             (self.rdhome / ".claude" / "agents" / "probe-agent.md").unlink()
         rc, out = self.rddoc()
-        self.assertEqual(rc, 0, "возврат листинга агентов к норме не очистил находку: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_6_devkit_pockets_are_not_a_project_finding(self):
         # Доктор подключённого проекта печатает вес его резидента (карманы те же,

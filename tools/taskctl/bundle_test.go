@@ -477,18 +477,22 @@ func TestBundleIdeaConfirmActualCLIRace(t *testing.T) {
 		go func() { <-start; out, err := confirm.CombinedOutput(); confirmations <- reply{out, err} }()
 		close(start)
 		i, c := <-ideas, <-confirmations
-		if (i.err == nil) == (c.err == nil) {
-			t.Fatalf("race idea=%s %v confirm=%s %v", i.out, i.err, c.out, c.err)
+		if c.err != nil || i.err == nil {
+			t.Fatalf("подтверждение: %s %v, новая мысль: %s %v", c.out, c.err, i.out, i.err)
 		}
 		record, state, err := readPrepared(root, view.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if i.err == nil && (state.State != "active" || !strings.Contains(string(record), "мысль из другой вкладки")) {
-			t.Fatal("successful idea hidden or lost")
+		if state.State != "history" || strings.Contains(string(record), "мысль из другой вкладки") {
+			t.Fatalf("после подтверждения: состояние %q, запись %s", state.State, record)
 		}
-		if c.err == nil && (state.State != "history" || !strings.Contains(string(i.out), "истории")) {
-			t.Fatal("history idea did not fail explicitly")
+		// На момент команды результаты уже сохранены, а подтверждение может
+		// успеть перенести запись в историю. Оба состояния имеют свой отказ.
+		message := string(i.out)
+		if !strings.Contains(message, "результаты разбора сохранены; оставьте замечание в «Чате разбора»") &&
+			!strings.Contains(message, "разбор завершён и сохранён в истории") {
+			t.Fatalf("неожиданный отказ при записи мысли: %s", message)
 		}
 	}
 }

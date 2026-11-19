@@ -119,10 +119,10 @@ class CorpTest(SandboxCase):
         run(["git", "init", "-q", "--bare", str(self.box.root / "corp-board.git")])
         git(self.local, "remote", "add", "origin", str(self.box.root / "corp-board.git"))
         rc, out = self.corpdoc()
-        self.assertEqual(rc, 0, "doctor нашёл находки на чистом корп-проекте: %s" % out)
+        self.assertDoctorClean(rc, out)
         # И тот же доктор, прогнанный в боковой директории, тоже чист.
         rc, out = self.corpdoc(root=self.local)
-        self.assertEqual(rc, 0, "doctor из боковой директории нашёл находки: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_04_home_project_has_no_corp_checks(self):
         proj = self.box.project("proj")
@@ -147,7 +147,7 @@ class CorpTest(SandboxCase):
         self.assertIn_("цепочка хуков потеряна на commit-msg", out,
                        "нет находки на потерянную цепочку commit-msg")
         rc, out = self.corpdoc("--fix")
-        self.assertEqual(rc, 0, "--fix не вернул цепочку на commit-msg: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertIn("devkit-corp-chain", read(self.clone / ".git" / "hooks" / "commit-msg"),
                       "--fix сказал про цепочку, а обёртки нет")
 
@@ -158,7 +158,7 @@ class CorpTest(SandboxCase):
         self.assertIn_("обёртка pre-commit перезаписана", out,
                        "нет находки на перезаписанную обёртку")
         rc, out = self.corpdoc("--fix")
-        self.assertEqual(rc, 0, "--fix не вернул перезаписанную обёртку: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertIn("devkit-corp-chain", read(self.clone / ".git" / "hooks" / "pre-commit"),
                       "--fix не восстановил обёртку pre-commit")
         # Чужой хук проекта раскладка тут затёрла им же перезаписанной обёрткой:
@@ -189,7 +189,7 @@ class CorpTest(SandboxCase):
         _, out = self.corpdoc()
         self.assertIn_("нет ключа repo", out, "нет находки на привязку без ключа repo")
         rc, out = self.corpdoc("--fix")
-        self.assertEqual(rc, 0, "--fix не вписал repo в привязку: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertRegex(read(tracker), r"(?m)^repo = \.\./corp-proj$",
                          "--fix сказал про repo, а ключа нет")
 
@@ -214,7 +214,7 @@ class CorpTest(SandboxCase):
                          "нет находки на протухшую отметку sync")
         os.utime(str(stamp), None)
         rc, out = self.corpdoc()
-        self.assertEqual(rc, 0, "доктор нашёл находки при свежей отметке sync: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_12_trace_boundary(self):
         # Рубеж следов на настоящей раскладке подключения (DK-124): проверяется
@@ -276,7 +276,7 @@ class CorpTest(SandboxCase):
         self.assertIn_("хук pre-commit: цепочка на месте", out,
                        "повторный corp не сказал, что цепочка уже на месте")
         rc, out = self.corpdoc()
-        self.assertEqual(rc, 0, "doctor после повторного corp нашёл находки: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_15_reclone_loses_and_corp_restores(self):
         # Обвязка живёт в .git и в негитигнорнутом дереве, поэтому свежий клон её
@@ -676,7 +676,7 @@ class CorpWindowTest(SandboxCase):
         _, out = self.box.dkctl_run("doctor", "-C", str(self.clone), path=self.corppath)
         self.assertIn_("нет ссылки .devkit", out, "доктор промолчал про снесённую ссылку")
         rc, out = self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
-        self.assertEqual(rc, 0, "--fix не вернул ссылку: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertTrue((self.clone / ".devkit" / "docs" / "TASKS.md").is_file(),
                         "--fix сказал про ссылку, а доска из клона не открывается")
 
@@ -688,7 +688,7 @@ class CorpWindowTest(SandboxCase):
         _, out = self.box.dkctl_run("doctor", "-C", str(self.clone), path=self.corppath)
         self.assertIn_("exclude прячет .devkit", out, "доктор промолчал про спрятанную ссылку")
         rc, out = self.box.dkctl_run("doctor", "--fix", "-C", str(self.clone), path=self.corppath)
-        self.assertEqual(rc, 0, "--fix не убрал строку exclude: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertNotIn(".devkit", read(excl).split("\n"), "строка exclude осталась после --fix")
 
     def test_7_old_link_dir_becomes_a_link(self):

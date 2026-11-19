@@ -159,35 +159,41 @@ func (j journalSources) logSign() string { return "журнал оболочки
 
 func (j journalSources) docSign() string { return "журнал из файла цели " + j.doc.rel }
 
+type journalItems struct {
+	lines []string
+	open  bool // последний пункт стоит в конце файла без перевода строки
+}
+
 // docLines читает строки раздела «Журнал» файла цели. Пустота тут не одна, и
 // три её причины называются по-разному: файла цели нет вовсе, раздела в нём
 // нет, раздел заведён и пуст.
-func (j journalSources) docLines() ([]string, string) {
+func (j journalSources) docLines() (journalItems, string) {
 	none := fmt.Sprintf("журнала %s нет и файла цели %s в %s нет: цель %s не гонялась ни оболочкой goal-run, ни живым чатом",
 		j.logName, j.doc.rel, j.project, j.id)
 	if !j.doc.seen {
-		return nil, none
+		return journalItems{}, none
 	}
 	data, err := os.ReadFile(j.doc.path)
 	if err != nil {
-		return nil, none
+		return journalItems{}, none
 	}
-	lines, section := journalLines(string(data))
+	items, section := journalLines(string(data))
 	switch {
 	case !section:
-		return nil, fmt.Sprintf("журнала %s нет, а в файле цели %s нет раздела «Журнал»: писать ход цели пока некуда", j.logName, j.doc.rel)
-	case len(lines) == 0:
-		return nil, fmt.Sprintf("раздел «Журнал» файла цели %s пуст: витков у цели %s ещё не было", j.doc.rel, j.id)
+		return journalItems{}, fmt.Sprintf("журнала %s нет, а в файле цели %s нет раздела «Журнал»: писать ход цели пока некуда", j.logName, j.doc.rel)
+	case len(items.lines) == 0:
+		return journalItems{}, fmt.Sprintf("раздел «Журнал» файла цели %s пуст: витков у цели %s ещё не было", j.doc.rel, j.id)
 	}
-	return lines, ""
+	return items, ""
 }
 
 // journalLines вынимает строки списка из раздела «Журнал» файла цели. Прочая
 // проза раздела (строка-заготовка от goal-start) на экран не едет: журнал это
 // строки витков и снимков квоты.
-func journalLines(doc string) (lines []string, section bool) {
+func journalLines(doc string) (items journalItems, section bool) {
 	in := false
-	for _, ln := range strings.Split(doc, "\n") {
+	lines := strings.Split(doc, "\n")
+	for i, ln := range lines {
 		trimmed := strings.TrimRight(ln, " ")
 		if trimmed == journalHeader {
 			in, section = true, true
@@ -200,10 +206,11 @@ func journalLines(doc string) (lines []string, section bool) {
 			continue
 		}
 		if item, ok := strings.CutPrefix(trimmed, "- "); ok {
-			lines = append(lines, item)
+			items.lines = append(items.lines, item)
+			items.open = i == len(lines)-1
 		}
 	}
-	return lines, section
+	return items, section
 }
 
 // linkTargetRe вынимает путь из markdown-ссылки: в колонке доски ссылка стоит
@@ -293,12 +300,13 @@ func (s *server) handleGoalLog(w http.ResponseWriter, r *http.Request) {
 	}
 	// Пустота различима: отсутствие строк называется словами, а не пустым
 	// списком, «цель не гонялась» и «цикл молчит» это разные состояния.
-	lines, note := j.docLines()
+	items, note := j.docLines()
 	if note != "" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"goal": id, "exists": false, "source": "none", "note": note, "lines": []string{}})
 		return
 	}
+	lines := items.lines
 	if n := intParam(r, "n", tailDefault, tailMax); len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}
@@ -311,37 +319,62 @@ func (s *server) handleGoalLog(w http.ResponseWriter, r *http.Request) {
 // обойтись: новые строки узнаются по изменившемуся файлу и по числу уже
 // отданных строк.
 type docTail struct {
-	mod  time.Time
-	size int64
-	sent int
+	mod     time.Time
+	size    int64
+	sent    int
+	pending string
+	shown   string
 }
 
-func (d *docTail) stamp(path string) {
-	if fi, err := os.Stat(path); err == nil {
-		d.mod, d.size = fi.ModTime(), fi.Size()
+func (d *docTail) changed(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || (fi.ModTime().Equal(d.mod) && fi.Size() == d.size) {
+		return false
 	}
+	d.mod, d.size = fi.ModTime(), fi.Size()
+	return true
 }
 
 func (d *docTail) next(j journalSources) []string {
-	fi, err := os.Stat(j.doc.path)
-	if err != nil {
-		return nil
+	if !d.changed(j.doc.path) {
+		return d.showPending()
 	}
-	if fi.ModTime().Equal(d.mod) && fi.Size() == d.size {
-		return nil
-	}
-	d.mod, d.size = fi.ModTime(), fi.Size()
 	j.doc.seen = true
-	lines, _ := j.docLines()
-	if len(lines) <= d.sent {
-		// Раздел переписали короче: гнать заново уже показанное незачем, счёт
-		// продолжается от нынешней длины.
-		d.sent = len(lines)
+	items, _ := j.docLines()
+	return d.take(items)
+}
+
+func (d *docTail) showPending() []string {
+	if d.pending == "" || d.pending == d.shown {
 		return nil
 	}
-	out := lines[d.sent:]
+	d.shown = d.pending
+	return []string{d.pending}
+}
+
+// Последний пункт без перевода строки допустим в Markdown. Даём писателю
+// один опрос на продолжение, а показанный текст помним до конца строки.
+func (d *docTail) take(items journalItems) []string {
+	lines := items.lines
+	if items.open {
+		last := lines[len(lines)-1]
+		lines = lines[:len(lines)-1]
+		if d.sent == len(lines) && d.pending == last {
+			return d.showPending()
+		}
+		d.pending = last
+	} else {
+		d.pending = ""
+	}
+	from := min(d.sent, len(lines))
+	if from < len(lines) && d.shown != "" && lines[from] == d.shown {
+		from++
+	}
+	if d.sent != len(lines) || !items.open {
+		d.shown = ""
+	}
 	d.sent = len(lines)
-	return out
+	return lines[from:]
 }
 
 // streamGoalLog шлёт хвост журнала и дальше дописывает новые строки по мере
@@ -357,14 +390,17 @@ func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path stri
 	var offset int64
 	var doc *docTail
 	if data, err := os.ReadFile(path); err == nil {
-		sseEvent(w, f, "source", j.logSign())
 		data = lastComplete(data)
+		offset = int64(len(data))
+		sseEvent(w, f, "source", j.logSign())
 		for _, ln := range tailLines(data, tailDefault) {
 			sseEvent(w, f, "", ln)
 		}
-		offset = int64(len(data))
 	} else {
-		lines, note := j.docLines()
+		doc = &docTail{}
+		j.doc.seen = doc.changed(j.doc.path)
+		items, note := j.docLines()
+		lines := doc.take(items)
 		sseEvent(w, f, "source", j.docSign())
 		for _, ln := range lines {
 			sseEvent(w, f, "", ln)
@@ -372,8 +408,6 @@ func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path stri
 		if note != "" {
 			sseEvent(w, f, "note", note)
 		}
-		doc = &docTail{sent: len(lines)}
-		doc.stamp(j.doc.path)
 	}
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()

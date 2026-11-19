@@ -9,6 +9,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -194,6 +195,19 @@ esac`)
 	if err := os.WriteFile(filepath.Join(e.bin, "клиент-app.py"), []byte(appClientPy), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		e.srv.Close()
+		e.s.appTasksClose()
+		e.s.appMu.Lock()
+		chats := maps.Clone(e.s.appChats)
+		e.s.appMu.Unlock()
+		for id, chat := range chats {
+			if chat.proc != nil {
+				e.s.appDrop(id, "конец теста")
+			}
+		}
+		e.s.appWorkers.Wait()
+	})
 	return e, e.loggedClient(t)
 }
 
@@ -421,10 +435,11 @@ func TestAppChatSayStopResume(t *testing.T) {
 	appMode(t, e, "")
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
 		`{"text": "третий вопрос", "msg_id": "m-3"}`)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("реплика после остановки не ушла: %d %s", resp.StatusCode, body(t, resp))
+	if got := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика после остановки не ушла: %d %s", resp.StatusCode, got)
 	}
-	appWaitFeed(t, e, sid, "ответ на реплику")
+	appWaitFeed(t, e, sid, "ответ на реплику: третий вопрос")
+	appWaitBusy(t, e, c, sid, false)
 	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
 	if strings.Count(log, "start ") != 1 || strings.Count(log, "turn") != 3 {
 		t.Fatalf("разговор после остановки пошёл не той нитью: %s", log)
@@ -1023,7 +1038,7 @@ func TestAppChatExternalWriterConflict(t *testing.T) {
 	before := e.s.chatStoreRead(sid)
 	feed := readFile(t, e.s.appFeedFile(sid))
 	h := e.s.chatHarnessOf(before.Model, before.Harness)
-	owner, err := appServerStart(h, e.proj, binPath(agentctlBin), nil)
+	owner, err := e.s.appServerStart(h, e.proj, binPath(agentctlBin), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1078,6 +1093,50 @@ func TestAppChatExternalWriterConflict(t *testing.T) {
 	}
 	if got := readFile(t, e.s.appFeedFile(sid)); !strings.HasPrefix(got, feed) || strings.Count(got, `"role":"user"`) != 2 {
 		t.Fatalf("история после продолжения: %s", got)
+	}
+}
+
+func TestAppChatConcurrentResume(t *testing.T) {
+	e, client := appEnv(t)
+	sid := appStartChat(t, e, client, "начало")
+	appWaitBusy(t, e, client, sid, false)
+	e.s.appDrop(sid, "перезапуск")
+	appMode(t, e, "resume-barrier")
+	first := make(chan int, 1)
+	go func() {
+		code, _ := appTaskSay(t, e, client, sid, "первый запрос", "first")
+		first <- code
+	}()
+	defer func() {
+		if err := os.WriteFile(filepath.Join(e.proj, "fake-app-release"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code := <-first; code != http.StatusOK {
+			t.Errorf("первый запрос получил %d", code)
+		}
+		if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Count(log, "resume th-1") != 1 {
+			t.Errorf("число возобновлений одного разговора: %s", log)
+		}
+	}()
+	deadline := time.Now().Add(8 * time.Second)
+	for !isFile(filepath.Join(e.proj, "fake-app-handshake")) {
+		if time.Now().After(deadline) {
+			t.Fatal("первый клиент не начал возобновление")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	appMode(t, e, "")
+	appStartChat(t, e, client, "соседний разговор")
+	code, raw := appTaskSay(t, e, client, sid, "второй запрос", "second")
+	if code != http.StatusConflict || !strings.Contains(raw, "уже запускается") {
+		// На прежнем коде второй клиент стал владельцем до возврата первого.
+		if extra := e.s.appLive(sid); extra != nil {
+			extra.proc.kill()
+		}
+		t.Fatalf("второй запрос: %d %s", code, raw)
+	}
+	if feed := readFile(t, e.s.appFeedFile(sid)); strings.Contains(feed, "второй запрос") {
+		t.Fatalf("отказанная реплика попала в ленту: %s", feed)
 	}
 }
 

@@ -381,7 +381,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	for key, value := range toolEnv {
 		env = append(env, key+"="+value)
 	}
-	proc, err := appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
+	proc, err := s.appServerStart(h, dir, binPath(agentctlBin), func(method string, params json.RawMessage) {
 		s.appNote(sid, method, params)
 	}, env...)
 	if err != nil {
@@ -389,13 +389,13 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}
 	c.proc = proc
 	if len(cancelled) > 0 && cancelled[0] != nil {
-		go func() {
+		s.appWorkers.Go(func() {
 			select {
 			case <-cancelled[0]:
 				proc.kill()
 			case <-proc.dead:
 			}
-		}()
+		})
 	}
 	fail := func(err error) (*appChat, error) {
 		proc.kill()
@@ -464,10 +464,10 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	s.appMu.Unlock()
 	// Смерть процесса после подъёма: о ней узнаёт лента сразу же, а не следующим
 	// заходом человека в разговор.
-	go func() {
+	s.appWorkers.Go(func() {
 		<-proc.dead
 		s.appDead(sid, c)
-	}()
+	})
 	return c, nil
 }
 

@@ -197,6 +197,7 @@ type server struct {
 	// appMu при этом берётся внутри appStartRecord.
 	groomStartMu   sync.Mutex
 	appMu          sync.Mutex
+	appWorkers     sync.WaitGroup
 	appChats       map[string]*appChat
 	appFeedIndexes map[string]*appFeedIndex
 	appTasks       map[string]*appTask

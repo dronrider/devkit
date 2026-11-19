@@ -9,6 +9,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -194,6 +195,19 @@ esac`)
 	if err := os.WriteFile(filepath.Join(e.bin, "клиент-app.py"), []byte(appClientPy), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		e.srv.Close()
+		e.s.appTasksClose()
+		e.s.appMu.Lock()
+		chats := maps.Clone(e.s.appChats)
+		e.s.appMu.Unlock()
+		for id, chat := range chats {
+			if chat.proc != nil {
+				e.s.appDrop(id, "конец теста")
+			}
+		}
+		e.s.appWorkers.Wait()
+	})
 	return e, e.loggedClient(t)
 }
 
@@ -218,7 +232,6 @@ func appStartChat(t *testing.T, e *testEnv, c *http.Client, text string) string 
 	if r.Way != "appserver" || !strings.HasPrefix(r.Session, "as") || r.Model != "модель-codex" {
 		t.Fatalf("подъём ответил не дорогой app-server: %+v", r)
 	}
-	t.Cleanup(func() { e.s.appDrop(r.Session, "конец теста") })
 	return r.Session
 }
 
@@ -1025,7 +1038,7 @@ func TestAppChatExternalWriterConflict(t *testing.T) {
 	before := e.s.chatStoreRead(sid)
 	feed := readFile(t, e.s.appFeedFile(sid))
 	h := e.s.chatHarnessOf(before.Model, before.Harness)
-	owner, err := appServerStart(h, e.proj, binPath(agentctlBin), nil)
+	owner, err := e.s.appServerStart(h, e.proj, binPath(agentctlBin), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

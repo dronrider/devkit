@@ -72,7 +72,7 @@ type appServer struct {
 // exec: пары окружения подписки (каталог конфигурации, токен) кладёт она, и
 // чат мимо обвязки не идёт (то же правило, что у tmux-дороги, DK-1271). dir это
 // рабочий каталог разговора: нить клиента привязывается к нему и работает в нём.
-func appServerStart(h *Harness, dir, agentctl string, note func(method string, params json.RawMessage), env ...string) (*appServer, error) {
+func (s *server) appServerStart(h *Harness, dir, agentctl string, note func(method string, params json.RawMessage), env ...string) (*appServer, error) {
 	cmd := exec.Command(agentctl, "exec", "--harness", h.Name, "--", h.Bin, "app-server", "--stdio")
 	cmd.Dir = dir
 	cmd.Env = append(homeEnvAt(realHome(), false), env...)
@@ -93,9 +93,9 @@ func appServerStart(h *Harness, dir, agentctl string, note func(method string, p
 	}
 	p := &appServer{cmd: cmd, in: stdin, note: note,
 		pending: map[int64]chan *appMsg{}, dead: make(chan struct{})}
-	go p.readOut(stdout)
-	go p.readErr(stderr)
-	go p.await()
+	s.appWorkers.Go(func() { p.readOut(stdout) })
+	s.appWorkers.Go(func() { p.readErr(stderr) })
+	s.appWorkers.Go(p.await)
 	return p, nil
 }
 

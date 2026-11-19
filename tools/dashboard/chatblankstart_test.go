@@ -149,15 +149,30 @@ exit 0`)
 }
 
 func TestTaskBlankForeignKeepsExistingStartRoute(t *testing.T) {
-	e, c := appEnv(t)
-	blank := blankMake(t, e, c, `{"model":"модель-codex","harness":"codextest"}`)
-	for i := 0; i < 2; i++ {
+	var clients []*appServer
+	t.Run("два запуска", func(t *testing.T) {
+		e, c := appEnv(t)
+		blank := blankMake(t, e, c, `{"model":"модель-codex","harness":"codextest"}`)
 		data, _ := json.Marshal(map[string]string{"chat": blank, "text": "первый текст", "model": "модель-codex", "harness": "codextest"})
-		r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats", string(data))
-		if r.StatusCode != http.StatusOK {
-			t.Fatalf("app-start получил новый отказ: %d %s", r.StatusCode, body(t, r))
+		for i := 0; i < 2; i++ {
+			r := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats", string(data))
+			raw := body(t, r)
+			var got map[string]string
+			if r.StatusCode != http.StatusOK || json.Unmarshal([]byte(raw), &got) != nil || got["way"] != "appserver" {
+				t.Fatalf("app-start: %d %s", r.StatusCode, raw)
+			}
+			live := e.s.appLive(got["session"])
+			if live == nil {
+				t.Fatalf("нет клиента у разговора %s", got["session"])
+			}
+			clients = append(clients, live.proc)
 		}
-		body(t, r)
+	})
+	for _, client := range clients {
+		if !client.gone() {
+			client.kill()
+			t.Error("клиент продолжил работу после закрытия стенда")
+		}
 	}
 }
 

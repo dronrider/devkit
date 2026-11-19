@@ -40,6 +40,10 @@ func appNewSharedSocket(h *Harness, st chatStore) (string, error) {
 	}
 	socket := os.Getenv(appSharedSocketEnv)
 	if socket == "" {
+		// Иначе выбор общего сервера мог бы выдать профилю чужой аккаунт.
+		if h.Home == "" && !h.Default {
+			return "", nil
+		}
 		bin := filepath.Base(h.Bin)
 		if bin != h.Protocol && bin != h.Protocol+"-cli" {
 			return "", nil

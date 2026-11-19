@@ -692,3 +692,16 @@ class SandboxCase(unittest.TestCase):
 
     def assertNotIn_(self, needle, out, why):
         self.assertNotIn(needle, out, "%s: %s" % (why, out))
+
+    def assertDoctorClean(self, rc, out):
+        """В стенде установлен dashboard. За пределами macOS у него нет носителя."""
+        verdict = [line for line in out.splitlines()
+                   if line == "обвязка в порядке" or line.startswith(("находок:", "машина:"))]
+        if sys.platform == "darwin":
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(verdict, ["обвязка в порядке"], out)
+        else:
+            self.assertEqual(rc, 1, out)
+            finding = ("машина: носителя дашборда на платформе %s пока нет: держать dashboard serve "
+                       "своим расписанием (systemd) и смотреть /healthz на порту 7112" % sys.platform)
+            self.assertCountEqual(verdict, ["находок: 1", finding], out)

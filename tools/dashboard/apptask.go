@@ -172,6 +172,10 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	}
 	notes := make(chan appTaskNote, 128)
 	c.mu.Lock()
+	if c.busy {
+		c.mu.Unlock()
+		return errAppTurnBusy
+	}
 	c.taskNotes = notes
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
@@ -245,7 +249,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		status := http.StatusBadGateway
 		body := map[string]string{"error": err.Error(), "session": sid}
 		var conflict *appThreadWriterConflict
-		if errors.As(err, &conflict) {
+		if errors.As(err, &conflict) || errors.Is(err, errAppStarting) {
 			status = http.StatusConflict
 			body["refused"] = err.Error()
 		}
@@ -310,7 +314,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		}
 		s.appDrop(sid, "возобновление рабочего запуска задачи")
 	}
-	go s.appTaskServe(a, p)
+	s.appWorkers.Go(func() { s.appTaskServe(a, p) })
 	res, err := taskhead.Raise(q)
 	a.pid = res.PID
 	st.TaskRunPID = res.PID
@@ -341,7 +345,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		return
 	}
 	s.mainChatAssign(id, sid, p.Name, "работа")
-	go func() {
+	s.appWorkers.Go(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
 		for {
@@ -355,7 +359,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 				}
 			}
 		}
-	}()
+	})
 	select {
 	case err = <-a.ready:
 	case <-a.stop:

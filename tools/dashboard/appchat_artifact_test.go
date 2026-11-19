@@ -24,7 +24,7 @@ func TestAppChatInstalledArtifact(t *testing.T) {
 	}
 	before := readFile(t, filepath.Join(chatStoreDir(e.home), sid+".json"))
 	feed := readFile(t, e.s.appFeedFile(sid))
-	owner, err := appServerStart(e.s.chatHarnessOf(stored.Model, stored.Harness), e.proj, binPath(agentctlBin), nil)
+	owner, err := e.s.appServerStart(e.s.chatHarnessOf(stored.Model, stored.Harness), e.proj, binPath(agentctlBin), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

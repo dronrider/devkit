@@ -3217,9 +3217,9 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			file: saidFile(s.cfg.Home, key), src: saidSrc + key})
 	}
 	subs := map[string]*tailSrc{}
-	// known помнит журналы, заведённые до открытия потока: их хвост уже уехал
-	// в ленту, и дочитывать их надо с текущего конца. Журнал, появившийся
-	// позже, читается с начала: он пуст в момент появления, и всё в нём новое.
+	// Метка снимается до обхода: журнал может появиться и во время отправки
+	// первых реплик. Тогда на следующем тике его надо прочитать с начала.
+	stamp := subStamp(path)
 	{
 		feed := sessionFeedOf(path, repliesDefault+feedSlack)
 		items := feed.items
@@ -3257,7 +3257,6 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 	if seq == 0 {
 		sseEvent(w, f, "note", emptyTranscriptNote)
 	}
-	stamp := subStamp(path)
 	// Имя tmux читается один раз на поток: реестр это файл на диске, и ходить в
 	// него каждым тиком незачем, а запись сессии ложится хуком старта, то есть
 	// раньше, чем открывается поток её ленты.

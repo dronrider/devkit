@@ -262,7 +262,7 @@ func TestAppTaskContinuationExternalWriterConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := e.s.chatStoreRead(sid)
-	owner, err := appServerStart(e.s.chatHarnessOf(st.Model, st.Harness), e.proj, binPath(agentctlBin), nil)
+	owner, err := e.s.appServerStart(e.s.chatHarnessOf(st.Model, st.Harness), e.proj, binPath(agentctlBin), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

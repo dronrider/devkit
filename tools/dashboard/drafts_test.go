@@ -492,10 +492,7 @@ func TestDraftGroomNoTmuxLogged(t *testing.T) {
 	if err := os.Remove(filepath.Join(e.bin, "tmux")); err != nil {
 		t.Fatal(err)
 	}
-	writeAgentctlFake(t, e.bin, harnessTiersFixture)
-	// PATH сужается до каталога фикстур и /bin (для cat в скрипте agentctl):
-	// настоящий tmux иначе нашёлся бы в системных путях.
-	t.Setenv("PATH", e.bin+string(os.PathListSeparator)+"/bin")
+	t.Setenv("PATH", e.bin)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadGateway {

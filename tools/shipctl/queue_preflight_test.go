@@ -13,7 +13,9 @@ import (
 )
 
 func TestQueueResumesOnFreshRegcheckWithoutNewCommit(t *testing.T) {
-	t.Parallel()
+	const commitDate = "2020-01-01T00:00:00Z"
+	t.Setenv("GIT_AUTHOR_DATE", commitDate)
+	t.Setenv("GIT_COMMITTER_DATE", commitDate)
 	root := queueSetup(t)
 	wt, err := taskWorktree(root, "XR-001")
 	if err != nil || wt == nil {
@@ -79,7 +81,7 @@ func TestQueueResumesOnFreshRegcheckWithoutNewCommit(t *testing.T) {
 	countRuns(1)
 
 	gitT(t, root, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
-	fresh := time.Now().Format("2006-01-02T15:04:05")
+	fresh := "2020-01-02T00:00:00"
 	write(t, wt.Path, logPath, stale+fresh+"\tregcheck\trun\t1\n")
 	items = tick()
 	if len(items) != 1 || !items[0].Waiting || items[0].Changed || items[0].Block != block {

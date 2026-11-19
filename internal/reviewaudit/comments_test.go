@@ -177,27 +177,27 @@ func TestCommentCoverageDistinguishesGoSignatureFromBehavior(t *testing.T) {
 		"- **STYLE-015.** Комментарий должен соответствовать коду.\n")
 	write(t, filepath.Join(root, "export.go"), `package sample
 
-// Export takes a License.
-// Attributes (limits and so on, e.g. max_guest_users) come from feature_values.
+// Export takes a Shipment.
+// Attributes (limits and so on, e.g. max_parcels) come from parcel_limits.
 func Export(
-	license License,
+	shipment Shipment,
 ) string {
-	return license.UpdateObjects
+	return shipment.RouteLimits
 }
 
-type License struct{ UpdateObjects string }
+type Shipment struct{ RouteLimits string }
 `)
 	report := completed(t, root, path)
 	rule := findTargetRule(t, &report, commentRule)
 	const heading = "### Источник атрибутов"
 	entry := Evidence{
 		Object: "export.go:3", Location: "export.go:5", Result: "checked",
-		Observation: "Аудит использует сигнатуру.", CommentQuote: "come from feature_values.",
+		Observation: "Аудит использует сигнатуру.", CommentQuote: "come from parcel_limits.",
 		Facts: map[string][]ReviewFact{
 			"purpose": {{Location: "export.go:5", Text: "Описывает аргумент и источник данных."}},
 			"claim": {
-				{Location: "export.go:6", Quote: "Export takes a License.", Value: "License", Verdict: "checked", Text: "Аргумент имеет тип License."},
-				{Location: "export.go:5", Quote: "Attributes (limits and so on, e.g. max_guest_users) come from feature_values.", Verdict: "checked", Text: "Источник якобы подтверждён."},
+				{Location: "export.go:6", Quote: "Export takes a Shipment.", Value: "Shipment", Verdict: "checked", Text: "Аргумент имеет тип Shipment."},
+				{Location: "export.go:5", Quote: "Attributes (limits and so on, e.g. max_parcels) come from parcel_limits.", Verdict: "checked", Text: "Источник якобы подтверждён."},
 			},
 		},
 	}
@@ -208,19 +208,19 @@ type License struct{ UpdateObjects string }
 	entry.Facts["claim"] = claims[:1]
 	save(t, path, report)
 	assertTargetCheck(t, CheckCoverage(root, path, "XR-1", summary),
-		"нет вывода по фрагменту \"Attributes (limits and so on, e.g. max_guest_users) come from feature_values.\"")
+		"нет вывода по фрагменту \"Attributes (limits and so on, e.g. max_parcels) come from parcel_limits.\"")
 
 	entry.Facts["claim"] = claims
 	save(t, path, report)
 	assertTargetCheck(t, CheckCoverage(root, path, "XR-1", summary), "сигнатура не подтверждает")
 
 	claims[1].Location = "export.go:7"
-	claims[1].Value = "feature_values"
+	claims[1].Value = "parcel_limits"
 	save(t, path, report)
 	assertTargetCheck(t, CheckCoverage(root, path, "XR-1", summary), "сигнатура не подтверждает")
 
 	claims[1].Location, claims[1].Value, claims[1].Verdict = "export.go:8", "", "violated"
-	claims[1].Text = "Экспорт читает UpdateObjects из License."
+	claims[1].Text = "Экспорт читает RouteLimits из Shipment."
 	rule.Result = "violated"
 	proof := &rule.Evidence[0]
 	proof.Location, proof.Result, proof.Heading, proof.Kind = "export.go:8", "violated", heading, "contradiction"
@@ -233,13 +233,13 @@ type License struct{ UpdateObjects string }
 func TestCommentFragmentsKeepsWrappedSentencesAndCodeTogether(t *testing.T) {
 	body := "Сохраняет SQL NULL. Общий конвертер не меняется,\n" +
 		"чтобы сохранить результат.\n\n" +
-		"- Берёт max_guest_users и др. поля из feature_values.\n" +
-		"- Читает licenses.activations_limit и `x. Y`."
+		"- Берёт max_parcels и др. поля из parcel_limits.\n" +
+		"- Читает routes.capacity_limit и `x. Y`."
 	want := []string{
 		"Сохраняет SQL NULL.",
 		"Общий конвертер не меняется, чтобы сохранить результат.",
-		"Берёт max_guest_users и др. поля из feature_values.",
-		"Читает licenses.activations_limit и `x. Y`.",
+		"Берёт max_parcels и др. поля из parcel_limits.",
+		"Читает routes.capacity_limit и `x. Y`.",
 	}
 	if got := commentFragments(body); !slices.Equal(got, want) {
 		t.Fatalf("ожидались %q, получено %q", want, got)

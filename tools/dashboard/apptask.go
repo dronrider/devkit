@@ -181,7 +181,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); c.taskNotes = nil; c.mu.Unlock() }()
 	s.appSayRecord(a.sid, req.Order)
-	raw, err := c.proc.call("turn/start", map[string]any{"threadId": c.thread, "input": []map[string]string{{"type": "text", "text": req.Order}}, "effort": appEffort(st.CxEffort)})
+	raw, err := c.proc.call("turn/start", s.appTurnParams(c, req.Order, st.CxEffort))
 	if err != nil {
 		return err
 	}

@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/deployconf"
+	"github.com/dronrider/devkit/internal/obey"
 )
 
 // appChat это живой разговор дороги app-server: процесс сервера, нить клиента
@@ -365,6 +367,55 @@ func (e *appThreadWriterConflict) Error() string {
 
 func (e *appThreadWriterConflict) Unwrap() error { return e.cause }
 
+func (s *server) appCommitInstruction() (string, error) {
+	root := devkitOwnTree()
+	if profiles := s.harnesses().ProfileDir; profiles != "" {
+		root = filepath.Dir(filepath.Dir(profiles))
+	}
+	if root == "" {
+		return "", fmt.Errorf("не найден источник правил чата задачи; выполните devkitctl doctor --fix")
+	}
+	path := filepath.Join(root, "RULES.board.core.md")
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("не удалось прочитать правила чата задачи %s: %w", path, err)
+	}
+	const section = "Обычный коммит"
+	lines, found := obey.SectionBody(string(text), section)
+	body := strings.TrimSpace(strings.Join(lines, "\n"))
+	if !found || body == "" {
+		return "", fmt.Errorf("в %s нет раздела «%s»; выполните devkitctl doctor --fix", path, section)
+	}
+	return "## " + section + "\n\n" + body, nil
+}
+
+func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
+	params := map[string]any{
+		"threadId": c.thread,
+		"input":    []map[string]string{{"type": "text", "text": text}},
+		"effort":   appEffort(effort),
+	}
+	if s.chatStoreRead(c.sid).Task == "" {
+		return params
+	}
+	value := "autonomous = false"
+	if p, ok := s.projectByName(c.project); ok && deployconf.Autonomous(p.Path) {
+		value = "autonomous = true"
+		instruction, err := s.appCommitInstruction()
+		if err != nil {
+			message := "правило обычного коммита не обновилось: " + err.Error()
+			s.logf("разговор %s: %s", c.sid, message)
+			if err := s.appFeedAppend(c.sid, []reply{{Role: "note", Fail: true, Text: message, Time: s.now().UTC().Format(time.RFC3339)}}); err != nil {
+				s.logf("предупреждение разговора %s не записалось: %v", c.sid, err)
+			}
+		} else {
+			value += "\n\n" + instruction
+		}
+	}
+	params["additionalContext"] = map[string]any{"devkit-autonomous": map[string]string{"kind": "application", "value": value}}
+	return params
+}
+
 var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
 var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
 
@@ -515,11 +566,7 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 	if record {
 		s.appSayRecord(c.sid, text)
 	}
-	_, err := c.proc.call("turn/start", map[string]any{
-		"threadId": c.thread,
-		"input":    []map[string]string{{"type": "text", "text": text}},
-		"effort":   appEffort(c.effortNow()),
-	})
+	_, err := c.proc.call("turn/start", s.appTurnParams(c, text, c.effortNow()))
 	if err != nil {
 		c.mu.Lock()
 		c.busy = false

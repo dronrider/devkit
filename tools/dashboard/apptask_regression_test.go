@@ -15,11 +15,13 @@ import (
 func appTaskEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 	t.Helper()
 	e, c := appEnv(t)
+	putDoc(t, e.proj, ".devkit/deploy.local", "autonomous = true\n")
 	t.Setenv("DEVKIT_TASK_PASS_PAUSE", "0")
 	useHeadHome(t, e)
 	putDoc(t, e.proj, "docs/tasks/XR-002.md", "# XR-002: тест\n")
 	writeTaskRunFake(t, filepath.Dir(e.proj))
 	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
+	putDoc(t, kit, "RULES.board.core.md", readFile(t, filepath.Join(os.Getenv("DEVKIT_HOME"), "RULES.board.core.md")))
 	for _, rel := range []string{taskhead.TaskRunRel, "tools/devkitctl/taskstate.py"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
 		if err != nil {
@@ -79,7 +81,7 @@ func TestAppTaskRunFromForm(t *testing.T) {
 		t.Fatalf("не связана задача/нить: %+v", st)
 	}
 	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-	for _, want := range []string{"start модель-codex", "turn high", `"approvalPolicy": "on-request"`, `"approvalsReviewer": "auto_review"`, `shell_environment_policy.set.DEVKIT_TASK": "XR-002"`, `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM`} {
+	for _, want := range []string{"start модель-codex", "turn high", `"additionalContext": {"devkit-autonomous": {"kind": "application", "value": "autonomous = true`, "Synthetic commit instruction.", `"approvalPolicy": "on-request"`, `"approvalsReviewer": "auto_review"`, `shell_environment_policy.set.DEVKIT_TASK": "XR-002"`, `shell_environment_policy.set.DEVKIT_TASK_LOCK_FROM`} {
 		if !strings.Contains(log, want) {
 			t.Errorf("в клиенте нет %q: %s", want, log)
 		}

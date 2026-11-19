@@ -130,6 +130,7 @@ for raw in sys.stdin:
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": configured(params, params.get("threadId"))})
     elif m == "turn/start":
+        log("params " + json.dumps(params))
         log("turn " + str(params.get("effort", "")))
         log("input " + json.dumps(params.get("input")))
         text = ""
@@ -184,6 +185,9 @@ for raw in sys.stdin:
 func appEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
 	e := newTestEnv(t)
+	kit := t.TempDir()
+	t.Setenv("DEVKIT_HOME", kit)
+	putDoc(t, kit, "RULES.board.core.md", "# Board rules\n\n## Обычный коммит\n\nSynthetic commit instruction.\n")
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 не в PATH: подменному серверу приложения нечем выполниться")
 	}
@@ -1194,6 +1198,196 @@ func TestAppChatStopContinuesSameThread(t *testing.T) {
 			}
 			if mode == "deaf" && !strings.Contains(log, "resume th-1") {
 				t.Fatalf("после снятия процесса нить не продолжилась: %s", log)
+			}
+		})
+	}
+}
+
+func appContextValues(t *testing.T, dir string) []string {
+	t.Helper()
+	var values []string
+	for _, line := range strings.Split(readFile(t, filepath.Join(dir, "fake-app-log")), "\n") {
+		if strings.HasPrefix(line, "policy ") && strings.Contains(line, "developerInstructions") {
+			t.Fatalf("инструкции клиента заменены: %s", line)
+		}
+		if !strings.HasPrefix(line, "params ") {
+			continue
+		}
+		var params struct {
+			Context map[string]struct {
+				Kind  string `json:"kind"`
+				Value string `json:"value"`
+			} `json:"additionalContext"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "params ")), &params); err != nil {
+			t.Fatal(err)
+		}
+		if len(params.Context) != 1 || params.Context["devkit-autonomous"].Kind != "application" {
+			t.Fatalf("контекст хода: %s", line)
+		}
+		values = append(values, params.Context["devkit-autonomous"].Value)
+	}
+	return values
+}
+
+func TestAppTaskInstructionsRefreshOnResume(t *testing.T) {
+	for _, source := range []string{"profiles", "environment"} {
+		t.Run(source, func(t *testing.T) {
+			e, client := appEnv(t)
+			root := os.Getenv("DEVKIT_HOME")
+			putDoc(t, e.proj, ".devkit/deploy.local", "autonomous = true\n")
+			stale := t.TempDir()
+			view := e.s.harnesses()
+			if source == "profiles" {
+				view.ProfileDir = filepath.Join(root, "kit", "harness")
+				e.s.mu.Lock()
+				e.s.harn = &view
+				e.s.mu.Unlock()
+				t.Setenv("DEVKIT_HOME", e.proj)
+			}
+			const old = "# Board rules\n\n## Обычный коммит\n\nOld tree instruction.\n"
+			putDoc(t, stale, "RULES.board.core.md", old)
+			putDoc(t, stale, "AGENTS.md", "Old embedded instructions.\n")
+			sid := "astask-instructions"
+			st := chatStore{Project: "demo", Task: "XR-002", Model: "модель-codex", Harness: "codextest", Protocol: "codex"}
+			if err := e.s.chatStoreWrite(sid, st); err != nil {
+				t.Fatal(err)
+			}
+			h := e.s.chatHarnessOf(st.Model, st.Harness)
+			spawn := func(thread string) *appChat {
+				t.Helper()
+				c, err := e.s.appSpawn(sid, h, st.Model, stale, "demo", thread)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return c
+			}
+			turn := func(c *appChat) {
+				t.Helper()
+				if err := e.s.appTurn(c, "проверь запись", true); err != nil {
+					t.Fatal(err)
+				}
+				appWaitBusy(t, e, client, sid, false)
+			}
+			c := spawn("")
+			thread := c.thread
+			turn(c)
+			putDoc(t, root, "RULES.board.core.md", "# Board rules\n\n## Обычный коммит\n\nUpdated commit instruction.\n\n## Other rules\n\nUnrelated text.\n")
+			turn(c)
+			e.s.appDrop(sid, "перезапуск теста")
+			c = spawn(thread)
+			turn(c)
+			putDoc(t, e.proj, ".devkit/deploy.local", "autonomous = false\n")
+			if err := os.Remove(filepath.Join(root, "RULES.board.core.md")); err != nil {
+				t.Fatal(err)
+			}
+			turn(c)
+			e.s.appDrop(sid, "перезапуск теста")
+			c = spawn(thread)
+			defer e.s.appDrop(sid, "конец теста")
+			turn(c)
+			if c.thread != thread || c.automatic {
+				t.Fatalf("привязка получила другую нить или права исполнителя: %+v", c)
+			}
+			want := []string{
+				"autonomous = true\n\n## Обычный коммит\n\nSynthetic commit instruction.",
+				"autonomous = true\n\n## Обычный коммит\n\nUpdated commit instruction.",
+				"autonomous = true\n\n## Обычный коммит\n\nUpdated commit instruction.",
+				"autonomous = false", "autonomous = false",
+			}
+			if got := appContextValues(t, stale); fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("контекст живых и возобновлённых ходов: got=%q, want=%q", got, want)
+			}
+			if readFile(t, filepath.Join(stale, "RULES.board.core.md")) != old || readFile(t, filepath.Join(stale, "AGENTS.md")) != "Old embedded instructions.\n" {
+				t.Fatal("старое рабочее дерево изменилось")
+			}
+		})
+	}
+}
+
+func TestAppTaskInstructionsFailureKeepsTurn(t *testing.T) {
+	for _, mode := range []string{"no-source", "missing-file", "missing-section", "empty-section"} {
+		t.Run(mode, func(t *testing.T) {
+			e, client := appEnv(t)
+			putDoc(t, e.proj, ".devkit/deploy.local", "autonomous = true\n")
+			root := os.Getenv("DEVKIT_HOME")
+			want := ""
+			switch mode {
+			case "no-source":
+				t.Setenv("DEVKIT_HOME", "")
+				want = "не найден источник правил"
+			case "missing-file":
+				if err := os.Remove(filepath.Join(root, "RULES.board.core.md")); err != nil {
+					t.Fatal(err)
+				}
+				want = "не удалось прочитать правила"
+			case "missing-section", "empty-section":
+				text := "# Board rules\n"
+				if mode == "empty-section" {
+					text += "\n## Обычный коммит\n\n"
+				}
+				putDoc(t, root, "RULES.board.core.md", text)
+				want = "нет раздела «Обычный коммит»"
+			}
+			st := chatStore{Project: "demo", Task: "XR-002", Model: "модель-codex", Harness: "codextest", Protocol: "codex"}
+			sid := "asbad-rules"
+			if err := e.s.chatStoreWrite(sid, st); err != nil {
+				t.Fatal(err)
+			}
+			c, err := e.s.appSpawn(sid, e.s.chatHarnessOf(st.Model, st.Harness), st.Model, e.proj, "demo", "th-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer e.s.appDrop(sid, "конец теста")
+			if err := e.s.appTurn(c, "продолжи разговор", true); err != nil {
+				t.Fatal(err)
+			}
+			appWaitBusy(t, e, client, sid, false)
+			if got := appContextValues(t, e.proj); fmt.Sprint(got) != "[autonomous = true]" {
+				t.Fatalf("не передан факт режима: %q", got)
+			}
+			found := false
+			for _, item := range e.s.appFeedRead(sid) {
+				if item.Role == "note" && strings.Contains(item.Text, want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("нет видимой причины %q: %+v", want, e.s.appFeedRead(sid))
+			}
+		})
+	}
+}
+
+func TestAppNonAutonomousChatKeepsClientInstructions(t *testing.T) {
+	for _, binding := range []string{"", "XR-002"} {
+		t.Run(binding, func(t *testing.T) {
+			e, client := appEnv(t)
+			t.Setenv("DEVKIT_HOME", "")
+			st := chatStore{Project: "demo", Task: binding, Model: "модель-codex", Harness: "codextest", Protocol: "codex"}
+			sid := "asplain-rules"
+			if err := e.s.chatStoreWrite(sid, st); err != nil {
+				t.Fatal(err)
+			}
+			c, err := e.s.appSpawn(sid, e.s.chatHarnessOf(st.Model, st.Harness), st.Model, e.proj, "demo", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer e.s.appDrop(sid, "конец теста")
+			if err := e.s.appTurn(c, "продолжи разговор", true); err != nil {
+				t.Fatal(err)
+			}
+			appWaitBusy(t, e, client, sid, false)
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			if strings.Contains(log, "config-read ") || strings.Contains(log, "developerInstructions") {
+				t.Fatalf("инструкции клиента заменены: %s", log)
+			}
+			if binding == "" {
+				if strings.Contains(log, "additionalContext") {
+					t.Fatalf("свободный чат получил правила задачи: %s", log)
+				}
+			} else if got := appContextValues(t, e.proj); fmt.Sprint(got) != "[autonomous = false]" {
+				t.Fatalf("режим не выключен: %q", got)
 			}
 		})
 	}

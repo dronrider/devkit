@@ -108,8 +108,8 @@ func TestProfileCodex(t *testing.T) {
 		{"delegate", "mode", "cli"},
 		{"delegate", "map_mini", "gpt-6-luna"},
 		{"delegate", "map_base", "gpt-6.1-terra"},
-		{"delegate", "map_pro", "gpt-6.1-sol"},
-		{"delegate", "map_max", "gpt-6-astra"},
+		{"delegate", "map_pro", "gpt-6.2-sol"},
+		{"delegate", "map_max", "gpt-6.2-astra"},
 		{"skills", "dir", "~/.agents/skills"},
 		{"skills", "discovery", "auto"},
 	}
@@ -1001,11 +1001,34 @@ func TestCmdHarnessJSONProfileChatModels(t *testing.T) {
 				t.Fatalf("машинная модель потеряна: %s", text)
 			}
 			for _, m := range h.Models {
-				if (m.Tier == "pro" && m.Model != "gpt-6.1-sol") || (m.Tier == "max" && m.Model != "gpt-6-astra") {
-					t.Fatalf("лестница изменилась: %s", text)
+				if (m.Tier == "pro" && m.Model != "gpt-6.2-sol") || (m.Tier == "max" && m.Model != "gpt-6.2-astra") {
+					t.Fatalf("лестница не обновилась: %s", text)
 				}
 			}
 		}
+	}
+}
+
+func TestLegacyAssignmentsUseCurrentModels(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeProfile(t, kit, "othercli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"homecli\", \"othercli\"]\ndefault = \"homecli\"\n[homecli]\nmini = \"gpt-6-luna\"\nbase = \"gpt-6.1-terra\"\npro = \"othercli:gpt-6.1-sol\"\nmax = \"othercli:gpt-6-astra\"\nchat = [\"gpt-6-sol\", \"gpt-6.2-sol\", \"opaque:custom-id\"]\n")
+	l, err := mergeLayers(filepath.Join(kit, "kit", "harness"), machineConfigPath(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := tierModels{Map: l.Setup["homecli"].Map, Active: "homecli"}
+	for tier, want := range map[string]string{"mini": "gpt-6-luna", "base": "gpt-6.1-terra", "pro": "gpt-6.2-sol", "max": "gpt-6.2-astra"} {
+		if got := m.model(tier); got != want {
+			t.Fatalf("%s = %s, жду %s", tier, got, want)
+		}
+	}
+	if m.via("pro") != "othercli" || m.named("pro") != "othercli:gpt-6.2-sol" {
+		t.Fatalf("подписка назначения потеряна: %+v", m)
+	}
+	if got := chatModelsOf(l.Profiles["homecli"], l.Setup["homecli"]); !slices.Equal(got, []string{"gpt-6.2-sol", "opaque:custom-id"}) {
+		t.Fatalf("модели чата не обновились или непрозрачный ID изменён: %v", got)
 	}
 }
 

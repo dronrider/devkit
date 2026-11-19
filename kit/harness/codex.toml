@@ -35,8 +35,8 @@ effort_max = ["low", "medium", "high", "xhigh"]
 # отдельно от модели и подставляется в команду через {effort}.
 map_mini = "gpt-6-luna"
 map_base = "gpt-6.1-terra"
-map_pro = "gpt-6.1-sol"
-map_max = "gpt-6-astra"
+map_pro = "gpt-6.2-sol"
+map_max = "gpt-6.2-astra"
 
 [chat]
 models = ["gpt-6.2-sol", "gpt-6.2-astra"]

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/modelcatalog"
 	"github.com/dronrider/devkit/internal/subtoml"
 )
 
@@ -823,6 +824,14 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 	if err := checkAssignments(l, machinePath); err != nil {
 		return nil, err
 	}
+	// Прежний машинный маппинг остаётся читаемым, но новый запуск берёт
+	// актуальную модель. Подписка и непрозрачные ID пользователя сохраняются.
+	for _, s := range l.Setup {
+		for tier, a := range s.Map {
+			a.Model = modelcatalog.Current(a.Model)
+			s.Map[tier] = a
+		}
+	}
 	if err := narrowByProject(l, projectPath); err != nil {
 		return nil, err
 	}
@@ -1507,6 +1516,7 @@ func chatModelsOf(p *profile, s *setup) []string {
 	}
 	var out []string
 	for _, model := range models {
+		model = modelcatalog.Current(model)
 		if model != "" && !inList(out, model) {
 			out = append(out, model)
 		}

@@ -142,6 +142,9 @@ for raw in sys.stdin:
             emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
             continue
         emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
+        if mode() == "turn-failed":
+            note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "failed", "error": {"message": "model_not_found", "codexErrorInfo": "other", "additionalDetails": None}}})
+            continue
         if mode() == "approval-denied":
             note("item/completed", {"item": {"type": "commandExecution", "command": "agentctl plan", "aggregatedOutput": "automatic approval review rejected: service access denied", "exitCode": 1}})
             note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
@@ -1196,5 +1199,30 @@ func TestAppChatStopContinuesSameThread(t *testing.T) {
 				t.Fatalf("после снятия процесса нить не продолжилась: %s", log)
 			}
 		})
+	}
+}
+
+func TestAppChatTurnFailureRetry(t *testing.T) {
+	e, c := appEnv(t)
+	appMode(t, e, "turn-failed")
+	sid := appStartChat(t, e, c, "первая реплика")
+	appWaitFeed(t, e, sid, "model_not_found")
+	appWaitBusy(t, e, c, sid, false)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+	raw := body(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(raw, "model_not_found") {
+		t.Fatalf("отказ в HTTP-ленте: %d %s", resp.StatusCode, raw)
+	}
+	before := e.s.chatStoreRead(sid)
+	appMode(t, e, "")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"повтор"}`)
+	raw = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("повтор: %d %s", resp.StatusCode, raw)
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику: повтор")
+	after := e.s.chatStoreRead(sid)
+	if before.Thread != "th-1" || before.Thread != after.Thread || before.Model != "модель-codex" || before.Model != after.Model {
+		t.Fatalf("изменились нить или модель: до %+v после %+v", before, after)
 	}
 }

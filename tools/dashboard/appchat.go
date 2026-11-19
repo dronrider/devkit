@@ -553,8 +553,8 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		var p struct {
 			ThreadID string `json:"threadId"`
 			Turn     struct {
-				Status string `json:"status"`
-				Error  string `json:"error"`
+				Status string          `json:"status"`
+				Error  json.RawMessage `json:"error"`
 			} `json:"turn"`
 		}
 		json.Unmarshal(params, &p)
@@ -567,9 +567,18 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 			c.mu.Unlock()
 		}
 		s.appMu.Unlock()
-		if p.Turn.Error != "" {
+		var message string
+		if json.Unmarshal(p.Turn.Error, &message) != nil {
+			var detail struct {
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(p.Turn.Error, &detail) == nil {
+				message = detail.Message
+			}
+		}
+		if message != "" {
 			s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true,
-				Text: "ход кончился отказом клиента: " + p.Turn.Error, Time: now}})
+				Text: "ход кончился отказом клиента: " + message, Time: now}})
 		}
 		return
 	}

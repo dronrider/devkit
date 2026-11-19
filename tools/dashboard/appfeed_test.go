@@ -369,3 +369,34 @@ func TestAppFeedIndexResetsChangedFile(t *testing.T) {
 		})
 	}
 }
+
+func TestAppFeedTurnError(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"object", `{"message":"model_not_found","codexErrorInfo":"other","additionalDetails":null}`, "model_not_found"},
+		{"string", `"legacy failure"`, "legacy failure"},
+		{"null", `null`, ""},
+		{"success", ``, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, _ := appEnv(t)
+			sid := "as-turn-error"
+			e.s.appChats[sid] = &appChat{thread: "th-1", busy: true}
+			field := ""
+			if tc.raw != "" {
+				field = `,"error":` + tc.raw
+			}
+			e.s.appNote(sid, "turn/completed", json.RawMessage(`{"threadId":"th-1","turn":{"status":"completed"`+field+`}}`))
+			if e.s.appChats[sid].busyNow() {
+				t.Fatal("ход остался занятым")
+			}
+			got := e.s.appFeedRead(sid)
+			if tc.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("ложный отказ: %+v", got)
+				}
+			} else if len(got) != 1 || !got[0].Fail || got[0].Role != "assistant" || !strings.Contains(got[0].Text, tc.want) {
+				t.Fatalf("отказ не дошёл: %+v", got)
+			}
+		})
+	}
+}

@@ -76,7 +76,7 @@ PARK_WHY = "стенд: голова отработала свои проход�
 # Подставной выкат и тесты временного проекта: обе команды на самом python3,
 # метка выката ложится в каталог проекта.
 DEPLOY_CMD = "python3 -c \"open('.devkit/waitcheck-deployed','w').close()\""
-TEST_CMD = "python3 -c pass"
+TEST_CMD = "python3 -I " + selfcheck.WAIT_TEST
 
 # Пары окружения стенда. Уведомления выключены: звать человека к синтетической
 # задаче незачем. Пауза между проходами снимается, а шаг ожидания оставляется
@@ -89,20 +89,6 @@ STAND_ENV = {
     "DEVKIT_TASK_WATCH_STEP": "1",
     "DEVKIT_HARNESS": "claude-code",
 }
-
-# Сценарий синтетической предпосылки и её раздел «Проверка». Ворота слияния
-# спрашивают сценарий, ворота закрытия непустую проверку, а сведения о себе
-# стенд пишет сам. Слова соседнего круга рассказывали бы тут о чужой работе.
-SCENARIO_WORDS = ("1. devkitctl waitcheck во временном каталоге.\n"
-                  "2. Каждое из трёх ожиданий отвечает «ок», итог «три ожидания "
-                  "прошли».\n\n"
-                  "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка,\n"
-                  "и ворота перевода в Check спрашивают её отметку.\n\n"
-                  "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
-                  "Ожидаемый итог: слияние этой строки поднимает взведённого "
-                  "соседа, а закрытие припаркованного.\n")
-VERIFY_WORDS = ("слияние и закрытие этой строки поднимают ждущих соседей, стенд "
-                "смотрит на журнал подъёмов\n")
 
 # Ожидание подъёма головы: обход ждущих отдаёт лестницу оболочке, а та пишет
 # свою строку в журнал подъёмов уже своим ходом. Строка, оставшаяся стоять,
@@ -455,14 +441,13 @@ def task_work(cmd_run, task, tree, devkit):
     # Тест рядом с правкой: ворота слияния спрашивают его у всякой ветки с
     # кодом, и синтетическая задача проходит их наравне с настоящей.
     test = Path(tree) / "src" / (task.lower().replace("-", "_") + "_test.py")
-    test.write_text("def test_работа():\n    assert True\n", encoding="utf-8")
+    test.write_text(selfcheck.WAIT_TEST_BODY, encoding="utf-8")
     cmd_run(["git", "-C", str(tree), "add", "--", "src"])
     rc, out = cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",
                        "feat: %s работа задачи" % task])
     if rc != 0:
         return rc, out
-    rc, out = selfcheck.write_scenario(runner, tree, task, about=SCENARIO_WORDS % task,
-                                       verify=VERIFY_WORDS)
+    rc, out = selfcheck.write_scenario(runner, tree, task)
     if rc != 0:
         return rc, out
     # Отчёт снимается до обкатки: после отметки мерка свежести пускает

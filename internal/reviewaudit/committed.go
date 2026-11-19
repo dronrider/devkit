@@ -47,9 +47,9 @@ func ValidateAt(root, path, id, sha string) error {
 	if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		metadata = filepath.Join(tree, rel)
 	}
-	now, e := snapshot(tree, metadata, id, r.BaseSHA, standards)
+	now, e := snapshot(tree, metadata, id, r.BaseSHA, standards, r.RequestPath)
 	if e != nil {
 		return e
 	}
-	return validateSnapshot(r, now, id)
+	return validateSnapshot(tree, metadata, path, r, now, id)
 }

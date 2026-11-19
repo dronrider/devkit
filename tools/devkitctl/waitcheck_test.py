@@ -208,19 +208,29 @@ class WaitcheckTest(SandboxCase):
     def test_audit_and_merge_share_rules_source(self):
         # Отчёт аудита ревью и ворота слияния обязаны читать один чекаут
         # правил: инвентарь снимается у источника аудита, а слияние сверяет
-        # отчёт по своему DEVKIT_HOME. Дописываю в копию стенда правило с
-        # устойчивым ID, которого нет у чекаута, откуда запущен сам тест:
-        # разошедшиеся источники обязаны уронить слияние на изменённом
-        # источнике.
+        # отчёт по своему DEVKIT_HOME. Меняем перенос строки известного правила:
+        # его смысл сохранён, но текст и отпечаток отличаются от исходного чекаута.
         rules = self.box.dk / "RULES.style.md"
         was = rules.read_text(encoding="utf-8")
-        rules.write_text(was + "\n- **STYLE-990.** Синтетическое правило различения"
-                         " источников аудита и слияния.\n", encoding="utf-8")
+        wrapped = "Комментарий\n  объясняет"
+        self.assertIn("Комментарий объясняет", was)
+        rules.write_text(was.replace("Комментарий объясняет", wrapped, 1), encoding="utf-8")
+        reports = []
+
+        def read_at_merge(args, cwd):
+            if args[0] == "shipctl" and args[-2:] == ["merge", waitcheck.DEP]:
+                tree = waitcheck.selfcheck.task_tree(Path(args[2]), waitcheck.DEP)
+                report = tree / "docs" / "tasks" / (waitcheck.DEP + ".review-audit.json")
+                reports.append(next(rule["text"] for rule in json.loads(report.read_text())["rules"]
+                                    if rule["id"] == "common-style:STYLE-015"))
+
         try:
-            rc, out = self.stand("stand-shared-rules")
+            rc, out = self.stand("stand-shared-rules", sabotage=read_at_merge)
         finally:
             rules.write_text(was, encoding="utf-8")
         self.assertEqual(rc, 0, "стенд не прошёл на едином источнике правил:\n%s" % out)
+        self.assertEqual(len(reports), 1)
+        self.assertIn(wrapped, reports[0])
 
     def test_head_without_a_wait_mark_fails_the_stand(self):
         # Откат первого звена: голова кончает ход, не отметив ожидания. Воронка

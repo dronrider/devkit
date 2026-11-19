@@ -342,7 +342,16 @@ func writeReviewAudit(t *testing.T, root, id string, board, commit bool) string 
 		report.Rules[i].Applicability = "applicable"
 		report.Rules[i].Result = "checked"
 		report.Rules[i].Reason = "Explicit synthetic review of the pipeline fixture"
-		report.Rules[i].Evidence = []reviewaudit.Evidence{{Object: "fixture change", Location: "code.txt", Observation: "Fixture behavior inspected for this gate test"}}
+		evidence := reviewaudit.Evidence{Object: "fixture change", Location: "code.txt", Observation: "Fixture behavior inspected for this gate test"}
+		if report.Rules[i].ID == "common-style:STYLE-001" {
+			report.Rules[i].Applicability = "not_applicable"
+			report.Rules[i].Reason = "Pipeline fixture does not change symbol names or responsibilities"
+			for j := range report.Rules[i].Files {
+				report.Rules[i].Files[j].Reason = "Fixture file has no changed symbol responsibilities"
+			}
+			continue
+		}
+		report.Rules[i].Evidence = []reviewaudit.Evidence{evidence}
 	}
 	data, err = json.MarshalIndent(report, "", "  ")
 	if err != nil {

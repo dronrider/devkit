@@ -46,7 +46,8 @@ TASK = "SC-001"
 # Выкат и тесты временного проекта подставные, обе команды на самом python3
 # без внешних утилит: слияние гоняет их через sh -c в том же PATH, и
 # минимальному окружению вроде CI-контейнера незачем знать touch(1) и true(1).
-DEPLOY_CMD = "python3 -c \"open('.devkit/selfcheck-deployed','w').close()\""
+DEPLOY_MARKER = ".devkit/selfcheck-deployed"
+DEPLOY_CMD = "python3 -c \"open('%s','w').close()\"" % DEPLOY_MARKER
 TEST_CMD = "python3 -c pass"
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "selfcheck",
@@ -71,6 +72,48 @@ PIPE_ENV_DROP = (
 SCENARIO_HEADER = "## Сценарий проверки"
 VERIFY_HEADER = "## Проверка"
 TIMEOUT = 900
+
+# Единственная предпосылка, которую waitcheck сливает через shipctl.
+WAIT_MARKER = "src/wt-002.txt"
+WAIT_TEST = "src/wt_002_test.py"
+WAIT_ASSERTION = 'assert Path("src/wt-002.txt").read_text(encoding="utf-8") == "работа WT-002\\n"'
+WAIT_TEST_BODY = "from pathlib import Path\n\n" + WAIT_ASSERTION + "\n"
+
+SELF_SCENARIO = ("1. devkitctl selfcheck во временном каталоге.\n"
+                 "2. Каждый шаг круга отвечает «ок», итог «связка жива».\n\n"
+                 "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка\n"
+                 "круга, и ворота перевода в Check спрашивают её отметку.\n\n"
+                 "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
+                 "Ожидаемый итог: круг закрыл временную задачу и не оставил "
+                 "после себя ни проекта, ни дерева задачи.\n")
+SELF_VERIFY = ("выкат круга оставляет метку %s, "
+               "круг проверяет её после слияния\n" % DEPLOY_MARKER)
+
+WAIT_SCENARIO = ("1. devkitctl waitcheck во временном каталоге.\n"
+                 "2. Каждое из трёх ожиданий отвечает «ок», итог «три ожидания "
+                 "прошли».\n\n"
+                 "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка,\n"
+                 "и ворота перевода в Check спрашивают её отметку.\n\n"
+                 "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
+                 "Ожидаемый итог: слияние этой строки поднимает взведённого "
+                 "соседа, а закрытие припаркованного.\n")
+WAIT_VERIFY = ("слияние и закрытие этой строки поднимают ждущих соседей, стенд "
+               "смотрит на журнал подъёмов\n")
+
+FIXTURE_SECTIONS = {
+    TASK: (SELF_SCENARIO, SELF_VERIFY),
+    "WT-002": (WAIT_SCENARIO, WAIT_VERIFY),
+}
+
+
+# У временных проектов нет собственных правил. Для нового общего или
+# проектного ID сначала требуется разобрать его на этих двух фикстурах.
+FIXTURE_RULE_IDS = {
+    "%s-%03d" % (prefix, number)
+    for prefix, last in (("common-architecture:ARCH", 28), ("common-style:STYLE", 16),
+                         ("common-tests:TEST", 9))
+    for number in range(1, last + 1)
+}
 
 
 @contextlib.contextmanager
@@ -207,7 +250,7 @@ def task_tree(proj, task):
     return Path("%s-%s" % (proj, task.lower()))
 
 
-def write_scenario(cmd_run, tree, task, about=None, verify=None):
+def write_scenario(cmd_run, tree, task):
     """Сценарий проверки и раздел «Проверка» в файл задачи, коммитом в ветку.
 
     Ворота слияния пускают ветку только со сценарием в файле задачи, а ворота
@@ -223,19 +266,9 @@ def write_scenario(cmd_run, tree, task, about=None, verify=None):
     text = doc.read_text(encoding="utf-8") if doc.exists() else ""
     if not text.strip():
         text = "# %s: проверка связки\n" % task
-    if about is None:
-        about = ("1. devkitctl selfcheck во временном каталоге.\n"
-                 "2. Каждый шаг круга отвечает «ок», итог «связка жива».\n\n"
-                 "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка\n"
-                 "круга, и ворота перевода в Check спрашивают её отметку.\n\n"
-                 "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
-                 "Ожидаемый итог: круг закрыл временную задачу и не оставил "
-                 "после себя ни проекта, ни дерева задачи.\n" % task)
-    if verify is None:
-        verify = ("выкат круга оставляет метку .devkit/selfcheck-deployed, "
-                  "круг проверяет её после слияния\n")
+    about, verify = FIXTURE_SECTIONS[task]
     if not re.search(r"^%s\b" % re.escape(SCENARIO_HEADER), text, flags=re.M):
-        text += "\n%s\n\n%s" % (SCENARIO_HEADER, about)
+        text += "\n%s\n\n%s" % (SCENARIO_HEADER, about % task)
     if not re.search(r"^%s\b" % re.escape(VERIFY_HEADER), text, flags=re.M):
         text += "\n%s\n\n%s" % (VERIFY_HEADER, verify)
     doc.write_text(text, encoding="utf-8")
@@ -269,9 +302,10 @@ def audit_report(cmd_run, tree, task, standards):
     отчёт аудита ревью (DK-1675): строка говорит, что ревью шло по скиллу,
     отчёт покрывает код и правила. Снимок делает штатная taskctl review audit
     с базой в точке ответвления ветки, пересчёт хешей остаётся утилите, и
-    стенд их не дублирует. Выводы заполняются только у фиксированной
-    синтетической задачи стенда: правила помечаются проверенными самим
-    прогоном. Отчёт уезжает коммитом в ветку, потому что ворота читают его из
+    стенд их не дублирует. Стенд знает точный состав двух временных задач.
+    В обеих он выполняет шаг сценария, у WT-002 также проверяет файл работы
+    и чувствительность теста к подмене строки. Отчёт уезжает коммитом в ветку,
+    потому что ворота читают его из
     закоммиченного дерева, а не из рабочего каталога. standards это чекаут
     общих правил, с него снимается инвентарь правил: окружение стенда чекаут
     само по себе не знает, и у ворота слияния та же зависимость.
@@ -282,10 +316,17 @@ def audit_report(cmd_run, tree, task, standards):
     def call(args):
         return cmd_run(args, str(tree), env)
 
+    if task not in (TASK, "WT-002") or tree.name != "proj-" + task.lower():
+        return 1, "отчёт самопроверки предназначен только для её временных задач"
+    rc, out = call(["git", "remote", "get-url", "origin"])
+    if rc != 0 or out.strip() != str(tree.parent / "origin.git"):
+        return 1, "у проекта нет локального origin стенда: " + out
     rc, out = call(["git", "branch", "--show-current"])
     if rc != 0:
         return rc, out
     head_branch = out.strip().split("\n")[-1].strip()
+    if head_branch != task.lower():
+        return 1, "отчёт самопроверки вне ветки задачи: " + head_branch
     rc, out = call(["git", "for-each-ref", "--format=%(refname:short)",
                     "refs/heads"])
     if rc != 0:
@@ -298,6 +339,46 @@ def audit_report(cmd_run, tree, task, standards):
     if rc != 0:
         return rc, out
     base = out.strip().split("\n")[-1].strip()
+    doc = "docs/tasks/%s.md" % task
+    wait = task == "WT-002"
+    changes = {doc: "M"}
+    if wait:
+        changes.update({WAIT_MARKER: "A", WAIT_TEST: "A"})
+    rc, out = call(["git", "status", "--porcelain", "--untracked-files=all"])
+    if rc != 0 or out.strip():
+        return 1, "в ветке стенда есть незакоммиченные файлы: " + out
+    rc, out = call(["git", "diff", "--name-status", base, "--"])
+    if rc != 0 or set(out.splitlines()) != {status + "\t" + path for path, status in changes.items()}:
+        return 1, "состав правки отличается от задачи стенда: " + out
+    command = "test -f docs/TASKS.md && grep -q %s docs/TASKS.md" % task
+    rc, base_card = call(["git", "show", base + ":" + doc])
+    if rc != 0:
+        return rc, base_card
+    about, verify = FIXTURE_SECTIONS[task]
+    expected = "%s\n\n%s\n\n%s\n%s\n\n%s" % (
+        base_card.rstrip("\n"), SCENARIO_HEADER, about % task, VERIFY_HEADER, verify)
+    card = (tree / doc).read_text(encoding="utf-8")
+    if card != expected:
+        return 1, "STYLE-016: изменения в %s расходятся со сценарием и проверяемым исходом стенда" % doc
+    lines = card.splitlines()
+    scenario = "%s:%d" % (doc, lines.index(command) + 1)
+    rc, out = call(["sh", "-c", command])
+    if rc != 0:
+        return rc, "шаг сценария не нашёл %s: %s" % (task, out)
+    if wait:
+        if ((tree / WAIT_MARKER).read_text(encoding="utf-8") != "работа WT-002\n"
+                or (tree / WAIT_TEST).read_text(encoding="utf-8") != WAIT_TEST_BODY):
+            return 1, "маркер работы или проверка WT-002 отличаются от фикстуры"
+        rc, out = call(["python3", "-I", WAIT_TEST])
+        if rc != 0:
+            return rc, out
+        with tempfile.TemporaryDirectory(dir=tree.parent) as mutation:
+            marker = Path(mutation) / WAIT_MARKER
+            marker.parent.mkdir()
+            marker.write_text("работа WT-999\n", encoding="utf-8")
+            rc, out = cmd_run(["python3", "-I", str(tree / WAIT_TEST)], mutation, env)
+            if rc != 1 or "AssertionError" not in out:
+                return 1, "подмена ID в рабочем файле должна уронить сравнение: " + out
     rc, out = call(["taskctl", "-C", str(tree), "review", "audit", task,
                     "--base", base])
     if rc != 0:
@@ -308,25 +389,49 @@ def audit_report(cmd_run, tree, task, standards):
     except (OSError, ValueError) as e:
         return 1, "отчёт аудита не читается (%s): %s" % (report, e)
     data["architecture"].update({
-        "goal": "провести синтетическую задачу стенда от строки до слияния",
+        "goal": ("проверить, что слияние предпосылки поднимает ждущую задачу" if wait
+                 else "провести синтетическую задачу стенда от строки до слияния"),
         "decision": "штатные команды утилит devkit на временном проекте",
-        "boundaries": "синтетическая правка это файл работы и файл задачи стенда, производство не трогается",
+        "boundaries": "Правка временной задачи ограничена файлами " + ", ".join(sorted(changes)),
         "alternative": "заглушки утилит отклонены: стенд проверяет живую связку",
-        "justification": "иначе ворота слияния целиком на машине не проверить",
+        "justification": "Сценарий проверяется в подготовленной ветке. Шаг %s вернул код 0." % command,
         "result": "checked",
-        "evidence": ["docs/tasks/%s.md" % task, "docs/TASKS.md"],
+        "evidence": [scenario] + ([WAIT_MARKER + ":1", WAIT_TEST + ":3"] if wait else []),
     })
+    scope = ("В диффе только постановка и сценарий %s." % doc if not wait else
+             "В диффе %s, текстовый маркер %s и проверка его содержимого %s." % (doc, WAIT_MARKER, WAIT_TEST))
     for rule in data["rules"]:
-        rule["applicability"] = "applicable"
-        rule["result"] = "checked"
-        rule["reason"] = "синтетическая задача стенда, правило проверено самим прогоном"
-        rule["evidence"] = [{
-            "object": "временный проект стенда",
-            "location": "docs/tasks/%s.md" % task,
-            "observation": "правило прошло кругом стенда без нарушений",
-        }]
+        if rule["id"] not in FIXTURE_RULE_IDS:
+            return 1, "неизвестное стенду правило: " + rule["id"]
+        rule.update(applicability="not_applicable", result="checked",
+                    reason=scope + " Рабочие модули, их настройки и контракты не меняются.")
+        if rule["id"] == "common-style:STYLE-016":
+            rule["reason"] = ("В ветке нет публичной операции или изменения её описания. "
+                              "Внутренний сценарий %s сверён с контрактом стенда, "
+                              "в разделе «Проверка» указано: %s" % (scenario, verify.strip()))
+        if wait:
+            for file in rule.get("files", []):
+                if file["path"] == WAIT_MARKER:
+                    file["reason"] = "Текстовая строка «работа WT-002»."
+                elif file["path"] == WAIT_TEST:
+                    reason = {
+                        "common-architecture:ARCH-018": "Скрипт читает один локальный файл, запросов к БД нет.",
+                        "common-style:STYLE-001": "Скрипт не объявляет функций, типов или переменных.",
+                        "common-style:STYLE-015": "Файл состоит из импорта Path и сравнения, комментариев нет.",
+                    }.get(rule["id"])
+                    if reason is None:
+                        return 1, "стенд не проверил файлы правила " + rule["id"]
+                    file["reason"] = reason
+                else:
+                    return 1, "неизвестный файл в инвентаре стенда: " + file["path"]
+            if rule["id"] in ("common-tests:TEST-001", "common-tests:TEST-004",
+                              "common-tests:TEST-005", "common-tests:TEST-006"):
+                wait_test_facts(rule, scenario)
     report.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
                       encoding="utf-8")
+    rc, out = call(["taskctl", "-C", str(tree), "review", "audit-check", task])
+    if rc != 0:
+        return rc, out
     rc, out = cmd_run(["git", "-C", str(tree), "add", "--",
                        "docs/tasks/%s.review-audit.json" % task], str(tree), env)
     if rc != 0:
@@ -335,15 +440,49 @@ def audit_report(cmd_run, tree, task, standards):
                     "docs(tasks): %s отчёт аудита ревью" % task], str(tree), env)
 
 
+def wait_test_facts(rule, scenario):
+    check = WAIT_TEST + ":3"
+    marker = WAIT_MARKER + ":1"
+    item = "содержимое маркера WT-002"
+    reason = "python3 -I %s сверил файл работы %s с ожидаемой строкой и вернул 0." % (WAIT_TEST, WAIT_MARKER)
+    rule.update(applicability="applicable", reason=reason, objects=[item])
+
+    def fact(location, text, **fields):
+        return [dict(location=location, text=text, **fields)]
+
+    ev = dict(object=item, location=check, result="checked", observation=reason)
+    if rule["id"] == "common-tests:TEST-001":
+        rule["evidence"] = [ev]
+    elif rule["id"] == "common-tests:TEST-006":
+        rule["evidence"] = [dict(ev, observation="С подменой WT-002 на WT-999 тот же скрипт вернул 1 с AssertionError.")]
+    elif rule["id"] == "common-tests:TEST-004":
+        rule["evidence"] = [dict(ev, facts=dict(
+            test=fact(check, "Скрипт проверяет содержимое файла из ветки задачи."),
+            dependency=fact(marker, "Прочитан файл работы из временного репозитория."),
+            unit_selection=fact(check, "У временного проекта нет команды изолированных юнитов."),
+            integration_selection=fact(check, "Команда теста слияния запускает этот файл явно.")))]
+    else:
+        rule["evidence"] = [
+            dict(ev, check="strength", facts=dict(
+                assertion=fact(check, "Содержание сверяется с буквальным образцом.", quote=WAIT_ASSERTION),
+                boundary=fact(marker, "Строка содержит ID предпосылки и завершается переводом строки."),
+                failure_case=fact(marker, "При замене WT-002 на WT-999 сравнение завершилось с AssertionError."))),
+            dict(ev, check="overlap", kind="single", facts=dict(
+                first=fact(check, "Проверено содержимое файла работы.", related=check, quote=WAIT_ASSERTION),
+                first_level=fact(check, "Чтение файла из дерева проекта.", value="component"),
+                search=fact(marker, "В ветке один тест содержимого маркера. Шаг сценария %s проверяет наличие строки доски." % scenario,
+                            value="system")))]
+
+
 def stamp_result(proj, task):
     """Факт прогона в раздел «Проверка» основного дерева после слияния."""
-    if not (Path(proj) / ".devkit" / "selfcheck-deployed").exists():
+    if not (Path(proj) / DEPLOY_MARKER).exists():
         return False
     doc = Path(proj) / "docs" / "tasks" / ("%s.md" % task)
     if not doc.exists():
         return True
     text = doc.read_text(encoding="utf-8")
-    line = "метка выката .devkit/selfcheck-deployed на месте после слияния"
+    line = "метка выката %s на месте после слияния" % DEPLOY_MARKER
     if line in text:
         return True
     text = re.sub(r"^(%s)\b.*$" % re.escape(VERIFY_HEADER),
@@ -449,7 +588,7 @@ def circle(cmd_run, proj, log, standards=None):
         # «ок» здесь было бы ложным.
         merged = steps[-1]
         merged["rc"] = 1
-        merged["out"] += "\nвыкат не оставил метку .devkit/selfcheck-deployed"
+        merged["out"] += "\nвыкат не оставил метку " + DEPLOY_MARKER
         log("  слияние с выкатом: не прошёл")
         return steps
     # Слияние оставило выкат непроверенным, и отметку smoke в конвейере ставит

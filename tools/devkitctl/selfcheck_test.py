@@ -89,6 +89,60 @@ class SelfcheckTest(SandboxCase):
         self.assertIn("taskctl", out, "вывод провала не называет утилиту")
         self.assertNotIn("связка жива", out, "сломанная связка названа живой")
 
+    def test_audit_refuses_an_extra_committed_file(self):
+        where = self.box.root / "circle-extra-code"
+        where.mkdir()
+
+        def add_code(args, cwd):
+            if args[:2] == ["git", "merge-base"] and Path(cwd).name == "proj-sc-001":
+                write(Path(cwd) / "extra.py", "value = 7\n")
+                write(Path(cwd) / "extra_test.py", "from extra import value\nassert value == 7\n")
+                for command in (["git", "add", "extra.py", "extra_test.py"],
+                                ["git", "commit", "-qm", "chore: SC-001 дополнительная правка"]):
+                    rc, out = testenv.run(command, cwd=cwd, path=self.path, home=self.box.home)
+                    self.assertEqual(rc, 0, out)
+
+        rc, out = self.run_selfcheck(where, sabotage=add_code)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("отчёт аудита ревью: не прошёл", out)
+        self.assertIn("состав правки отличается от задачи стенда", out)
+        self.assertIn("extra.py", out)
+
+    def test_audit_refuses_an_unknown_rule(self):
+        where = self.box.root / "circle-unknown-rule"
+        where.mkdir()
+        rules = self.box.dk / "RULES.style.md"
+        original = rules.read_text(encoding="utf-8")
+        rules.write_text(original + "\n- **STYLE-991.** В карточке SC-001 должна быть "
+                         "строка «два проверенных выката».\n", encoding="utf-8")
+        try:
+            rc, out = self.run_selfcheck(where)
+        finally:
+            rules.write_text(original, encoding="utf-8")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("отчёт аудита ревью: не прошёл", out)
+        self.assertIn("неизвестное стенду правило: common-style:STYLE-991", out)
+
+    def test_audit_refuses_an_incorrect_deploy_marker(self):
+        where = self.box.root / "circle-wrong-marker"
+        where.mkdir()
+
+        def change_marker(args, cwd):
+            if args[:2] == ["git", "merge-base"] and Path(cwd).name == "proj-sc-001":
+                doc = Path(cwd) / "docs" / "tasks" / "SC-001.md"
+                text = doc.read_text(encoding="utf-8")
+                self.assertIn(".devkit/selfcheck-deployed", text)
+                doc.write_text(text.replace(".devkit/selfcheck-deployed", ".devkit/second-marker"),
+                               encoding="utf-8")
+                rc, out = testenv.run(["git", "commit", "-qm", "docs(tasks): SC-001 другая метка",
+                                       "--", str(doc)], cwd=cwd, path=self.path, home=self.box.home)
+                self.assertEqual(rc, 0, out)
+
+        rc, out = self.run_selfcheck(where, sabotage=change_marker)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("отчёт аудита ревью: не прошёл", out)
+        self.assertIn("STYLE-016: изменения в docs/tasks/SC-001.md", out)
+
     def test_broken_path_fails_first_step_with_output(self):
         # Ни одной утилиты devkit в PATH: круг падает на первом же шаге и
         # печатает вывод, а не молчит.

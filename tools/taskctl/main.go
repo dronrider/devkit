@@ -286,11 +286,17 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               деревьев
 
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
-  review audit <ID> --base REF [--refresh]    создать отчёт покрытия правил;
+  review audit <ID> --base REF [--refresh] [--request FILE]  создать отчёт покрытия правил;
+  review audit-template <RULE> [--check NAME] [--object NAME] [--result STATUS] [--kind NAME]  вывести заготовки evidence
                                               refresh сохраняет прежний JSON
                                               и сбрасывает выводы
   review audit-check <ID>                    проверить полноту и актуальность;
                                               обязателен перед clean и approve-mr
+  review audit-check <ID> --coverage FILE [--request FILE]  сверить объекты и ссылки на итог
+                                              при любом вердикте
+  review audit-record <ID> --rule STYLE-001 --object NAME --input FILE [--request FILE] [--summary FILE]  сохранить доказательства цели
+  review audit-progress <ID> [--request FILE] [--summary FILE] [--json]  показать ход STYLE-001
+  review audit-repair <ID> --targets [--request FILE] [--summary FILE]  восстановить targets без сброса доказательств
   review level <ID> <0-3> "причина"           записать уровень тщательности
                                               ревью первой строкой раздела:
                                               «Уровень 2 до a1b2c3d: причина»,
@@ -1106,21 +1112,73 @@ func main() {
 		return
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review audit|audit-check|level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
+			fail(fmt.Errorf("жду: review audit|audit-check|audit-progress|audit-record|audit-repair|audit-template|level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
 		}
 		switch args[1] {
+		case "audit-template":
+			fs := flag.NewFlagSet("review audit-template", flag.ExitOnError)
+			check := fs.String("check", "", "одна подпроверка")
+			object := fs.String("object", "", "ключ объекта аудита")
+			result := fs.String("result", "checked", "статус записи")
+			kind := fs.String("kind", "", "вариант структуры доказательств")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review audit-template <RULE> [--check NAME] [--object NAME] [--result STATUS] [--kind NAME]")
+			msg, err = cmdReviewAuditTemplate(gdir, pos[0], *check, *object, *result, *kind)
+		case "audit-record":
+			fs := flag.NewFlagSet("review audit-record", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			rule := fs.String("rule", "", "правило проверки")
+			object := fs.String("object", "", "ключ цели аудита")
+			input := fs.String("input", "", "JSON с заполненными записями цели")
+			request := fs.String("request", "", "файл исходной постановки")
+			summary := fs.String("summary", "", "путь итогового Markdown")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review audit-record <ID> --rule STYLE-001 --object NAME --input FILE [--request FILE] [--summary FILE]")
+			r := noteRoot(*dir)
+			if r == "" {
+				r = root(*dir)
+			}
+			msg, err = cmdReviewAuditRecord(r, *dir, pos[0], *rule, *object, *input, *request, *summary)
+		case "audit-progress":
+			fs := flag.NewFlagSet("review audit-progress", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			request := fs.String("request", "", "файл постановки для ревью вне доски")
+			summary := fs.String("summary", "", "исключить новый Markdown итога из снимка кода")
+			asJSON := fs.Bool("json", false, "вывести состояние очереди в JSON")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review audit-progress <ID> [--request FILE] [--summary FILE] [--json]")
+			r := noteRoot(*dir)
+			if r == "" {
+				r = root(*dir)
+			}
+			msg, err = cmdReviewAuditProgress(r, *dir, pos[0], *request, *summary, *asJSON)
+		case "audit-repair":
+			fs := flag.NewFlagSet("review audit-repair", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			request := fs.String("request", "", "файл постановки для ревью вне доски")
+			summary := fs.String("summary", "", "исключить новый Markdown итога из снимка кода")
+			targets := fs.Bool("targets", false, "восстановить только targets")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review audit-repair <ID> --targets [--request FILE] [--summary FILE]")
+			r := noteRoot(*dir)
+			if r == "" {
+				r = root(*dir)
+			}
+			msg, err = cmdReviewAuditRepair(r, *dir, pos[0], *request, *summary, *targets)
 		case "audit", "audit-check":
 			fs := flag.NewFlagSet("review "+args[1], flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			base := fs.String("base", "", "база всей проверяемой правки")
 			refresh := fs.Bool("refresh", false, "сохранить старый отчёт и сбросить выводы для нового снимка")
+			coverage := fs.String("coverage", "", "сверить покрытие и ссылки на файл итогового отчёта при любом вердикте")
+			request := fs.String("request", "", "файл постановки для ревью вне доски")
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 1, 1, "review audit <ID> --base <REF> | review audit <ID> --refresh | review audit-check <ID>")
+			needArgs(pos, 1, 1, "review audit <ID> --base <REF> [--request FILE] | review audit <ID> --refresh | review audit-check <ID> [--request FILE]")
 			r := noteRoot(*dir)
 			if r == "" {
 				r = root(*dir)
 			}
-			msg, err = cmdReviewAudit(r, *dir, pos[0], *base, *refresh, args[1] == "audit-check")
+			msg, err = cmdReviewAudit(r, *dir, pos[0], *base, *coverage, *request, *refresh, args[1] == "audit-check")
 		case "add":
 			fs := flag.NewFlagSet("review add", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

@@ -338,8 +338,14 @@ class TestBoardGateWithShipctl(unittest.TestCase):
             "evidence": ["правка локальна и не выходит за рамки фикстуры"],
         }
         for rule in report["rules"]:
-            rule["applicability"] = "applicable"
             rule["result"] = "checked"
+            if rule["id"] == "common-style:STYLE-001":
+                rule["applicability"] = "not_applicable"
+                rule["reason"] = "Правка меняет только текст карточки и содержимое app.txt."
+                for entry in rule["files"]:
+                    entry["reason"] = "В файле нет объявлений или переименований объектов языка."
+                continue
+            rule["applicability"] = "applicable"
             rule["reason"] = "правило разобрано по фикстурной правке"
             rule["evidence"] = [{"object": "правка фикстуры",
                                  "location": "tools/app.txt",
@@ -353,7 +359,8 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
         self.audit("external-review", self.base)
         self.note("Уровень 1 до %s: рутина\nЯрлык: external-review" % head[:7])
-        self.assertEqual(self.push(head, self.base, CLAUDECODE="1", DEVKIT_HOME=self.standards).returncode, 0)
+        result = self.push(head, self.base, CLAUDECODE="1", DEVKIT_HOME=self.standards)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_note_without_audit_label_is_refused(self):
         """DK-1675: строка уровня без ярлыка отчёта код не пускает, ворот

@@ -957,13 +957,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		"message": "реплика ушла клиенту чужого протокола: ответ придёт в ленту"})
 }
 
-// appStart это подъём нового разговора с первой реплики: свежий ID, запись
-// настроек и тот же ход, что у живого разговора. tmux-механики дороге не нужны,
-// и ответ называет адрес ленты сразу, ждать родившейся сессии нечего.
-func (s *server) appStart(w http.ResponseWriter, found *Project, id, blank, text, model, harness, effort string) {
-	s.appStartRecord(w, found, id, blank, text, model, harness, effort, chatStore{})
-}
-
+// appStartRecord открывает нить и сохраняет её адрес до отправки реплики.
 func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank, text, model, harness, effort string, st chatStore) {
 	h := s.chatHarnessOf(model, harness)
 	if h == nil || !h.foreign() {
@@ -971,13 +965,36 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 			"модель %s не определилась подпиской чужого протокола", chatModelName(model, harness))})
 		return
 	}
+	socket, err := appNewSharedSocket(h, st)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "refused": err.Error()})
+		return
+	}
 	sid := "as" + msgID()
+	if socket == "" {
+		st.SharedFirst = ""
+	} else if blank == "" && st.SharedFirst != "" {
+		// У прямого старта нет заготовки для привязки. Один ID реплики
+		// закрепляет за повтором ту же запись даже после рестарта.
+		sid = appSharedStartID(found.Name, st.SharedFirst)
+		lock, err := chat.Lock(filepath.Join(chatStoreDir(s.cfg.Home), sid+".first.lock"))
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "первый ход общего чата ещё не подтверждён: " + err.Error()})
+			return
+		}
+		defer lock.Close()
+		if saved := s.chatStoreRead(sid); saved.Project != "" {
+			if saved.Project != found.Name || saved.Task != id || saved.SharedFirst != st.SharedFirst || saved.SharedSocket == "" {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "ID реплики уже принадлежит другому разговору"})
+				return
+			}
+			s.appSay(w, found, sid, text, st.SharedFirst, effort)
+			return
+		}
+	}
 	st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
 	st.Task, st.Project, st.Born, st.CxEffort = id, found.Name, s.now().Unix(), effort
-	st.SharedSocket = appNewSharedSocket(h, st)
-	if st.SharedSocket == "" {
-		st.SharedFirst = ""
-	}
+	st.SharedSocket = socket
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}

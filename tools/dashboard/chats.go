@@ -2495,7 +2495,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h := s.chatHarnessOf(model, harness); h != nil && h.foreign() {
-		s.appStart(w, found, id, blank, text, model, harness, body.Effort)
+		s.appStartRecord(w, found, id, blank, text, model, harness, body.Effort, chatStore{SharedFirst: body.MsgID})
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {

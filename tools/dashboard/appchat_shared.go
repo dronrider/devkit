@@ -34,28 +34,33 @@ func appSharedHome(h *Harness) string {
 	return filepath.Join(realHomeFn(), ".codex")
 }
 
-func appNewSharedSocket(h *Harness, st chatStore) string {
+func appNewSharedSocket(h *Harness, st chatStore) (string, error) {
 	if !appSharedHarness(h) || st.GroomSource != "" || st.TaskRun || st.TaskRunPID != 0 {
-		return ""
+		return "", nil
 	}
 	socket := os.Getenv(appSharedSocketEnv)
 	if socket == "" {
 		bin := filepath.Base(h.Bin)
 		if bin != h.Protocol && bin != h.Protocol+"-cli" {
-			return ""
+			return "", nil
 		}
 		if home := os.Getenv("CODEX_HOME"); home != "" && !appSamePath(home, appSharedHome(h)) {
-			return ""
+			return "", nil
 		}
 		if !appSamePath(appSharedHome(h), filepath.Join(realHomeFn(), ".codex")) {
-			return ""
+			return "", nil
 		}
 		socket = filepath.Join(appSharedHome(h), "app-server-control", "app-server-control.sock")
 	}
 	if !filepath.IsAbs(socket) {
-		return ""
+		return "", fmt.Errorf("%s требует абсолютный путь к Unix-сокету Codex", appSharedSocketEnv)
 	}
-	return socket
+	return socket, nil
+}
+
+func appSharedStartID(project, claim string) string {
+	key := sha256.Sum256([]byte(project + "\x00" + claim))
+	return fmt.Sprintf("as%x", key)
 }
 
 func appSamePath(a, b string) bool {

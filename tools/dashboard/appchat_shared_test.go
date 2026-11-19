@@ -19,11 +19,11 @@ func TestAppSharedSocketDoesNotFallBackWhenDaemonIsAbsent(t *testing.T) {
 	t.Cleanup(func() { realHomeFn = previous })
 	socket := filepath.Join(home, ".codex", "app-server-control", "app-server-control.sock")
 	h := &Harness{Name: "test-profile", Protocol: "codex", Bin: "codex"}
-	if got := appNewSharedSocket(h, chatStore{}); got != socket {
-		t.Fatalf("адрес недоступного общего сервера: %q, жду %q", got, socket)
+	if got, err := appNewSharedSocket(h, chatStore{}); err != nil || got != socket {
+		t.Fatalf("адрес недоступного общего сервера: %q, жду %q, ошибка %v", got, socket, err)
 	}
-	if got := appNewSharedSocket(h, chatStore{TaskRun: true}); got != "" {
-		t.Fatalf("конвейер подключился бы к общему серверу: %q", got)
+	if got, err := appNewSharedSocket(h, chatStore{TaskRun: true}); err != nil || got != "" {
+		t.Fatalf("конвейер подключился бы к общему серверу: %q, ошибка %v", got, err)
 	}
 }
 
@@ -39,6 +39,66 @@ func TestAppSharedNewChatReportsUnavailableDaemon(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.proj, "fake-app-log")); !os.IsNotExist(err) {
 		t.Fatalf("вместо общего сервера запущен отдельный процесс: %v", err)
+	}
+}
+
+func TestAppSharedNewChatRejectsRelativeSocket(t *testing.T) {
+	e, client := appEnv(t)
+	t.Setenv(appSharedSocketEnv, "relative.sock")
+	res := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats",
+		`{"text":"проверка","model":"модель-codex","harness":"codextest"}`)
+	data := body(t, res)
+	if res.StatusCode != http.StatusBadGateway || !strings.Contains(data, appSharedSocketEnv) ||
+		!strings.Contains(data, "абсолютный путь") || !strings.Contains(data, `"refused"`) {
+		t.Fatalf("создание чата с относительным путём: %d %s", res.StatusCode, data)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "fake-app-log")); !os.IsNotExist(err) {
+		t.Fatalf("запущен отдельный клиент: %v", err)
+	}
+}
+
+func TestAppSharedDirectStartReusesAcceptedSession(t *testing.T) {
+	e, client := appEnv(t)
+	t.Setenv(appSharedSocketEnv, filepath.Join(t.TempDir(), "absent.sock"))
+	const request = `{"text":"проверка","model":"модель-codex","harness":"codextest","msg_id":"first-request"}`
+	const claim = "first-request"
+	url := e.srv.URL + "/api/projects/demo/chats"
+	res := doReq(t, client, "POST", url, request)
+	if data := body(t, res); res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("первая попытка без подключения: %d %s", res.StatusCode, data)
+	}
+	sid := appSharedStartID("demo", claim)
+	st := e.s.chatStoreRead(sid)
+	if st.Project != "demo" || st.SharedFirst != claim || st.Thread != "" {
+		t.Fatalf("первая попытка не закрепила запись: %+v", st)
+	}
+	// Подключение восстановилось. Сервер уже принял ход, а браузер
+	// повторяет запрос, поскольку не получил ответ.
+	c := &appChat{sid: sid, shared: true, thread: "shared-thread", proc: &appServer{}}
+	if err := e.s.appSharedHold(c, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.s.appSharedReceipt(c, claim), []byte("accepted\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e.s.appMu.Lock()
+	e.s.appChats[sid] = c
+	e.s.appMu.Unlock()
+	t.Cleanup(func() {
+		e.s.appMu.Lock()
+		delete(e.s.appChats, sid)
+		e.s.appMu.Unlock()
+	})
+	res = doReq(t, client, "POST", url, request)
+	data := body(t, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(data, sid) {
+		t.Fatalf("повтор первого запроса: %d %s", res.StatusCode, data)
+	}
+	if c.busyNow() {
+		t.Fatal("повтор принятого запроса открыл ход")
+	}
+	if got := e.s.chatStoreRead(sid).Thread; got != c.thread {
+		t.Fatalf("в хранилище нет ID восстановленной нити: %q", got)
 	}
 }
 

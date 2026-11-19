@@ -167,7 +167,7 @@ func TestTmuxPaneHungAnsweredWithError(t *testing.T) {
 func TestParseTmuxAsk(t *testing.T) {
 	// Снимок снят с живой застрявшей сессии, слово в слово.
 	pane := strings.Join([]string{
-		"────────────────────────────────────────────",
+		strings.Repeat("\u2500", 44),
 		" Accessing workspace:",
 		"",
 		" /Users/rider/projects/xr-proxy",
@@ -178,10 +178,10 @@ func TestParseTmuxAsk(t *testing.T) {
 		"",
 		" Security guide",
 		"",
-		" ❯ 1. Yes, I trust this folder",
+		" \u276f 1. Yes, I trust this folder",
 		"   2. No, exit",
 		"",
-		" Enter to confirm · Esc to cancel",
+		" Enter to confirm \u00b7 Esc to cancel",
 	}, "\n")
 
 	ask := parseTmuxAsk(pane)
@@ -402,7 +402,7 @@ func TestParseTmuxAskPrintedAboveWidget(t *testing.T) {
 // Именно так встали два чата xr-proxy, о которых сказал пользователь.
 var liveTrustBarePane = strings.Join([]string{
 	"",
-	strings.Repeat("─", 100),
+	strings.Repeat("\u2500", 100),
 	" Accessing workspace:",
 	"",
 	" /private/tmp/dk486-untrusted",
@@ -415,10 +415,10 @@ var liveTrustBarePane = strings.Join([]string{
 	"",
 	" Security guide",
 	"",
-	" ❯ No, exit",
+	" \u276f No, exit",
 	"   Yes, I trust this folder",
 	"",
-	" Enter to confirm · Esc to cancel",
+	" Enter to confirm \u00b7 Esc to cancel",
 }, "\n")
 
 // Вопрос доверия без номеров узнаётся так же, как узнавался нумерованный, и
@@ -454,12 +454,12 @@ func TestParseTmuxAskBareNotWidget(t *testing.T) {
 		pane string
 	}{
 		{"тот же вопрос без подсказки", strings.Replace(liveTrustBarePane,
-			" Enter to confirm · Esc to cancel", " auto mode on (shift+tab to cycle)", 1)},
+			" Enter to confirm \u00b7 Esc to cancel", " auto mode on (shift+tab to cycle)", 1)},
 		{"реплика человека и текст под ней", strings.Join([]string{
-			strings.Repeat("─", 56),
-			"❯ Заведи 1 и 2, по третьей отдельно разберёмся",
+			strings.Repeat("\u2500", 56),
+			"\u276f Заведи 1 и 2, по третьей отдельно разберёмся",
 			"  а четвёртую отложи",
-			strings.Repeat("─", 56),
+			strings.Repeat("\u2500", 56),
 		}, "\n")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

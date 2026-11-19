@@ -191,7 +191,7 @@ class DoctorTest(SandboxCase):
             # компонентов она должна быть, и doctor сгенерит её той же починкой.
             self.box.doctor(self.proj, "--fix")
             rc, out = self.box.doctor(self.proj)
-            self.assertEqual(rc, 0, "doctor нашёл находки на описанном: %s" % out)
+            self.assertDoctorClean(rc, out)
         finally:
             (self.proj / "xr-hub" / "README.md").unlink()
 

@@ -323,7 +323,7 @@ class DoctorDepsTest(SandboxCase):
     def test_02_marker_on_own_row_is_clean(self):
         self.board("Первая [после BD-2]")
         rc, out = self.box.doctor(self.proj, path=self.path)
-        self.assertEqual(rc, 0, "doctor нашёл находки при маркере у своей строки: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_03_marker_on_named_row_is_clean(self):
         # Фраза называет входом чужой результат для названной задачи: маркер
@@ -333,7 +333,7 @@ class DoctorDepsTest(SandboxCase):
         write(path, path.read_text(encoding="utf-8")
                      .replace("| BD-2 | Вторая |", "| BD-2 | Вторая [после BD-1] |"))
         rc, out = self.box.doctor(self.proj, path=self.path)
-        self.assertEqual(rc, 0, "doctor нашёл находки при маркере у названной строки: %s" % out)
+        self.assertDoctorClean(rc, out)
 
 
 OLD_BLOCK_DRAFT = """# BD-3: материал
@@ -471,13 +471,13 @@ class DoctorPreparedMigrateTest(SandboxCase):
 
     def test_02_fix_runs_taskctl_and_closes(self):
         rc, out = self.box.doctor(self.proj, "--fix", path=self.path)
-        self.assertEqual(rc, 0, "перенос не закрыл находки: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertIn("починено: старые блоки разбора перенесены в prepared-файлы: PD-3",
                       out, "--fix не сказал про перенос")
         body = (self.drafts / "PD-3.md").read_text(encoding="utf-8")
         self.assertNotIn("Предложения разбора", body, "блок остался в записи")
         rc, out = self.box.doctor(self.proj, path=self.path)
-        self.assertEqual(rc, 0, "перенесённый блок всё ещё находка: %s" % out)
+        self.assertDoctorClean(rc, out)
 
     def test_03_failing_migrate_stays_a_finding(self):
         write(self.drafts / "PD-3.md", OLD_BLOCK_DRAFT.replace("BD-3", "PD-3"))

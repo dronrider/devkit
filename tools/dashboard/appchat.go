@@ -907,7 +907,6 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 		return
 	}
 	c.setEffort(st.CxEffort)
-	st.Thread = c.thread
 	if err := s.chatStoreUpdate(sid, func(current *chatStore) error {
 		if selected := s.chatHarnessOf(current.Model, current.Harness); selected != nil && selected.Name != h.Name {
 			return errAppDetached
@@ -975,8 +974,8 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 		"message": "клиент не принял прерывание, процесс снят: разговор продолжится новой репликой"})
 }
 
-// appDrop снимает процесс разговора целиком: под смену подписки, уборку в архив
-// и перезапуск. Лента остаётся; сохранённая нить продолжится следующим подъёмом.
+// appDrop снимает процесс разговора целиком при уборке в архив и перезапуске.
+// Лента остаётся; сохранённая нить продолжится следующим подъёмом.
 func (s *server) appDrop(sid, why string) {
 	s.appMu.Lock()
 	for s.appStarting[sid] != nil {

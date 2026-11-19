@@ -233,18 +233,10 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 		return
 	}
 	if matched {
-		st := s.chatStoreRead(sid)
-		exists := false
-		for i, old := range st.SelectionContexts {
-			if old.Reply == claim {
-				st.SelectionContexts[i] = context
-				exists = true
-			}
-		}
-		if !exists {
-			st.SelectionContexts = append(st.SelectionContexts, context)
-		}
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(st *chatStore) error {
+			st.SelectionContexts = mergeSelectionContexts(st.SelectionContexts, []selectionDeliveryContext{context})
+			return nil
+		}); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
@@ -265,9 +257,10 @@ func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, clai
 		return
 	}
 	context.Delivered = true
-	store := s.chatStoreRead(sid)
-	store.SelectionContexts = append(store.SelectionContexts, context)
-	if err := s.chatStoreWrite(sid, store); err != nil {
+	if err := s.chatStoreUpdate(sid, func(st *chatStore) error {
+		st.SelectionContexts = mergeSelectionContexts(st.SelectionContexts, []selectionDeliveryContext{context})
+		return nil
+	}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "выбор доставлен; сохранение доставки: " + err.Error()})
 		return
 	}

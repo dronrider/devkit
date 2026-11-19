@@ -73,8 +73,10 @@ func (s *server) preserveGroomContext(sid, task string) error {
 	if st.GroomSource == source && st.GroomMode == mode && st.GroomTree == last.Tree {
 		return nil
 	}
-	st.GroomSource, st.GroomMode, st.GroomTree = source, mode, last.Tree
-	return s.chatStoreWrite(sid, st)
+	return s.chatStoreUpdate(sid, func(st *chatStore) error {
+		st.GroomSource, st.GroomMode, st.GroomTree = source, mode, last.Tree
+		return nil
+	})
 }
 
 // Delivery metadata contains no decisions or card text. Receipt keys and the
@@ -173,12 +175,14 @@ func (s *server) rememberProposalContext(sid string, q chat.PreparedQuestion, a 
 	if shown, tools := s.groomConsent(q.Tree, sid); shown != nil && reflect.DeepEqual(*shown, q) {
 		item.NativeTools = tools
 	}
-	st := s.chatStoreRead(sid)
-	if source, mode := s.inheritedGroomContext(sid, q.Anchor); source != "" {
-		st.GroomSource, st.GroomMode, st.GroomTree = source, mode, q.Tree
-	}
-	st.ProposalContexts = append(st.ProposalContexts, item)
-	return s.chatStoreWrite(sid, st)
+	source, mode := s.inheritedGroomContext(sid, q.Anchor)
+	return s.chatStoreUpdate(sid, func(st *chatStore) error {
+		if source != "" {
+			st.GroomSource, st.GroomMode, st.GroomTree = source, mode, q.Tree
+		}
+		st.ProposalContexts = mergeProposalContexts(st.ProposalContexts, []proposalDeliveryContext{item})
+		return nil
+	})
 }
 
 func (s *server) rememberProposalShown(sid string, q chat.PreparedQuestion) error {
@@ -189,11 +193,19 @@ func (s *server) rememberProposalShown(sid string, q chat.PreparedQuestion) erro
 	for _, source := range q.Sources {
 		item.Sources = append(item.Sources, source.Source)
 	}
-	st := s.chatStoreRead(sid)
 	source, mode := s.inheritedGroomContext(sid, q.Anchor)
+	st := s.chatStoreRead(sid)
 	modeChanged := source != "" && (st.GroomSource != source || st.GroomMode != mode || st.GroomTree != q.Tree)
-	if modeChanged {
-		st.GroomSource, st.GroomMode, st.GroomTree = source, mode, q.Tree
+	keep := func(add bool) error {
+		return s.chatStoreUpdate(sid, func(st *chatStore) error {
+			if modeChanged {
+				st.GroomSource, st.GroomMode, st.GroomTree = source, mode, q.Tree
+			}
+			if add {
+				st.ProposalContexts = mergeProposalContexts(st.ProposalContexts, []proposalDeliveryContext{item})
+			}
+			return nil
+		})
 	}
 	for _, old := range s.proposalContexts(sid) {
 		if old.Key != "" || old.Tree != item.Tree || old.Anchor != item.Anchor {
@@ -212,13 +224,12 @@ func (s *server) rememberProposalShown(sid string, q chat.PreparedQuestion) erro
 		}
 		if all {
 			if modeChanged {
-				return s.chatStoreWrite(sid, st)
+				return keep(false)
 			}
 			return nil
 		}
 	}
-	st.ProposalContexts = append(st.ProposalContexts, item)
-	return s.chatStoreWrite(sid, st)
+	return keep(true)
 }
 
 func (s *server) proposalContexts(sid string) []proposalDeliveryContext {

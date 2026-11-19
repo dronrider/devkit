@@ -4601,9 +4601,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		s.appMu.Lock()
 		err := s.chatStoreUpdate(sid, func(current *chatStore) error {
 			wasModel, wasHarness = current.Model, current.Harness
-			old := s.chatHarnessOf(current.Model, current.Harness)
 			sameHarness := current.Harness == next.Name
 			if current.Harness == "" {
+				old := s.chatHarnessOf(current.Model, current.Harness)
 				sameHarness = old != nil && old.Name == next.Name
 			}
 			if live := s.appChats[sid]; live != nil && live.h.Name != next.Name {

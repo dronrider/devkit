@@ -163,7 +163,6 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 			return errors.New("конвейер задачи остановлен")
 		default:
 		}
-		st.Thread = c.thread
 		if err = s.chatStoreUpdate(a.sid, func(st *chatStore) error { st.Thread = c.thread; return nil }); err != nil {
 			return err
 		}

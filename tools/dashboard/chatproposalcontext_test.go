@@ -1,12 +1,71 @@
 package main
 
 import (
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
+
+func TestProposalShownPreservesConcurrentModelChoice(t *testing.T) {
+	e, c := appEnv(t)
+	catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
+		`"chat": ["gpt-6.2-sol"], "protocol": "codex", "models":`, 1)
+	writeScript(t, e.bin, "agentctl", `printf '%s' '`+catalog+`'`)
+	e.s.harnesses()
+	const sid = "as-concurrent-choice"
+	before := chatStore{Model: "gpt-6.1-sol", Harness: "codextest", Protocol: "codex", Project: "demo", Thread: "saved-context",
+		ProposalContexts: []proposalDeliveryContext{{Key: "receipt", Tree: e.proj, Anchor: "XR-3", Sources: []string{"XR-3"}}}}
+	if err := e.s.chatStoreWrite(sid, before); err != nil {
+		t.Fatal(err)
+	}
+	q := chat.PreparedQuestion{Version: 1, Tree: e.proj, Anchor: "XR-4", Sources: []chat.PreparedSource{{Source: "XR-4", Basis: "basis", Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop"}}}}}
+	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	originalHome := realHomeFn
+	var held atomic.Bool
+	realHomeFn = func() string {
+		if held.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		return e.home
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+			<-finished
+		}
+		realHomeFn = originalHome
+	}()
+	go func() { finished <- e.s.rememberProposalShown(sid, q) }()
+	select {
+	case <-entered:
+	case err := <-finished:
+		released = true
+		t.Fatalf("writer не дошёл до барьера: %v", err)
+	case <-time.After(8 * time.Second):
+		t.Fatal("writer не начал читать происхождение вопроса")
+	}
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model", `{"model":"gpt-6.2-sol","harness":"codextest"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор модели: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	close(release)
+	released = true
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	after := e.s.chatStoreRead(sid)
+	if after.Model != "gpt-6.2-sol" || after.Harness != before.Harness || after.Thread != before.Thread || len(after.ProposalContexts) != 2 {
+		t.Fatalf("контекст вопроса откатил модель или потерял квитанцию: %+v", after)
+	}
+}
 
 func TestChatStorePreservesProposalDeliveryContext(t *testing.T) {
 	e := newTestEnv(t)

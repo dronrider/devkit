@@ -9214,7 +9214,7 @@ function saveChatWidth(w) {
 const TA_MIN = 44;
 const TA_MAX = 420;
 
-function wireTaGrip(grip, ta, done) {
+function wireTaGrip(grip, ta, done, cap) {
   let from = 0;
   let base = 0;
   let held = false;
@@ -9223,7 +9223,7 @@ function wireTaGrip(grip, ta, done) {
     return box && box.height ? box.height : ta.offsetHeight || TA_MIN;
   };
   const set = (h) => {
-    ta.style.height = Math.max(TA_MIN, Math.min(TA_MAX, Math.round(h))) + "px";
+    ta.style.height = Math.max(TA_MIN, Math.min(cap ? cap() : TA_MAX, Math.round(h))) + "px";
   };
   grip.addEventListener("pointerdown", (ev) => {
     if (ev.button !== undefined && ev.button !== 0) return;
@@ -9251,6 +9251,53 @@ function wireTaGrip(grip, ta, done) {
   grip.addEventListener("pointercancel", release);
   grip.addEventListener("lostpointercapture", release);
   window.addEventListener("pointerup", release);
+}
+
+function chatInputSize(wrap, ta, manual) {
+  const limit = () => {
+    const view = window.visualViewport;
+    const vh = view && view.height || window.innerHeight || TA_MAX * 2;
+    const r = wrap.getBoundingClientRect();
+    const top = view && view.offsetTop || 0;
+    const visible = r.height > 0 ? Math.min(r.bottom, top + vh) - Math.max(r.top, top) : vh;
+    return Math.max(TA_MIN, Math.min(TA_MAX, Math.floor(visible / 2)));
+  };
+  const resize = () => {
+    const panel = wrap.closest && wrap.closest(".cpanel");
+    const view = window.visualViewport;
+    if (panel && view) {
+      panel.style.maxHeight = Math.max(TA_MIN, view.height + view.offsetTop - panel.getBoundingClientRect().top) + "px";
+    }
+    const cap = limit();
+    ta.style.height = "auto";
+    const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
+    ta.style.height = Math.min(cap, Math.max(TA_MIN, manual || 0, (ta.scrollHeight || 0) + border)) + "px";
+    ta.style.overflowY = ta.scrollHeight > cap ? "auto" : "hidden";
+  };
+  return {
+    resize, limit,
+    minimum(h) { manual = h; resize(); },
+    arm() {
+      resize();
+      const view = window.visualViewport;
+      window.addEventListener("resize", resize);
+      if (view) {
+        view.addEventListener("resize", resize);
+        view.addEventListener("scroll", resize);
+      }
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+      if (observer) observer.observe(wrap);
+      chatLive.push(() => {
+        window.removeEventListener("resize", resize);
+        if (view) {
+          view.removeEventListener("resize", resize);
+          view.removeEventListener("scroll", resize);
+        }
+        if (observer) observer.disconnect();
+      });
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(resize);
+    },
+  };
 }
 
 function wireChatGrab(grab) {
@@ -10240,33 +10287,33 @@ function chatModelSet(model, harness) {
   }
 }
 
-// Выбор глубины для разговора: уровень из меню модели живёт до ближайшего
-// подъёма, первая реплика, резюм или продолжение. Память в памяти панели, а не
-// в накопителе браузера: выбор действует на один запуск и настройки на экране
-// не образует. Ключом служит задача разговора, а без задачи его адрес: у
-// разговора задачи подъёмы ходят по её имени.
+// Выбор глубины переживает перезагрузку вкладки и расходуется успешным ходом.
 const chatEffortArm = new Map();
+const CHAT_EFFORT_KEY = "devkit.chat.effort.";
 
 function chatEffortKey(project, addr) {
   return String(project || "") + "/" + String(addr || "");
 }
 
 function chatEffortOf(project, addr) {
-  return chatEffortArm.get(chatEffortKey(project, addr)) || "";
+  const key = chatEffortKey(project, addr);
+  if (chatEffortArm.has(key)) return chatEffortArm.get(key);
+  try { return sessionStorage.getItem(CHAT_EFFORT_KEY + key) || ""; }
+  catch (err) { return ""; }
 }
 
 function chatEffortSet(project, addr, lv) {
   const key = chatEffortKey(project, addr);
-  if (lv) chatEffortArm.set(key, lv);
-  else chatEffortArm.delete(key);
+  chatEffortArm.set(key, lv || "");
+  try {
+    if (lv) sessionStorage.setItem(CHAT_EFFORT_KEY + key, lv);
+    else sessionStorage.removeItem(CHAT_EFFORT_KEY + key);
+  } catch (err) { /* Выбор работает и при запрете хранилища. */ }
 }
 
-// Подъём тратит выбор: дальше разговор идёт своей дорогой, и следующий подъём
-// без нового выбора едет вердиктом.
 function chatEffortSpend(project, addr) {
-  const key = chatEffortKey(project, addr);
-  const lv = chatEffortArm.get(key) || "";
-  chatEffortArm.delete(key);
+  const lv = chatEffortOf(project, addr);
+  chatEffortSet(project, addr, "");
   return lv;
 }
 
@@ -11249,7 +11296,7 @@ function modelPick(project, st) {
   const isLive = Boolean(st.entry && st.entry.state === "live");
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
-  const alien = Boolean(isLive && !st.entry.own);
+  const alien = Boolean(isLive && !st.entry.own && !st.entry.protocol);
   // Живая сессия показывается своей настоящей моделью: молча показывать выбор
   // поверх работающей модели значило бы врать (замечание пользователя: выбран
   // opus, работает fable). Своя живая сессия называет модель записью подъёма,
@@ -11436,7 +11483,7 @@ async function modelSwitch(project, st, pick, live) {
     sayResult(apiSaid(set), true);
     return;
   }
-  if (!live) {
+  if (!live || (st.entry && st.entry.protocol)) {
     await repaintChat();
     return;
   }
@@ -11965,6 +12012,8 @@ function fillPop(pop, project, p) {
     const tpl = planTpl(p && p.plan_template);
     if (tpl) pop.append(el("div", "prow pempty", tpl));
     pop.append(planList(plan));
+  } else {
+    pop.append(el("div", "prow pempty", "Плана пока нет"));
   }
   const list = (p && p.agents) || [];
   const now = Date.now();
@@ -12517,10 +12566,7 @@ function chatWay(st) {
         "Основной чат записи выбирается из прежних разговоров." };
   }
   if (st.unassigned) {
-    return { kind: "unassigned", off: true,
-      hint: "у записи нет разговора, работа начинается кнопкой",
-      why: "У записи нет основного разговора: начните работу, и он появится " +
-        "здесь сам. Прежние беседы открывает список в шапке панели." };
+    return { kind: "unassigned", off: false, why: "" };
   }
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   // Носитель записи без головы: ключ носителя разговором не разрешается, а
@@ -13116,8 +13162,7 @@ async function chatRaise(project, st, text, pick, onTmux) {
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
     if (r.body.unknown) return { held: r.body.error || "исход запуска не подтверждён" };
-    sayResult(r.body.error || "чат не поднялся", true);
-    return false;
+    return { failed: r.body.error || "чат не поднялся" };
   }
   // Слово way из ответа говорит, доехал ли выбор до агента: только тогда
   // ручная глубина считается потраченной, тем же правилом, что у реплики
@@ -14135,6 +14180,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         why = m.why || "агенту её не отдали";
       } else if (m.state === "bad") {
         mark = stateMark("fail", stopped ? "не ушло" : "не ушло, дожимаю");
+        why = m.why || "";
       } else if (m.state === "sent") {
         mark = stateMark("done", "доставлено");
       } else {
@@ -14159,7 +14205,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       const wrap = chatBubble("вы", selectionWords(m.text, m.selection), m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
-      if (m.unknown && m.state === "held") wrap.append(el("div", "mwhy", why));
+      if (((m.state === "held" && !m.queue) || m.state === "bad") && why) wrap.append(el("div", "mwhy", why));
       if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       for (const c of m.clips || []) {
@@ -14364,9 +14410,10 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       draw();
       ripen(m);
     },
-    bad(m) {
+    bad(m, why) {
       if (!mine.includes(m)) return;
       m.state = "bad";
+      if (why) m.why = why;
       save();
       draw();
       plan();
@@ -14587,24 +14634,6 @@ function chatPanel(project, st) {
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
     note.append(el("span", "", way.why));
-    // Действие запуска стоит в самой плашке: разговор записи заводит работа, а
-    // не реплика в запертое поле (LLD DK-1422). После запуска панель
-    // собирается заново: адрес тот же, состояние уже другое, и слот со старой
-    // плашкой пережил бы нажатие, спрятав начавшуюся работу.
-    if (way.kind === "unassigned" && st.task) {
-      const go = el("button", "btn btn-sm btn-acc", "Начать работу");
-      go.addEventListener("click", async () => {
-        go.disabled = true;
-        try {
-          await startRun(project, st.task);
-        } finally {
-          go.disabled = false;
-          chatPool.delete(chatOpen);
-          await repaintChat();
-        }
-      });
-      note.append(go);
-    }
     wrap.append(note);
   }
   // Служебных ручек записи в чате нет: решение цели задачам и строку
@@ -14648,12 +14677,6 @@ function chatPanel(project, st) {
   // ответа надо не только собрать, но и убрать со снятой отметки.
   const askPick = Object.assign({ on: false, put: "", ask: null }, askPickRead(st.addr));
   askPick.addr = st.addr;
-  // Разговор без процесса красит общий индикатор остановкой вместо отдельной
-  // строки с кнопкой (DK-701). Кнопки «Поднять» тут больше нет: молчание не
-  // отличалось от живого разговора, и человек нажимал её не зная, поднимется
-  // чат или нет (замечание пользователя про разговор из архива). Первая же
-  // реплика поднимает разговор сама, а состояние видно цветом и словами.
-  if (way.kind === "resume") busy.stopped();
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -14688,7 +14711,11 @@ function chatPanel(project, st) {
   }
   // Высота поля возвращается вместе с черновиком: растянутое поле переживает
   // перезагрузку ровно пока в нём лежит ненаписанное.
-  wireTaGrip(grip, ta, (h) => { chatDraftHeightWrite(st.addr, h); });
+  const grow = chatInputSize(wrap, ta, chatDraftHeight(st.addr));
+  wireTaGrip(grip, ta, (h) => {
+    grow.minimum(h);
+    chatDraftHeightWrite(st.addr, h);
+  }, grow.limit);
   // Черновик возвращается при открытии разговора и пишется по ходу набора.
   // Черновик незачатого разговора приезжает от него самого, когда вкладка про
   // него не знает: разговор ждёт с набранным текстом и в другом браузере.
@@ -14698,10 +14725,10 @@ function chatPanel(project, st) {
     chatDraftWrite(st.addr, text);
     if (st.blank) chatDraftPush(project, st.blank, text, attach.map(clipLean));
   };
-  const savedHeight = chatDraftHeight(st.addr);
-  if (savedHeight > 0) ta.style.height = savedHeight + "px";
+  grow.resize();
   let draftTimer = null;
   ta.addEventListener("input", () => {
+    grow.resize();
     askPickInput(askPick, ta.value);
     askPickSave(st.addr, askPick);
     chatDraftWrite(st.addr, ta.value);
@@ -14792,6 +14819,10 @@ function chatPanel(project, st) {
           chip.append(el("span", "bad", "картинка не показалась"));
         });
         thumb.src = clip.data || (clip.path ? shotURL(clip.path) : "");
+        thumb.addEventListener("click", () => {
+          const src = clip.data || (clip.path ? shotURL(clip.path) : "");
+          if (src) shotOpen(src, clip.name || "снимок");
+        });
         chip.append(thumb);
         chip.append(el("span", "", clip.name || "снимок"));
         chip.classList.remove("cfrag");
@@ -14928,8 +14959,9 @@ function chatPanel(project, st) {
     });
     row.append(go);
   }
-  const send = el("button", "btn btn-acc csend", "Отправить");
+  const send = el("button", "btn btn-acc csend", way.kind === "unassigned" ? "Начать работу" : "Отправить");
   askPick.send = send;
+  askPick.start = way.kind === "unassigned";
   askPick.draft = ta.value;
   askPickRender(askPick);
   send.disabled = Boolean(way.off);
@@ -15047,8 +15079,8 @@ function chatPanel(project, st) {
         (name) => echo.mark(m, name))
         .then((got) => {
           if (got && got.held) { echo.held(m, got.held, undefined, true); busy.off(); return; }
-          if (got === false) {
-            echo.bad(m);
+          if (got === false || (got && got.failed)) {
+            echo.bad(m, got && got.failed || "чат не поднялся");
             busy.off();
             return;
           }
@@ -15079,7 +15111,7 @@ function chatPanel(project, st) {
           method: "POST", body: { text: selection ? wire : text, msg_id: m.id, ...(selection ? { selection } : scenario ? { scenario } : { proposal }) },
         }).then((r) => {
           if (!r.ok) {
-            if (r.status >= 500) echo.bad(m);
+            if (r.status >= 500) echo.bad(m, r.body.error || "реплика не ушла");
             else echo.held(m, r.body.error || "ответ не принят");
             sayResult(r.body.error || "ответ не принят", true);
           } else {
@@ -15119,9 +15151,6 @@ function chatPanel(project, st) {
         return;
       }
       if (launch) {
-        // Плашка о подъёме встаёт сразу: между отправкой и пришиванием ленты
-        // проходят секунды, и пустота под пузырём читалась как зависание.
-        busy.raise();
         lift(wire, 1);
         return;
       }
@@ -15147,7 +15176,7 @@ function chatPanel(project, st) {
               sayResult(r.body.refused, true);
               return;
             }
-            echo.bad(m);
+            echo.bad(m, r.body.error || "реплика не ушла");
             // Отказ с именем клина (клиент не подтвердил доставку) перечитывает
             // панель сразу: сервер уже запомнил молчащий канал, и плашка клина
             // с кнопкой выхода обязана встать здесь, а не при следующем заходе.
@@ -15192,16 +15221,10 @@ function chatPanel(project, st) {
           } else if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else echo.sent(m);
-          // Дорога сервера приложения отвечает словами сразу, а ответ клиента
-          // приходит в ленту ходом: слово уходит в панель, чтобы отправка не
-          // читалась молчанием до первого хода.
-          if (r.body.way === "appserver" && r.body.message) {
-            sayResult(r.body.message, false);
-          }
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
           // Подъём тратит и ручную глубину: она уехала с этим подъёмом.
-          if (r.body.way === "start" || r.body.way === "resume" || r.body.way === "fresh") {
+          if (r.body.way === "start" || r.body.way === "resume" || r.body.way === "fresh" || r.body.way === "appserver") {
             chatEffortSpend(project, st.task || st.addr);
           }
           if (r.body.way === "start") {
@@ -15218,7 +15241,7 @@ function chatPanel(project, st) {
         })
         .catch((err) => {
           busy.off();
-          echo.bad(m);
+          echo.bad(m, String(err.message || err));
           console.error(err);
         })
         .finally(() => {
@@ -15265,6 +15288,51 @@ function chatPanel(project, st) {
       catch (err) { sayResult(err.message, true); return; }
     }
     const text = ta.value;
+    if (way.kind === "unassigned") {
+      if (send.disabled) return;
+      send.disabled = true;
+      const pick = st.entry && st.entry.model
+        ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(st.models);
+      const option = (st.models || []).find((m) => m.model === pick.model && m.harness === pick.harness);
+      const launch = async () => {
+        const m = text.trim() || attach.length ? echo.add(text, null, text, null, attach) : null;
+        try {
+          await Promise.all(attach.map(putClip));
+          const bad = attach.find((c) => !c.path);
+          if (bad) throw new Error(bad.bad || "вложение не ушло");
+          const wire = attachPrefix(attach) + text;
+          const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs", {
+            method: "POST", body: { id: st.task, text: wire, harness: pick.harness,
+              tier: option && option.tier || "", effort: chatEffortOf(project, st.task) }
+          });
+          if (!r.ok) throw new Error(apiSaid(r));
+          if (m) {
+            m.wire = r.body.wire || wire;
+            echo.sent(m);
+          }
+          ta.value = "";
+          attach = [];
+          drawClips();
+          chatDraftWrite(st.addr, "");
+          chatDraftHeightWrite(st.addr, 0);
+          grow.minimum(0);
+          chatEffortSpend(project, st.task);
+          askPick.start = false;
+          askPickRender(askPick);
+          if (r.body.way === "appserver" && r.body.session) {
+            echoMove(project, st.sid || st.addr, r.body.session);
+            switchChat(r.body.session);
+          } else if (r.body.session) {
+            chatWait(project, r.body.session, st.addr).catch(console.error);
+          }
+        } catch (err) {
+          if (m) echo.held(m, String(err.message || err));
+          else sayResult(String(err.message || err), true);
+        } finally { send.disabled = false; }
+      };
+      launch().catch(console.error);
+      return;
+    }
     if ((!text.trim() && !(attach.length && !goalOut) && !selection && !(proposal && proposal.mode !== "comment")) || send.disabled) return;
     ta.value = "";
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
@@ -15293,7 +15361,7 @@ function chatPanel(project, st) {
     // Отправка уносит и высоту: поле возвращается к своему обычному росту,
     // растянутым его держало ненаписанное.
     chatDraftHeightWrite(st.addr, 0);
-    ta.style.height = "";
+    grow.minimum(0);
     // Выделенный в постановке кусок уезжает вместе с репликой: человек
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
@@ -15395,7 +15463,8 @@ function chatPanel(project, st) {
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
       (more, id, wire, scenario, proposal, selection, launch) => post(more, null, null, id, null, wire, scenario, proposal, selection, launch), legacy);
-    chatLive.push(echo.clear, echo.stop);
+    chatLive.push(echo.stop);
+    grow.arm();
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать. Гашение явное (halt): занятость,
     // которую сервер ещё видит по хвосту транскрипта, плашку обратно не
@@ -15404,7 +15473,7 @@ function chatPanel(project, st) {
     chatLive.push(busy.shut);
     // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
     // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-    if (!st.dead && (chatIsNew(st.addr) ? (echo.waiting() || st.lift) : (!st.sid && st.lift))) busy.raise();
+    if (!st.dead && !chatIsNew(st.addr) && !st.blank && !st.sid && st.lift) busy.raise();
     // Слежение за состоянием чата (DK-893). Плашка встаёт по ответу сервера, а
     // не по нажатию «Отправить»: открытие чата, перезагрузка страницы и заход с
     // другого устройства посреди чужого хода показывают её сразу. Слежение
@@ -15454,7 +15523,7 @@ function chatPanel(project, st) {
           : st.unassigned
           // Слова плашки над лентой уже назвали действие, и лента добавляет
           // только про историю: у записи без назначения беседы не пропадают.
-          ? "у записи нет назначенного разговора, прежние беседы открывает список в шапке"
+          ? ""
           : st.fresh
           ? "новый чат: напишите первую реплику, она и поднимет сессию"
           // Про пустоту говорит либо заголовок панели, либо лента, но не оба
@@ -16101,7 +16170,7 @@ function askPickRender(pick) {
     caption = el("span", "choice-caption");
     pick.send.replaceChildren(caption);
   }
-  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : "Отправить";
+  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : pick.start ? "Начать работу" : "Отправить";
   const border = pick.send.querySelector(".choice-border");
   if (choosing && !border) {
     const ring = el("span", "choice-border");

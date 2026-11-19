@@ -404,3 +404,48 @@ esac`)
 	}
 	waitTaskStopped(t, e, got["session"])
 }
+
+func TestAppTaskFirstTextDeliveredOnce(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"codextest","tier":"pro","text":"Различимая первая фраза"}`)
+	raw := body(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("start: %d %s", resp.StatusCode, raw)
+	}
+	var result map[string]string
+	json.Unmarshal([]byte(raw), &result)
+	if !strings.Contains(result["wire"], "Различимая первая фраза") {
+		t.Fatalf("нет провода первой реплики: %s", raw)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	orders := 0
+	for _, line := range strings.Split(log, "\n") {
+		if !strings.HasPrefix(line, "input ") {
+			continue
+		}
+		var input []map[string]string
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "input ")), &input); err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range input {
+			orders += strings.Count(part["text"], "Различимая первая фраза")
+		}
+	}
+	if orders != 1 {
+		t.Fatalf("первая фраза не в единственном заказе: %s", log)
+	}
+	count := 0
+	for _, item := range e.s.appFeedRead(result["session"]) {
+		if item.Role == "user" && strings.Contains(item.Text, "Различимая первая фраза") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("экземпляров первой реплики: %d", count)
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"codextest","text":"Различимая первая фраза"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("второй запуск: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+}

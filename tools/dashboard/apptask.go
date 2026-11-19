@@ -379,7 +379,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 	if replyOnce {
 		s.chatSayDone(sid, claim, "appserver")
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
+	writeJSON(w, http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "wire": order, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
 }
 
 func (s *server) appTaskToolEnv(sid string, st chatStore, env map[string]string) {

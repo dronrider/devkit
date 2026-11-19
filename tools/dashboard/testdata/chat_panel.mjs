@@ -970,7 +970,7 @@ console.log("отправка: на телефоне Enter ставит стро
   if (store.get("devkit.chat.draft." + st3.addr + ".h")) {
     fail("после отправки высота осталась записанной");
   }
-  if (again.ta.style.height) fail("после отправки поле осталось растянутым: " + again.ta.style.height);
+  if (again.ta.style.height !== "44px") fail("после отправки поле не вернулось к минимуму: " + again.ta.style.height);
 }
 
 console.log("поле ввода: высота живёт с черновиком и снимается отправкой");

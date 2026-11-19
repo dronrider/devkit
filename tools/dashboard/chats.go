@@ -4568,18 +4568,13 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
-	// новая нить заводится следующим ходом, а лента остаётся: это и есть
-	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
+	// Выбор применяется следующим turn/start. Текущий ответ завершается в той
+	// же нити; подписка меняется при следующей отправке после конца хода.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		wasModel, wasHarness := st.Model, st.Harness
 		st.Model, st.Harness = model, harness
 		if h := s.chatHarnessOf(model, harness); h != nil {
 			st.Protocol = h.Protocol
-		}
-		if wasModel != model || wasHarness != harness {
-			st.Thread = ""
-			s.appDrop(sid, "смена модели")
 		}
 		if err := s.chatStoreWrite(sid, st); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})

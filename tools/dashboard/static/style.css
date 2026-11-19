@@ -1442,7 +1442,8 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .chead .nx:hover{color:var(--tx);border-color:var(--acc)}
 .crow2{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;margin-top:4px}
 .cpanel .chatwrap{max-width:none;margin-top:12px;flex:1;display:flex;flex-direction:column;min-height:0}
-.cpanel .chatfeed{flex:1;max-height:none;min-height:120px}
+.cpanel .chatfeed{flex:1;max-height:none;min-height:0}
+.cpanel .cbox{flex-shrink:0}
 .cpanel .cbox textarea:disabled{color:var(--tx3);cursor:not-allowed}
 @media (max-width:1100px){
   .cpanel{position:fixed;top:0;right:0;bottom:0;z-index:40;box-shadow:-18px 0 40px -22px rgba(0,0,0,0.7)}
@@ -2384,8 +2385,8 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    в строке вложений. Рамка рисуется контуром, чтобы не двигать раскладку. */
 .pickhi{outline:2px solid var(--acc);outline-offset:1px;cursor:crosshair}
 .cpickchip b{color:var(--acc)}
-.cslot{display:flex;flex-direction:column;min-height:0}
-.cslot.off{content-visibility:hidden;contain-intrinsic-size:0}
+.cslot{display:flex;flex:1 1 0;flex-direction:column;min-height:0}
+.cslot.off{flex:0 0 0;content-visibility:hidden;contain-intrinsic-size:0}
 .cclips{display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap}
 .cclip{display:flex;align-items:center;gap:6px;max-width:230px;padding:3px 6px;border:1px solid var(--line2);border-radius:8px;background:var(--bg2)}
 .cclip b{font:600 10.5px var(--sans);color:var(--acc);flex:none}

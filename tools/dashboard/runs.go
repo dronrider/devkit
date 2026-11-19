@@ -710,8 +710,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
 		// agentctl pick с учётом строки «Эффорт:» файла задачи.
 		Effort string `json:"effort"`
+		Text   string `json:"text"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"id\": \"DK-NNN\"}"})
 		return
@@ -733,6 +734,10 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("запуск %s в %s отклонён: нет строки на доске 404", id, found.Name)
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": s.rowGone(found, id)})
 		return
+	}
+	order := runPrompt(row.Sect, id)
+	if strings.TrimSpace(body.Text) != "" {
+		order += "\n\nРеплика человека:\n" + body.Text
 	}
 	// Проверенная задача с пользовательской приёмкой закрывается тут же, своей
 	// командой: кнопка «Закрыть» у неё это подтверждение принятого глазами, а не
@@ -854,7 +859,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "живой исполнитель задачи")})
 			return
 		}
-		s.startAppTask(w, found, id, own, tier, body.Effort, runPrompt(row.Sect, id))
+		s.startAppTask(w, found, id, own, tier, body.Effort, order)
 		return
 	}
 	// Лестница носителей цели, как у задачи (DK-1009). Ступень чата поднимает
@@ -998,7 +1003,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort)
+		order, runPrompt("in-progress", id), "работа", false, body.Effort)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что
@@ -1024,7 +1029,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// дальше, решает вердикт pick по лестнице этой подписки, и обещать тут
 	// большее значило бы обещать чужую настройку.
 	where := headWhere(res, sess)
-	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier,
+	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier, "wire": order,
 		"message": fmt.Sprintf("конвейер задачи %s поднят %s", id, where)}
 	if harness != nil {
 		resp["harness"] = harness.Name

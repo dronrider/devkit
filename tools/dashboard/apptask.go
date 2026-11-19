@@ -172,6 +172,10 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	}
 	notes := make(chan appTaskNote, 128)
 	c.mu.Lock()
+	if c.busy {
+		c.mu.Unlock()
+		return errAppTurnBusy
+	}
 	c.taskNotes = notes
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
@@ -245,7 +249,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		status := http.StatusBadGateway
 		body := map[string]string{"error": err.Error(), "session": sid}
 		var conflict *appThreadWriterConflict
-		if errors.As(err, &conflict) {
+		if errors.As(err, &conflict) || errors.Is(err, errAppStarting) {
 			status = http.StatusConflict
 			body["refused"] = err.Error()
 		}

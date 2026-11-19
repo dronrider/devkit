@@ -199,6 +199,7 @@ type server struct {
 	appMu          sync.Mutex
 	appWorkers     sync.WaitGroup
 	appChats       map[string]*appChat
+	appStarting    map[string]chan struct{}
 	appFeedIndexes map[string]*appFeedIndex
 	appTasks       map[string]*appTask
 
@@ -242,6 +243,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{},
 		archive: map[string]archiveEntry{}, deaf: map[string]deafEntry{},
 		appChats:    map[string]*appChat{},
+		appStarting: map[string]chan struct{}{},
 		appTasks:    map[string]*appTask{},
 		flights:     map[string]*boardFlight{},
 		lagSaid:     map[string]bool{},

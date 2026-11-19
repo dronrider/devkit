@@ -316,21 +316,19 @@ type docTail struct {
 	sent int
 }
 
-func (d *docTail) stamp(path string) {
-	if fi, err := os.Stat(path); err == nil {
-		d.mod, d.size = fi.ModTime(), fi.Size()
+func (d *docTail) changed(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || (fi.ModTime().Equal(d.mod) && fi.Size() == d.size) {
+		return false
 	}
+	d.mod, d.size = fi.ModTime(), fi.Size()
+	return true
 }
 
 func (d *docTail) next(j journalSources) []string {
-	fi, err := os.Stat(j.doc.path)
-	if err != nil {
+	if !d.changed(j.doc.path) {
 		return nil
 	}
-	if fi.ModTime().Equal(d.mod) && fi.Size() == d.size {
-		return nil
-	}
-	d.mod, d.size = fi.ModTime(), fi.Size()
 	j.doc.seen = true
 	lines, _ := j.docLines()
 	if len(lines) <= d.sent {
@@ -357,14 +355,17 @@ func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path stri
 	var offset int64
 	var doc *docTail
 	if data, err := os.ReadFile(path); err == nil {
-		sseEvent(w, f, "source", j.logSign())
 		data = lastComplete(data)
+		offset = int64(len(data))
+		sseEvent(w, f, "source", j.logSign())
 		for _, ln := range tailLines(data, tailDefault) {
 			sseEvent(w, f, "", ln)
 		}
-		offset = int64(len(data))
 	} else {
+		doc = &docTail{}
+		j.doc.seen = doc.changed(j.doc.path)
 		lines, note := j.docLines()
+		doc.sent = len(lines)
 		sseEvent(w, f, "source", j.docSign())
 		for _, ln := range lines {
 			sseEvent(w, f, "", ln)
@@ -372,8 +373,6 @@ func (s *server) streamGoalLog(w http.ResponseWriter, r *http.Request, path stri
 		if note != "" {
 			sseEvent(w, f, "note", note)
 		}
-		doc = &docTail{sent: len(lines)}
-		doc.stamp(j.doc.path)
 	}
 	t := time.NewTicker(tailPoll)
 	defer t.Stop()

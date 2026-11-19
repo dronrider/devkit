@@ -382,6 +382,47 @@ func TestGoalLogStreamGoalDocAppends(t *testing.T) {
 	}
 }
 
+func TestGoalLogStreamAppendDuringFirstFlush(t *testing.T) {
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	defer func() { tailPoll = old }()
+	for _, source := range []string{"документ", "оболочка"} {
+		t.Run(source, func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "goal-XR-100.log")
+			docPath := filepath.Join(dir, "XR-100.md")
+			j := journalSources{id: "XR-100", logName: filepath.Base(logPath),
+				doc: journalDoc{path: docPath, rel: filepath.Base(docPath), seen: true}}
+			path, initial, added, sign := docPath, "## Журнал\n- начало\n", "- продолжение\n", j.docSign()
+			if source == "оболочка" {
+				path, initial, added, sign = logPath, "начало\nпродол", "жение\n", j.logSign()
+			}
+			if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			rec := httptest.NewRecorder()
+			want := "event: source\ndata: " + sign + "\n\ndata: начало\n\ndata: продолжение\n\n"
+			first := true
+			w := sessionFlushRecorder{rec, func() {
+				if first {
+					first = false
+					appendLine(t, path, added)
+				}
+				if rec.Body.String() == want {
+					cancel()
+				}
+			}}
+			req := httptest.NewRequestWithContext(ctx, "GET", "/?stream=1", nil)
+			(&server{}).streamGoalLog(w, req, logPath, j)
+			if got := rec.Body.String(); got != want {
+				t.Fatalf("поток после дописывания на первом событии: %q, ожидал %q", got, want)
+			}
+		})
+	}
+}
+
 // journalBoardJSON это доска с одной целью XR-100 и заданной ссылкой на её
 // файл: сито ссылки проверяется только настоящей ссылкой, прочерк ведёт на
 // путь по умолчанию.

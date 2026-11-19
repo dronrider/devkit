@@ -415,6 +415,31 @@ func (g *queryGoSource) checkNameGap(declaration, check string, fact ReviewFact,
 	return fmt.Errorf("%s: покажите возврат, запись или вызов с %q, после которого остаётся вопрос", fact.Location, symbol)
 }
 
+// A scalar result can have no identifier. For non-Go code the stable
+// evidence is the literal return and a caller that checks that same value.
+func checkScalarReturn(e Evidence, decl, line string, source *evidenceSource) error {
+	pair, result := e.ObjectComparison, e.ResultEvidence
+	file, declLine, base, err := evidenceLocation(decl)
+	resultFile, resultLine, resultBase, resultErr := evidenceLocation(pair.ActualAt)
+	consumer, readErr := source.line(result.ConsumerAt)
+	if err != nil || resultErr != nil || readErr != nil {
+		return errors.Join(err, resultErr, readErr)
+	}
+	value := pair.Actual
+	if file != resultFile || base != resultBase || resultLine <= declLine ||
+		result.ReturnAt != pair.ActualAt || result.Returned != value ||
+		strings.TrimSuffix(strings.TrimSpace(line), ";") != "return "+value {
+		return fmt.Errorf("actual_at: укажите строку возврата литерала %q и его точное значение", value)
+	}
+	_, symbol, ok := strings.Cut(e.Object, "#")
+	if !ok || symbol == "" || !containsIdentifier(result.Consumer, symbol) ||
+		!containsIdentifier(result.Consumer, value) || !strings.Contains(consumer, result.Consumer) ||
+		result.ConsumerAt == pair.ActualAt {
+		return fmt.Errorf("consumer_at: покажите использование %s с проверкой значения %s", symbol, value)
+	}
+	return nil
+}
+
 func checkNameObject(e Evidence, word *string, words []string, observed, declaration string, source *evidenceSource) error {
 	if err := checkNameWord(word, words); err != nil {
 		return err
@@ -441,6 +466,14 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 			return fmt.Errorf("укажите actual для проверяемой цепочки")
 		}
 		return nil
+	}
+	if e.Check == "result" && !isGoRef(declaration) && e.ResultEvidence != nil &&
+		e.ResultEvidence.Flow == nil && pair.Proof == nil && pair.EquivalentFlow == nil && pair.EquivalentAt == "" {
+		_, numberErr := strconv.ParseFloat(pair.Actual, 64)
+		_, stringErr := strconv.Unquote(pair.Actual)
+		if (numberErr == nil && strings.ContainsAny(pair.Actual, "0123456789")) || stringErr == nil {
+			return checkScalarReturn(e, declaration, line, source)
+		}
 	}
 	if pair.Actual == "" || !strings.ContainsFunc(pair.Actual, unicode.IsLetter) ||
 		strings.ContainsFunc(pair.Actual, func(r rune) bool {

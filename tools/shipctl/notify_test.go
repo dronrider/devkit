@@ -136,7 +136,12 @@ func TestMergeDeployFailureFromSandboxRelaysSkip(t *testing.T) {
 	if werr != nil {
 		t.Fatal(werr)
 	}
-	t.Setenv("DEVKIT_HOME", filepath.Dir(filepath.Dir(wd)))
+	devkit := fakeDevkit(t, false)
+	// Exercise the real notifier while keeping audit rules local to the fixture.
+	if err := os.Symlink(filepath.Join(filepath.Dir(filepath.Dir(wd)), "hooks"), filepath.Join(devkit, "hooks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", devkit)
 	// Бэкенд подставной: сработай отправка вопреки рубежу, на машине
 	// разработчика не появится живой баннер.
 	stub := filepath.Join(t.TempDir(), "backend")

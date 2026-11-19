@@ -14,7 +14,7 @@ func TestCreatedCollectionRequiresMatchingPlural(t *testing.T) {
 	}
 	if !createdResultMatches([]string{"Files"}, result) ||
 		createdResultMatches([]string{"File"}, result) ||
-		createdResultMatches([]string{"Licenses"}, result) {
+		createdResultMatches([]string{"Receipts"}, result) {
 		t.Fatal("ожидается только имя коллекции файлов")
 	}
 }
@@ -23,17 +23,17 @@ func TestNameResultAcrossForwarding(t *testing.T) {
 	root, path := fixture(t)
 	write(t, filepath.Join(root, "files.go"), `package sample
 type File struct{}
-func createLicense() map[string][]*File {
+func createReceipt() map[string][]*File {
 	files := map[string][]*File{}
 	return files
 }
 func dispatch(kind int) map[string][]*File {
 	switch kind {
 	case 1:
-		files := createLicense()
+		files := createReceipt()
 		return files
 	case 2:
-		files := createLicense()
+		files := createReceipt()
 		files = nil
 		return files
 	}
@@ -51,14 +51,14 @@ func export() {
 	}
 	defer files.Close()
 	source := &evidenceSource{root: root, reportPath: path, files: files, cache: make(map[string][]string)}
-	word := "License"
+	word := "Receipt"
 	flow := &NameResultFlow{Caller: "files.go:7", CallAt: "files.go:10", Value: "files",
 		Consumer: "files.go:19", Forward: []NameResultHop{{ReturnAt: "files.go:11", Caller: "files.go:20", CallAt: "files.go:21", Value: "files"}}}
 	e := Evidence{Check: "result", Result: "checked",
 		ObjectComparison: &NameObjectComparison{Expected: []string{word}, Actual: "files", ActualAt: "files.go:5"},
 		ResultEvidence: &ResultEvidence{Word: &word, Returned: "files", ReturnAt: "files.go:5",
 			Consumer: "archive(files)", ConsumerAt: "files.go:22", Flow: flow}}
-	words := identifierWords("createLicense")
+	words := identifierWords("createReceipt")
 	assertTargetCheck(t, checkNameEntry(e, "files.go:3", words, source), "фактический тип результата \"map[string][]*File\"")
 	e.Result = "violated"
 	assertTargetCheck(t, checkNameEntry(e, "files.go:3", words, source), "")

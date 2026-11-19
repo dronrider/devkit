@@ -11,7 +11,7 @@ import (
 func TestIdentifierWordsPreservesInitialisms(t *testing.T) {
 	for name, want := range map[string][]string{
 		"createPDFReportFromRows": {"create", "PDF", "Report", "From", "Rows"},
-		"jwtLicenseIDs":           {"jwt", "License", "IDs"},
+		"jwtReceiptIDs":           {"jwt", "Receipt", "IDs"},
 		"listURLsByID":            {"list", "URLs", "By", "ID"},
 		"JWT_claim-attribute":     {"JWT", "claim", "attribute"},
 	} {
@@ -19,6 +19,30 @@ func TestIdentifierWordsPreservesInitialisms(t *testing.T) {
 			t.Errorf("%s: получено %q, ожидается %q", name, got, want)
 		}
 	}
+}
+
+func TestNameChecksLiteralReturnAndConsumer(t *testing.T) {
+	root, report := fixture(t)
+	write(t, filepath.Join(root, "sample.py"), "def page_size():\n    return 25\n\nassert page_size() == 25\n")
+	files, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	source := &evidenceSource{root: root, reportPath: report, files: files, cache: make(map[string][]string)}
+	word := "size"
+	ev := Evidence{Check: "result", Object: "sample.py:1#page_size", Result: "checked",
+		ObjectComparison: &NameObjectComparison{Actual: "25", ActualAt: "sample.py:2", Expected: []string{"page", "size"}},
+		ResultEvidence:   &ResultEvidence{Word: &word, Returned: "25", ReturnAt: "sample.py:2", ConsumerAt: "sample.py:4", Consumer: "assert page_size() == 25"}}
+	check := func() error {
+		return checkNameObject(ev, &word, identifierWords("page_size"), ev.ResultEvidence.Returned, "sample.py:1", source)
+	}
+	assertTargetCheck(t, check(), "")
+	ev.ResultEvidence.Consumer = "assert other_size() == 25"
+	assertTargetCheck(t, check(), "consumer_at")
+	ev.ResultEvidence.Consumer = "assert page_size() == 25"
+	ev.ObjectComparison.Actual = "2"
+	assertTargetCheck(t, check(), "actual_at")
 }
 
 func TestNamingRejectsEmptyExpectedForNamedResultAndWrite(t *testing.T) {
@@ -267,24 +291,24 @@ func TestNameResultFlowRequiresTheSameValueAndExpectedType(t *testing.T) {
 	write(t, filepath.Join(root, "names.go"), `package sample
 type Invoice struct{}
 type FileInfo struct{}
-type Key struct{ UpdateLicensingObjects []string }
+type Key struct{ UpdateShippingRecords []string }
 func createInvoiceFromKey() *Invoice {
   result := &Invoice{}
   return result
 }
-func createLicenseFromKey() *FileInfo {
+func createReceiptFromKey() *FileInfo {
   files := &FileInfo{}
   return files
 }
 func addUpdateAttributes(key *Key) {
-  key.UpdateLicensingObjects = []string{"update"}
+  key.UpdateShippingRecords = []string{"update"}
 }
 func persist(value *Invoice) {}
 func archive(value *FileInfo) {}
 func export() {
   current := createInvoiceFromKey()
   persist(current)
-  files := createLicenseFromKey()
+  files := createReceiptFromKey()
   archive(files)
 }
 func replaced() {
@@ -302,7 +326,7 @@ func direct() {
 	}
 	defer files.Close()
 	source := &evidenceSource{root: root, reportPath: path, files: files, cache: make(map[string][]string)}
-	invoice, license, attributes := "Invoice", "License", "Attributes"
+	invoice, receipt, attributes := "Invoice", "Receipt", "Attributes"
 	invoiceEntry := Evidence{Check: "result", Result: "checked",
 		ObjectComparison: &NameObjectComparison{Expected: []string{invoice}, Actual: "result", ActualAt: "names.go:7",
 			EquivalentFlow: &NameResultFlow{Caller: "names.go:18", CallAt: "names.go:19", Value: "current", Consumer: "names.go:16"}},
@@ -316,39 +340,39 @@ func direct() {
 	invoiceEntry.ResultEvidence.ConsumerAt = "names.go:27"
 	assertTargetCheck(t, checkNameEntry(invoiceEntry, "names.go:5", invoiceWords, source), "покажите, как результат")
 
-	licenseEntry := Evidence{Check: "result", Result: "checked",
-		ObjectComparison: &NameObjectComparison{Expected: []string{license}, Actual: "files", ActualAt: "names.go:11",
+	receiptEntry := Evidence{Check: "result", Result: "checked",
+		ObjectComparison: &NameObjectComparison{Expected: []string{receipt}, Actual: "files", ActualAt: "names.go:11",
 			EquivalentFlow: &NameResultFlow{Caller: "names.go:18", CallAt: "names.go:21", Value: "files", Consumer: "names.go:17"}},
-		ResultEvidence: &ResultEvidence{Word: &license, Returned: "files", ReturnAt: "names.go:11", Consumer: "archive(files)", ConsumerAt: "names.go:22"}}
-	licenseWords := identifierWords("createLicenseFromKey")
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "имя обещает \"License\", фактический тип результата \"*FileInfo\"")
-	licenseEntry.Result, licenseEntry.ObjectComparison.EquivalentFlow = "violated", nil
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "")
+		ResultEvidence: &ResultEvidence{Word: &receipt, Returned: "files", ReturnAt: "names.go:11", Consumer: "archive(files)", ConsumerAt: "names.go:22"}}
+	receiptWords := identifierWords("createReceiptFromKey")
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "имя обещает \"Receipt\", фактический тип результата \"*FileInfo\"")
+	receiptEntry.Result, receiptEntry.ObjectComparison.EquivalentFlow = "violated", nil
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "")
 
 	writeEntry := Evidence{Check: "writes", Result: "checked",
-		ObjectComparison: &NameObjectComparison{Expected: []string{"Update", attributes}, Actual: "UpdateLicensingObjects", ActualAt: "names.go:14", EquivalentAt: "names.go:14"},
-		WriteEvidence:    &WriteEvidence{Word: &attributes, Target: "key.UpdateLicensingObjects", Value: "update", WriteAt: "names.go:14"}}
+		ObjectComparison: &NameObjectComparison{Expected: []string{"Update", attributes}, Actual: "UpdateShippingRecords", ActualAt: "names.go:14", EquivalentAt: "names.go:14"},
+		WriteEvidence:    &WriteEvidence{Word: &attributes, Target: "key.UpdateShippingRecords", Value: "update", WriteAt: "names.go:14"}}
 	writeWords := identifierWords("addUpdateAttributes")
-	assertTargetCheck(t, checkNameEntry(writeEntry, "names.go:13", writeWords, source), "строка должна называть \"Update Attributes\" и \"UpdateLicensingObjects\"")
+	assertTargetCheck(t, checkNameEntry(writeEntry, "names.go:13", writeWords, source), "строка должна называть \"Update Attributes\" и \"UpdateShippingRecords\"")
 	writeEntry.Result, writeEntry.ObjectComparison.EquivalentAt = "violated", ""
 	assertTargetCheck(t, checkNameEntry(writeEntry, "names.go:13", writeWords, source), "")
 
-	licenseEntry.Result, licenseEntry.Kind = "pending", "flow"
-	licenseEntry.Facts = map[string][]ReviewFact{"question": {{Location: "names.go:11", Text: "Как заполнить equivalent_at?"}}}
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "назовите недостающий факт")
-	licenseEntry.Facts["question"][0].Text = "Что внешний потребитель делает с files?"
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "последний подтверждённый переход")
-	licenseEntry.Facts["question"][0].Value = "files"
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "")
-	licenseEntry.Facts["question"][0].Text = "Как внешняя интеграция использует files после возврата?"
-	licenseEntry.Facts["question"][0].Location = "names.go:10"
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "покажите возврат, запись или вызов")
-	licenseEntry.Facts["question"][0].Location = "names.go:22"
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "переход вне тела")
-	licenseEntry.Facts["question"][0] = ReviewFact{
-		Location: "names.go:14", Value: "UpdateLicensingObjects", Text: "Кто использует UpdateLicensingObjects за границей пакета?",
+	receiptEntry.Result, receiptEntry.Kind = "pending", "flow"
+	receiptEntry.Facts = map[string][]ReviewFact{"question": {{Location: "names.go:11", Text: "Как заполнить equivalent_at?"}}}
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "назовите недостающий факт")
+	receiptEntry.Facts["question"][0].Text = "Что внешний потребитель делает с files?"
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "последний подтверждённый переход")
+	receiptEntry.Facts["question"][0].Value = "files"
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "")
+	receiptEntry.Facts["question"][0].Text = "Как внешняя интеграция использует files после возврата?"
+	receiptEntry.Facts["question"][0].Location = "names.go:10"
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "покажите возврат, запись или вызов")
+	receiptEntry.Facts["question"][0].Location = "names.go:22"
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "переход вне тела")
+	receiptEntry.Facts["question"][0] = ReviewFact{
+		Location: "names.go:14", Value: "UpdateShippingRecords", Text: "Кто использует UpdateShippingRecords за границей пакета?",
 	}
-	assertTargetCheck(t, checkNameEntry(licenseEntry, "names.go:9", licenseWords, source), "переход вне тела")
+	assertTargetCheck(t, checkNameEntry(receiptEntry, "names.go:9", receiptWords, source), "переход вне тела")
 }
 
 func TestNamePendingFlowChecksCallToHelper(t *testing.T) {
@@ -428,7 +452,7 @@ func TestNamingExpectedObjectExcludesSourceWords(t *testing.T) {
 	}
 	if !sameObjectName([]string{"Invoice", "Files"}, identifierWords("InvoiceFile")) ||
 		sameObjectName([]string{"Invoice"}, identifierWords("InvoiceFile")) ||
-		sameObjectName([]string{"Update", "Attributes"}, identifierWords("UpdateLicensingObjects")) {
+		sameObjectName([]string{"Update", "Attributes"}, identifierWords("UpdateShippingRecords")) {
 		t.Fatal("сверка объектов перепутала множественное число, представление или исходные данные")
 	}
 }

@@ -137,6 +137,32 @@ func TestOrdinaryEvidenceCannotHideOpenOrViolatedObject(t *testing.T) {
 	}
 }
 
+func TestProjectRulePendingRequiresDocumentedGap(t *testing.T) {
+	r := Report{Rules: []Rule{{ID: "project:LOCAL-007", Applicability: "pending", Result: "pending"}}}
+	if err := checkCoverage(r, "No findings"); err == nil {
+		t.Fatal("непроверенное проектное правило прошло coverage")
+	}
+	r.Rules[0].Reason = "Не определён потребитель"
+	r.Rules[0].Evidence = []Evidence{{Result: "pending", Heading: "### Контракт", Observation: "Кто потребитель?"}}
+	if err := checkCoverage(r, "### Контракт\nКто потребитель?"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanRequiresAllConfigurationObjects(t *testing.T) {
+	root, path := fixture(t)
+	write(t, filepath.Join(os.Getenv("DEVKIT_HOME"), "RULES.architecture.md"), "- **ARCH-022.** Настройка меняет поведение.\n")
+	r := completed(t, root, path)
+	rule := findTargetRule(t, &r, "common-architecture:ARCH-022")
+	rule.Objects = []string{"первая", "вторая"}
+	rule.Evidence[0].Object = rule.Objects[0]
+	rule.Evidence[0].Result = "checked"
+	save(t, path, r)
+	if err := Validate(root, path, "XR-1"); err == nil || !strings.Contains(err.Error(), "вторая") {
+		t.Fatalf("clean пропустил объект: %v", err)
+	}
+}
+
 func TestReviewAuditIntegrationRequiresSubchecksForClean(t *testing.T) {
 	root, path := fixture(t)
 	r := completed(t, root, path)

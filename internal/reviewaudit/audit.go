@@ -792,7 +792,7 @@ func validateSnapshot(root, path, auditPath string, r, now Report, id string) er
 			}
 			continue
 		}
-		if rr.Applicability == "applicable" && requiresReviewFacts(rr.ID, "") {
+		if rr.Applicability == "applicable" && tracksObjects(rr.ID) {
 			if err := errors.Join(checkObjects(rr, []string{""})...); err != nil {
 				return err
 			}

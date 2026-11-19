@@ -164,6 +164,14 @@ func checkCoverage(report Report, summary string) error {
 			issues = append(issues, checkObjects(rule, []string{""})...)
 		} else {
 			issues = append(issues, checkEvidenceVerdicts(rule))
+			if rule.Result == "pending" {
+				documented := slices.ContainsFunc(rule.Evidence, func(ev Evidence) bool {
+					return ev.Result == "pending" && ev.Observation != "" && len(headings[ev.Heading]) == 1
+				})
+				if strings.TrimSpace(rule.Reason) == "" || !documented {
+					issues = append(issues, fmt.Errorf("%s: для pending укажите основание и открытый вопрос в evidence со ссылкой на раздел итога", rule.ID))
+				}
+			}
 		}
 		linked := false
 		targets := make(map[string]Target, len(rule.Targets))

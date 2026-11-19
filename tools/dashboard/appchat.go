@@ -927,6 +927,9 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	c.setEffort(st.CxEffort)
 	if st.Model != model || st.Harness != harness || st.Thread != c.thread || effortSet {
 		st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
+		if c.shared {
+			st.Thread = c.thread
+		}
 		if err := s.chatStoreWrite(sid, st); err != nil {
 			s.logf("настройки разговора %s не записались: %v", sid, err)
 			if c.shared {
@@ -980,8 +983,12 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
-		if st.SharedSocket != "" || st.GroomSource != "" {
+		switch {
+		case st.SharedSocket != "":
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "настройки разговора не записались: " + err.Error()})
+			return
+		case st.GroomSource != "":
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "контекст груминга не записался: " + err.Error()})
 			return
 		}
 	}

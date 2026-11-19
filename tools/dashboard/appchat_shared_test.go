@@ -18,7 +18,7 @@ func TestAppSharedSocketDoesNotFallBackWhenDaemonIsAbsent(t *testing.T) {
 	realHomeFn = func() string { return home }
 	t.Cleanup(func() { realHomeFn = previous })
 	socket := filepath.Join(home, ".codex", "app-server-control", "app-server-control.sock")
-	h := &Harness{Name: "codex", Protocol: "codex"}
+	h := &Harness{Name: "test-profile", Protocol: "codex", Bin: "codex"}
 	if got := appNewSharedSocket(h, chatStore{}); got != socket {
 		t.Fatalf("адрес недоступного общего сервера: %q, жду %q", got, socket)
 	}

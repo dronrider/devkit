@@ -40,7 +40,8 @@ func appNewSharedSocket(h *Harness, st chatStore) string {
 	}
 	socket := os.Getenv(appSharedSocketEnv)
 	if socket == "" {
-		if h.Name != "codex" {
+		bin := filepath.Base(h.Bin)
+		if bin != h.Protocol && bin != h.Protocol+"-cli" {
 			return ""
 		}
 		if home := os.Getenv("CODEX_HOME"); home != "" && !appSamePath(home, appSharedHome(h)) {

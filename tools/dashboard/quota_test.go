@@ -296,7 +296,7 @@ func TestQuotaNoHarnessNamesInCode(t *testing.T) {
 			}
 		}
 	}
-	protocolWords := map[string]bool{"claude-code": true}
+	protocolWords := map[string]bool{"claude-code": true, "codex": true}
 	for _, dir := range []string{".", "static"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {

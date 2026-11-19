@@ -16757,8 +16757,10 @@ function draftRow(project, d, typeTitles, works) {
 // экран моргал бы пустотой на каждом обновлении по фокусу окна, а список уезжал
 // бы к началу из-под пальца.
 async function renderDrafts(project, works) {
+  const screen = screenKey(route());
   const groups = document.getElementById("groups");
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts");
+  if (screenKey(route()) !== screen) return;
   // Число записей тут точнее счёта сервера: накопитель только что прочитан
   // своей ручкой.
   countsSet({ sess: (works || []).length,
@@ -16810,6 +16812,8 @@ async function renderDrafts(project, works) {
   // Тип записи словом для колонки типа: словарь типов принадлежит проекту, и
   // называть тип его же словом честнее собственной таблицы имён.
   const typesView = await api(projectBase + "/drafts/types");
+  const historyResult = await api(projectBase + "/drafts?history=1");
+  if (screenKey(route()) !== screen) return;
   const typeTitles = {};
   for (const t of (typesView.ok && typesView.body.types) || []) typeTitles[t.name] = t.title;
   for (const v of (preparedAll.ok && preparedAll.body && preparedAll.body.views) || []) {
@@ -16955,7 +16959,6 @@ async function renderDrafts(project, works) {
       },
     });
   }
-  const historyResult = await api(projectBase + "/drafts?history=1");
   if (historyResult.ok && (historyResult.body.drafts || []).length) {
     const historyDrafts = historyResult.body.drafts;
     items.push({ key: "draft-history", sign: JSON.stringify(historyDrafts), make: () => {
@@ -21422,6 +21425,7 @@ async function paint() {
   // пришедший позже он перерисовал бы кнопку под пальцем. Ждать тут дёшево,
   // ходит запрос один раз на загрузку страницы.
   await loadHarnesses();
+  if (screenKey(route()) !== screen) return;
   renderSidebar(projects, rt.home ? null : current);
   document.getElementById("brand-note").textContent =
     projects.length + " " + plural(projects.length, "проект", "проекта", "проектов");

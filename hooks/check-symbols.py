@@ -20,6 +20,7 @@
                                 и канал ответа берутся по имени протокола из
                                 hookio.py, голый --hook это claude-code
 """
+import io
 import re
 import sys
 
@@ -129,8 +130,11 @@ def main(argv):
             if is_testdata(path):
                 continue
             try:
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    findings += scan(f, where=path)
+                with open(path, "rb") as raw:
+                    if raw.peek(3)[:3] == b"\x1f\x8b\x08":
+                        continue
+                    with io.TextIOWrapper(raw, encoding="utf-8", errors="replace") as f:
+                        findings += scan(f, where=path)
             except OSError as e:
                 sys.stderr.write("check-symbols: %s\n" % e)
                 return 2

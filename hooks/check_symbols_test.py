@@ -6,6 +6,7 @@ pre-commit: добавленные строки коммита проходят 
 Сами запрещённые символы пишутся escape-последовательностями, чтобы файл
 оставался чистым и не спотыкался о собственную проверку.
 """
+import gzip
 import json
 import os
 import subprocess
@@ -56,6 +57,16 @@ class TestFileAndStdin(unittest.TestCase):
     def test_dash_in_stdin_is_caught(self):
         r = run("--stdin", input="строка с тире %s\n" % DASH)
         self.assertEqual(r.returncode, 1)
+
+    def test_gzip_archive_and_plain_text_with_gz_suffix(self):
+        archive = os.path.join(self.tmp, "events")
+        with gzip.open(archive, "wb") as f:
+            f.write(b"event\n")
+        text = self.write("plain.gz", "текст %s\n" % DASH)
+        r = run(archive, text)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn(archive, r.stdout)
+        self.assertIn(text + ":1:", r.stdout)
 
     def test_testdata_snapshot_is_skipped(self):
         path = self.write("testdata/file.txt", "текст с тире %s в снимке\n" % DASH)

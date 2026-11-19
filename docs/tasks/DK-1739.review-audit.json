@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1739",
   "base_sha": "0689d1a641c686e2d3de28b226135d341b054de7",
-  "head_sha": "22f1f47c2d521ba9a473c419adf2fcacd813252d",
-  "code_hash": "9111f18257e5295fce4eeff47b7af54c5cfccd4ccf512a3707fa792946c228c5",
-  "task_hash": "33ef08001db152906528331f0f0f5256628a14b361716b1dc1b240bc8a323c31",
+  "head_sha": "3c7c216dcc60f2676d63681e650a876335676724",
+  "code_hash": "0cfa3cb037f7ce18fadfc628488fd945089e007692837a1dd38b814f812c9f84",
+  "task_hash": "258e08248e60d6b401be03772e1b41b385b5344e0307c9968a3922edba3bd2af",
   "sources": [
     {
       "name": "common-architecture",
@@ -50,7 +50,12 @@
       "/private/tmp/dk1739-schema/v2/TurnStartParams.json; tools/obeycheck/testdata/autonomous_commit.py:delivered_context: Схема допускает additionalContext с kind application; живые результаты в файле задачи показывают developer receipt. Финальные кандидаты 87/88 прошли по 3/3, 89 прошёл 4/4. Все 10 retained сценариев независимо перепроверены финальным checker/маркерами; receipt в 88 отсутствует в первом ходе и присутствует во втором.",
       "RULES.board.core.md:23-28: финальное ядро 22f1f47c2 ограничивает обычный коммит веткой задачи, сохраняет явное ограничение поручения пользователем и направляет слияние/выкат через существующие ворота shipctl.",
       "docs/tasks/DK-1739.md: Проверка/Обкатка: regcheck красен на main и зелён на 22f1f47c2; свежий rehearse собирает бинарь и проводит три artifact теста. Полный ^TestApp PASS 38.752s.",
-      "/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1739-mutations-i5krtuh4/results.json: семь независимых мутаций в git archive 22f1f47c2 пойманы утверждениями тестов."
+      "/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1739-mutations-i5krtuh4/results.json: семь независимых мутаций в git archive 22f1f47c2 пойманы утверждениями тестов.",
+      "Инкремент 709966882..3c7c216dc: Go/adapter/scenarios 87-89 неизменны; H2 «Автономная работа» побайтово совпадает. Изменена только шапка ядра и добавлен check-skills в сценарий обкатки. Прежние доказательства обоих turn/start, отказов источника, false, старого worktree, receipt и семи мутаций применимы.",
+      "RULES.board.core.md:16-19 восстановлено явное требование отдельной сессии вне круга разработки со свежим контекстом; имя модели/agentctl check/stage/taskctl close сохранены. Примеры ролей удалены только из краткого ядра, полное правило RULES.board.md:43 их сохраняет.",
+      "kit/skills/check-skills.py:282-309: VERIFY_PHRASE требует точную строку «прогоняет отдельная сессия». Независимый cmdout python3 kit/skills/check-skills.py на 3c7c216dc завершился 0: ok, проверено 20.",
+      "tools/taskctl/rehearse.go:scenarioSteps,cmdRehearse: добавленная строка python3 kit/skills/check-skills.py является отдельным шагом; любая красная строка запрещает зелёную отметку всей обкатки. Успех следующих artifact-проверок не маскирует её отказ.",
+      "docs/tasks/DK-1739.md: обновлённый obeycheck 87 для шапки 3c7c216dc зачтён, кандидат 3/3 и старая база 3/3. H2 неизменен, поэтому доказательства 88/89 сохраняют применимость. Повторный regcheck на той же вершине PASS. Полный штатный merge-прогон запускает диспетчер; отдельный компонент check-skills уже PASS 20."
     ]
   },
   "rules": [
@@ -711,6 +716,11 @@
           "object": "изменённый контракт",
           "location": "tools/dashboard/README.md; docs/tasks/DK-1739.md",
           "observation": "README описывает путь обновления devkit и бинаря, момент передачи и сбои; файл задачи содержит команды запуска стенда и ограничения измерения поведения базы."
+        },
+        {
+          "object": "инкремент DK-1739 / common-style:STYLE-016",
+          "location": "docs/tasks/DK-1739.md:Сценарий проверки",
+          "observation": "В существующий сценарий добавлен отдельный запуск check-skills перед сборкой и проверкой artifact; все названные команды существуют."
         }
       ]
     },
@@ -726,6 +736,11 @@
           "object": "тесты изменённой дороги",
           "location": "tools/dashboard/appchat_test.go; tools/dashboard/apptask_regression_test.go; tools/dashboard/tasks_test.go:TestMain; tools/obeycheck/testdata/autonomous_commit.py",
           "observation": "Go-код поставляется вместе с appchat_test/apptask_regression_test, сценарии и Python adapter находятся в том же коммите."
+        },
+        {
+          "object": "инкремент DK-1739 / common-tests:TEST-001",
+          "location": "kit/skills/check_skills_test.py:TestVerifyRunner",
+          "observation": "Инкремент меняет только prompt/сценарий. Существующий тест защищает точную фразу, независимый check-skills PASS 20; нового production кода без теста нет."
         }
       ]
     },
@@ -741,6 +756,11 @@
           "object": "TEST-002 / DK-1739",
           "location": "docs/tasks/DK-1739.md:Проверка; .devkit/log:2026-11-19T22:23:07",
           "observation": "regcheck --base main -- devkitctl test tools/dashboard -run ^TestAppTaskInstructionsRefreshOnResume$ -count=1 завершился 0: тест краснеет на main и проходит на текущем коде. Диспетчер сообщил точную команду/версию/результат, журнал подтверждает успех."
+        },
+        {
+          "object": "инкремент DK-1739 / common-tests:TEST-002",
+          "location": ".devkit/log:2026-11-19T22:36:28",
+          "observation": "Диспетчер повторил прежний regcheck на 3c7c216dc; успех подтверждён журналом. Неизменившаяся Go-регрессия по-прежнему закрыта."
         }
       ]
     },
@@ -1491,6 +1511,11 @@
           "object": "block-b3298c360a523f07 / DK-1739",
           "location": "RULES.board.core.md:23-28; tools/dashboard/README.md:292-307; tools/obeycheck/scenarios/87-autonomous-commit.md; tools/obeycheck/scenarios/88-autonomous-commit-resume.md; tools/obeycheck/scenarios/89-autonomous-delivery.md",
           "observation": "python3 hooks/check-symbols.py для перечисленных файлов завершился 0; gofmt -l для шести изменённых Go-файлов пуст; git diff --check чист. Последняя формулировка ядра 1497 символов."
+        },
+        {
+          "object": "инкремент DK-1739 / project-style:block-b3298c360a523f07",
+          "location": "RULES.board.core.md:16-21",
+          "observation": "Шапка восстанавливает буквальный контракт и не меняет H2. Текст остаётся на русском, общий объём ядра 1497 символов."
         }
       ]
     }

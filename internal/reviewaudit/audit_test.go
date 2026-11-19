@@ -116,6 +116,27 @@ func TestReviewAuditIntegrationCompleteAndMetadataCommit(t *testing.T) {
 	}
 }
 
+func TestOrdinaryEvidenceCannotHideOpenOrViolatedObject(t *testing.T) {
+	root, path := fixture(t)
+	r := completed(t, root, path)
+	rule := findTargetRule(t, &r, "common-architecture:ARCH-001")
+	const heading = "### Проверка операции"
+	for _, result := range []string{"pending", "violated"} {
+		rule.Evidence[0].Result = result
+		rule.Evidence[0].Heading = heading
+		save(t, path, r)
+		for _, err := range []error{checkCoverage(r, heading), Validate(root, path, "XR-1")} {
+			if err == nil || !strings.Contains(err.Error(), "результат доказательства") {
+				t.Fatalf("%s: %v", result, err)
+			}
+		}
+	}
+	rule.Result = "violated"
+	if err := checkCoverage(r, heading); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReviewAuditIntegrationRequiresSubchecksForClean(t *testing.T) {
 	root, path := fixture(t)
 	r := completed(t, root, path)

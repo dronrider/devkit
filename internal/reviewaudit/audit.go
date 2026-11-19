@@ -798,6 +798,9 @@ func validateSnapshot(root, path, auditPath string, r, now Report, id string) er
 			}
 			continue
 		}
+		if err := checkEvidenceVerdicts(rr); err != nil {
+			return err
+		}
 		switch rr.Applicability {
 		case "not_applicable":
 		case "applicable":

@@ -127,6 +127,27 @@ func untrackedSummary(root, path string) (string, error) {
 	return name, nil
 }
 
+// Older evidence has no per-object result. A populated result must agree
+// with the rule even when the rule has no specialised evidence schema.
+func checkEvidenceVerdicts(rule Rule) error {
+	for _, entry := range rule.Evidence {
+		switch entry.Result {
+		case "", "not_applicable":
+			continue
+		case "checked", "pending", "violated":
+		default:
+			return fmt.Errorf("%s / %s: неизвестный результат %q", rule.ID, entry.Object, entry.Result)
+		}
+		if rule.Applicability == "not_applicable" ||
+			(entry.Result == "violated" && rule.Result != "violated") ||
+			(entry.Result == "pending" && rule.Result == "checked") {
+			return fmt.Errorf("%s / %s: результат доказательства %s противоречит выводу %s (%s)",
+				rule.ID, entry.Object, entry.Result, rule.Result, rule.Applicability)
+		}
+	}
+	return nil
+}
+
 func checkCoverage(report Report, summary string) error {
 	headings := summarySections(summary)
 	var issues []error
@@ -141,6 +162,8 @@ func checkCoverage(report Report, summary string) error {
 			issues = append(issues, checkSplitRule(rule, checks)...)
 		} else if rule.Applicability == "applicable" && tracked {
 			issues = append(issues, checkObjects(rule, []string{""})...)
+		} else {
+			issues = append(issues, checkEvidenceVerdicts(rule))
 		}
 		linked := false
 		targets := make(map[string]Target, len(rule.Targets))

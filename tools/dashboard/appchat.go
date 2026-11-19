@@ -365,10 +365,27 @@ func (e *appThreadWriterConflict) Error() string {
 
 func (e *appThreadWriterConflict) Unwrap() error { return e.cause }
 
+var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
+var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
+
 // appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
 // продолжением. Отказ на любом шаге убивает процесс и называется словами с
 // хвостом stderr, потому что причины входа клиент пишет именно туда.
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
+	s.appMu.Lock()
+	if s.appStarting[sid] != nil || s.appChats[sid] != nil {
+		s.appMu.Unlock()
+		return nil, errAppStarting
+	}
+	started := make(chan struct{})
+	s.appStarting[sid] = started
+	s.appMu.Unlock()
+	defer func() {
+		s.appMu.Lock()
+		delete(s.appStarting, sid)
+		close(started)
+		s.appMu.Unlock()
+	}()
 	c := &appChat{sid: sid, h: h, model: model, dir: dir, project: project, thread: thread}
 	st := s.chatStoreRead(sid)
 	c.automatic = s.appAutomaticReview(sid, st)
@@ -487,10 +504,17 @@ func appEffort(effort string) string {
 // ответом и даже раньше него, и занятость, открытая после ответа, опаздывает
 // за собственным погашением и висит вечно. Ручка отвечает сразу: реплика у
 // клиента.
-func (s *server) appTurn(c *appChat, text string) error {
+func (s *server) appTurn(c *appChat, text string, record bool) error {
 	c.mu.Lock()
+	if c.busy {
+		c.mu.Unlock()
+		return errAppTurnBusy
+	}
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
+	if record {
+		s.appSayRecord(c.sid, text)
+	}
 	_, err := c.proc.call("turn/start", map[string]any{
 		"threadId": c.thread,
 		"input":    []map[string]string{{"type": "text", "text": text}},
@@ -722,7 +746,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			s.logf("разговор %s не поднялся дорогой app-server: %s", sid, msg)
 			status := http.StatusBadGateway
 			var conflict *appThreadWriterConflict
-			if errors.As(err, &conflict) {
+			if errors.As(err, &conflict) || errors.Is(err, errAppStarting) {
 				status = http.StatusConflict
 			}
 			body := map[string]string{"error": "чат не поднялся: " + msg}
@@ -732,9 +756,6 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			writeJSON(w, status, body)
 			return
 		}
-		if st.Thread != c.thread {
-			st.Thread = c.thread
-		}
 	}
 	c.setEffort(st.CxEffort)
 	if st.Model != model || st.Harness != harness || st.Thread != c.thread || effortSet {
@@ -743,13 +764,11 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			s.logf("настройки разговора %s не записались: %v", sid, err)
 		}
 	}
-	if c.busyNow() {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп",
-			"stuck": "ход чужого протокола идёт, реплика не принята"})
-		return
-	}
-	s.appSayRecord(sid, text)
-	if err := s.appTurn(c, text); err != nil {
+	if err := s.appTurn(c, text, true); err != nil {
+		if errors.Is(err, errAppTurnBusy) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "stuck": "ход чужого протокола идёт, реплика не принята"})
+			return
+		}
 		msg := err.Error()
 		s.logf("реплика разговора %s не ушла в app-server: %s", sid, msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "реплика не ушла: " + msg})
@@ -816,7 +835,7 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("настройки разговора %s не записались: %v", sid, err)
 	}
-	if err := s.appTurn(c, text); err != nil {
+	if err := s.appTurn(c, text, false); err != nil {
 		msg := err.Error()
 		s.logf("первая реплика разговора %s не ушла: %s", sid, msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат поднялся, но реплика не ушла: " + msg})
@@ -860,7 +879,9 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 	}
 	c.proc.kill()
 	s.appMu.Lock()
-	delete(s.appChats, sid)
+	if s.appChats[sid] == c {
+		delete(s.appChats, sid)
+	}
 	s.appMu.Unlock()
 	c.mu.Lock()
 	c.busy = false
@@ -876,6 +897,12 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 // и перезапуск. Лента остаётся, нить клиента продолжится следующим подъёмом.
 func (s *server) appDrop(sid, why string) {
 	s.appMu.Lock()
+	for s.appStarting[sid] != nil {
+		started := s.appStarting[sid]
+		s.appMu.Unlock()
+		<-started
+		s.appMu.Lock()
+	}
 	c := s.appChats[sid]
 	delete(s.appChats, sid)
 	s.appMu.Unlock()
@@ -1086,13 +1113,10 @@ func (s *server) appCarrierTurn(p *Project, sid, text string) error {
 			return err
 		}
 	}
-	if c.busyNow() {
+	c.setEffort(st.CxEffort)
+	err := s.appTurn(c, text, true)
+	if errors.Is(err, errAppTurnBusy) {
 		return fmt.Errorf("ход уже идёт: ответ согласования пока не доставлен")
 	}
-	c.setEffort(st.CxEffort)
-	s.appSayRecord(sid, text)
-	if err := s.appTurn(c, text); err != nil {
-		return err
-	}
-	return nil
+	return err
 }

@@ -559,12 +559,16 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		}
 		json.Unmarshal(params, &p)
 		s.appMu.Lock()
-		if c := s.appChats[sid]; c != nil && (p.ThreadID == "" || p.ThreadID == c.thread) {
-			c.mu.Lock()
-			if c.taskNotes == nil {
-				c.busy = false
+		owner := ""
+		if c := s.appChats[sid]; c != nil {
+			owner = c.thread
+			if p.ThreadID == "" || p.ThreadID == owner {
+				c.mu.Lock()
+				if c.taskNotes == nil {
+					c.busy = false
+				}
+				c.mu.Unlock()
 			}
-			c.mu.Unlock()
 		}
 		s.appMu.Unlock()
 		var message string
@@ -577,8 +581,12 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 			}
 		}
 		if message != "" {
-			s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true,
-				Text: "ход кончился отказом клиента: " + message, Time: now}})
+			item := reply{Role: "assistant", Fail: true,
+				Text: "ход кончился отказом клиента: " + message, Time: now}
+			if p.ThreadID != "" && owner != "" && p.ThreadID != owner {
+				item.Sub = p.ThreadID
+			}
+			s.appFeedAppend(sid, []reply{item})
 		}
 		return
 	}

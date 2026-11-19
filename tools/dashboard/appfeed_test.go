@@ -394,9 +394,23 @@ func TestAppFeedTurnError(t *testing.T) {
 				if len(got) != 0 {
 					t.Fatalf("ложный отказ: %+v", got)
 				}
-			} else if len(got) != 1 || !got[0].Fail || got[0].Role != "assistant" || !strings.Contains(got[0].Text, tc.want) {
+			} else if len(got) != 1 || !got[0].Fail || got[0].Role != "assistant" || got[0].Sub != "" || !strings.Contains(got[0].Text, tc.want) {
 				t.Fatalf("отказ не дошёл: %+v", got)
 			}
 		})
+	}
+}
+
+func TestAppFeedChildTurnError(t *testing.T) {
+	e, _ := appEnv(t)
+	sid := "as-child-error"
+	e.s.appChats[sid] = &appChat{thread: "parent", busy: true}
+	e.s.appNote(sid, "turn/completed", json.RawMessage(`{"threadId":"child","turn":{"status":"failed","error":{"message":"model_not_found","codexErrorInfo":"other"}}}`))
+	if !e.s.appChats[sid].busyNow() {
+		t.Fatal("дочерний ход освободил родительский")
+	}
+	got := e.s.appFeedRead(sid)
+	if len(got) != 1 || !got[0].Fail || got[0].Sub != "child" || !strings.Contains(got[0].Text, "model_not_found") {
+		t.Fatalf("принадлежность отказа потеряна: %+v", got)
 	}
 }

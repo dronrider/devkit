@@ -239,7 +239,7 @@ class CodexProfileTest(unittest.TestCase):
             self.assertNotIn(outsider, joined,
                              "в команде делегирования %s, а клиенту его не положено" % outsider)
         models = {"mini": "gpt-6-luna", "base": "gpt-6.1-terra",
-                  "pro": "gpt-6.1-sol", "max": "gpt-6-astra"}
+                  "pro": "gpt-6.2-sol", "max": "gpt-6.2-astra"}
         for tier, model in models.items():
             self.assertEqual(self.prof.str_of("delegate", "map_" + tier), model,
                              "ярус %s маппится не в назначенную модель" % tier)

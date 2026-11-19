@@ -224,7 +224,7 @@ class MimoSnapTest(unittest.TestCase):
         rc, out = self.snap(home, stub)
         self.assertEqual(rc, 0, out)
         self.assertIn("spent_cred = 40 кред", out)
-        self.assertIn("/tokenPlan/usage", Cab.calls)
+        self.assertIn("/api/v1/tokenPlan/usage", Cab.calls)
 
     def test_live_cookie_renews_before_usage(self):
         """Живая кука. Плановое продление переиздаёт сессию до запроса

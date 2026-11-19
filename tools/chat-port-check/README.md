@@ -13,7 +13,7 @@ python3 tools/chat-port-check/chat-port-check.py \
   --out /tmp/dk1624-run1 \
   --claude-cmd "<обёртка подписки Claude>" \
   --codex-cmd "codex app-server --stdio" \
-  --codex-model gpt-6.1-sol
+  --codex-model gpt-6.2-sol
 ```
 
 `--workdir` это родитель временных проектов, сценарий создаёт в нём три

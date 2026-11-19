@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestAppSharedImageOnlyUserMessage(t *testing.T) {
+	item := map[string]any{"content": []any{map[string]any{"type": "localImage", "path": "/sample/image.png"}}}
+	replies := appSharedUserReplies(item, "")
+	if len(replies) != 1 || replies[0].Role != "user" || replies[0].Text != "[изображение]" {
+		t.Fatalf("реплика с изображением: %+v", replies)
+	}
+}
+
 func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	const first = `{"data":[{"id":"turn-1","status":"completed","startedAt":10,"items":[
 		{"type":"userMessage","id":"user-1","startedAtMs":11000,"content":[{"type":"text","text":"первая"},{"type":"localImage"},{"type":"text","text":"строка"}]},
@@ -73,7 +81,7 @@ func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("в ленте %d записей, жду 3: %+v", len(items), items)
 	}
-	if items[0].Role != "user" || items[0].Text != "первая\nстрока" ||
+	if items[0].Role != "user" || items[0].Text != "первая\nстрока\n[изображение]" || items[0].Wire != "первая\nстрока" ||
 		items[0].Time != "1970-01-01T00:00:11Z" || items[0].App.identity() !=
 		appEventIdentity("item/completed", chat.thread, "turn-1", "user-1") {
 		t.Fatalf("первая реплика: %+v", items[0])

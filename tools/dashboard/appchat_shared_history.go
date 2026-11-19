@@ -9,23 +9,30 @@ import (
 
 func appSharedUserReplies(item map[string]any, now string) []reply {
 	content, _ := item["content"].([]any)
-	var parts []string
+	var parts, attachments []string
 	for _, part := range content {
 		input, _ := part.(map[string]any)
-		if input["type"] == "text" {
+		switch input["type"] {
+		case "text":
 			if text, ok := input["text"].(string); ok {
 				parts = append(parts, text)
 			}
+		case "image", "localImage":
+			attachments = append(attachments, "[изображение]")
 		}
 	}
 	wire := strings.Join(parts, "\n")
-	if strings.TrimSpace(wire) == "" {
+	if strings.TrimSpace(wire) == "" && len(attachments) == 0 {
 		return nil
+	}
+	text := wire
+	if len(attachments) > 0 {
+		text = strings.TrimSpace(strings.Join(append(parts, attachments...), "\n"))
 	}
 	if ms, ok := item["startedAtMs"].(float64); ok && ms > 0 {
 		now = time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339)
 	}
-	return []reply{{Role: "user", Text: wire, Wire: wire, Time: now}}
+	return []reply{{Role: "user", Text: text, Wire: wire, Time: now}}
 }
 
 type appSharedHistoryPage struct {

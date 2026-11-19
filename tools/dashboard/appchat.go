@@ -466,6 +466,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 			return nil, errors.New("подписка общего чата Codex изменилась")
 		}
 		proc, err = s.appServerConnect(st.SharedSocket, buffered.add)
+		if err != nil {
+			return nil, fmt.Errorf("общий сервер Codex недоступен: %w", err)
+		}
 	} else {
 		proc, err = s.appServerStart(h, dir, binPath(agentctlBin), receive, env...)
 	}
@@ -1007,6 +1010,10 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 	if err != nil {
 		msg := err.Error()
 		s.logf("разговор %s не поднялся дорогой app-server: %s", sid, msg)
+		if st.SharedSocket != "" {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg, "refused": msg})
+			return
+		}
 		s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true, Text: "чат не поднялся: " + msg, Time: s.now().UTC().Format(time.RFC3339)}})
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "чат не поднялся: " + msg})
 		return

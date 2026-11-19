@@ -2,9 +2,45 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestAppSharedSocketDoesNotFallBackWhenDaemonIsAbsent(t *testing.T) {
+	t.Setenv(appSharedSocketEnv, "")
+	t.Setenv("CODEX_HOME", "")
+	home := t.TempDir()
+	previous := realHomeFn
+	realHomeFn = func() string { return home }
+	t.Cleanup(func() { realHomeFn = previous })
+	socket := filepath.Join(home, ".codex", "app-server-control", "app-server-control.sock")
+	h := &Harness{Name: "codex", Protocol: "codex"}
+	if got := appNewSharedSocket(h, chatStore{}); got != socket {
+		t.Fatalf("адрес недоступного общего сервера: %q, жду %q", got, socket)
+	}
+	if got := appNewSharedSocket(h, chatStore{TaskRun: true}); got != "" {
+		t.Fatalf("конвейер подключился бы к общему серверу: %q", got)
+	}
+}
+
+func TestAppSharedNewChatReportsUnavailableDaemon(t *testing.T) {
+	e, client := appEnv(t)
+	t.Setenv(appSharedSocketEnv, filepath.Join(t.TempDir(), "absent.sock"))
+	res := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats",
+		`{"text":"проверка","model":"модель-codex","harness":"codextest"}`)
+	data := body(t, res)
+	if res.StatusCode != http.StatusBadGateway || !strings.Contains(data, "общий сервер Codex недоступен") ||
+		!strings.Contains(data, `"refused"`) {
+		t.Fatalf("создание чата без сокета: %d %s", res.StatusCode, data)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "fake-app-log")); !os.IsNotExist(err) {
+		t.Fatalf("вместо общего сервера запущен отдельный процесс: %v", err)
+	}
+}
 
 func TestAppSharedNotificationsOnlyResumeTheirThread(t *testing.T) {
 	var buffer appSharedNotifications

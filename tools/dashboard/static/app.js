@@ -13117,6 +13117,10 @@ async function chatRaise(project, st, text, pick, onTmux, msgID) {
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
     if (r.body.unknown) return { held: r.body.error || "исход запуска не подтверждён" };
+    if (r.body.refused) {
+      sayResult(r.body.refused, true);
+      return { refused: r.body.refused };
+    }
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
@@ -15054,6 +15058,7 @@ function chatPanel(project, st) {
         (name) => echo.mark(m, name), m.id)
         .then((got) => {
           if (got && got.held) { echo.held(m, got.held, undefined, true); busy.off(); return; }
+          if (got && got.refused) { echo.refused(m, got.refused); busy.off(); return; }
           if (got === false) {
             echo.bad(m);
             busy.off();

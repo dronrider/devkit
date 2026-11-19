@@ -40,6 +40,9 @@ func appNewSharedSocket(h *Harness, st chatStore) string {
 	}
 	socket := os.Getenv(appSharedSocketEnv)
 	if socket == "" {
+		if h.Name != "codex" {
+			return ""
+		}
 		if home := os.Getenv("CODEX_HOME"); home != "" && !appSamePath(home, appSharedHome(h)) {
 			return ""
 		}
@@ -51,10 +54,7 @@ func appNewSharedSocket(h *Harness, st chatStore) string {
 	if !filepath.IsAbs(socket) {
 		return ""
 	}
-	if fi, err := os.Stat(socket); err == nil && fi.Mode()&os.ModeSocket != 0 {
-		return socket
-	}
-	return ""
+	return socket
 }
 
 func appSamePath(a, b string) bool {

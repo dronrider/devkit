@@ -218,6 +218,7 @@ func appStartChat(t *testing.T, e *testEnv, c *http.Client, text string) string 
 	if r.Way != "appserver" || !strings.HasPrefix(r.Session, "as") || r.Model != "модель-codex" {
 		t.Fatalf("подъём ответил не дорогой app-server: %+v", r)
 	}
+	t.Cleanup(func() { e.s.appDrop(r.Session, "конец теста") })
 	return r.Session
 }
 
@@ -421,10 +422,11 @@ func TestAppChatSayStopResume(t *testing.T) {
 	appMode(t, e, "")
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
 		`{"text": "третий вопрос", "msg_id": "m-3"}`)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("реплика после остановки не ушла: %d %s", resp.StatusCode, body(t, resp))
+	if got := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика после остановки не ушла: %d %s", resp.StatusCode, got)
 	}
-	appWaitFeed(t, e, sid, "ответ на реплику")
+	appWaitFeed(t, e, sid, "ответ на реплику: третий вопрос")
+	appWaitBusy(t, e, c, sid, false)
 	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
 	if strings.Count(log, "start ") != 1 || strings.Count(log, "turn") != 3 {
 		t.Fatalf("разговор после остановки пошёл не той нитью: %s", log)

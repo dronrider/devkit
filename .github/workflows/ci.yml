@@ -13,6 +13,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: установить браузер и шрифты для тестов дашборда
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/dashboard-browsers
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dashboard" playwright@1.62.1
+          modules="$RUNNER_TEMP/dashboard/node_modules"
+          "$modules/.bin/playwright" install --with-deps --only-shell chromium
+          chrome=$(find "$PLAYWRIGHT_BROWSERS_PATH" -type f -name chrome-headless-shell)
+          "$chrome" --version
+          echo "DASHBOARD_CHROME=$chrome" >> "$GITHUB_ENV"
+          echo "NODE_PATH=$modules" >> "$GITHUB_ENV"
       # Перечень го-модулей раннер находит сам, по факту go.mod под tools/
       # (parallel.go_tools): хранёный список руками уже расходился с деревом
       # и молчал об этом, пока cmdout и secretctl не выпали из CI незамеченно

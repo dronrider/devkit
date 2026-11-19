@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1671,6 +1673,43 @@ func appendLine(t *testing.T, path, line string) {
 // isSidechain, как их пишет харнес.
 func sideLine(text, at string) string {
 	return fmt.Sprintf(`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":%q}]},"timestamp":%q}`, text, at) + "\n"
+}
+
+type sessionFlushRecorder struct {
+	*httptest.ResponseRecorder
+	afterFlush func()
+}
+
+func (w sessionFlushRecorder) Flush() {
+	w.ResponseRecorder.Flush()
+	w.afterFlush()
+}
+
+func TestSessionStreamSubLogDuringFirstFlush(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aaa-1.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	defer func() { tailPoll = old }()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	first := true
+	w := sessionFlushRecorder{rec, func() {
+		if first {
+			first = false
+			writeSubLog(t, path, "new1", "разбор находки", sideLine("смотрю дерево", "2026-08-10T10:00:08.000Z"))
+			return
+		}
+		cancel()
+	}}
+	req := httptest.NewRequestWithContext(ctx, "GET", "/?stream=1", nil)
+	(&server{}).streamSession(w, req, "aaa-1", path, nil)
+	if !strings.Contains(rec.Body.String(), `"key":"agent-new1:0.0"`) {
+		t.Fatalf("журнал, созданный при отправке первого события, пропал из потока: %s", rec.Body)
+	}
 }
 
 // Субагента зовут и посреди открытого потока: его журнал заводится позже

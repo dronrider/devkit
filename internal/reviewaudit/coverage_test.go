@@ -45,6 +45,29 @@ func TestNameChecksLiteralReturnAndConsumer(t *testing.T) {
 	assertTargetCheck(t, check(), "actual_at")
 }
 
+func TestScalarProofMustBelongToFunctionAndConfirmExpectedValue(t *testing.T) {
+	root, path := fixture(t)
+	write(t, filepath.Join(root, "sample.py"), "def label():\n    return 'small'\ndef other():\n    return 'large'\nassert label() == 'small'\nassert label() != 'large'\nassert label() == 'small' or True\n")
+	files, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	source := &evidenceSource{root: root, reportPath: path, files: files, cache: make(map[string][]string)}
+	word := "label"
+	for _, tc := range []struct{ value, at, use, consumer, want string }{
+		{"'small'", "sample.py:2", "sample.py:5", "assert label() == 'small'", ""},
+		{"'large'", "sample.py:4", "sample.py:6", "assert label() != 'large'", "actual_at"},
+		{"'small'", "sample.py:2", "sample.py:6", "assert label() != 'large'", "consumer_at"},
+		{"'small'", "sample.py:2", "sample.py:7", "assert label() == 'small'", "consumer_at"},
+	} {
+		ev := Evidence{Object: "sample.py:1#label", Check: "result", Result: "checked",
+			ObjectComparison: &NameObjectComparison{Expected: []string{word}, Actual: tc.value, ActualAt: tc.at},
+			ResultEvidence:   &ResultEvidence{Word: &word, Returned: tc.value, ReturnAt: tc.at, Consumer: tc.consumer, ConsumerAt: tc.use}}
+		assertTargetCheck(t, checkNameObject(ev, &word, []string{word}, tc.value, "sample.py:1", source), tc.want)
+	}
+}
+
 func TestNamingRejectsEmptyExpectedForNamedResultAndWrite(t *testing.T) {
 	root, path := fixture(t)
 	write(t, filepath.Join(root, "code.go"), `package sample

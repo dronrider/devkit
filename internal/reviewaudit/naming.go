@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -415,6 +416,8 @@ func (g *queryGoSource) checkNameGap(declaration, check string, fact ReviewFact,
 	return fmt.Errorf("%s: покажите возврат, запись или вызов с %q, после которого остаётся вопрос", fact.Location, symbol)
 }
 
+var quotedScalar = regexp.MustCompile(`^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$`)
+
 // A scalar result can have no identifier. For non-Go code the stable
 // evidence is the literal return and a caller that checks that same value.
 func checkScalarReturn(e Evidence, decl, line string, source *evidenceSource) error {
@@ -426,16 +429,28 @@ func checkScalarReturn(e Evidence, decl, line string, source *evidenceSource) er
 		return errors.Join(err, resultErr, readErr)
 	}
 	value := pair.Actual
-	if file != resultFile || base != resultBase || resultLine <= declLine ||
+	if file != resultFile || base != resultBase || resultLine != declLine+1 ||
 		result.ReturnAt != pair.ActualAt || result.Returned != value ||
 		strings.TrimSuffix(strings.TrimSpace(line), ";") != "return "+value {
 		return fmt.Errorf("actual_at: укажите строку возврата литерала %q и его точное значение", value)
 	}
 	_, symbol, ok := strings.Cut(e.Object, "#")
-	if !ok || symbol == "" || !containsIdentifier(result.Consumer, symbol) ||
-		!containsIdentifier(result.Consumer, value) || !strings.Contains(consumer, result.Consumer) ||
-		result.ConsumerAt == pair.ActualAt {
-		return fmt.Errorf("consumer_at: покажите использование %s с проверкой значения %s", symbol, value)
+	declaration, err := source.line(decl)
+	if err != nil {
+		return err
+	}
+	if !ok || symbol == "" || !containsIdentifier(declaration, symbol) {
+		return fmt.Errorf("actual_at: проверьте объявление %s перед возвратом", symbol)
+	}
+	// Match the complete assertion. A substring could be negated or be
+	// only one arm of an expression which succeeds for another reason.
+	call := regexp.QuoteMeta(symbol) + `\s*\([^()]*\)`
+	literal := regexp.QuoteMeta(value)
+	assertion := regexp.MustCompile(`^(?:assert\s+` + call + `\s*==\s*` + literal +
+		`|assert\.(?:equal|strictEqual)\(\s*` + call + `\s*,\s*` + literal + `\s*\))$`)
+	actualUse := strings.TrimSuffix(strings.TrimSpace(consumer), ";")
+	if actualUse != strings.TrimSuffix(strings.TrimSpace(result.Consumer), ";") || !assertion.MatchString(actualUse) {
+		return fmt.Errorf("consumer_at: покажите проверку равенства результата %s и значения %s", symbol, value)
 	}
 	return nil
 }
@@ -470,8 +485,7 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 	if e.Check == "result" && !isGoRef(declaration) && e.ResultEvidence != nil &&
 		e.ResultEvidence.Flow == nil && pair.Proof == nil && pair.EquivalentFlow == nil && pair.EquivalentAt == "" {
 		_, numberErr := strconv.ParseFloat(pair.Actual, 64)
-		_, stringErr := strconv.Unquote(pair.Actual)
-		if (numberErr == nil && strings.ContainsAny(pair.Actual, "0123456789")) || stringErr == nil {
+		if (numberErr == nil && strings.ContainsAny(pair.Actual, "0123456789")) || quotedScalar.MatchString(pair.Actual) {
 			return checkScalarReturn(e, declaration, line, source)
 		}
 	}

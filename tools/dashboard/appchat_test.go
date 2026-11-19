@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -200,10 +199,12 @@ esac`)
 		e.srv.Close()
 		e.s.appTasksClose()
 		e.s.appMu.Lock()
-		ids := slices.Collect(maps.Keys(e.s.appChats))
+		chats := maps.Clone(e.s.appChats)
 		e.s.appMu.Unlock()
-		for _, id := range ids {
-			e.s.appDrop(id, "конец теста")
+		for id, chat := range chats {
+			if chat.proc != nil {
+				e.s.appDrop(id, "конец теста")
+			}
 		}
 		e.s.appWorkers.Wait()
 	})

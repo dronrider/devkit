@@ -655,7 +655,7 @@ def main():
                         help="модель клиента Claude Code, если нужна")
     parser.add_argument("--codex-cmd", default="codex app-server --stdio",
                         help="команда запуска codex app-server")
-    parser.add_argument("--codex-model", default="gpt-6.1-sol",
+    parser.add_argument("--codex-model", default="gpt-6.2-sol",
                         help="модель Codex")
     parser.add_argument("--timeout", type=int, default=300,
                         help="таймаут одного прогона клиента и turn, секунды")

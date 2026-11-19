@@ -68,6 +68,7 @@ class HappyPathTest(Stand):
         done = self.run_driver()
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.report["errors"], [])
+        self.assertEqual(self.report["setup"]["codex_model"], "fake-model")
         self.assertIn("отчёт:", done.stdout)
 
         phase = self.report["stages"]["claude_phase"]
@@ -140,6 +141,25 @@ class HappyPathTest(Stand):
         self.assertNotIn(str(self.out.resolve()), report_text)
         self.assertEqual(self.report["setup"]["workdir"],
                          self.work.resolve().name)
+
+
+class DefaultModelTest(Stand):
+    def build_argv(self):
+        argv = super().build_argv()
+        at = argv.index("--codex-model")
+        del argv[at:at + 2]
+        return argv
+
+    def test_default_model_reaches_client(self):
+        done = self.run_driver()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.report["setup"]["codex_model"], "gpt-6.2-sol")
+        requests = [json.loads(line) for line in
+                    (self.out / "codex1_in.jsonl").read_text(
+                        encoding="utf-8").splitlines()]
+        self.assertEqual([request["params"]["model"] for request in requests
+                          if request.get("method") == "thread/start"],
+                         ["gpt-6.2-sol"])
 
 
 class RejectToolsTest(Stand):

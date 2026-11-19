@@ -29,9 +29,11 @@ const bulk = { views: drafts.map((d) => d.id === "XR-D1"
     { id: "another", board_id: "XR-100", revision: 1, outcome: "add", title: "Вторая задача", text: "Описание" }])
   : view(d.id, null)) };
 
+let holdHistory;
 const { sandbox, byId, asked } = makeSandbox(app, (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };
   if (path === "/api/projects/demo/drafts") return { drafts };
+  if (path === "/api/projects/demo/drafts?history=1" && holdHistory) return holdHistory();
   if (path === "/api/projects/demo/drafts/prepared") return bulk;
   if (path === "/api/projects/demo/drafts/types") return { types: [{ name: "task", title: "Задача" }] };
   if (path === "/api/harnesses") return { harnesses: [] };
@@ -75,5 +77,24 @@ await sandbox.refresh(); await settle();
   const per = perDraft();
   check(per.length === 0, "обновление читает подготовленные задачи по записям: " + per.join(", "));
 }
+
+// Пока накопитель ждёт историю, человек уже открыл запись.
+let release;
+let notify;
+const requested = new Promise(resolve => { notify = resolve; });
+holdHistory = () => {
+  notify();
+  return new Promise(resolve => { release = resolve; });
+};
+const listRefresh = sandbox.refresh();
+await requested;
+sandbox.location.hash = "#demo/draft/XR-010";
+await sandbox.refresh();
+const groups = byId.get("groups");
+const description = byClass(groups, "draft-description");
+check(description, "экран записи не открылся");
+release({ drafts: [] });
+await listRefresh;
+check(byClass(groups, "draft-description") === description, "поздний ответ накопителя заменил открытую запись");
 
 console.log("состав согласования читается одним общим ответом при любом числе записей");

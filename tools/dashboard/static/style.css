@@ -2757,18 +2757,12 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    проекта в первой, кнопки-действия во второй, а поиск и так живёт лупой среди
    кнопок. Разрыв делает ::after во всю ширину: он встаёт флекс-элементом между
    селектом и кнопками, и разметка не трогается */
-@media (max-width:360px){
-  /* На узком экране в 320 точек полей баджа уже не хватает: подписи табов
-     стоят ниже кеглем и без боковых полей (DK-1456), зазор табов остаётся
-     сжатым из блока 520 точек ниже */
-  .ktab{padding-left:0;padding-right:0;font-size:12.5px}
-  .ktab .n{font-size:10px}
-}
 @media (max-width:520px){
   /* Полоса четырёх табов доски на телефоне впритык: зазор табов и поля
      баджа сжаты, иначе полоса уезжает за край карточки (DK-1456) */
   .ktabs{gap:var(--sp2)}
   .ktab .n{margin-left:var(--sp1);padding:1px var(--sp1)}
+  .tacts .split .lb{font-weight:500}
   .bhead{flex-wrap:wrap;row-gap:8px}
   .bhead::after{content:"";width:100%;order:1}
   /* легенда уезжает во вторую строку к кнопкам: первую делят имя и выбор
@@ -2795,6 +2789,11 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .cdrow b{padding-right:20px}
   .cchips{gap:3px}
   .cchips .chip{height:17px;padding:0 6px;gap:3px;font-size:9.5px}
+}
+@media (max-width:360px){
+  .ktabs{gap:var(--sp1)}
+  .ktab{padding-left:0;padding-right:0;font-size:12.5px}
+  .ktab .n{font-size:10px}
 }
 
 /* ---- табличный вид трёх разделов доски (POC DK-397) ----

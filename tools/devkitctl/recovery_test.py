@@ -98,6 +98,10 @@ class RecoveryTest(unittest.TestCase):
             os.environ.pop(key, None)
         self.dir = Path(tempfile.mkdtemp(prefix="recovery-test-"))
         self.addCleanup(shutil.rmtree, str(self.dir), True)
+        self.agentctl = self.dir / "agentctl"
+        self.agentctl.write_text("#!/bin/sh\nexit 1\n")
+        self.agentctl.chmod(0o755)
+        os.environ["PATH"] = str(self.dir) + os.pathsep + os.environ.get("PATH", os.defpath)
         self.home = self.dir / "home"
         (self.home / ".devkit").mkdir(parents=True)
         self.proj = self.dir / "proj"
@@ -131,6 +135,7 @@ class RecoveryTest(unittest.TestCase):
         return Shell(**kw)
 
     def inspect(self, argv, **kw):
+        self.assertEqual(argv[0], str(self.agentctl))
         if "harness" in argv and "quota" not in argv:
             value = {"harnesses":[{"name":"glm-code-2", "enabled":True, "auto":True, "models":[{"model":"glm-5.3"}]}]}
         else:
@@ -268,6 +273,12 @@ class RecoveryTest(unittest.TestCase):
                 if proc.poll() is None:
                     proc.kill()
                 proc.wait()
+
+    def test_missing_agentctl_blocks_resume(self):
+        call = self.shell()
+        with patch.dict(os.environ, PATH=str(self.proj), HOME=str(self.home)):
+            self.assertIn("agentctl не найден", " ".join(self.resume(call=call)))
+        self.assertEqual(call.calls, [])
 
     def test_source_state_and_quota_fail_closed(self):
         path = taskstate.path(self.home, self.proj, self.TASK)

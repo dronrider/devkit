@@ -382,6 +382,88 @@ func TestGoalLogStreamGoalDocAppends(t *testing.T) {
 	}
 }
 
+func TestGoalLogStreamAppendDuringFirstFlush(t *testing.T) {
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	defer func() { tailPoll = old }()
+	for _, tc := range []struct {
+		name, initial, added string
+		shell                bool
+	}{
+		{"документ", "## Журнал\n- начало\n", "- продолжение\n", false},
+		{"дописанный пункт", "## Журнал\n- начало\n- продол", "жение\n", false},
+		{"оболочка", "начало\n", "продолжение\n", true},
+		{"дописанная строка", "начало\nпродол", "жение\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "goal-XR-100.log")
+			docPath := filepath.Join(dir, "XR-100.md")
+			j := journalSources{id: "XR-100", logName: filepath.Base(logPath),
+				doc: journalDoc{path: docPath, rel: filepath.Base(docPath), seen: true}}
+			path, sign := docPath, j.docSign()
+			if tc.shell {
+				path, sign = logPath, j.logSign()
+			}
+			if err := os.WriteFile(path, []byte(tc.initial), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			rec := httptest.NewRecorder()
+			want := "event: source\ndata: " + sign + "\n\ndata: начало\n\ndata: продолжение\n\n"
+			first := true
+			w := sessionFlushRecorder{rec, func() {
+				if first {
+					first = false
+					appendLine(t, path, tc.added)
+				}
+				if rec.Body.String() == want {
+					cancel()
+				}
+			}}
+			req := httptest.NewRequestWithContext(ctx, "GET", "/?stream=1", nil)
+			(&server{}).streamGoalLog(w, req, logPath, j)
+			if got := rec.Body.String(); got != want {
+				t.Fatalf("поток после дописывания на первом событии: %q, ожидал %q", got, want)
+			}
+		})
+	}
+}
+
+func TestGoalLogMarkdownWithoutFinalNewline(t *testing.T) {
+	e := newTestEnv(t)
+	old := tailPoll
+	tailPoll = 10 * time.Millisecond
+	t.Cleanup(func() { tailPoll = old })
+	path := writeGoalDoc(t, e.proj, "XR-100", "## Журнал\n- сохранён")
+	c := e.loggedClient(t)
+	url := e.srv.URL + "/api/projects/demo/goals/XR-100/log"
+	resp := doReq(t, c, "GET", url, "")
+	var got struct{ Lines []string }
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil || !reflect.DeepEqual(got.Lines, []string{"сохранён"}) {
+		t.Fatalf("последний пункт документа: %v, %v", got.Lines, err)
+	}
+	r, done := sseClient(t, c, url+"?stream=1")
+	defer done()
+	if event, _ := sseNext(t, r); event != "source" {
+		t.Fatalf("первым событием пришло %q", event)
+	}
+	for _, step := range []struct{ want, append string }{
+		{"сохранён", "\n- начат"},
+		{"начат", "ый\n- метка\n"},
+		{"начатый", ""},
+		{"метка", ""},
+	} {
+		if _, data := sseNext(t, r); data != step.want {
+			t.Fatalf("пункт потока: %q, ожидал %q", data, step.want)
+		}
+		if step.append != "" {
+			appendLine(t, path, step.append)
+		}
+	}
+}
+
 // journalBoardJSON это доска с одной целью XR-100 и заданной ссылкой на её
 // файл: сито ссылки проверяется только настоящей ссылкой, прочерк ведёт на
 // путь по умолчанию.

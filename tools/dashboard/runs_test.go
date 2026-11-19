@@ -1246,6 +1246,7 @@ func runsEnvWithLog(t *testing.T, sessions string) (*testEnv, *http.Client, stri
 
 	bin := t.TempDir()
 	writeScript(t, bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
+	writeAgentctlFake(t, bin, harnessTiersFixture)
 	tmuxLog := filepath.Join(home, "tmux.log")
 	writeTmuxFake(t, bin, tmuxLog, sessions)
 	writeScript(t, bin, "claude", "exit 0")

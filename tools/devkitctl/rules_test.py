@@ -821,7 +821,7 @@ class GlobalPointDoctorTest(SandboxCase):
         finally:
             shutil.move(str(keep), str(grules))
         rc, out = self.box.doctor(self.proj)
-        self.assertEqual(rc, 0, "doctor нашёл находки после восстановления devkit: %s" % out)
+        self.assertDoctorClean(rc, out)
 
 
 class ThinFilesTest(SandboxCase):
@@ -1199,7 +1199,7 @@ class ProjectImportsTest(SandboxCase):
         rc, out = self.box.doctor(proj)
         self.assertNotIn_("до контекста не доезжает", out,
                           "правила доски не доезжают до подключённого проекта")
-        self.assertEqual(rc, 0, "доктор нашёл находки на свежем проекте с доской: %s" % out)
+        self.assertDoctorClean(rc, out)
         self.assertIn("@.devkit/devkit/RULES.board.md\n", read(proj / "CLAUDE.md"))
 
     def test_8_doctor_names_both_defects_of_a_handwritten_file(self):

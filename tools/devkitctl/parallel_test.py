@@ -203,6 +203,7 @@ class ComponentEnvTest(unittest.TestCase):
             else:
                 os.environ[name] = was
 
+    @mock.patch.dict(os.environ, TMPDIR="/tmp/devkit-component")
     def test_tail_leaves_every_component(self):
         # Хвост снимается у всякого компонента, не только у го: питоньи сюиты
         # строят свои объекты в процессе и читают окружение напрямую. PATH,
@@ -215,7 +216,7 @@ class ComponentEnvTest(unittest.TestCase):
             for name in self.POISON:
                 self.assertNotIn(name, env, "%s уехал в %s" % (name, argv[0]))
             for name in ("PATH", "HOME", "TMPDIR", "LANG", self.KNOB):
-                self.assertIn(name, env, "%s потерян у %s" % (name, argv[0]))
+                self.assertEqual(env.get(name), os.environ[name], "%s потерян у %s" % (name, argv[0]))
         self.assertEqual(parallel.command_env(["go", "test", "./..."])["GOWORK"],
                          "off", "го-компонент остался в чужом workspace")
 

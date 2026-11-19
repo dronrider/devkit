@@ -4524,8 +4524,8 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	return archDone{dropped: true, tmux: name, message: "разговор убран в архив, сессия снята"}, nil
 }
 
-// handleChatModel сохраняет выбор для следующего хода. У Codex в той же
-// подписке модель задаётся turn/start, поэтому нить и идущий ход сохраняются.
+// handleChatModel сохраняет выбор для следующего хода. У клиента app-server
+// в той же подписке модель задаётся turn/start, поэтому нить и ход сохраняются.
 func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -4609,12 +4609,12 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			if live := s.appChats[sid]; live != nil && live.h.Name != next.Name {
 				sameHarness = false
 			}
-			keepThread = current.Protocol == "codex" && next.Protocol == "codex" && sameHarness
+			keepThread = current.Protocol != "" && current.Protocol == next.Protocol && sameHarness
 			changed = wasModel != model || wasHarness != harness
 			if changed && !keepThread {
 				status = http.StatusConflict
 				if current.TaskRunPID > 0 || current.TaskRunID != "" || current.TaskRun {
-					return errors.New("рабочий разговор задачи сохраняет подписку: выберите модель в той же подписке Codex")
+					return errors.New("рабочий разговор задачи сохраняет подписку: выберите модель в той же подписке")
 				}
 				if s.appStarting[sid] != nil {
 					return errAppStarting
@@ -4665,7 +4665,7 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s в %s теперь %s", sid, found.Name, chatModelName(model, harness))
 		message := "модель разговора теперь " + chatModelName(model, harness) + ": она возьмётся следующим ходом, лента сохранится"
 		if keepThread {
-			message += ", нить и контекст Codex сохранятся; текущий ход продолжится своей моделью"
+			message += ", нить и контекст клиента сохранятся; текущий ход продолжится своей моделью"
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model, "harness": harness, "message": message})
 		return

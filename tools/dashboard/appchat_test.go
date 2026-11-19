@@ -626,9 +626,17 @@ esac`)
 }
 
 func TestAppChatModelSwitchKeepsCodexContext(t *testing.T) {
+	for _, protocol := range []string{"codex", "test-app-protocol"} {
+		t.Run(protocol, func(t *testing.T) { appChatModelSwitchKeepsContext(t, protocol) })
+	}
+}
+
+func appChatModelSwitchKeepsContext(t *testing.T, protocol string) {
+	t.Helper()
 	e, c := appEnv(t)
-	catalog := strings.Replace(appHarnessJSON, `"protocol": "codex", "models":`,
-		`"chat": ["gpt-6.2-sol", "gpt-6.2-astra"], "protocol": "codex", "models":`, 1)
+	catalog := strings.ReplaceAll(appHarnessJSON, `"protocol": "codex"`, `"protocol": "`+protocol+`"`)
+	catalog = strings.Replace(catalog, `"protocol": "`+protocol+`", "models":`,
+		`"chat": ["gpt-6.2-sol", "gpt-6.2-astra"], "protocol": "`+protocol+`", "models":`, 1)
 	writeScript(t, e.bin, "agentctl", `case "$1" in
   exec) shift 4; exec "$@" ;;
   *) printf '%s' '`+catalog+`' ;;
@@ -655,11 +663,11 @@ esac`)
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
 		`{"model":"gpt-6.2-astra","harness":"codextest"}`)
 	message := body(t, resp)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(message, "контекст Codex сохранятся") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(message, "нить и контекст") || !strings.Contains(message, "сохранятся") {
 		t.Fatalf("переход не принят: %d %s", resp.StatusCode, message)
 	}
 	after := e.s.chatStoreRead(sid)
-	if after.Thread != before.Thread || after.CxEffort != "high" || after.Harness != before.Harness || after.Model != "gpt-6.2-astra" {
+	if after.Thread != before.Thread || after.CxEffort != "high" || after.Harness != before.Harness || after.Model != "gpt-6.2-astra" || after.Protocol != protocol {
 		t.Fatalf("нить, глубина или подписка потеряны: %+v", after)
 	}
 	if e.s.appLive(sid) != live || !live.busyNow() {

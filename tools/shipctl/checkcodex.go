@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -78,8 +79,8 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 	case a := <-answers:
 		start, err = a.start, a.err
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		go func() { _ = cmd.Wait() }()
 		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, Codex не начал ход за %s", id, checkrun.NotRaised, checkRunTimeout)}
 	}
 	if err != nil {
@@ -95,6 +96,8 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 }
 
 func codexCheckWorker(raw string) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 	var o codexCheckOrder
 	reply := func(s codexCheckStart) { _ = json.NewEncoder(os.Stdout).Encode(s) }
 	if err := json.Unmarshal([]byte(raw), &o); err != nil {
@@ -148,7 +151,9 @@ func codexCheckWorker(raw string) {
 		return
 	}
 	defer log.Close()
-	cmd := exec.Command("agentctl", "exec", "--harness", o.Harness, "--", "codex", "exec", "--json", "--approve-for-me", "--model", o.Model, "-c", "model_reasoning_effort=\""+o.Effort+"\"", o.Order)
+	cmd := exec.CommandContext(ctx, "agentctl", "exec", "--harness", o.Harness, "--", "codex", "exec", "--json", "--approve-for-me", "--model", o.Model, "-c", "model_reasoning_effort=\""+o.Effort+"\"", o.Order)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.Dir = o.Root
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "CLAUDE_CODE_SESSION_ID=") && !strings.HasPrefix(env, "CODEX_THREAD_ID=") && !strings.HasPrefix(env, "DEVKIT_CHAT_SESSION_ID=") && !strings.HasPrefix(env, "DEVKIT_TASK=") && !strings.HasPrefix(env, "DEVKIT_TMUX=") && !strings.HasPrefix(env, "DEVKIT_TASK_RUN_ID=") && !strings.HasPrefix(env, "DEVKIT_HEADLESS=") && !strings.HasPrefix(env, "DEVKIT_CLOUD_ACK=") && !strings.HasPrefix(env, taskhead.LockFromEnv+"=") {
@@ -199,7 +204,7 @@ func codexCheckWorker(raw string) {
 		}
 	}
 	if scan.Err() != nil {
-		_ = cmd.Process.Kill()
+		_ = cmd.Cancel()
 	}
 	_ = cmd.Wait()
 	if !started {

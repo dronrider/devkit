@@ -43,7 +43,7 @@ func (g *queryGoSource) parseFile(file string, base bool) (*ast.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
-		tree, err = parser.ParseFile(g.fset, key, body, parser.SkipObjectResolution)
+		tree, err = parser.ParseFile(g.fset, key, body, 0)
 		if err != nil {
 			return nil, err
 		}

@@ -125,6 +125,9 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	}
 	proofLines := map[string]bool{}
 	var assigned ast.Expr
+	var scenario *ast.FuncLit
+	var binding *ast.Object
+	ordinaryWrite := false
 	commaOK := false
 	for _, site := range a.Writes {
 		if proofLines[site.At] {
@@ -135,10 +138,30 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 			return ok && slices.ContainsFunc(s.Lhs, func(x ast.Expr) bool { return sameNameExpression(x, site.Target) })
 		})
 		if err != nil {
-			return fmt.Errorf("proof.assignment: найдите присваивание %s: %w", site.Target, err)
+			if ordinaryWrite {
+				return fmt.Errorf("proof.assignment: записи должны относиться к одному сценарию")
+			}
+			var special *nameSynctestMatch
+			special = g.nameSynctestNode(fn, site.At, site.Target, true)
+			if special == nil || (scenario != nil && scenario != special.scenario) {
+				return fmt.Errorf("proof.assignment: найдите присваивание %s: %w", site.Target, err)
+			}
+			node, scenario = special.node, special.scenario
+		} else {
+			if scenario != nil {
+				return fmt.Errorf("proof.assignment: записи должны относиться к одному сценарию")
+			}
+			ordinaryWrite = true
 		}
 		stmt := node.(*ast.AssignStmt)
 		slot := slices.IndexFunc(stmt.Lhs, func(x ast.Expr) bool { return sameNameExpression(x, site.Target) })
+		if scenario != nil {
+			root := nameWriteRoot(stmt.Lhs[slot])
+			if root == nil || root.Obj == nil || (binding != nil && binding != root.Obj) {
+				return fmt.Errorf("proof.assignment: записи должны относиться к одному значению")
+			}
+			binding = root.Obj
+		}
 		if calledName(stmt.Lhs[slot]) != pair.Actual {
 			return fmt.Errorf("proof.assignment: поле %s не соответствует actual %s", site.Target, pair.Actual)
 		}
@@ -204,6 +227,13 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 		}
 		return false
 	})
+	if scenario != nil {
+		match := g.nameSynctestNode(consumer, a.Use.At, a.Use.Expression, false)
+		if consumer.node.Body != fn.node.Body || match == nil || match.scenario != scenario || !nameSynctestUsesBinding(match.node, binding, pair.Actual) || nameIsAssignmentTarget(consumer, match.node.(ast.Expr)) {
+			return &nameConsumerIssue{field: pair.Actual, err: fmt.Errorf("proof.assignment.use: покажите чтение того же значения в сценарии synctest")}
+		}
+		err = nil
+	}
 	if err != nil {
 		return &nameConsumerIssue{field: pair.Actual, err: fmt.Errorf("proof.assignment.use: покажите выражение, которое читает %s: %w", pair.Actual, err)}
 	}

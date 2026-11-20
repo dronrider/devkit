@@ -158,24 +158,21 @@ func codexCheckWorker(raw string) {
 	cmd.Env = append(cmd.Env, "DEVKIT_TASK="+o.ID, fmt.Sprintf("%s=%d", taskhead.LockFromEnv, os.Getpid()))
 	cmd.Stderr = log
 	stdout, err := cmd.StdoutPipe()
-	if err == nil {
-		err = cmd.Start()
-	}
 	if err != nil {
 		reply(codexCheckStart{Message: err.Error()})
 		return
 	}
 	runID := fmt.Sprintf("check-%d-%d", os.Getpid(), time.Now().UnixNano())
 	if err := state.Start(runID, o.Harness, o.Model, ""); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 		reply(codexCheckStart{Message: err.Error()})
 		return
 	}
 	state.State.Run.PID, state.State.Run.Group = os.Getpid(), syscall.Getpgrp()
 	if err := state.Save(); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		reply(codexCheckStart{Message: err.Error()})
+		return
+	}
+	if err := cmd.Start(); err != nil {
 		reply(codexCheckStart{Message: err.Error()})
 		return
 	}

@@ -33,9 +33,8 @@ import (
 // командой `shipctl check-run`.
 //
 // Кого поднимать и какой моделью, решает общий отбор internal/checkrun, тот же
-// у дашборда. Носитель тут `taskctl run <ID> --model <модель>`: лестница
-// internal/taskhead и замок головы задачи, как у подъёма упавшего хода. До
-// DK-947 подъём шёл бинарём дашборда, и без него строка стояла до человека.
+// у дашборда. Для Codex проверка идёт отдельным процессом с замком задачи;
+// остальные харнесы поднимаются через `taskctl run <ID> --model <модель>`.
 
 // checkRunTimeout это предел подъёма одной головы: команда отдаёт окно tmux, и
 // висеть ей не на чем. Предел нужен на случай подвисшего подпроцесса: слияние
@@ -45,7 +44,7 @@ const checkRunTimeout = 3 * time.Minute
 // errCheckRunFailed это код возврата `check-run`: подъём был нужен и не вышел.
 var errCheckRunFailed = errors.New("подъём прогона не вышел")
 
-// shipCarrier это носитель подъёма без дашборда: голову поднимает taskctl run.
+// shipCarrier поднимает проверку без дашборда через Codex или taskctl run.
 type shipCarrier struct {
 	root, home, devkit string
 	harness            string
@@ -94,9 +93,8 @@ func (c *shipCarrier) Ladders() []checkrun.Ladder {
 	return c.ladders
 }
 
-// Raise поднимает голову проверки командой taskctl run. Модель называется
-// всегда: без --model команда спросила бы вердикт исполнителя с записью этапа,
-// и проверяющий лёг бы в «Ход работы» разработчиком.
+// Raise поднимает проверяющего в Codex либо командой taskctl run. Для taskctl
+// модель называется всегда: без --model записался бы этап исполнителя.
 func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	id := p.Row.ID
 	if p.Choice.Model == "" {

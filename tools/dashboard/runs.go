@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/dronrider/devkit/internal/taskhead"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 // Запуск и стоп работ: POST /api/projects/{p}/runs и DELETE
@@ -1064,6 +1066,15 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"id": id, "state": "стоп", "session": a.sid})
 		return
 	}
+	stopped, err := stopCodexChecker(s.cfg.Home, found.Path, id)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "проверяющий не остановлен: " + err.Error()})
+		return
+	}
+	if stopped {
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "state": "стоп"})
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		s.logf("стоп %s отклонён: tmux не нашёлся 502", id)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
@@ -1139,4 +1150,29 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logf("стоп %s в %s: tmux-сессия %s снята", id, found.Name, sess)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func stopCodexChecker(home, root, id string) (bool, error) {
+	g, err := taskstate.Acquire(home, root, id)
+	if err != nil {
+		return false, err
+	}
+	defer g.Close()
+	run := g.State.Run
+	if !g.State.Stopped || run == nil || run.PID <= 0 || run.Group != run.PID ||
+		!strings.HasPrefix(run.ID, fmt.Sprintf("check-%d-", run.PID)) || run.Harness != "codex" {
+		return false, nil
+	}
+	lock := taskhead.LockPath(home, id)
+	if taskhead.Owner(lock) != run.PID || !taskhead.Working(lock) {
+		return false, nil
+	}
+	group, err := syscall.Getpgid(run.PID)
+	if err != nil || group != run.Group {
+		return false, nil
+	}
+	if err := syscall.Kill(-run.Group, syscall.SIGTERM); err != nil {
+		return false, err
+	}
+	return true, nil
 }

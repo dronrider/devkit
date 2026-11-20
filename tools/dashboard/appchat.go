@@ -796,12 +796,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			return
 		}
 		if waiting {
-			s.appTaskQueued(w, sid, claim)
+			s.appTaskQueued(w, sid)
 			return
 		}
 		lock, err := s.appTaskLaunchLock(sid)
 		if errors.Is(err, chat.ErrLocked) {
-			s.appTaskQueued(w, sid, claim)
+			s.appTaskQueued(w, sid)
 			return
 		}
 		if err != nil {
@@ -810,7 +810,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		defer lock.Close()
 		if s.appTaskFind(sid, "", "") != nil {
-			s.appTaskQueued(w, sid, claim)
+			s.appTaskQueued(w, sid)
 			return
 		}
 		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry.Claim)

@@ -42,17 +42,16 @@ func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim string
 		writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver"})
 		return
 	}
-	s.appTaskQueued(w, sid, claim)
+	s.appTaskQueued(w, sid)
 }
 
-func (s *server) appTaskQueued(w http.ResponseWriter, sid, claim string) {
-	s.chatSayDone(sid, claim, "queued")
+func (s *server) appTaskQueued(w http.ResponseWriter, sid string) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"way": "queued", "session": sid, "message": "реплика сохранена во входе рабочего разговора Codex"})
 }
 
 func (s *server) appTaskNextOrder(a *appTask, p *Project, c *appChat, order string) (string, appTaskMessage, error) {
 	recovering := a.recover && order == appTaskRecoveryOrder
-	if recovering {
+	if a.recover {
 		if err := s.appTaskQueueImport(p, a.sid, a.task); err != nil {
 			return "", appTaskMessage{}, err
 		}
@@ -169,7 +168,8 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		return nil
 	}
 	owner := s.appTaskRecoveryOwner(p, sid, st.Task)
-	state, err := taskstate.Acquire(realHomeFn(), p.Path, st.Task)
+	home := realHomeFn()
+	state, err := taskstate.Acquire(home, p.Path, st.Task)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,16 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		return nil
 	}
 	if owner && run.AppChat == "" && run.ID == st.TaskRunID && run.PID == st.TaskRunPID && state.State.Root == st.TaskRunRoot && st.TaskRunSession == sid &&
-		(st.TaskRun || appTaskInterruptedLegacy(realHomeFn(), st.Task, run.Started)) {
+		(st.TaskRun || appTaskInterruptedLegacy(home, st.Task, run.Started)) {
+		stopped, err := s.appTaskLegacyStopped(home, state.State.Root, st.Task, run.Started)
+		if err != nil || stopped {
+			if stopped {
+				state.State.Stopped = true
+				err = state.Save()
+			}
+			state.Close()
+			return err
+		}
 		run.AppChat, run.AppRecovery = sid, true
 		if err := state.Save(); err != nil {
 			state.Close()
@@ -224,7 +233,6 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+err.Error(), true, "quota-"+run.ID)
 		return err
 	}
-	home := realHomeFn()
 	budget := strings.TrimSpace(os.Getenv("DEVKIT_RECOVERY_LOG"))
 	if budget == "" {
 		budget = filepath.Join(home, ".devkit", "recovery.jsonl")
@@ -310,6 +318,42 @@ func (s *server) appTaskStopOrphan(w http.ResponseWriter, root, sid string, st c
 		return false
 	}
 	return true
+}
+
+// Старый дашборд мог сохранить стоп в каталоге конфигурации.
+func (s *server) appTaskLegacyStopped(home, root, task, started string) (bool, error) {
+	if s.cfg.Home == home {
+		return false, nil
+	}
+	since, err := time.Parse(time.RFC3339Nano, started)
+	if err != nil {
+		return false, err
+	}
+	path, _, err := taskstate.Path(s.cfg.Home, root, task)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil || info.ModTime().Before(since) {
+		return false, err
+	}
+	machinePath, _, err := taskstate.Path(home, root, task)
+	if err != nil {
+		return false, err
+	}
+	machineInfo, err := os.Stat(machinePath)
+	if err != nil || os.SameFile(info, machineInfo) {
+		return false, err
+	}
+	previous, err := taskstate.Acquire(s.cfg.Home, root, task)
+	if err != nil {
+		return false, err
+	}
+	defer previous.Close()
+	return previous.State.Stopped, nil
 }
 
 // Старый дашборд сбрасывал TaskRun при выгрузке. В этом случае нужен след

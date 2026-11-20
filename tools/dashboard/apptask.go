@@ -322,7 +322,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); c.taskTurn = nil; c.mu.Unlock() }()
 	params := s.appTurnParams(c, order, st.CxEffort)
-	if a.recover {
+	if a.recover || a.replyOnce {
 		params["model"] = st.Model
 	}
 	if queued.ID != "" {
@@ -550,7 +550,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 	}
 	if replyOnce {
 		if a.firstClaim != claim {
-			s.appTaskQueued(w, sid, claim)
+			s.appTaskQueued(w, sid)
 			return nil
 		}
 		s.chatSayDone(sid, claim, "appserver")

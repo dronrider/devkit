@@ -10,7 +10,7 @@ import (
 )
 
 func (s *server) recoveryStopped(w http.ResponseWriter, root, id string, stopped bool) bool {
-	if err := taskstate.SetStopped(s.cfg.Home, root, id, stopped); err != nil {
+	if err := taskstate.SetStopped(realHomeFn(), root, id, stopped); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "состояние ручной остановки не сохранено: " + err.Error()})
 		return false
 	}
@@ -42,9 +42,9 @@ func (s *server) recoveryChatStopped(w http.ResponseWriter, found *Project, sid,
 			seen[key] = true
 			var err error
 			if action == "invalidate" {
-				err = taskstate.Invalidate(s.cfg.Home, root, id)
+				err = taskstate.Invalidate(realHomeFn(), root, id)
 			} else {
-				err = taskstate.SetStopped(s.cfg.Home, root, id, action == "stop")
+				err = taskstate.SetStopped(realHomeFn(), root, id, action == "stop")
 			}
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "состояние запуска не сохранено: " + err.Error()})

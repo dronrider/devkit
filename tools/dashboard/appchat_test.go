@@ -58,6 +58,13 @@ def log(line):
 
 writer = None
 
+def history():
+    try:
+        with open("fake-app-history") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
 def claim_thread(mid):
     global writer
     if not os.path.exists("fake-app-enforce-writer-lock") or writer is not None:
@@ -130,10 +137,7 @@ for raw in sys.stdin:
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": configured(params, params.get("threadId"))})
     elif m == "thread/read":
-        try:
-            with open("fake-app-history") as f: turns = json.load(f)
-        except FileNotFoundError:
-            turns = []
+        turns = history()
         log("read " + params.get("threadId", ""))
         emit({"id": mid, "result": {"thread": {"id": params.get("threadId"), "status": {"type": "idle"}, "turns": turns}}})
     elif m == "turn/start":
@@ -143,14 +147,17 @@ for raw in sys.stdin:
         text = ""
         for part in params.get("input") or []:
             text = text + " " + str(part.get("text", ""))
-        if mode() == "recover-die":
-            with open("fake-app-history", "w") as f:
-                json.dump([{"id": "interrupted-turn", "status": "interrupted", "itemsView": "full",
-                            "items": [{"type": "userMessage", "clientId": params.get("clientUserMessageId")}]}], f)
-            sys.exit(2)
         if mode() == "rejected-model":
             emit({"id": mid, "error": {"message": "unsupported model"}})
             continue
+        if client_id := params.get("clientUserMessageId"):
+            turns = history()
+            turns.append({"id": "accepted-" + client_id, "status": "interrupted", "itemsView": "full",
+                          "items": [{"type": "userMessage", "clientId": client_id}]})
+            with open("fake-app-history", "w") as f:
+                json.dump(turns, f)
+        if mode() == "recover-die":
+            sys.exit(2)
         if mode() == "early":
             note("item/completed", {"item": {"type": "agentMessage",
                 "text": "ответ на реплику:" + text}})

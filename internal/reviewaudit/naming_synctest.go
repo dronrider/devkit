@@ -2,6 +2,7 @@ package reviewaudit
 
 import (
 	"go/ast"
+	"go/token"
 	"slices"
 	"strings"
 )
@@ -125,16 +126,22 @@ func nameSynctestUsesBinding(n ast.Node, binding *ast.Object, target string) boo
 	if binding == nil {
 		return false
 	}
-	found := false
-	ast.Inspect(n, func(node ast.Node) bool {
-		if _, ok := node.(*ast.FuncLit); ok {
-			return false
+	var skipUntil token.Pos
+	for node := range ast.Preorder(n) {
+		if node.Pos() < skipUntil {
+			continue
+		}
+		if lit, ok := node.(*ast.FuncLit); ok {
+			skipUntil = lit.End()
+			continue
 		}
 		if expr, ok := node.(ast.Expr); ok && sameNameExpression(expr, target) {
 			root := nameWriteRoot(expr)
-			found = root != nil && root.Obj == binding
+			matches := root != nil && root.Obj == binding
+			if matches {
+				return matches
+			}
 		}
-		return !found
-	})
-	return found
+	}
+	return false
 }

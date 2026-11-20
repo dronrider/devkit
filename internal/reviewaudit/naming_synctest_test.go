@@ -37,8 +37,8 @@ func TestTurn(t *testing.T) {
  t.Run("one", func(t *testing.T) {
   synctest.Test(t, func(t *testing.T) {
    turn := makeTurn()
-   go func() { use(turn) }()
-   func() { turn := makeTurn(); use(turn) }()
+   go func() { consume(func() { turn := makeTurn(); use(turn) }, turn) }()
+   { turn := makeTurn(); use(turn) }
    unused := func() { use(turn) }; _ = unused
   })
   synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) })
@@ -49,7 +49,7 @@ func TestTurn(t *testing.T) {
 	write, use := at("turn := makeTurn()"), at("go func()")
 	e := Evidence{Check: "writes", Result: "checked", ObjectComparison: &NameObjectComparison{Expected: []string{"Test", word}, Actual: "turn", ActualAt: write,
 		Proof: &NameObjectProof{Expression: "turn", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: write, Target: "turn", Value: "makeTurn()"}},
-			Use: NameCodeUse{Declaration: at("func TestTurn"), At: use, Expression: "turn"}}, Words: []NameProofWord{
+			Use: NameCodeUse{Declaration: at("func TestTurn"), At: use, Expression: "consume(func() { turn := makeTurn(); use(turn) }, turn)"}}, Words: []NameProofWord{
 			{Word: "Test", Role: "context", Fact: ReviewFact{Location: use, Quote: "use(turn)", Value: "turn", Text: "Сценарий читает фикстуру."}},
 			{Word: word, Role: "object", Fact: ReviewFact{Location: write, Quote: "turn := makeTurn()", Value: "turn", Text: "Создаётся фикстура."}},
 		}}}, WriteEvidence: &WriteEvidence{Word: &word, Target: "turn", Value: "makeTurn()", WriteAt: write}}
@@ -58,8 +58,10 @@ func TestTurn(t *testing.T) {
 		assertTargetCheck(t, checkNameEntry(e, at("func TestTurn"), identifierWords("TestTurn"), source), want)
 	}
 	check("")
-	for _, read := range []string{at("func() { turn :="), at("unused :="), at("synctest.Test(t, func(t *testing.T) { turn :=")} {
+	e.ObjectComparison.Proof.Assignment.Use.Expression = "use(turn)"
+	for _, read := range []string{at("{ turn :="), at("unused :="), at("synctest.Test(t, func(t *testing.T) { turn :=")} {
 		e.ObjectComparison.Proof.Assignment.Use.At = read
+		e.ObjectComparison.Proof.Words[0].Fact.Location = read
 		check("proof.assignment.use")
 	}
 }

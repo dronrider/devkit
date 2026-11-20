@@ -35,37 +35,32 @@ func appSharedUserReplies(item map[string]any, now string) []reply {
 	return []reply{{Role: "user", Text: text, Wire: wire, Time: now}}
 }
 
-type appLegacyEcho struct {
-	wire string
-	at   string
-}
-
 type appLegacyEchoIndex struct {
-	turns   map[string]string
-	pending map[appLegacyEcho]int
+	turns       map[string]string
+	unconfirmed map[string]bool
 }
 
-// appLegacyEchoes связывает старое эхо с первым записанным событием хода.
-// Эхо без события остаётся кандидатом по тексту и времени своего хода.
+// appLegacyEchoes связывает прежнее эхо с первым записанным событием хода.
+// Эхо без такого события остаётся попыткой отправки без подтверждения.
 func appLegacyEchoes(items []reply, thread string) appLegacyEchoIndex {
-	index := appLegacyEchoIndex{turns: map[string]string{}, pending: map[appLegacyEcho]int{}}
+	index := appLegacyEchoIndex{turns: map[string]string{}, unconfirmed: map[string]bool{}}
 	seen := map[string]bool{}
-	var echo appLegacyEcho
+	var echo reply
 	for _, r := range items {
 		if r.Role == "user" {
-			echo = appLegacyEcho{}
+			echo = reply{}
 			if r.App == nil && r.Wire != "" {
-				echo = appLegacyEcho{wire: r.Wire, at: r.Time}
-				index.pending[echo]++
+				echo = r
+				index.unconfirmed[r.Key] = true
 			}
 			continue
 		}
 		if r.App != nil && r.App.ThreadID == thread && r.App.TurnID != "" && !seen[r.App.TurnID] {
 			seen[r.App.TurnID] = true
-			if echo.wire != "" {
-				index.turns[r.App.TurnID] = echo.wire
-				index.pending[echo]--
-				echo = appLegacyEcho{}
+			if echo.Wire != "" {
+				index.turns[r.App.TurnID] = echo.Wire
+				delete(index.unconfirmed, echo.Key)
+				echo = reply{}
 			}
 		}
 	}
@@ -76,27 +71,26 @@ func (index appLegacyEchoIndex) consume(r reply) bool {
 	if r.Role != "user" || r.Wire == "" || r.App == nil {
 		return false
 	}
-	if clientID, _ := r.App.Item["clientId"].(string); clientID != "" {
+	if clientID, _ := r.App.Item["clientId"].(string); clientID != "" || index.turns[r.App.TurnID] != r.Wire {
 		return false
 	}
-	if index.turns[r.App.TurnID] == r.Wire {
-		delete(index.turns, r.App.TurnID)
-		return true
+	delete(index.turns, r.App.TurnID)
+	return true
+}
+
+const appLegacyUnconfirmed = "Прежняя отправка без подтверждения"
+
+func appLegacyEchoView(items []reply, thread string) {
+	if thread == "" {
+		return
 	}
-	at, err := time.Parse(time.RFC3339, r.Time)
-	if err != nil {
-		return false
-	}
-	// Дашборд писал старое эхо перед RPC, поэтому начало хода может
-	// попасть в ту же или следующую секунду. У новых клиентов есть clientId.
-	for _, candidate := range []time.Time{at, at.Add(-time.Second)} {
-		key := appLegacyEcho{wire: r.Wire, at: candidate.Format(time.RFC3339)}
-		if index.pending[key] > 0 {
-			index.pending[key]--
-			return true
+	unconfirmed := appLegacyEchoes(items, thread).unconfirmed
+	for i := range items {
+		if unconfirmed[items[i].Key] {
+			items[i].Role = "note"
+			items[i].Note = appLegacyUnconfirmed
 		}
 	}
-	return false
 }
 
 type appSharedHistoryPage struct {

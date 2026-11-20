@@ -244,8 +244,12 @@ func (s *server) appSharedMigrate(sid string, h *Harness, st *chatStore) error {
 	if err != nil || socket == "" {
 		return err
 	}
-	if node, err := os.Stat(socket); err != nil || node.Mode()&os.ModeSocket == 0 {
-		return nil
+	node, err := os.Stat(socket)
+	if err != nil {
+		return fmt.Errorf("общий сервер Codex недоступен: %w", err)
+	}
+	if node.Mode()&os.ModeSocket == 0 {
+		return errors.New("общий сервер Codex недоступен: указан не Unix-сокет")
 	}
 	s.appMu.Lock()
 	if s.appStarting[sid] != nil {

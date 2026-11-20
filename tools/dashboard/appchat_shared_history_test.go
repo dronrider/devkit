@@ -16,19 +16,22 @@ func TestAppSharedImageOnlyUserMessage(t *testing.T) {
 	}
 }
 
-func TestAppSharedDedupOrphanLegacyEcho(t *testing.T) {
-	old := reply{Role: "user", Wire: "same", Time: "2026-11-20T06:39:48Z"}
-	index := appLegacyEchoes([]reply{old}, "thread-1")
+func TestAppSharedLegacyEchoRemainsUnconfirmed(t *testing.T) {
+	old := reply{Role: "user", Text: "same", Wire: "same", Key: "app:0"}
 	item := reply{
-		Role: "user", Wire: old.Wire, Time: "2026-11-20T06:39:49Z",
-		App: &appFeedEvent{ThreadID: "thread-1", TurnID: "unrecorded", Item: map[string]any{"clientId": "desktop"}},
+		Role: "user", Text: old.Text, Wire: old.Wire, Key: "app:1",
+		App: &appFeedEvent{ThreadID: "thread-1", TurnID: "unrecorded", Item: map[string]any{}},
 	}
+	items := []reply{old, item}
+	index := appLegacyEchoes(items[:1], "thread-1")
 	if index.consume(item) {
-		t.Fatal("реплика из Codex совпала со старым эхом дашборда")
+		t.Fatal("попытка отправки поглотила подтверждённую реплику")
 	}
-	delete(item.App.Item, "clientId")
-	if !index.consume(item) || index.consume(item) {
-		t.Fatal("старое эхо должно поглотить только одну запись истории")
+	appLegacyEchoView(items, "thread-1")
+	if items[0].Role != "note" || items[0].Note != appLegacyUnconfirmed ||
+		items[0].Text != old.Text || items[0].Key != old.Key ||
+		items[1].Role != "user" || items[1].Key != item.Key {
+		t.Fatalf("пометка старой попытки: %+v", items)
 	}
 }
 

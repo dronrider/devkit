@@ -913,7 +913,11 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	}
 	if !wasTaskRun && st.SharedSocket == "" && st.Thread != "" && st.Project == found.Name && !s.appAutomaticReview(sid, st) {
 		if err := s.appSharedMigrate(sid, h, &st); err != nil {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
+			status := http.StatusBadGateway
+			if errors.Is(err, errAppStarting) || errors.Is(err, errAppTurnBusy) {
+				status = http.StatusConflict
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error(), "refused": err.Error()})
 			return
 		}
 	}
@@ -1271,10 +1275,13 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 		return
 	}
 	if r.URL.Query().Get("stream") == "1" {
-		s.appFeedStream(w, r, file)
+		s.appFeedStream(w, r, sid, st)
 		return
 	}
 	items := s.appFeedRead(sid)
+	if st.SharedSocket != "" {
+		appLegacyEchoView(items, st.Thread)
+	}
 	head := sessionInfo{ID: sid, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
 		Task: st.Task, Reply: "session", Harness: st.Harness, Protocol: st.Protocol,
 		Live: s.appLive(sid) != nil}
@@ -1298,7 +1305,8 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 // appFeedStream это лента живым потоком: хвост файла уезжает событиями по
 // мере записи, как у транскриптной ленты. Ключ записи это её номер в файле, и
 // счётчик продолжает нумерацию чтения без разрыва.
-func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file string) {
+func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid string, st chatStore) {
+	file := s.appFeedFile(sid)
 	f, ok := sseOpen(w)
 	if !ok {
 		return
@@ -1308,6 +1316,9 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file stri
 	// потока, и она уезжала в панель дважды под двумя ключами.
 	data, _ := os.ReadFile(file)
 	items := appFeedParse(data)
+	if st.SharedSocket != "" {
+		appLegacyEchoView(items, st.Thread)
+	}
 	off := int64(len(data))
 	if len(items) > repliesDefault {
 		items = items[len(items)-repliesDefault:]
@@ -1337,6 +1348,18 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file stri
 		case <-t.C:
 			lines, end := newLines(file, off)
 			off = end
+			if len(lines) > 0 && st.SharedSocket == "" && st.Thread != "" {
+				if current := s.chatStoreRead(sid); current.SharedSocket != "" {
+					st = current
+					items := s.appFeedRead(sid)
+					appLegacyEchoView(items, st.Thread)
+					for _, it := range items {
+						if it.Role == "note" && it.Note == appLegacyUnconfirmed {
+							sseEvent(w, f, "replace", marshalReply(it))
+						}
+					}
+				}
+			}
 			for _, ln := range lines {
 				var it reply
 				if json.Unmarshal([]byte(ln), &it) != nil {

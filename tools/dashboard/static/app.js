@@ -7774,6 +7774,13 @@ async function wireFeed(project, sid, opts) {
       empty = ev.data;
       draw();
     });
+    es.addEventListener("replace", (ev) => {
+      const item = JSON.parse(ev.data);
+      const at = talk.findIndex((previous) => itemKey(previous) === itemKey(item));
+      if (at < 0) return;
+      talk[at] = item;
+      draw();
+    });
     es.onmessage = (ev) => {
       seen = Date.now();
       const item = JSON.parse(ev.data);

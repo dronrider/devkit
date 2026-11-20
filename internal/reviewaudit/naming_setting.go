@@ -141,7 +141,7 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting.use.declaration: укажите реализацию вызванной функции")
 	}
 	get, _, err := g.call(reader, proof.ReadAt, func(x ast.Expr) bool { return g.namePackageSelector(reader, x, "os", "Getenv") })
-	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get) {
+	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get, fn, set, use) {
 		return fmt.Errorf("proof.setting.read_at: укажите возвращаемое чтение того же ключа")
 	}
 	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true}))
@@ -178,11 +178,23 @@ func nameEnvironmentUse(fn queryFunc, call *ast.CallExpr) bool {
 
 // nameEnvironmentReturn supports a direct return or TrimSpace of the value.
 // Other transformations require an explicit proof instead of guessing flow.
-func (g *queryGoSource) nameEnvironmentReturn(fn queryFunc, get *ast.CallExpr) bool {
+func (g *queryGoSource) nameEnvironmentReturn(fn queryFunc, get *ast.CallExpr, test queryFunc, set, use *ast.CallExpr) bool {
 	for _, stmt := range fn.node.Body.List {
 		ret, ok := stmt.(*ast.ReturnStmt)
-		if !ok || len(ret.Results) != 1 {
+		if !ok {
+			guard, ok := stmt.(*ast.IfStmt)
+			if ok && guard.Else == nil {
+				if c, ok := guard.Cond.(*ast.Ident); ok && c.Name == "false" && c.Obj == nil {
+					continue
+				}
+			}
+			if !ok || !g.nameEnvironmentEmptyGuard(fn, guard, test, set, use) {
+				return false
+			}
 			continue
+		}
+		if len(ret.Results) != 1 {
+			return false
 		}
 		if ret.Results[0] == get {
 			return true
@@ -192,6 +204,90 @@ func (g *queryGoSource) nameEnvironmentReturn(fn queryFunc, get *ast.CallExpr) b
 		}
 	}
 	return false
+}
+
+// nameEnvironmentEmptyGuard proves that a preceding early return cannot run
+// for this test: its other environment key was explicitly set to empty.
+func (g *queryGoSource) nameEnvironmentEmptyGuard(fn queryFunc, guard *ast.IfStmt, test queryFunc, set, use *ast.CallExpr) bool {
+	init, ok := guard.Init.(*ast.AssignStmt)
+	if !ok || len(init.Lhs) != 1 || len(init.Rhs) != 1 {
+		return false
+	}
+	id, ok := init.Lhs[0].(*ast.Ident)
+	if !ok || id.Obj == nil {
+		return false
+	}
+	wrap, ok := init.Rhs[0].(*ast.CallExpr)
+	if !ok || len(wrap.Args) != 1 || !g.namePackageSelector(fn, wrap.Fun, "strings", "TrimSpace") {
+		return false
+	}
+	read, ok := wrap.Args[0].(*ast.CallExpr)
+	if !ok || len(read.Args) != 1 || !g.namePackageSelector(fn, read.Fun, "os", "Getenv") {
+		return false
+	}
+	key := nameSettingKey(read.Args[0])
+	if key == "" {
+		ident, ok := read.Args[0].(*ast.Ident)
+		if !ok || ident.Obj == nil {
+			return false
+		}
+		spec, ok := ident.Obj.Decl.(*ast.ValueSpec)
+		if !ok || len(spec.Values) != 1 {
+			return false
+		}
+		key = nameSettingKey(spec.Values[0])
+	}
+	if key == "" {
+		return false
+	}
+	cond, ok := guard.Cond.(*ast.BinaryExpr)
+	if !ok || cond.Op != token.NEQ {
+		return false
+	}
+	lhs, ok := cond.X.(*ast.Ident)
+	if !ok || lhs.Obj != id.Obj || nameSettingKey(cond.Y) != "" {
+		return false
+	}
+	lit, ok := cond.Y.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	var emptyAt token.Pos
+	for _, stmt := range test.node.Body.List {
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := expr.X.(*ast.CallExpr)
+		if !ok || call.Pos() >= set.Pos() || len(call.Args) != 2 {
+			continue
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Setenv" {
+			continue
+		}
+		arg, ok := call.Args[1].(*ast.BasicLit)
+		setter, _ := set.Fun.(*ast.SelectorExpr)
+		if ok && arg.Kind == token.STRING && nameSettingKey(arg) == "" && nameSettingKey(call.Args[0]) == key && setter != nil && nameIdentifier(sel.X) == nameIdentifier(setter.X) {
+			emptyAt = call.Pos()
+		}
+	}
+	if emptyAt == token.NoPos {
+		return false
+	}
+	for node := range ast.Preorder(test.node.Body) {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || call.Pos() <= emptyAt || call.Pos() >= use.Pos() || len(call.Args) == 0 || nameSettingKey(call.Args[0]) != key {
+			continue
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Setenv" {
+			return false
+		}
+		if g.namePackageSelector(test, call.Fun, "os", "Unsetenv") {
+			return false
+		}
+	}
+	return true
 }
 
 func nameHasParameter(field *ast.Field, name string) bool {

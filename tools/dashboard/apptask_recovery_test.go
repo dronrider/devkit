@@ -772,8 +772,19 @@ func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
 	}
 	before := e.s.chatStoreRead(sid)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"новая реплика","msg_id":"effort-test","effort":"low"}`)
-	if raw := body(t, resp); resp.StatusCode != http.StatusAccepted {
+	raw := body(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("say %d: %s", resp.StatusCode, raw)
+	}
+	var receipt struct {
+		MessageID string `json:"app_message_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := e.s.appTaskQueueNext(sid)
+	if err != nil || entry.ID == "" || receipt.MessageID != entry.ID || entry.Claim != "effort-test" {
+		t.Fatalf("квитанция %q не соответствует записи %+v: %v", receipt.MessageID, entry, err)
 	}
 	after := e.s.chatStoreRead(sid)
 	if after.CxEffort != "low" || after.TaskRunID != before.TaskRunID || after.Thread != before.Thread {

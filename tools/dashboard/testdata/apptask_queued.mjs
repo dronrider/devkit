@@ -13,6 +13,7 @@ const { sandbox, timers, store } = makeSandbox(appPathArg(), (path) => {
   return {};
 });
 const message = "Реплика для следующего хода";
+const messageID = "queue-message";
 const reason = "реплика сохранена во входе рабочего разговора Codex";
 const originalFetch = sandbox.fetch;
 let sends = 0;
@@ -20,7 +21,7 @@ sandbox.fetch = (path, init) => {
   if (init?.method === "POST" && path.endsWith("/say")) {
     sends += 1;
     return Promise.resolve({ ok: true, status: 202,
-      text: () => Promise.resolve(JSON.stringify({ way: "queued", session: sid, message: reason })) });
+      text: () => Promise.resolve(JSON.stringify({ way: "queued", session: sid, message: reason, app_message_id: messageID })) });
   }
   return originalFetch(path, init);
 };
@@ -57,6 +58,11 @@ if (sends !== 1 || restored.length !== 1 || !restored[0].queue || restored[0].wh
 if (!dump(queue).includes("в очереди") || !tipOf(queue).includes(reason)) {
   fail("обновлённая панель потеряла состояние очереди с причиной: " + dump(queue));
 }
-reloaded.reconcile([{ role: "user", text: message, key: "app:delivered" }]);
+const earlier = { role: "user", text: message, key: "app:earlier",
+  app: { method: "devkit/appTaskMessage", item: { id: "earlier-message" } } };
+reloaded.reconcile([earlier]);
+if (readPending().length !== 1) fail("старая одноимённая реплика сняла новую из очереди");
+reloaded.reconcile([earlier, { role: "user", text: message, key: "app:delivered",
+  app: { method: "devkit/appTaskMessage", item: { id: messageID } } }]);
 if (readPending().length !== 0) fail("появление реплики в ленте не сняло отметку ожидания");
 reloaded.stop();

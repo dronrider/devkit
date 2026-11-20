@@ -13941,6 +13941,7 @@ function echoRead(project, addr) {
       // легшая во вход задачи, обязана и после неё называть очередь, а не
       // недоставку. Прежде оба поля писались в персист и не читались из него.
       queue: Boolean(m.queue), refused: Boolean(m.refused),
+      appMessageID: m.appMessageID ? String(m.appMessageID) : "",
       task: m.task ? String(m.task) : "",
       // Ключ записи переживает перезагрузку вместе с ней: по нему сервер узнаёт
       // повтор, а вкладка, поднятая заново, шлёт ту же запись, а не новую.
@@ -13988,7 +13989,8 @@ function echoWrite(project, addr, list) {
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection, launch: m.launch, unknown: m.unknown,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
-        queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "", since: m.since || m.born }));
+        queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "",
+        appMessageID: m.appMessageID || "", since: m.since || m.born }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -14285,7 +14287,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       sinceOf.set(rec.id, rec.since);
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task,
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID,
         scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection, rec.launch) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
@@ -14296,7 +14298,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, launch: rec.launch, unknown: rec.unknown, once: true });
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID, launch: rec.launch, unknown: rec.unknown, once: true });
     }
     if (mine.length) {
       draw();
@@ -14450,8 +14452,16 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         if (m.refused) continue;
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
-        const hit = list.find((it) => it && it.role === "user" && !it.who && (it.text || it.selection || it.proposal) &&
-          !claimed.has(itemKey(it)) && (m.selection ? (sameSay(it.wire || it.text, m.wire) || sameSelection(it.selection, m.selection) && it.text === m.text) : (sameSay(it.wire || it.text, m.wire) || !it.selection && sameSay(it.text, m.text))));
+        const hit = list.find((it) => {
+          if (!it || it.role !== "user" || it.who || claimed.has(itemKey(it))) return false;
+          if (m.appMessageID) {
+            return it.app?.method === "devkit/appTaskMessage" && it.app?.item?.id === m.appMessageID;
+          }
+          if (!it.text && !it.selection && !it.proposal) return false;
+          if (sameSay(it.wire || it.text, m.wire)) return true;
+          return m.selection ? sameSelection(it.selection, m.selection) && it.text === m.text :
+            !it.selection && sameSay(it.text, m.text);
+        });
         if (!hit) continue;
         claimed.add(itemKey(hit));
         const at = mine.indexOf(m);
@@ -15170,6 +15180,7 @@ function chatPanel(project, st) {
           // Слова дороги (DK-480): ответ отпустил запертый вопрос, строка с !
           // уехала текстом мимо терминала. Удача обычной доставки молчит.
           if (r.body.note) sayResult(r.body.note);
+          if (r.body.app_message_id) m.appMessageID = r.body.app_message_id;
           // Дорога вопроса (way=ask) отвечает итогом сама: принятый ответ,
           // откладывание в файл задачи и отказ мёртвого окна (DK-1399)
           // называются словами, отказ идёт ошибкой. Пузырь вслед словам держит

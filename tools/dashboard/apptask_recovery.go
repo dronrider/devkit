@@ -39,14 +39,14 @@ func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim string
 	}
 	if entry.Accepted {
 		s.chatSayDone(sid, claim, "appserver")
-		writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver"})
+		writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
 		return
 	}
-	s.appTaskQueued(w, sid)
+	s.appTaskQueued(w, sid, entry.ID)
 }
 
-func (s *server) appTaskQueued(w http.ResponseWriter, sid string) {
-	writeJSON(w, http.StatusAccepted, map[string]string{"way": "queued", "session": sid, "message": "реплика сохранена во входе рабочего разговора Codex"})
+func (s *server) appTaskQueued(w http.ResponseWriter, sid, messageID string) {
+	writeJSON(w, http.StatusAccepted, map[string]string{"way": "queued", "session": sid, "app_message_id": messageID, "message": "реплика сохранена во входе рабочего разговора Codex"})
 }
 
 func (s *server) appTaskNextOrder(a *appTask, p *Project, c *appChat, order string) (string, appTaskMessage, error) {
@@ -275,7 +275,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	}
 	state.Close()
 	outcome := "confirmed"
-	if err = s.raiseAppTask(nil, p, sid, st, h, "", appTaskRecoveryOrder, false, true, ""); err != nil {
+	if err = s.raiseAppTask(nil, p, sid, st, h, "", appTaskRecoveryOrder, false, true, appTaskMessage{}); err != nil {
 		outcome = "launch-failed"
 		s.appTaskRecoveryFailure(sid, p.Path, st.Task, 0, err)
 	}

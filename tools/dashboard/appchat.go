@@ -787,7 +787,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		if entry.Accepted {
 			s.chatSayDone(sid, claim, "appserver")
-			writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver"})
+			writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
 			return
 		}
 	}
@@ -825,12 +825,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			return
 		}
 		if waiting {
-			s.appTaskQueued(w, sid)
+			s.appTaskQueued(w, sid, entry.ID)
 			return
 		}
 		lock, err := s.appTaskLaunchLock(sid)
 		if errors.Is(err, chat.ErrLocked) {
-			s.appTaskQueued(w, sid)
+			s.appTaskQueued(w, sid, entry.ID)
 			return
 		}
 		if err != nil {
@@ -839,10 +839,10 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		defer lock.Close()
 		if s.appTaskFind(sid, "", "") != nil {
-			s.appTaskQueued(w, sid)
+			s.appTaskQueued(w, sid, entry.ID)
 			return
 		}
-		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry.Claim)
+		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry)
 		return
 	}
 	if wasTaskRun && !st.TaskRun {

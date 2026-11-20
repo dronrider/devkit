@@ -394,10 +394,10 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *Harness, tier, effort, order string) {
 	sid := "as" + msgID()
 	st := chatStore{Task: id, Project: p.Name, Model: h.tierModel(tier), Harness: h.Name, Protocol: h.Protocol, TaskRun: true, CxEffort: effort, Born: s.now().Unix()}
-	s.raiseAppTask(w, p, sid, st, h, tier, order, false, false, "")
+	s.raiseAppTask(w, p, sid, st, h, tier, order, false, false, appTaskMessage{})
 }
 
-func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce, recover bool, claim string) error {
+func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce, recover bool, message appTaskMessage) error {
 	id := st.Task
 	respond := func(status int, body map[string]string) {
 		if w != nil {
@@ -456,7 +456,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		os.RemoveAll(dir)
 		return fail(err)
 	}
-	a := &appTask{sid: sid, root: p.Path, task: id, home: q.Home, dir: dir, listener: listener, token: msgID(), launched: make(chan struct{}), ready: make(chan error, 1), stop: make(chan struct{}), recover: recover, replyOnce: replyOnce, replyClaim: claim}
+	a := &appTask{sid: sid, root: p.Path, task: id, home: q.Home, dir: dir, listener: listener, token: msgID(), launched: make(chan struct{}), ready: make(chan error, 1), stop: make(chan struct{}), recover: recover, replyOnce: replyOnce, replyClaim: message.Claim}
 	q.ContinueStopped, q.ExpectedRun = replyOnce, st.TaskRunID
 	q.AppServer = &taskhead.AppServerCarrier{ReplyOnce: replyOnce, Chat: sid, Recover: recover, Command: []string{"python3", taskRunPath(s.cfg.Roots), "--app-turn-client", socket, a.token}}
 	if recover {
@@ -557,13 +557,17 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		return fail(err)
 	}
 	if replyOnce {
-		if a.firstClaim != claim {
-			s.appTaskQueued(w, sid)
+		if a.firstClaim != message.Claim {
+			s.appTaskQueued(w, sid, message.ID)
 			return nil
 		}
-		s.chatSayDone(sid, claim, "appserver")
+		s.chatSayDone(sid, message.Claim, "appserver")
 	}
-	respond(http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
+	body := map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort}
+	if message.ID != "" {
+		body["app_message_id"] = message.ID
+	}
+	respond(http.StatusOK, body)
 	return nil
 }
 

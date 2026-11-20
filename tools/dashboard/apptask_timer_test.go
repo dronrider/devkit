@@ -36,7 +36,7 @@ func TestAppTaskSilenceTimer(t *testing.T) {
 					params, _ := json.Marshal(map[string]string{"threadId": tc.thread, "turnId": tc.turn})
 					s.appNote("chat", "item/agentMessage/delta", params)
 				}
-				time.Sleep(10 * time.Minute)
+				time.Sleep(5 * time.Minute)
 				synctest.Wait()
 				if !tc.wantOK {
 					select {

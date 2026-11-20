@@ -95,3 +95,23 @@ func Own() string { return os.Getenv("TOKEN") }
 		t.Fatal("недостижимый потребитель принят")
 	}
 }
+
+// Если чтение результата спрятано за false &&, оно не подтверждает проверку.
+func TestNameSettingRejectsShortCircuitedConsumer(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+import "testing"
+import "os"
+func TestOwn(t *testing.T) {
+ t.Setenv("TOKEN", "value")
+ if got := Own(); false && got != "value" { t.Fatal(got) }
+}
+func Own() string { return os.Getenv("TOKEN") }
+`)
+	g := newQueryGoSource(source)
+	fn, _ := g.declaration(at("func TestOwn"))
+	p := &NameObjectProof{Expression: `t.Setenv("TOKEN", "value")`, Setting: &NameSettingWrite{SubtestAt: at("func TestOwn"), Use: NameCodeUse{Declaration: at("func Own"), At: at("if got"), Expression: "Own()"}, ReadAt: at("func Own() string")}}
+	e := Evidence{Result: "checked", ObjectComparison: &NameObjectComparison{Actual: "TOKEN", ActualAt: at("t.Setenv"), Proof: p}, WriteEvidence: &WriteEvidence{Target: "TOKEN", Value: `"value"`, WriteAt: at("t.Setenv")}}
+	if err := g.checkNameSettingWrite(e, fn); err == nil {
+		t.Fatal("недостижимая проверка принята")
+	}
+}

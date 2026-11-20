@@ -116,8 +116,8 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting: записанный ключ не подтверждает объект в имени")
 	}
 	use, err := g.nameCallExpression(fn, proof.Use.At, proof.Use.Expression)
-	if err != nil || use.Pos() <= set.End() {
-		return fmt.Errorf("proof.setting.use: требуется вызов после записи")
+	if err != nil || use.Pos() <= set.End() || !nameEnvironmentUse(fn, use) {
+		return fmt.Errorf("proof.setting.use: укажите проверку результата вызова после записи")
 	}
 	for node := range ast.Preorder(fn.node.Body) {
 		if stmt, ok := node.(*ast.AssignStmt); ok && stmt.Pos() < set.Pos() {
@@ -141,10 +141,53 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting.use.declaration: укажите реализацию вызванной функции")
 	}
 	get, _, err := g.call(reader, proof.ReadAt, func(x ast.Expr) bool { return g.namePackageSelector(reader, x, "os", "Getenv") })
-	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target {
-		return fmt.Errorf("proof.setting.read_at: укажите чтение того же ключа")
+	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get) {
+		return fmt.Errorf("proof.setting.read_at: укажите возвращаемое чтение того же ключа")
 	}
 	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true}))
+}
+
+// nameEnvironmentUse accepts a top-level test condition that checks the
+// returned value; calls inside unrelated or unreachable blocks prove nothing.
+func nameEnvironmentUse(fn queryFunc, call *ast.CallExpr) bool {
+	for _, stmt := range fn.node.Body.List {
+		cond, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		init, ok := cond.Init.(*ast.AssignStmt)
+		if !ok || len(init.Lhs) != 1 || len(init.Rhs) != 1 || init.Rhs[0] != call {
+			continue
+		}
+		id, ok := init.Lhs[0].(*ast.Ident)
+		if !ok || id.Name == "_" || id.Obj == nil {
+			continue
+		}
+		for node := range ast.Preorder(cond.Cond) {
+			if read, ok := node.(*ast.Ident); ok && read.Obj == id.Obj {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nameEnvironmentReturn supports a direct return or TrimSpace of the value.
+// Other transformations require an explicit proof instead of guessing flow.
+func (g *queryGoSource) nameEnvironmentReturn(fn queryFunc, get *ast.CallExpr) bool {
+	for _, stmt := range fn.node.Body.List {
+		ret, ok := stmt.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 {
+			continue
+		}
+		if ret.Results[0] == get {
+			return true
+		}
+		if wrap, ok := ret.Results[0].(*ast.CallExpr); ok && len(wrap.Args) == 1 && wrap.Args[0] == get && g.namePackageSelector(fn, wrap.Fun, "strings", "TrimSpace") {
+			return true
+		}
+	}
+	return false
 }
 
 func nameHasParameter(field *ast.Field, name string) bool {

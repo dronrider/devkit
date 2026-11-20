@@ -494,13 +494,14 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 	if e.Check == "result" && isGoRef(declaration) && e.ResultEvidence != nil && isNameBooleanExpression(pair.Actual) {
 		return checkNameBooleanResult(e, declaration, source)
 	}
-	if pair.Actual == "" || !strings.ContainsFunc(pair.Actual, unicode.IsLetter) ||
+	destinationExpr := e.Check == "writes" && e.WriteEvidence != nil && e.WriteEvidence.File != nil && e.WriteEvidence.File.Role == "destination" && isGoRef(declaration)
+	if !destinationExpr && (pair.Actual == "" || !strings.ContainsFunc(pair.Actual, unicode.IsLetter) ||
 		strings.ContainsFunc(pair.Actual, func(r rune) bool {
 			return !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsMark(r) && r != '_' && r != '$'
-		}) {
+		})) {
 		return fmt.Errorf("actual: укажите точный идентификатор фактического объекта")
 	}
-	if !containsIdentifier(line, pair.Actual) {
+	if !destinationExpr && !containsIdentifier(line, pair.Actual) {
 		return fmt.Errorf("actual_at: идентификатор %q должен быть виден в %s", pair.Actual, pair.ActualAt)
 	}
 	structuredWrite := e.Check == "writes" && e.WriteEvidence != nil && (e.WriteEvidence.File != nil || e.WriteEvidence.Callback != nil || pair.Proof != nil)

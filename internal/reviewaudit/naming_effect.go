@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/parser"
+	"go/token"
+	"path"
 	"slices"
 )
 
@@ -128,6 +131,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	var scenario *ast.FuncLit
 	var binding *ast.Object
 	var assignedTarget string
+	var assignedNode ast.Expr
 	ordinaryWrite := false
 	commaOK := false
 	for _, site := range a.Writes {
@@ -180,9 +184,10 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 		if exprSlot >= len(stmt.Rhs) || !sameNameExpression(stmt.Rhs[exprSlot], site.Value) {
 			return fmt.Errorf("proof.assignment: %s должно получать правую часть %s", site.Target, site.Value)
 		}
-		if site.At == e.WriteEvidence.WriteAt && site.At == pair.ActualAt && sameNameExpression(stmt.Lhs[slot], p.Expression) {
+		if site.At == e.WriteEvidence.WriteAt && (site.At == pair.ActualAt || g.nameAssignmentFieldDeclaration(fn, stmt.Lhs[slot], pair.ActualAt)) && (sameNameExpression(stmt.Lhs[slot], p.Expression) || sameNameAssignment(stmt, p.Expression)) {
 			assigned, commaOK = stmt.Rhs[exprSlot], isMapOK
 			assignedTarget = site.Target
+			assignedNode = stmt.Lhs[slot]
 		}
 		proofLines[site.At] = true
 	}
@@ -226,7 +231,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 			if field, ok := node.(*ast.SelectorExpr); ok && field.Sel.Name == pair.Actual {
 				return true
 			}
-			if id, ok := node.(*ast.Ident); ok && id.Name == pair.Actual && consumer.node.Body == fn.node.Body {
+			if id, ok := node.(*ast.Ident); ok && id.Name == pair.Actual && (consumer.node.Body == fn.node.Body || g.nameAssignmentGlobal(fn, consumer, id, assignedNode)) {
 				return true
 			}
 		}
@@ -244,6 +249,126 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	}
 	proofLines[a.Use.At] = true
 	return checkNameWriteWordLinks(p.Words, nameWriteLines(e, proofLines))
+}
+
+func sameNameAssignment(stmt *ast.AssignStmt, text string) bool {
+	tree, err := parser.ParseFile(token.NewFileSet(), "proof.go", "package p\nfunc f() {\n"+text+"\n}", 0)
+	if err != nil || len(tree.Decls) != 1 {
+		return false
+	}
+	fn, ok := tree.Decls[0].(*ast.FuncDecl)
+	if !ok || len(fn.Body.List) != 1 {
+		return false
+	}
+	want, ok := fn.Body.List[0].(*ast.AssignStmt)
+	if !ok || stmt.Tok != want.Tok || len(stmt.Lhs) != len(want.Lhs) || len(stmt.Rhs) != len(want.Rhs) {
+		return false
+	}
+	for i := range stmt.Lhs {
+		if nameExpression(stmt.Lhs[i]) != nameExpression(want.Lhs[i]) {
+			return false
+		}
+	}
+	for i := range stmt.Rhs {
+		if nameExpression(stmt.Rhs[i]) != nameExpression(want.Rhs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *queryGoSource) nameAssignmentFieldDeclaration(fn queryFunc, target ast.Expr, at string) bool {
+	sel, ok := target.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	root, ok := sel.X.(*ast.Ident)
+	if !ok || root.Obj == nil {
+		return false
+	}
+	spec, ok := root.Obj.Decl.(*ast.ValueSpec)
+	if !ok {
+		return false
+	}
+	typ, ok := spec.Type.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	file, line, base, err := evidenceLocation(at)
+	if err != nil || file != fn.file || base != fn.base {
+		return false
+	}
+	tree, err := g.parseFile(file, base)
+	if err != nil {
+		return false
+	}
+	for _, d := range tree.Decls {
+		gen, ok := d.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, s := range gen.Specs {
+			t, ok := s.(*ast.TypeSpec)
+			if !ok || t.Name.Name != typ.Name || typ.Obj == nil || typ.Obj != t.Name.Obj {
+				continue
+			}
+			st, ok := t.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+			for _, field := range st.Fields.List {
+				for _, name := range field.Names {
+					if name.Name == sel.Sel.Name && g.fset.Position(name.Pos()).Line == line {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (g *queryGoSource) nameAssignmentGlobal(writer, reader queryFunc, read *ast.Ident, target ast.Expr) bool {
+	written, ok := target.(*ast.Ident)
+	if !ok || written.Name != read.Name || writer.base != reader.base || path.Dir(writer.file) != path.Dir(reader.file) {
+		return false
+	}
+	wt, err := g.parseFile(writer.file, writer.base)
+	if err != nil {
+		return false
+	}
+	rt, err := g.parseFile(reader.file, reader.base)
+	if err != nil || wt.Name.Name != rt.Name.Name {
+		return false
+	}
+	var global *ast.Object
+	for _, tree := range []*ast.File{wt, rt} {
+		for _, decl := range tree.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				if v, ok := spec.(*ast.ValueSpec); ok {
+					for _, id := range v.Names {
+						if id.Name == written.Name {
+							if global != nil && global != id.Obj {
+								return false
+							}
+							global = id.Obj
+						}
+					}
+				}
+			}
+		}
+		if wt == rt {
+			break
+		}
+	}
+	if global == nil || (read.Obj != nil && read.Obj != global) || (written.Obj != nil && written.Obj != global) {
+		return false
+	}
+	return true
 }
 
 func nameIsAssignmentTarget(fn queryFunc, expr ast.Expr) bool {

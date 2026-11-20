@@ -64,8 +64,23 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	switch f.Role {
 	case "destination":
-		if pair.Actual != f.Path || f.PayloadAt != "" || f.EncodeAt != "" {
+		if !sameNameExpression(path, pair.Actual) || f.PayloadAt != "" || f.EncodeAt != "" {
 			return fmt.Errorf("write_evidence.file: для destination укажите путь как actual")
+		}
+		actual, err := parser.ParseExpr(pair.Actual)
+		if err != nil {
+			return fmt.Errorf("actual: укажите выражение пути")
+		}
+		if _, simple := actual.(*ast.Ident); !simple {
+			openAt := ""
+			if open != nil {
+				openAt = nameRef(fn, g.fset.Position(open.Pos()).Line)
+			}
+			if pair.ActualAt != w.WriteAt && pair.ActualAt != openAt {
+				return fmt.Errorf("actual_at: укажите строку вызова с путём")
+			}
+		} else if line, err := source.line(pair.ActualAt); err != nil || !containsIdentifier(line, pair.Actual) {
+			return fmt.Errorf("actual_at: идентификатор пути не найден")
 		}
 		if e.Result == "checked" && !g.nameFileDestinationMatches(fn, pair, open) {
 			return fmt.Errorf("запись файла не подтверждает %q как объект назначения", strings.Join(pair.Expected, " "))

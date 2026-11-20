@@ -422,9 +422,9 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
 var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
 
-// appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
-// продолжением. Отказ на любом шаге убивает процесс и называется словами с
-// хвостом stderr, потому что причины входа клиент пишет именно туда.
+// appSpawn поднимает клиент и готовит новую либо прежнюю нить. При отказе
+// после запуска клиенту посылается сигнал остановки. Собранный хвост stderr
+// добавляется к ошибке, если он непуст.
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
 	s.appMu.Lock()
 	if s.appStarting[sid] != nil || s.appChats[sid] != nil {
@@ -470,8 +470,8 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}
 	fail := func(err error) (*appChat, error) {
 		proc.kill()
-		// Хвост stderr читается после смерти процесса: клиент пишет причину
-		// отказа туда, и гонять чтение раньше выхода значило бы терять её.
+		// kill ждёт закрытия dead до пяти секунд. Дополнительная пауза
+		// даёт сборщику stderr дочитать причину отказа.
 		time.Sleep(200 * time.Millisecond)
 		if tail := strings.TrimSpace(proc.errTail()); tail != "" {
 			return nil, fmt.Errorf("%w (%s)", err, tail)
@@ -742,9 +742,9 @@ func (s *server) appTaskSaveEffort(w http.ResponseWriter, sid, effort string) bo
 	return true
 }
 
-// appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
-// разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
-// называются словами, молчания тут не бывает.
+// appSay передаёт реплику обычному разговору, при необходимости поднимая
+// клиент. У рабочего чата задачи реплика идёт в очередь восстановления
+// или однопроходного продолжения. Занятый исходный конвейер может отказать.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
 	if a := s.appTaskFind(sid, "", ""); a != nil {

@@ -58,6 +58,11 @@ def log(line):
 
 writer = None
 
+def thread_sample():
+    path = os.path.join(os.path.dirname(__file__), "apptask_thread_read.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["thread"]
+
 def history():
     try:
         with open("fake-app-history") as f:
@@ -137,9 +142,11 @@ for raw in sys.stdin:
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": configured(params, params.get("threadId"))})
     elif m == "thread/read":
-        turns = history()
+        thread = thread_sample()
+        thread["id"] = params.get("threadId")
+        thread["turns"] = history()
         log("read " + params.get("threadId", ""))
-        emit({"id": mid, "result": {"thread": {"id": params.get("threadId"), "status": {"type": "idle"}, "turns": turns}}})
+        emit({"id": mid, "result": {"thread": thread}})
     elif m == "turn/start":
         log("params " + json.dumps(params))
         log("turn " + str(params.get("effort", "")))
@@ -152,8 +159,10 @@ for raw in sys.stdin:
             continue
         if client_id := params.get("clientUserMessageId"):
             turns = history()
-            turns.append({"id": "accepted-" + client_id, "status": "interrupted", "itemsView": "full",
-                          "items": [{"type": "userMessage", "clientId": client_id}]})
+            turn = thread_sample()["turns"][0]
+            turn["id"] = "accepted-" + client_id
+            turn["items"][0]["clientId"] = client_id
+            turns.append(turn)
             with open("fake-app-history", "w") as f:
                 json.dump(turns, f)
         if mode() == "recover-die":
@@ -223,6 +232,10 @@ esac`)
 	if err := os.WriteFile(filepath.Join(e.bin, "клиент-app.py"), []byte(appClientPy), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Снимок thread/read локального Codex 0.170.0 после thread/resume
+	// содержит только поля сверки квитанции и подставные идентификаторы.
+	const threadRead = "apptask_thread_read.json"
+	putDoc(t, e.bin, threadRead, readFile(t, filepath.Join("testdata", threadRead)))
 	t.Cleanup(func() {
 		e.srv.Close()
 		e.s.appTasksClose()

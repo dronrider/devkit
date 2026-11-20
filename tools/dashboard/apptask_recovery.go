@@ -34,7 +34,7 @@ func (s *server) appTaskLaunchLock(sid string) (*os.File, error) {
 func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim string) {
 	entry, err := s.appTaskQueueAdd(sid, claim, text)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		appTaskQueueError(w, err)
 		return
 	}
 	if entry.Accepted {
@@ -43,6 +43,15 @@ func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim string
 		return
 	}
 	s.appTaskQueued(w, sid, entry.ID)
+}
+
+func appTaskQueueError(w http.ResponseWriter, err error) {
+	message := err.Error()
+	if errors.Is(err, errAppTaskClaimConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": message, "refused": message})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": message})
 }
 
 func (s *server) appTaskQueued(w http.ResponseWriter, sid, messageID string) {

@@ -786,6 +786,11 @@ func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
 	if err != nil || entry.ID == "" || receipt.MessageID != entry.ID || entry.Claim != "effort-test" {
 		t.Fatalf("квитанция %q не соответствует записи %+v: %v", receipt.MessageID, entry, err)
 	}
+	conflict := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text":"другой текст","msg_id":"effort-test"}`)
+	if raw := body(t, conflict); conflict.StatusCode != http.StatusConflict || !strings.Contains(raw, `"refused":"ключ реплики уже занят другим текстом"`) {
+		t.Fatalf("повтор ключа с другим текстом: %d %s", conflict.StatusCode, raw)
+	}
 	after := e.s.chatStoreRead(sid)
 	if after.CxEffort != "low" || after.TaskRunID != before.TaskRunID || after.Thread != before.Thread {
 		t.Fatalf("settings before %+v after %+v", before, after)

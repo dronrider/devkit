@@ -65,6 +65,8 @@ func (s *server) appTaskQueue(sid string, change func(*[]appTaskMessage) bool) e
 	return dir.Sync()
 }
 
+var errAppTaskClaimConflict = errors.New("ключ реплики уже занят другим текстом")
+
 func (s *server) appTaskQueueAdd(sid, claim, text string) (appTaskMessage, error) {
 	entry := appTaskMessage{ID: msgID(), Claim: claim, Text: text}
 	if entry.Claim == "" {
@@ -83,7 +85,7 @@ func (s *server) appTaskQueueAdd(sid, claim, text string) (appTaskMessage, error
 		return true
 	})
 	if conflict {
-		err = errors.New("ключ реплики уже занят другим текстом")
+		err = errAppTaskClaimConflict
 	}
 	return entry, err
 }

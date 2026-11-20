@@ -782,7 +782,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		entry, err = s.appTaskQueueAdd(sid, claim, text)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			appTaskQueueError(w, err)
 			return
 		}
 		if entry.Accepted {

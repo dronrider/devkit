@@ -1,0 +1,2241 @@
+{
+  "architecture": {
+    "goal": "",
+    "decision": "",
+    "boundaries": "",
+    "alternative": "",
+    "justification": "",
+    "result": "pending",
+    "evidence": []
+  },
+  "base_sha": "86e93f6a889c7c4848d7532986bcb9d6cdbd6326",
+  "code_hash": "5cc8ceb9b38c201094ee3e53feceb99db9afb1137836e3d716154ad52579e0ce",
+  "head_sha": "120aa58ab53bee73ee2009d6c9e743afd595ac3a",
+  "id": "DK-1748",
+  "rules": [
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-001",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-002",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-004",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "schema",
+        "output",
+        "consumer"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-007",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-010",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-011",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-012",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-013",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-014",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "usage",
+        "order"
+      ],
+      "evidence": [
+        {
+          "object": "Ожидание и проверка хода",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "waitTaskTurn вызывает JSON-RPC thread/read; waitTaskTurnProbe обрабатывает ответ в памяти. Изменённый путь не выполняет запрос к БД.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-015",
+      "reason": "На затронутом пути нет SQL, ORM, транзакции или обращения к БД.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "with_consumer",
+        "without_consumer"
+      ],
+      "evidence": [
+        {
+          "object": "Ожидание и проверка хода",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "waitTaskTurn вызывает JSON-RPC thread/read; waitTaskTurnProbe обрабатывает ответ в памяти. Изменённый путь не выполняет запрос к БД.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-016",
+      "reason": "На затронутом пути нет SQL, ORM, транзакции или обращения к БД.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Ожидание и проверка хода",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "waitTaskTurn вызывает JSON-RPC thread/read; waitTaskTurnProbe обрабатывает ответ в памяти. Изменённый путь не выполняет запрос к БД.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-017",
+      "reason": "На затронутом пути нет SQL, ORM, транзакции или обращения к БД.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "calls",
+        "inputs",
+        "batch"
+      ],
+      "evidence": [],
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "В файле нет запросов к БД по элементам коллекции."
+        },
+        {
+          "path": "tools/dashboard/appchat.go",
+          "reason": "В файле нет запросов к БД по элементам коллекции."
+        },
+        {
+          "path": "tools/dashboard/apptask.go",
+          "reason": "В файле нет запросов к БД по элементам коллекции."
+        },
+        {
+          "path": "tools/dashboard/apptask_probe_test.go",
+          "reason": "В файле нет запросов к БД по элементам коллекции."
+        },
+        {
+          "path": "tools/dashboard/apptask_timer_test.go",
+          "reason": "В файле нет запросов к БД по элементам коллекции."
+        }
+      ],
+      "id": "common-architecture:ARCH-018",
+      "reason": "В изменённом пути нет запроса к БД по элементам коллекции: thread/read вызывается один раз на окно тишины для одной нити; перебор turns разбирает локальный ответ.",
+      "result": "not_applicable",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "boundaries",
+        "parameters",
+        "binding",
+        "proposed_binding"
+      ],
+      "evidence": [
+        {
+          "object": "Ожидание и проверка хода",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "waitTaskTurn вызывает JSON-RPC thread/read; waitTaskTurnProbe обрабатывает ответ в памяти. Изменённый путь не выполняет запрос к БД.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-019",
+      "reason": "На затронутом пути нет SQL, ORM, транзакции или обращения к БД.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-020",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-021",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-022",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "behavior",
+        "basis"
+      ],
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-023",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-024",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-025",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-026",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-027",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "Таймер ожидания хода",
+          "location": "tools/dashboard/appchat.go:72",
+          "observation": "Константа appBusyCap задаёт 30 минут. Код отсчитывает время от последнего события.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-028",
+      "reason": "В изменении нет нового или изменённого пользовательского параметра, источника конфигурации или способа переопределения.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "meaning",
+        "result",
+        "writes"
+      ],
+      "evidence": [
+        {
+          "object": "tools/dashboard/apptask.go:34#appTaskTurnID",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:34",
+          "observation": "Извлекает ID хода из уведомления app-server для нити задачи; имя называет область и результат.",
+          "result": "checked",
+          "symbol": "appTaskTurnID",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "app-server",
+              "fact": "Обрабатывает метод и параметры уведомления app-server.",
+              "location": "tools/dashboard/apptask.go:34",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "конвейер задачи",
+              "fact": "Вызывается для событий appTaskTurn.",
+              "location": "tools/dashboard/apptask.go:53",
+              "result": "checked"
+            },
+            {
+              "word": "Turn",
+              "meaning": "ход",
+              "fact": "Извлекает вложенный turn.id либо turnId.",
+              "location": "tools/dashboard/apptask.go:45",
+              "result": "checked"
+            },
+            {
+              "word": "ID",
+              "meaning": "идентификатор",
+              "fact": "Возвращает ids.Turn.ID или ids.TurnID.",
+              "location": "tools/dashboard/apptask.go:48",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:34#appTaskTurnID",
+          "check": "writes",
+          "location": "tools/dashboard/apptask.go:34",
+          "observation": "Функция читает вход и возвращает строку; не меняет данные потребителя.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:34#appTaskTurnID",
+          "check": "result",
+          "location": "tools/dashboard/apptask.go:48",
+          "observation": "Возвращает строковый ID хода текущей нити или пустую строку при несовпадении нити и некорректном JSON.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "app",
+              "Task",
+              "Turn",
+              "ID"
+            ],
+            "actual": "TurnID",
+            "actual_at": "tools/dashboard/apptask.go:48",
+            "proof": {
+              "expression": "ids.TurnID",
+              "type": "string",
+              "words": [
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:53",
+                    "quote": "appTaskTurnID(method, params, t.thread)",
+                    "text": "note передаёт параметры события.",
+                    "value": "params",
+                    "parameter": "params"
+                  }
+                },
+                {
+                  "word": "Task",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:53",
+                    "quote": "appTaskTurnID(method, params, t.thread)",
+                    "text": "note передаёт параметры события.",
+                    "value": "params",
+                    "parameter": "params"
+                  }
+                },
+                {
+                  "word": "Turn",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:48",
+                    "quote": "return ids.TurnID",
+                    "text": "Возвращает идентификатор хода.",
+                    "value": "ids.TurnID"
+                  }
+                },
+                {
+                  "word": "ID",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:48",
+                    "text": "ids.TurnID",
+                    "value": "ids.TurnID",
+                    "quote": "ids.TurnID"
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "ID",
+            "returned": "ids.Turn.ID для turn/started и turn/completed; иначе ids.TurnID; пустая строка при несовпадении нити или ошибке разбора",
+            "return_at": "tools/dashboard/apptask.go:48",
+            "consumer": "note проверяет ID и использует его для фильтрации события",
+            "consumer_at": "tools/dashboard/apptask.go:54"
+          }
+        },
+        {
+          "object": "tools/dashboard/apptask.go:52#appTaskTurn.note",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:52",
+          "observation": "Фиксирует событие хода и сигнализирует ожидающему; note обозначает регистрацию события.",
+          "result": "checked",
+          "symbol": "note",
+          "word_checks": [
+            {
+              "word": "note",
+              "meaning": "зафиксировать событие",
+              "fact": "После проверки ID обновляет seq и время, посылает сигнал ожиданию.",
+              "location": "tools/dashboard/apptask.go:57",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:52#appTaskTurn.note",
+          "check": "result",
+          "location": "tools/dashboard/apptask.go:52",
+          "observation": "Функция не возвращает прикладного результата.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:52#appTaskTurn.note",
+          "check": "writes",
+          "location": "tools/dashboard/apptask.go:61",
+          "observation": "Фиксирует время события для ожидающего хода.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "note"
+            ],
+            "actual": "last",
+            "actual_at": "tools/dashboard/apptask.go:61",
+            "proof": {
+              "expression": "t.last",
+              "words": [
+                {
+                  "word": "note",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:61",
+                    "quote": "t.last = now",
+                    "value": "t.last",
+                    "text": "Время события записывается в состояние хода."
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/dashboard/apptask.go:61",
+                    "target": "t.last",
+                    "value": "now"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/dashboard/apptask.go:81",
+                  "at": "tools/dashboard/apptask.go:112",
+                  "expression": "t.last"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "note",
+            "target": "t.last",
+            "value": "now",
+            "write_at": "tools/dashboard/apptask.go:61"
+          }
+        },
+        {
+          "object": "tools/dashboard/appchat.go:581#server.appNote",
+          "check": "meaning",
+          "location": "tools/dashboard/appchat.go:581",
+          "observation": "Принимает уведомление app-server, передаёт событие хода и обновляет ленту.",
+          "result": "checked",
+          "symbol": "appNote",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "app-server",
+              "location": "tools/dashboard/appchat.go:586",
+              "fact": "Событие передаётся c.taskTurn.note.",
+              "result": "checked"
+            },
+            {
+              "word": "Note",
+              "meaning": "уведомление",
+              "location": "tools/dashboard/appchat.go:591",
+              "fact": "Отбор уведомлений выполняется по method.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/appchat.go:961#server.appStatus",
+          "check": "meaning",
+          "location": "tools/dashboard/appchat.go:961",
+          "observation": "Отдаёт панели состояние разговора app-server.",
+          "result": "checked",
+          "symbol": "appStatus",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "app-server",
+              "location": "tools/dashboard/appchat.go:968",
+              "fact": "Ответ строится из состояния appChat.",
+              "result": "checked"
+            },
+            {
+              "word": "Status",
+              "meaning": "состояние",
+              "location": "tools/dashboard/appchat.go:991",
+              "fact": "writeJSON отправляет состояние клиенту.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:75#appChat.waitTaskTurn",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "Ожидает исход хода задачи и возвращает ошибку или успех.",
+          "result": "checked",
+          "symbol": "waitTaskTurn",
+          "word_checks": [
+            {
+              "word": "wait",
+              "meaning": "ожидать",
+              "location": "tools/dashboard/apptask.go:76",
+              "fact": "Передаёт ожидание waitTaskTurnProbe.",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "задача",
+              "location": "tools/dashboard/apptask.go:393",
+              "fact": "Вызывается из прохода задачи.",
+              "result": "checked"
+            },
+            {
+              "word": "Turn",
+              "meaning": "ход",
+              "location": "tools/dashboard/apptask.go:76",
+              "fact": "Передаёт идентификатор turn.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:81#appChat.waitTaskTurnProbe",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:81",
+          "observation": "Ожидает ход задачи и при тишине проверяет состояние через probe.",
+          "result": "checked",
+          "symbol": "waitTaskTurnProbe",
+          "word_checks": [
+            {
+              "word": "wait",
+              "meaning": "ожидать",
+              "location": "tools/dashboard/apptask.go:104",
+              "fact": "Цикл ждёт событий, остановки и таймера.",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "задача",
+              "location": "tools/dashboard/apptask.go:393",
+              "fact": "Вызывается из прохода задачи через waitTaskTurn.",
+              "result": "checked"
+            },
+            {
+              "word": "Turn",
+              "meaning": "ход",
+              "location": "tools/dashboard/apptask.go:83",
+              "fact": "Устанавливает ID текущего хода.",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "проверка",
+              "location": "tools/dashboard/apptask.go:120",
+              "fact": "Запускает probe по истечении времени.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:177#appTaskProbeStatus",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:177",
+          "observation": "Разбирает ответ проверки состояния хода задачи.",
+          "result": "checked",
+          "symbol": "appTaskProbeStatus",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "app-server",
+              "location": "tools/dashboard/apptask.go:77",
+              "fact": "thread/read возвращает данные app-server.",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "задача",
+              "location": "tools/dashboard/apptask.go:137",
+              "fact": "Вызывается из ожидания хода задачи.",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "проверка",
+              "location": "tools/dashboard/apptask.go:178",
+              "fact": "Обрабатывает ошибку запроса проверки.",
+              "result": "checked"
+            },
+            {
+              "word": "Status",
+              "meaning": "состояние",
+              "location": "tools/dashboard/apptask.go:201",
+              "fact": "Разбирает статус хода.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:307#server.appTaskPass",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask.go:307",
+          "observation": "Выполняет проход задачи через app-server и отвечает носителю результатом.",
+          "result": "checked",
+          "symbol": "appTaskPass",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "app-server",
+              "location": "tools/dashboard/apptask.go:375",
+              "fact": "Запускает turn/start.",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "задача",
+              "location": "tools/dashboard/apptask.go:327",
+              "fact": "Проверяет владельца задачи.",
+              "result": "checked"
+            },
+            {
+              "word": "Pass",
+              "meaning": "проход",
+              "location": "tools/dashboard/apptask.go:393",
+              "fact": "Ожидает исход одного хода.",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/appchat.go:581#server.appNote",
+          "check": "result",
+          "location": "tools/dashboard/appchat.go:581",
+          "observation": "Уведомление обрабатывается побочными эффектами; возвращаемого значения нет.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/appchat.go:961#server.appStatus",
+          "check": "result",
+          "location": "tools/dashboard/appchat.go:961",
+          "observation": "Ответ передаётся в HTTP writer; функция не возвращает значение.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:75#appChat.waitTaskTurn",
+          "check": "result",
+          "location": "tools/dashboard/apptask.go:75",
+          "observation": "Возвращаемая ошибка сообщает исход ожидания; прикладной объект имя не обещает.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:81#appChat.waitTaskTurnProbe",
+          "check": "result",
+          "location": "tools/dashboard/apptask.go:81",
+          "observation": "Возвращаемая ошибка сообщает исход ожидания; прикладной объект имя не обещает.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:307#server.appTaskPass",
+          "check": "result",
+          "location": "tools/dashboard/apptask.go:307",
+          "observation": "Ошибка передаёт успех или отказ прохода; имя не обещает прикладного результата.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:177#appTaskProbeStatus",
+          "check": "writes",
+          "location": "tools/dashboard/apptask.go:177",
+          "observation": "Разбирает вход в локальные значения и возвращает результат; данные потребителя не изменяет.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/appchat.go:961#server.appStatus",
+          "check": "writes",
+          "location": "tools/dashboard/appchat.go:971",
+          "observation": "Формирует статус активного чата для HTTP-ответа.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "app",
+              "Status"
+            ],
+            "actual": "out",
+            "actual_at": "tools/dashboard/appchat.go:971",
+            "proof": {
+              "expression": "out[\"status\"]",
+              "words": [
+                {
+                  "word": "app",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/appchat.go:971",
+                    "quote": "out[\"status\"] = \"ход идёт\"",
+                    "value": "out[\"status\"]",
+                    "text": "Статус app-server записан в ответ."
+                  }
+                },
+                {
+                  "word": "Status",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/appchat.go:971",
+                    "quote": "out[\"status\"] = \"ход идёт\"",
+                    "value": "out[\"status\"]",
+                    "text": "Статус app-server записан в ответ."
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/dashboard/appchat.go:971",
+                    "target": "out[\"status\"]",
+                    "value": "\"ход идёт\""
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/dashboard/appchat.go:961",
+                  "at": "tools/dashboard/appchat.go:991",
+                  "expression": "out"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Status",
+            "target": "out[\"status\"]",
+            "value": "\"ход идёт\"",
+            "write_at": "tools/dashboard/appchat.go:971"
+          }
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:117#TestAppTaskSilenceProbeStop",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_probe_test.go:117",
+          "symbol": "TestAppTaskSilenceProbeStop",
+          "observation": "TestAppTaskSilenceProbeStop называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceProbeStop(t *testing.T) {",
+              "location": "tools/dashboard/apptask_probe_test.go:117",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:126",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:126",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:126",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "Слово Probe входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:126",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "Слово Stop входит в имя проверяемого сценария",
+              "fact": "close(stop)",
+              "location": "tools/dashboard/apptask_probe_test.go:130",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:117#TestAppTaskSilenceProbeStop",
+          "check": "result",
+          "location": "tools/dashboard/apptask_probe_test.go:117",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:12#TestAppTaskSilenceProbe",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_probe_test.go:12",
+          "symbol": "TestAppTaskSilenceProbe",
+          "observation": "TestAppTaskSilenceProbe называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceProbe(t *testing.T) {",
+              "location": "tools/dashboard/apptask_probe_test.go:12",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:40",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:40",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:40",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "Слово Probe входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:40",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:12#TestAppTaskSilenceProbe",
+          "check": "result",
+          "location": "tools/dashboard/apptask_probe_test.go:12",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:138#TestAppTaskSilenceProbeProgressRace",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_probe_test.go:138",
+          "symbol": "TestAppTaskSilenceProbeProgressRace",
+          "observation": "TestAppTaskSilenceProbeProgressRace называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceProbeProgressRace(t *testing.T) {",
+              "location": "tools/dashboard/apptask_probe_test.go:138",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:146",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:146",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:146",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "Слово Probe входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_probe_test.go:146",
+              "result": "checked"
+            },
+            {
+              "word": "Progress",
+              "meaning": "Слово Progress входит в имя проверяемого сценария",
+              "fact": "turn.note(\"item/agentMessage/delta\", json.RawMessage(`{\"threadId\":\"main\",\"turnId\":\"ours\"}`), time.Now())",
+              "location": "tools/dashboard/apptask_probe_test.go:151",
+              "result": "checked"
+            },
+            {
+              "word": "Race",
+              "meaning": "Слово Race входит в имя проверяемого сценария",
+              "fact": "turn.note(\"item/agentMessage/delta\", json.RawMessage(`{\"threadId\":\"main\",\"turnId\":\"ours\"}`), time.Now())",
+              "location": "tools/dashboard/apptask_probe_test.go:151",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:138#TestAppTaskSilenceProbeProgressRace",
+          "check": "result",
+          "location": "tools/dashboard/apptask_probe_test.go:138",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:176#TestAppTaskSilenceProbeStopAndCompletion",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_probe_test.go:176",
+          "symbol": "TestAppTaskSilenceProbeStopAndCompletion",
+          "observation": "TestAppTaskSilenceProbeStopAndCompletion называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceProbeStopAndCompletion(t *testing.T) {",
+              "location": "tools/dashboard/apptask_probe_test.go:176",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "err := c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { t.Fatal(\"unexpected probe\"); return nil, nil })",
+              "location": "tools/dashboard/apptask_probe_test.go:183",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "err := c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { t.Fatal(\"unexpected probe\"); return nil, nil })",
+              "location": "tools/dashboard/apptask_probe_test.go:183",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "err := c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { t.Fatal(\"unexpected probe\"); return nil, nil })",
+              "location": "tools/dashboard/apptask_probe_test.go:183",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "Слово Probe входит в имя проверяемого сценария",
+              "fact": "err := c.waitTaskTurnProbe(turn, \"ours\", stop, 30*time.Minute, func() (json.RawMessage, error) { t.Fatal(\"unexpected probe\"); return nil, nil })",
+              "location": "tools/dashboard/apptask_probe_test.go:183",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "Слово Stop входит в имя проверяемого сценария",
+              "fact": "turn.ends <- json.RawMessage(`{\"threadId\":\"main\",\"turn\":{\"id\":\"ours\",\"status\":\"completed\"}}`)",
+              "location": "tools/dashboard/apptask_probe_test.go:179",
+              "result": "checked"
+            },
+            {
+              "word": "And",
+              "meaning": "Слово And входит в имя проверяемого сценария",
+              "fact": "turn.ends <- json.RawMessage(`{\"threadId\":\"main\",\"turn\":{\"id\":\"ours\",\"status\":\"completed\"}}`)",
+              "location": "tools/dashboard/apptask_probe_test.go:179",
+              "result": "checked"
+            },
+            {
+              "word": "Completion",
+              "meaning": "Слово Completion входит в имя проверяемого сценария",
+              "fact": "turn.ends <- json.RawMessage(`{\"threadId\":\"main\",\"turn\":{\"id\":\"ours\",\"status\":\"completed\"}}`)",
+              "location": "tools/dashboard/apptask_probe_test.go:179",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:176#TestAppTaskSilenceProbeStopAndCompletion",
+          "check": "result",
+          "location": "tools/dashboard/apptask_probe_test.go:176",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:96#TestAppTaskSilenceProbeEventRace",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_probe_test.go:96",
+          "symbol": "TestAppTaskSilenceProbeEventRace",
+          "observation": "TestAppTaskSilenceProbeEventRace называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceProbeEventRace(t *testing.T) {",
+              "location": "tools/dashboard/apptask_probe_test.go:96",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:104",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:104",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:104",
+              "result": "checked"
+            },
+            {
+              "word": "Probe",
+              "meaning": "Слово Probe входит в имя проверяемого сценария",
+              "fact": "go func() { done <- c.waitTaskTurnProbe(turn, \"ours\", nil, 30*time.Minute, probe) }()",
+              "location": "tools/dashboard/apptask_probe_test.go:104",
+              "result": "checked"
+            },
+            {
+              "word": "Event",
+              "meaning": "Слово Event входит в имя проверяемого сценария",
+              "fact": "turn.note(\"turn/completed\", json.RawMessage(`{\"threadId\":\"main\",\"turn\":{\"id\":\"ours\",\"status\":\"completed\"}}`), time.Now())",
+              "location": "tools/dashboard/apptask_probe_test.go:108",
+              "result": "checked"
+            },
+            {
+              "word": "Race",
+              "meaning": "Слово Race входит в имя проверяемого сценария",
+              "fact": "turn.note(\"turn/completed\", json.RawMessage(`{\"threadId\":\"main\",\"turn\":{\"id\":\"ours\",\"status\":\"completed\"}}`), time.Now())",
+              "location": "tools/dashboard/apptask_probe_test.go:108",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:96#TestAppTaskSilenceProbeEventRace",
+          "check": "result",
+          "location": "tools/dashboard/apptask_probe_test.go:96",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/apptask_timer_test.go:12#TestAppTaskSilenceTimer",
+          "check": "meaning",
+          "location": "tools/dashboard/apptask_timer_test.go:12",
+          "symbol": "TestAppTaskSilenceTimer",
+          "observation": "TestAppTaskSilenceTimer называет тест сценария ожидания хода приложения при тишине; тест создаёт фикстуру и проверяет исход ожидания, прикладного значения не возвращает. Слова соответствуют сценарию.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Слово Test входит в имя проверяемого сценария",
+              "fact": "func TestAppTaskSilenceTimer(t *testing.T) {",
+              "location": "tools/dashboard/apptask_timer_test.go:12",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "Слово App входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, appBusyCap, func() (json.RawMessage, error) { return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_timer_test.go:32",
+              "result": "checked"
+            },
+            {
+              "word": "Task",
+              "meaning": "Слово Task входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, appBusyCap, func() (json.RawMessage, error) { return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_timer_test.go:32",
+              "result": "checked"
+            },
+            {
+              "word": "Silence",
+              "meaning": "Слово Silence входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, appBusyCap, func() (json.RawMessage, error) { return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_timer_test.go:32",
+              "result": "checked"
+            },
+            {
+              "word": "Timer",
+              "meaning": "Слово Timer входит в имя проверяемого сценария",
+              "fact": "done <- c.waitTaskTurnProbe(turn, \"ours\", nil, appBusyCap, func() (json.RawMessage, error) { return nil, errors.New(\"offline\") })",
+              "location": "tools/dashboard/apptask_timer_test.go:32",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask_timer_test.go:12#TestAppTaskSilenceTimer",
+          "check": "result",
+          "location": "tools/dashboard/apptask_timer_test.go:12",
+          "observation": "Функция теста не возвращает значение; имя обещает проверку сценария, а не прикладной результат.",
+          "result": "not_applicable"
+        }
+      ],
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "Документация не объявляет модулей, функций, переменных или типов."
+        },
+        {
+          "path": "tools/dashboard/appchat.go",
+          "objects": [
+            "tools/dashboard/appchat.go:581#server.appNote",
+            "tools/dashboard/appchat.go:961#server.appStatus"
+          ]
+        },
+        {
+          "path": "tools/dashboard/apptask.go",
+          "objects": [
+            "tools/dashboard/apptask.go:34#appTaskTurnID",
+            "tools/dashboard/apptask.go:52#appTaskTurn.note",
+            "tools/dashboard/apptask.go:75#appChat.waitTaskTurn",
+            "tools/dashboard/apptask.go:81#appChat.waitTaskTurnProbe",
+            "tools/dashboard/apptask.go:177#appTaskProbeStatus",
+            "tools/dashboard/apptask.go:307#server.appTaskPass"
+          ]
+        },
+        {
+          "path": "tools/dashboard/apptask_probe_test.go",
+          "objects": [
+            "tools/dashboard/apptask_probe_test.go:12#TestAppTaskSilenceProbe",
+            "tools/dashboard/apptask_probe_test.go:96#TestAppTaskSilenceProbeEventRace",
+            "tools/dashboard/apptask_probe_test.go:117#TestAppTaskSilenceProbeStop",
+            "tools/dashboard/apptask_probe_test.go:138#TestAppTaskSilenceProbeProgressRace",
+            "tools/dashboard/apptask_probe_test.go:176#TestAppTaskSilenceProbeStopAndCompletion"
+          ]
+        },
+        {
+          "path": "tools/dashboard/apptask_timer_test.go",
+          "objects": [
+            "tools/dashboard/apptask_timer_test.go:12#TestAppTaskSilenceTimer"
+          ]
+        }
+      ],
+      "id": "common-style:STYLE-001",
+      "objects": [
+        "tools/dashboard/appchat.go:581#server.appNote",
+        "tools/dashboard/appchat.go:961#server.appStatus",
+        "tools/dashboard/apptask.go:34#appTaskTurnID",
+        "tools/dashboard/apptask.go:52#appTaskTurn.note",
+        "tools/dashboard/apptask.go:75#appChat.waitTaskTurn",
+        "tools/dashboard/apptask.go:81#appChat.waitTaskTurnProbe",
+        "tools/dashboard/apptask.go:177#appTaskProbeStatus",
+        "tools/dashboard/apptask.go:307#server.appTaskPass",
+        "tools/dashboard/apptask_probe_test.go:12#TestAppTaskSilenceProbe",
+        "tools/dashboard/apptask_probe_test.go:96#TestAppTaskSilenceProbeEventRace",
+        "tools/dashboard/apptask_probe_test.go:117#TestAppTaskSilenceProbeStop",
+        "tools/dashboard/apptask_probe_test.go:138#TestAppTaskSilenceProbeProgressRace",
+        "tools/dashboard/apptask_probe_test.go:176#TestAppTaskSilenceProbeStopAndCompletion",
+        "tools/dashboard/apptask_timer_test.go:12#TestAppTaskSilenceTimer"
+      ],
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "tools/dashboard/appchat.go:581#server.appNote",
+          "symbol": "appNote",
+          "location": "tools/dashboard/appchat.go:581"
+        },
+        {
+          "object": "tools/dashboard/appchat.go:961#server.appStatus",
+          "symbol": "appStatus",
+          "location": "tools/dashboard/appchat.go:961"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:34#appTaskTurnID",
+          "symbol": "appTaskTurnID",
+          "location": "tools/dashboard/apptask.go:34"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:52#appTaskTurn.note",
+          "symbol": "note",
+          "location": "tools/dashboard/apptask.go:52"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:75#appChat.waitTaskTurn",
+          "symbol": "waitTaskTurn",
+          "location": "tools/dashboard/apptask.go:75"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:81#appChat.waitTaskTurnProbe",
+          "symbol": "waitTaskTurnProbe",
+          "location": "tools/dashboard/apptask.go:81"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:177#appTaskProbeStatus",
+          "symbol": "appTaskProbeStatus",
+          "location": "tools/dashboard/apptask.go:177"
+        },
+        {
+          "object": "tools/dashboard/apptask.go:307#server.appTaskPass",
+          "symbol": "appTaskPass",
+          "location": "tools/dashboard/apptask.go:307"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:12#TestAppTaskSilenceProbe",
+          "symbol": "TestAppTaskSilenceProbe",
+          "location": "tools/dashboard/apptask_probe_test.go:12"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:96#TestAppTaskSilenceProbeEventRace",
+          "symbol": "TestAppTaskSilenceProbeEventRace",
+          "location": "tools/dashboard/apptask_probe_test.go:96"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:117#TestAppTaskSilenceProbeStop",
+          "symbol": "TestAppTaskSilenceProbeStop",
+          "location": "tools/dashboard/apptask_probe_test.go:117"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:138#TestAppTaskSilenceProbeProgressRace",
+          "symbol": "TestAppTaskSilenceProbeProgressRace",
+          "location": "tools/dashboard/apptask_probe_test.go:138"
+        },
+        {
+          "object": "tools/dashboard/apptask_probe_test.go:176#TestAppTaskSilenceProbeStopAndCompletion",
+          "symbol": "TestAppTaskSilenceProbeStopAndCompletion",
+          "location": "tools/dashboard/apptask_probe_test.go:176"
+        },
+        {
+          "object": "tools/dashboard/apptask_timer_test.go:12#TestAppTaskSilenceTimer",
+          "symbol": "TestAppTaskSilenceTimer",
+          "location": "tools/dashboard/apptask_timer_test.go:12"
+        }
+      ],
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-002",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-004",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-007",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-010",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-011",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-012",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-013",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-014",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "tools/dashboard/appchat.go:579",
+          "location": "tools/dashboard/appchat.go:586",
+          "observation": "Комментарий описывает границу поведения, подтверждённую кодом.",
+          "result": "checked",
+          "comment_quote": "appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/appchat.go:586",
+                "text": "При уведомлении рабочего хода событие передаётся в note; завершение очищает занятость в waitTaskTurn.",
+                "quote": "appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.",
+                "value": "c.taskTurn.note(method, params, time.Now())",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/appchat.go:586",
+                "text": "Условие и источник поведения помогают понять изменённый путь."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/appchat.go:959",
+          "location": "tools/dashboard/appchat.go:968",
+          "observation": "Комментарий описывает границу поведения, подтверждённую кодом.",
+          "result": "checked",
+          "comment_quote": "appStatus это состояние разговора для опроса панели: жив ли процесс, идёт ли ход и сколько он длится.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/appchat.go:968",
+                "text": "При живом чате ответ содержит live и busy, а sec вычисляется сервером.",
+                "quote": "appStatus это состояние разговора для опроса панели: жив ли процесс, идёт ли ход и сколько он длится.",
+                "value": "out := map[string]any{\"session\": sid, \"live\": true, \"busy\": busy,",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/appchat.go:980",
+                "text": "Время хода считается на сервере от turnAt.",
+                "quote": "Возраст хода говорит сервер, не браузер.",
+                "value": "age := s.now().Sub(at)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/appchat.go:968",
+                "text": "Условие и источник поведения помогают понять изменённый путь."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/apptask.go:51",
+          "location": "tools/dashboard/appchat.go:584",
+          "observation": "Комментарий описывает границу поведения, подтверждённую кодом.",
+          "result": "checked",
+          "comment_quote": "The chat lock guards activity while the request is still returning its turn ID.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/appchat.go:584",
+                "text": "appNote вызывает note при удержании c.mu; до ответа turn/start события сохраняются по ID.",
+                "quote": "The chat lock guards activity while the request is still returning its turn ID.",
+                "value": "c.mu.Lock()",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/appchat.go:584",
+                "text": "Условие и источник поведения помогают понять изменённый путь."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/apptask.go:138",
+          "location": "tools/dashboard/apptask.go:140",
+          "observation": "Комментарий описывает границу поведения, подтверждённую кодом.",
+          "result": "checked",
+          "comment_quote": "A newer event wins over a stale response, including errors and terminal states.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/apptask.go:140",
+                "text": "Если событие пришло во время пробы, изменившаяся последовательность отменяет разбор её ответа.",
+                "quote": "A newer event wins over a stale response, including errors and terminal states.",
+                "value": "t.seq != result.seq",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/apptask.go:140",
+                "text": "Условие и источник поведения помогают понять изменённый путь."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/apptask.go:175",
+          "location": "tools/dashboard/apptask.go:204",
+          "observation": "Комментарий описывает границу поведения, подтверждённую кодом.",
+          "result": "checked",
+          "comment_quote": "The exact turn supplies terminal status.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/apptask.go:204",
+                "text": "Известный конечный статус найденного хода возвращается вызывающей функции.",
+                "quote": "The exact turn supplies terminal status.",
+                "value": "case \"completed\", \"failed\", \"interrupted\":",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/apptask.go:212",
+                "text": "Активная нить продлевает ожидание, когда подходящий ход отсутствует в проекции.",
+                "quote": "An active matching thread also renews waiting when Codex has not yet projected the running turn into history.",
+                "value": "response.Thread.Status.Type == \"active\"",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/apptask.go:204",
+                "text": "Условие и источник поведения помогают понять изменённый путь."
+              }
+            ]
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "В изменённых строках файла нет комментариев к коду."
+        },
+        {
+          "path": "tools/dashboard/appchat.go",
+          "objects": [
+            "tools/dashboard/appchat.go:579",
+            "tools/dashboard/appchat.go:959"
+          ]
+        },
+        {
+          "path": "tools/dashboard/apptask.go",
+          "objects": [
+            "tools/dashboard/apptask.go:51",
+            "tools/dashboard/apptask.go:138",
+            "tools/dashboard/apptask.go:175"
+          ]
+        },
+        {
+          "path": "tools/dashboard/apptask_probe_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду."
+        },
+        {
+          "path": "tools/dashboard/apptask_timer_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду."
+        }
+      ],
+      "id": "common-style:STYLE-015",
+      "objects": [
+        "tools/dashboard/appchat.go:579",
+        "tools/dashboard/appchat.go:959",
+        "tools/dashboard/apptask.go:51",
+        "tools/dashboard/apptask.go:138",
+        "tools/dashboard/apptask.go:175"
+      ],
+      "reason": "Изменённые блоки и комментарии к изменённым функциям сверены с реализацией.",
+      "result": "checked",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "tools/dashboard/appchat.go:579",
+          "symbol": "server.appNote",
+          "location": "tools/dashboard/appchat.go:579",
+          "comment_fragments": [
+            "appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты."
+          ]
+        },
+        {
+          "object": "tools/dashboard/appchat.go:959",
+          "symbol": "server.appStatus",
+          "location": "tools/dashboard/appchat.go:959",
+          "comment_fragments": [
+            "appStatus это состояние разговора для опроса панели: жив ли процесс, идёт ли ход и сколько он длится.",
+            "Возраст хода говорит сервер, не браузер."
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:51",
+          "symbol": "appTaskTurn.note",
+          "location": "tools/dashboard/apptask.go:51",
+          "comment_fragments": [
+            "The chat lock guards activity while the request is still returning its turn ID."
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:138",
+          "symbol": "appChat.waitTaskTurnProbe",
+          "location": "tools/dashboard/apptask.go:138",
+          "comment_fragments": [
+            "A newer event wins over a stale response, including errors and terminal states."
+          ]
+        },
+        {
+          "object": "tools/dashboard/apptask.go:175",
+          "symbol": "appTaskProbeStatus",
+          "location": "tools/dashboard/apptask.go:175",
+          "comment_fragments": [
+            "The exact turn supplies terminal status.",
+            "An active matching thread also renews waiting when Codex has not yet projected the running turn into history."
+          ]
+        }
+      ],
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-016",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-001",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-002",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-004",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "strength",
+        "overlap"
+      ],
+      "evidence": [],
+      "id": "common-tests:TEST-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-007",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-927d754447cbe51a",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "## Границы"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-3795ec1243732caa",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-feefa59680bc01df",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "## Инварианты"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-746f66466c253955",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-c8be7a833c89c0e8",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-91fb2123abfa64cb",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Занятость хода открывается до отправки реплики и гасится\n  уведомлением конца хода, смерть процесса записывается в ленту словами."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-b6ca4d1bc2e089cd",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-9c814a6998496b37",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-414cfee6ece27659",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-2896dde8774e1968",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-8bfebc193cc45790",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "# Стиль devkit"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-2f21840e1463a01e",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-9c4dd47968139c01",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "## Ошибки и отказы"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-88e50c4f780c246c",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-2212761035e243fb",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-41b95475184c2aef",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "## Раскладка тестов"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-519646d7d9f951be",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-9573ef33db114342",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-b03ef741121d44a0",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-a969903cd6ddc137",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "## Имена"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-c785ad31965daade",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-b3298c360a523f07",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется."
+    }
+  ],
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "db5798bb65fe4c35c2867b0f4d81b49d087ae87c35ac85f20483c63004f43956"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "2096a3b68b867b7f40f6e76610a2054c95637b333dcd6970591b6f4a57eb8ca1"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "dd65fbb7edf8754ffaafded6d5d7c896effabc130db5bdf3de939a9f608a82da"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "7dfd9787d5886b70cbe3f589bdc2967a36a52de7bc0951b2924901cf915bd4be"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "task_hash": "50de7016d00044aee21ac67524a2cc36b8ab94df8a6e0b7437d10b54de6e5a21",
+  "version": 1
+}

@@ -75,6 +75,7 @@ func ExitClass(code int) string {
 // Ступени лестницы, словом для вывода и журнала.
 const (
 	RungLock     = "замок"
+	RungAppChat  = "рабочий чат Codex"
 	RungLive     = "живое окно"
 	RungWindow   = "новое окно"
 	RungHeadless = "headless"
@@ -181,9 +182,8 @@ func (q *Request) pickModel(res *Result) {
 	res.say("модель %s по вердикту agentctl pick", model)
 }
 
-// Raise ведёт лестницу носителей. Ошибка это сломанная раскладка (нет
-// профиля, нет секции [head]), а всё, что случилось на ступенях, лежит в
-// Result.
+// Raise ведёт лестницу носителей. Ошибка означает отказ предполёта
+// или сбой раскладки. Исходы выбора носителя записываются в Result.
 func Raise(q Request) (Result, error) {
 	var res Result
 	if err := GuardGroomRun(q.Root, os.Getenv("DEVKIT_GROOM_SOURCE"), os.Getenv("DEVKIT_GROOM_MODE"), q.ID); err != nil {
@@ -226,7 +226,7 @@ func Raise(q Request) (Result, error) {
 	}
 	diagnostic := old != nil && old.AppChat != "" && old.AppRecoveryTerminal && strings.HasPrefix(q.Order, "Разбери неизвестный отказ конвейера ")
 	if q.AppServer == nil && old != nil && old.AppChat != "" && (old.AppRecovery || old.AppRecoveryTerminal) && !q.ContinueStopped && q.automaticContinuation() {
-		res.Code, res.Rung = CodeBusy, RungLock
+		res.Code, res.Rung = CodeBusy, RungAppChat
 		res.say("%s: запуск закреплён за рабочим разговором Codex", q.ID)
 		return res, nil
 	}

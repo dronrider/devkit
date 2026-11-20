@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -741,6 +742,13 @@ func TestAppTaskImportAssignsDistinctIDsToLegacyLines(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestAppTaskRecoveryQueueInComposer(t *testing.T) {
+	out, err := exec.Command("node", "testdata/apptask_queued.mjs", "static/app.js").CombinedOutput()
+	if err != nil {
+		t.Fatalf("очередь рабочего Codex в панели: %v\n%s", err, out)
 	}
 }
 

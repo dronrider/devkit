@@ -9,7 +9,7 @@ import (
 	"github.com/dronrider/devkit/internal/taskstate"
 )
 
-func (s *server) recoveryStopped(w http.ResponseWriter, root, id string, stopped bool) bool {
+func (s *server) setRecoveryStopped(w http.ResponseWriter, root, id string, stopped bool) bool {
 	if err := taskstate.SetStopped(realHomeFn(), root, id, stopped); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "состояние ручной остановки не сохранено: " + err.Error()})
 		return false
@@ -17,7 +17,7 @@ func (s *server) recoveryStopped(w http.ResponseWriter, root, id string, stopped
 	return true
 }
 
-func (s *server) recoveryChatStopped(w http.ResponseWriter, found *Project, sid, action string) bool {
+func (s *server) updateChatRecoveryState(w http.ResponseWriter, found *Project, sid, action string) bool {
 	records := s.bindsAll()[sid]
 	tasks := sessions.Works(records)
 	if id := sessions.LastTask(records); id != "" {

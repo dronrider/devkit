@@ -748,7 +748,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	kind := "task"
@@ -1055,7 +1055,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !s.recoveryStopped(w, found.Path, id, true) {
+	if !s.setRecoveryStopped(w, found.Path, id, true) {
 		return
 	}
 	if a := s.appTaskFind("", found.Path, id); a != nil {

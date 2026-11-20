@@ -3100,9 +3100,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	// В tmux обычный стоп посылает Escape в живой терминал. При клине
-	// сигнал получает сам процесс. Когда терминала уже нет, Escape
-	// подать некуда.
+	// При идущем ходе обычный стоп посылает Escape в окно tmux.
+	// При клине сигнал получает сам процесс. Без терминала
+	// Escape подать некуда.
 	var body struct {
 		Kill bool `json:"kill"`
 		// Drop это третий род: снять живую сессию целиком под перезапуск
@@ -3115,7 +3115,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
-		if !s.recoveryChatStopped(w, found, sid, "stop") {
+		if !s.updateChatRecoveryState(w, found, sid, "stop") {
 			return
 		}
 		s.appTaskClose(a)
@@ -3137,7 +3137,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		s.appStop(w, sid)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "stop") {
+	if !s.updateChatRecoveryState(w, found, sid, "stop") {
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -3451,7 +3451,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.appSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "continue") {
+	if !s.updateChatRecoveryState(w, found, sid, "continue") {
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
@@ -4605,7 +4605,7 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")
-	if (wasModel != model || wasHarness != harness) && !s.recoveryChatStopped(w, found, sid, "invalidate") {
+	if (wasModel != model || wasHarness != harness) && !s.updateChatRecoveryState(w, found, sid, "invalidate") {
 		return
 	}
 	st := s.chatStoreRead(sid)
@@ -4720,7 +4720,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	// Заказ собирается по месту: ветки живого чата и резюма несут своё имя

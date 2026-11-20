@@ -979,7 +979,7 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 // остаётся вечным ни в одном исходе, и лента называет случившееся словами.
 func (s *server) appStop(w http.ResponseWriter, sid string) {
 	if a := s.appTaskFind(sid, "", ""); a != nil {
-		if !s.recoveryStopped(w, a.root, a.task, true) {
+		if !s.setRecoveryStopped(w, a.root, a.task, true) {
 			return
 		}
 		s.appTaskClose(a)

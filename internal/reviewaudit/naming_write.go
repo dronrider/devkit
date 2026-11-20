@@ -140,6 +140,12 @@ func (g *queryGoSource) nameFileDestinationMatches(fn queryFunc, pair *NameObjec
 		}
 		call, ok := binding.Rhs[0].(*ast.CallExpr)
 		if ok {
+			if selector, qualified := call.Fun.(*ast.SelectorExpr); qualified && selector.Sel.Name == "Join" && len(call.Args) > 0 {
+				if pkg, imported := selector.X.(*ast.Ident); imported && pkg.Obj == nil && g.importPath(fn, pkg.Name) == "path/filepath" {
+					last := nameSettingKey(call.Args[len(call.Args)-1])
+					return last != "" && !strings.ContainsAny(last, "/\\") && sameObjectName(words, identifierWords(last))
+				}
+			}
 			name := strings.ToLower(strings.Join(identifierWords(calledName(call.Fun)), " "))
 			phrase := strings.ToLower(strings.Join(words, " "))
 			return strings.Contains(" "+name+" ", " "+phrase+" ")

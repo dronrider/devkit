@@ -49,4 +49,37 @@ func WriteFile(path, text string, other *os.File) {
 			assertTargetCheck(t, checkNameEntry(e, at("func WriteFile"), []string{"Write", "File"}, source), tc.want)
 		})
 	}
+	for _, name := range []string{"log", "other"} {
+		t.Run("literal_"+name, func(t *testing.T) {
+			source, at := nameProofFixture(t, `package sample
+import "fmt"
+import "os"
+import "path/filepath"
+func appendLog(dir, text string) {
+ path := filepath.Join(dir, "`+name+`")
+ out, err := os.OpenFile(path, os.O_APPEND, 0600)
+ if err != nil { return }
+ fmt.Fprintf(out, "%s", text)
+}
+`)
+			const call = `fmt.Fprintf(out, "%s", text)`
+			word := "Log"
+			e := Evidence{
+				Check: "writes", Result: "checked",
+				ObjectComparison: &NameObjectComparison{Expected: []string{"append", word}, Actual: "path", ActualAt: at("path :="),
+					Proof: &NameObjectProof{Expression: call, Words: []NameProofWord{
+						{Word: "append", Role: "context", Fact: ReviewFact{Location: at("out, err :="), Quote: "os.OpenFile(path, os.O_APPEND, 0600)", Value: "os.O_APPEND", Text: "Файл открыт для добавления записи."}},
+						{Word: word, Role: "object", Fact: ReviewFact{Location: at("path :="), Quote: `filepath.Join(dir, "` + name + `")`, Value: `"` + name + `"`, Text: "Последняя часть пути называет файл."}},
+					}}},
+				WriteEvidence: &WriteEvidence{Word: &word, Target: "path", Value: call, WriteAt: at(call),
+					File: &NameFileWrite{Path: "path", Role: "destination"}},
+			}
+			want := ""
+			if name != "log" {
+				want = "не подтверждает"
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func appendLog"), []string{"append", "Log"}, source), want)
+		})
+	}
+
 }

@@ -1670,7 +1670,22 @@ OpenAPI, аргумент запроса, декодирование и утве
 они не выполняют. Заготовки доступны
 через `audit-template STYLE-001` с `--kind forward`, `projection`,
 `use`, `assignment`, `field_read`, `facts`, `proof`, `api`, `cli`, `sql`, `reference`, `destination`
-или `content`. Для `reference` проверяется прямой Go-вызов `Exec` или
+или `content`. Для изменения через указатель в callback используйте
+`--check writes --kind callback`. В `write_evidence.callback` укажите
+`call_at` с передачей литерала, `helper` с объявлением помощника,
+`invoke_at` с вызовом callback и ранним выходом при `false`, а в `use`
+покажите, какой вызов получает изменённое значение после этого условия.
+В `write_at` укажите присваивание через параметр callback, в `target`
+и `value` его левую и правую части. При проверке `not_applicable` учитывается
+ранний выход, если конкретный callback всегда возвращает `false`.
+
+Для булева выражения непосредственно в `return` используйте
+`--check result --kind boolean`. В `actual`, `returned` и `proof.expression`
+укажите выражение целиком, в `proof.type` укажите `bool`. В `flow`
+укажите объявление вызывающего, строку вызова и полное условие
+`use_expression`, которое использует этот вызов.
+
+Для `reference` проверяется прямой Go-вызов `Exec` или
 `ExecContext` с одним `UPDATE ... SET ... WHERE ...`: таблица и столбец
 ссылки, её значение, отбор строки и соответствие аргументов параметрам
 SQL. `schema_at` указывает внешний ключ в `CREATE TABLE`. Поддерживаются

@@ -287,6 +287,8 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 				entry.ResultEvidence.Flow = &NameResultFlow{UseExpression: "выражение использования"}
 			case "use":
 				entry.ResultEvidence.Flow = &NameResultFlow{UseExpression: "точное выражение использования"}
+			case "boolean":
+				entry.ResultEvidence.Flow = &NameResultFlow{UseExpression: "полное условие, которое использует результат"}
 			case "assignment", "field_read":
 				entry.ResultEvidence.Flow = &NameResultFlow{UseKind: kind}
 			case "facts":
@@ -298,6 +300,9 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 			}
 		case "writes":
 			entry.WriteEvidence = &WriteEvidence{Word: &word}
+			if kind == "callback" {
+				entry.WriteEvidence.Callback = &NameCallbackWrite{}
+			}
 			if kind == "destination" || kind == "content" {
 				entry.WriteEvidence.File = &NameFileWrite{Role: kind}
 				if kind == "content" {
@@ -308,11 +313,13 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 		}
 		if entry.Check != "meaning" {
 			entry.ObjectComparison = &NameObjectComparison{Expected: []string{}, NoExpectationReason: "основание пустого expected, если применимо"}
-			if (entry.Check == "result" && slices.Contains([]string{"proof", "use", "guard", "implementation", "source"}, kind)) ||
-				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "destination", "content"}, kind)) {
+			if (entry.Check == "result" && slices.Contains([]string{"proof", "use", "guard", "implementation", "source", "boolean"}, kind)) ||
+				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "destination", "content", "callback"}, kind)) {
 				entry.ObjectComparison.Proof = &NameObjectProof{Words: []NameProofWord{{Word: "слово из expected", Role: "object", Fact: ReviewFact{Value: "выражение из цитаты"}}}}
 				p := entry.ObjectComparison.Proof
 				switch kind {
+				case "boolean":
+					p.Type = "bool"
 				case "guard":
 					p.Guards = []NameCodeUse{{}}
 					p.Type = "объявленный тип результата"

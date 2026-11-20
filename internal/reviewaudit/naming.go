@@ -86,12 +86,13 @@ type ResultEvidence struct {
 }
 
 type WriteEvidence struct {
-	Word    *string         `json:"word"`
-	Target  string          `json:"target"`
-	Value   string          `json:"value"`
-	WriteAt string          `json:"write_at"`
-	File    *NameFileWrite  `json:"file,omitempty"`
-	Calls   []NameWriteCall `json:"calls,omitempty"`
+	Word     *string            `json:"word"`
+	Target   string             `json:"target"`
+	Value    string             `json:"value"`
+	WriteAt  string             `json:"write_at"`
+	File     *NameFileWrite     `json:"file,omitempty"`
+	Callback *NameCallbackWrite `json:"callback,omitempty"`
+	Calls    []NameWriteCall    `json:"calls,omitempty"`
 }
 
 type NameFileWrite struct {
@@ -477,7 +478,8 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 	}
 	if pair.Actual == "" && e.Result == "violated" && len(pair.Expected) > 0 &&
 		pair.EquivalentAt == "" && pair.EquivalentFlow == nil && pair.Proof == nil {
-		if (e.ResultEvidence != nil && e.ResultEvidence.Flow != nil) || (e.WriteEvidence != nil && e.WriteEvidence.File != nil) {
+		if (e.ResultEvidence != nil && e.ResultEvidence.Flow != nil) ||
+			(e.WriteEvidence != nil && (e.WriteEvidence.File != nil || e.WriteEvidence.Callback != nil)) {
 			return fmt.Errorf("укажите actual для проверяемой цепочки")
 		}
 		return nil
@@ -489,6 +491,9 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 			return checkScalarReturn(e, declaration, line, source)
 		}
 	}
+	if e.Check == "result" && isGoRef(declaration) && e.ResultEvidence != nil && isNameBooleanExpression(pair.Actual) {
+		return checkNameBooleanResult(e, declaration, source)
+	}
 	if pair.Actual == "" || !strings.ContainsFunc(pair.Actual, unicode.IsLetter) ||
 		strings.ContainsFunc(pair.Actual, func(r rune) bool {
 			return !unicode.IsLetter(r) && !unicode.IsNumber(r) && !unicode.IsMark(r) && r != '_' && r != '$'
@@ -498,12 +503,15 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 	if !containsIdentifier(line, pair.Actual) {
 		return fmt.Errorf("actual_at: идентификатор %q должен быть виден в %s", pair.Actual, pair.ActualAt)
 	}
-	structuredWrite := e.Check == "writes" && e.WriteEvidence != nil && (e.WriteEvidence.File != nil || pair.Proof != nil)
+	structuredWrite := e.Check == "writes" && e.WriteEvidence != nil && (e.WriteEvidence.File != nil || e.WriteEvidence.Callback != nil || pair.Proof != nil)
 	if !structuredWrite && !containsIdentifier(observed, pair.Actual) {
 		return fmt.Errorf("actual: идентификатор %q должен быть виден в %s и в описании факта", pair.Actual, pair.ActualAt)
 	}
 	created := e.Check == "result" && e.Result == "checked" && e.ResultEvidence != nil &&
 		namesResultOrWrite(e.Check, nameBeforeSource(words)) && isGoRef(declaration)
+	if e.Check == "writes" && e.WriteEvidence != nil && e.WriteEvidence.Callback != nil {
+		return checkNameCallbackWrite(e, declaration, source)
+	}
 	if e.Check == "writes" && e.WriteEvidence != nil && e.WriteEvidence.File != nil {
 		if p := pair.Proof; p != nil && (p.Assignment != nil || p.API != nil || p.CLI != nil || p.Reference != nil || p.SQL != nil || p.Setting != nil) {
 			return fmt.Errorf("writes: выберите один способ доказательства: write_evidence.file или object_comparison.proof")

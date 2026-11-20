@@ -51,16 +51,21 @@ func checkNameObjectNoWrites(e Evidence, declaration string, words []string, sou
 			}
 		}
 	}
-	visited := map[*ast.FuncDecl]bool{}
-	var visit func(queryFunc) error
-	visit = func(current queryFunc) error {
-		if visited[current.node] {
+	type visitKey struct {
+		node *ast.FuncDecl
+		stop token.Pos
+	}
+	visited := map[visitKey]bool{}
+	var visit func(queryFunc, token.Pos) error
+	visit = func(current queryFunc, stop token.Pos) error {
+		key := visitKey{current.node, stop}
+		if visited[key] {
 			return nil
 		}
-		visited[current.node] = true
+		visited[key] = true
 		for n := range ast.Preorder(current.node.Body) {
 			call, ok := n.(*ast.CallExpr)
-			if !ok {
+			if !ok || stop.IsValid() && n.Pos() >= stop {
 				continue
 			}
 			sel, selected := call.Fun.(*ast.SelectorExpr)
@@ -76,14 +81,23 @@ func checkNameObjectNoWrites(e Evidence, declaration string, words []string, sou
 				if (next.node.Recv != nil) != selected || g.receiver(current, next, call, "") != nil {
 					continue
 				}
-				if err := visit(next); err != nil {
+				var cutoff token.Pos
+				callback := nameCallbackGuard(next, call)
+				if write := callback.argumentWrite(); write != nil {
+					return fmt.Errorf("not_applicable запрещён: callback меняет переданное значение в %s",
+						nameRef(current, g.fset.Position(write.Pos()).Line))
+				}
+				if callback.alwaysFalse() {
+					cutoff = callback.guard.End()
+				}
+				if err := visit(next, cutoff); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	return visit(fn)
+	return visit(fn, token.NoPos)
 }
 
 func checkNameImplementation(contract, implementation string, source *evidenceSource) (string, error) {

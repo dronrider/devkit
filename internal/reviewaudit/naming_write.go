@@ -3,6 +3,7 @@ package reviewaudit
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"slices"
 	"strings"
@@ -36,25 +37,41 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	write, _, err := g.call(fn, w.WriteAt, func(expr ast.Expr) bool {
 		call, ok := expr.(*ast.SelectorExpr)
-		return ok && call.Sel.Name == "WriteFile" && g.importPath(fn, nameIdentifier(call.X)) == "os"
+		return ok && (call.Sel.Name == "Write" || call.Sel.Name == "WriteFile" && g.importPath(fn, nameIdentifier(call.X)) == "os")
 	})
 	if err != nil {
 		return err
 	}
-	if len(write.Args) != 3 || f.Path != w.Target || f.Path == "" || !sameNameExpression(write.Args[0], f.Path) {
-		return fmt.Errorf("write_evidence.file: укажите фактический путь в первом аргументе записи")
+	var path, payload ast.Expr
+	var open *ast.CallExpr
+	switch write.Fun.(*ast.SelectorExpr).Sel.Name {
+	case "WriteFile":
+		if len(write.Args) == 3 {
+			path, payload = write.Args[0], write.Args[1]
+		}
+	case "Write":
+		open = g.nameOpenFileForWrite(fn, write)
+		if open == nil {
+			return fmt.Errorf("write_evidence.file: укажите Write на том же файловом дескрипторе, который вернул os.OpenFile")
+		}
+		path, payload = open.Args[0], write.Args[0]
+		if !sameNameExpression(payload, w.Value) {
+			return fmt.Errorf("write_evidence.value: укажите фактический аргумент Write")
+		}
+	}
+	if path == nil || f.Path != w.Target || f.Path == "" || !sameNameExpression(path, f.Path) {
+		return fmt.Errorf("write_evidence.file: укажите фактический путь из вызова открытия или записи файла")
 	}
 	switch f.Role {
 	case "destination":
 		if pair.Actual != f.Path || f.PayloadAt != "" || f.EncodeAt != "" {
 			return fmt.Errorf("write_evidence.file: для destination укажите путь как actual")
 		}
-		if e.Result == "checked" && len(nameProofObjects(pair)) != 0 &&
-			!slices.ContainsFunc(nameProofObjects(pair), func(word string) bool { return strings.EqualFold(word, "file") || strings.EqualFold(word, "path") }) {
+		if e.Result == "checked" && !g.nameFileDestinationMatches(fn, pair, open) {
 			return fmt.Errorf("запись файла не подтверждает %q как объект назначения", strings.Join(pair.Expected, " "))
 		}
 	case "content":
-		if err := g.checkNameFileContent(e, fn, write); err != nil {
+		if err := g.checkNameFileContent(e, fn, write, payload); err != nil {
 			return err
 		}
 	default:
@@ -62,6 +79,9 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	if pair.Proof != nil {
 		lines := map[string]bool{w.WriteAt: true, pair.ActualAt: true}
+		if open != nil {
+			lines[nameRef(fn, g.fset.Position(open.Pos()).Line)] = true
+		}
 		if f.Role == "content" {
 			lines[f.PayloadAt] = true
 			lines[f.EncodeAt] = true
@@ -76,7 +96,80 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	return checkNamePromisedWrite(e, original)
 }
 
-func (g *queryGoSource) checkNameFileContent(e Evidence, fn queryFunc, write *ast.CallExpr) error {
+func (g *queryGoSource) nameFileDestinationMatches(fn queryFunc, pair *NameObjectComparison, open *ast.CallExpr) bool {
+	words := nameProofObjects(pair)
+	if len(words) == 0 || slices.ContainsFunc(words, func(word string) bool {
+		return strings.EqualFold(word, "file") || strings.EqualFold(word, "path")
+	}) {
+		return true
+	}
+	if open == nil || nameIdentifier(open.Args[0]) != pair.Actual {
+		return false
+	}
+	// A named destination can be established by the call that supplied
+	// the path, e.g. journalPath := store.chatJournalPath(session).
+	for _, stmt := range fn.node.Body.List {
+		binding, ok := stmt.(*ast.AssignStmt)
+		if !ok || binding.Tok != token.DEFINE || len(binding.Lhs) != 1 || len(binding.Rhs) != 1 ||
+			nameIdentifier(binding.Lhs[0]) != pair.Actual || nameRef(fn, g.fset.Position(binding.Pos()).Line) != pair.ActualAt ||
+			!nameValueUnchangedWithin(fn.node.Body, binding, open, pair.Actual) {
+			continue
+		}
+		call, ok := binding.Rhs[0].(*ast.CallExpr)
+		if ok {
+			name := strings.ToLower(strings.Join(identifierWords(calledName(call.Fun)), " "))
+			phrase := strings.ToLower(strings.Join(words, " "))
+			return strings.Contains(" "+name+" ", " "+phrase+" ")
+		}
+	}
+	return false
+}
+
+func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) *ast.CallExpr {
+	sel, ok := write.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Write" || len(write.Args) != 1 {
+		return nil
+	}
+	receiver := nameIdentifier(sel.X)
+	if receiver == "" {
+		return nil
+	}
+	for _, stmt := range fn.node.Body.List {
+		binding, ok := stmt.(*ast.AssignStmt)
+		if !ok || binding.Tok != token.DEFINE || len(binding.Lhs) != 2 || len(binding.Rhs) != 1 ||
+			nameIdentifier(binding.Lhs[0]) != receiver || !nameValueUnchangedWithin(fn.node.Body, binding, write, receiver) {
+			continue
+		}
+		open, ok := binding.Rhs[0].(*ast.CallExpr)
+		if !ok || len(open.Args) != 3 {
+			continue
+		}
+		opener, ok := open.Fun.(*ast.SelectorExpr)
+		if !ok || opener.Sel.Name != "OpenFile" || g.importPath(fn, nameIdentifier(opener.X)) != "os" {
+			continue
+		}
+		// The regular parse skips object resolution. Resolve the package
+		// qualifier here so a local value with its own OpenFile cannot pass.
+		body, err := g.source.read(fn.file, fn.base)
+		if err != nil {
+			return nil
+		}
+		fset := token.NewFileSet()
+		tree, err := parser.ParseFile(fset, fn.file, body, 0)
+		if err != nil {
+			return nil
+		}
+		offset := g.fset.Position(opener.X.Pos()).Offset
+		for node := range ast.Preorder(tree) {
+			if id, ok := node.(*ast.Ident); ok && fset.Position(id.Pos()).Offset == offset && id.Obj == nil {
+				return open
+			}
+		}
+	}
+	return nil
+}
+
+func (g *queryGoSource) checkNameFileContent(e Evidence, fn queryFunc, write *ast.CallExpr, recorded ast.Expr) error {
 	w, pair := e.WriteEvidence, e.ObjectComparison
 	f := w.File
 	if f.PayloadAt == "" {
@@ -100,7 +193,7 @@ func (g *queryGoSource) checkNameFileContent(e Evidence, fn queryFunc, write *as
 		return err
 	}
 	if len(payload.Args) != 1 || nameIdentifier(payload.Args[0]) != pair.Actual ||
-		len(encoder.Args) != 1 || !nameFileEncodedValue(fn, encoder, write) {
+		len(encoder.Args) != 1 || !nameFileEncodedValue(fn, encoder, write, recorded) {
 		return fmt.Errorf("write_evidence.file: проследите значение actual через кодирование до содержимого файла")
 	}
 	block := nameIdentifier(encoder.Args[0])
@@ -116,11 +209,11 @@ func (g *queryGoSource) checkNameFileContent(e Evidence, fn queryFunc, write *as
 	return nil
 }
 
-func nameFileEncodedValue(fn queryFunc, encoder, write *ast.CallExpr) bool {
-	if write.Args[1] == encoder {
+func nameFileEncodedValue(fn queryFunc, encoder, write *ast.CallExpr, payload ast.Expr) bool {
+	if payload == encoder {
 		return true
 	}
-	value := nameIdentifier(write.Args[1])
+	value := nameIdentifier(payload)
 	for _, stmt := range fn.node.Body.List {
 		binding, ok := stmt.(*ast.AssignStmt)
 		if ok && binding.Tok == token.DEFINE && len(binding.Lhs) == 1 && len(binding.Rhs) == 1 &&

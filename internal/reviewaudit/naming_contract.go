@@ -64,7 +64,9 @@ func checkNameObjectNoWrites(e Evidence, declaration string, words []string, sou
 				continue
 			}
 			sel, selected := call.Fun.(*ast.SelectorExpr)
-			if selected && g.importPath(current, nameIdentifier(sel.X)) == "os" && slices.Contains([]string{"WriteFile", "Create", "CreateTemp", "Mkdir", "MkdirAll", "Remove", "RemoveAll", "Rename"}, sel.Sel.Name) {
+			if selected && (g.importPath(current, nameIdentifier(sel.X)) == "os" &&
+				slices.Contains([]string{"WriteFile", "Create", "CreateTemp", "Mkdir", "MkdirAll", "Remove", "RemoveAll", "Rename"}, sel.Sel.Name) ||
+				g.nameOpenFileForWrite(current, call) != nil) {
 				return fmt.Errorf("not_applicable запрещён: достижимая запись %s в %s; заполните write_evidence и calls", sel.Sel.Name, nameRef(current, g.fset.Position(call.Pos()).Line))
 			}
 			if g.namePackageSelector(current, call.Fun, "github.com/spf13/viper", "Set") {

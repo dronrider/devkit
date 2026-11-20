@@ -29,6 +29,40 @@ func TestNameCompletionTemporaryWrites(t *testing.T) {
 	}
 }
 
+func TestNameCompletionOpenFileWrite(t *testing.T) {
+	const open = "f, err := fs.OpenFile(path, fs.O_WRONLY|fs.O_APPEND, 0600)"
+	for _, tc := range []struct {
+		name, beforeOpen, beforeWrite, write, value, target, want string
+	}{
+		{name: "append in loop", write: "f.Write(line)", value: "line", target: "path"},
+		{name: "another file", write: "f.Write(line)", value: "line", target: "other", want: "фактический путь"},
+		{name: "another argument", write: "f.Write(line)", value: "otherLine", target: "path", want: "фактический аргумент"},
+		{name: "another receiver", write: "buffer.Write(line)", value: "line", target: "path", want: "файловом дескрипторе"},
+		{name: "rebound receiver", beforeWrite: "f = another\n", write: "f.Write(line)", value: "line", target: "path", want: "файловом дескрипторе"},
+		{name: "shadowed package", beforeOpen: "fs := opener\n", write: "f.Write(line)", value: "line", target: "path", want: "файловом дескрипторе"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code := "package sample\nimport fs \"os\"\nfunc appendLogFile(path, other string, lines [][]byte) error {\n" +
+				tc.beforeOpen + open + "\nif err != nil { return err }\ndefer f.Close()\nfor _, line := range lines {\n" +
+				tc.beforeWrite + "if _, err := " + tc.write + "; err != nil { return err }\n}\nreturn nil\n}\n"
+			source, at := nameProofFixture(t, code)
+			decl := at("func appendLogFile")
+			word := "File"
+			e := Evidence{
+				Object: decl + "#appendLogFile", Check: "writes", Result: "checked", Location: decl,
+				ObjectComparison: &NameObjectComparison{Expected: []string{"append", "Log", "File"}, Actual: tc.target, ActualAt: decl},
+				WriteEvidence: &WriteEvidence{Word: &word, Target: tc.target, Value: tc.value, WriteAt: at(tc.write),
+					File: &NameFileWrite{Path: tc.target, Role: "destination"}},
+			}
+			assertTargetCheck(t, checkNameEntry(e, decl, identifierWords("appendLogFile"), source), tc.want)
+			if tc.want == "" {
+				e.Result = "not_applicable"
+				assertTargetCheck(t, checkNameEntry(e, decl, identifierWords("appendLogFile"), source), "достижимая запись Write")
+			}
+		})
+	}
+}
+
 func TestNameCompletionUseAfterBranch(t *testing.T) {
 	for _, tc := range []struct {
 		body, expression string

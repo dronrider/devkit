@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +20,33 @@ import (
 	"github.com/dronrider/devkit/internal/taskhead"
 	"github.com/dronrider/devkit/internal/taskstate"
 )
+
+func waitAppTaskRecoveryCarrierExit(t *testing.T, e *testEnv, sid string) {
+	t.Helper()
+	st := e.s.chatStoreRead(sid)
+	state, err := taskstate.Acquire(e.home, e.proj, st.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := state.State.Run
+	state.Close()
+	if run == nil || run.ID != st.TaskRunID {
+		t.Fatal("состояние исходного запуска отсутствует")
+	}
+
+	// Оболочка снимает замок до выхода. Восстановление ждёт, пока
+	// завершатся и её процесс, и группа.
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for taskhead.Alive(run.PID) || run.Group > 0 && !errors.Is(syscall.Kill(-run.Group, 0), syscall.ESRCH) {
+		select {
+		case <-deadline:
+			t.Fatalf("исходная оболочка не вышла: pid %d, группа %d", run.PID, run.Group)
+		case <-tick.C:
+		}
+	}
+}
 
 func TestAppTaskRecoveryRestartsSameThread(t *testing.T) {
 	e, c := appTaskEnv(t, "mute")
@@ -36,6 +64,7 @@ func TestAppTaskRecoveryRestartsSameThread(t *testing.T) {
 	e.s.appTasksClose()
 	waitAppTaskLockGone(t, e)
 	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
 	putDoc(t, e.proj, "fake-app-mode", "recover-die")
 	// The first continuation accepts the input and drops the connection before
 	// responding. Its receipt must be reconciled from the original thread.
@@ -121,6 +150,7 @@ func TestAppTaskRecoveryReportsQueueImportFailure(t *testing.T) {
 	e.s.appTasksClose()
 	waitAppTaskLockGone(t, e)
 	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
 
 	const text = "Сохрани ожидающую реплику"
 	name := chat.TaskName(before.Task)
@@ -238,6 +268,7 @@ func TestAppTaskRecoveryRetriesUnreadableChatDirectory(t *testing.T) {
 	e.s.appTasksClose()
 	waitAppTaskLockGone(t, e)
 	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
 
 	dir := chatStoreDir(e.s.cfg.Home)
 	saved := dir + "-saved"
@@ -741,6 +772,7 @@ func TestAppTaskRecoveryDeliversRepeatedTaskMessage(t *testing.T) {
 	e.s.appTasksClose()
 	waitTaskStopped(t, e, sid)
 	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
 
 	project, ok := e.s.projectByName("demo")
 	if !ok {
@@ -882,6 +914,7 @@ func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
 	e.s.appTasksClose()
 	waitTaskStopped(t, e, sid)
 	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
 	p, ok := e.s.projectByName("demo")
 	if !ok {
 		t.Fatal("project missing")

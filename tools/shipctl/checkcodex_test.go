@@ -61,7 +61,7 @@ func TestCodexCheckWorkerFailsBeforeTurn(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
 	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}'\nexit 1\n"), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}'\nhead -c 8388608 /dev/zero | tr '\\000' x\nprintf '\\n'\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: "XR-1", Harness: "codex"})
@@ -74,6 +74,13 @@ func TestCodexCheckWorkerFailsBeforeTurn(t *testing.T) {
 	var got codexCheckStart
 	if err := json.Unmarshal(out, &got); err != nil || got.Started || !strings.Contains(got.Message, "не начал ход") {
 		t.Fatalf("должен быть отказ: %s %v", out, err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".devkit", "heads", "XR-1-check.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "token too long") {
+		t.Fatalf("журнал без причины остановки: %q", data)
 	}
 }
 

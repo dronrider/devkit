@@ -185,9 +185,13 @@ func codexCheckWorker(raw string) {
 	scan := bufio.NewScanner(stdout)
 	scan.Buffer(make([]byte, 4096), 8*1024*1024)
 	thread, started := "", false
+	var streamErr error
 	for scan.Scan() {
 		line := scan.Bytes()
-		_, _ = log.Write(append(append([]byte(nil), line...), '\n'))
+		if _, err := fmt.Fprintln(log, string(line)); err != nil {
+			streamErr = fmt.Errorf("запись журнала Codex: %w", err)
+			break
+		}
 		var event struct {
 			Type     string `json:"type"`
 			ThreadID string `json:"thread_id"`
@@ -203,11 +207,21 @@ func codexCheckWorker(raw string) {
 			reply(codexCheckStart{Started: true, Message: "поток " + thread + ", журнал " + logPath})
 		}
 	}
-	if scan.Err() != nil {
+	if err := scan.Err(); err != nil {
+		streamErr = fmt.Errorf("чтение событий Codex: %w", err)
+	}
+	if streamErr != nil {
+		fmt.Fprintln(log, streamErr)
 		_ = cmd.Cancel()
 	}
-	_ = cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		fmt.Fprintf(log, "Codex завершился: %v\n", err)
+	}
 	if !started {
-		reply(codexCheckStart{Message: "Codex не начал ход, журнал " + logPath})
+		message := "Codex не начал ход, журнал " + logPath
+		if streamErr != nil {
+			message += ", " + streamErr.Error()
+		}
+		reply(codexCheckStart{Message: message})
 	}
 }

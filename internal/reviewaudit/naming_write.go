@@ -37,7 +37,9 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	write, _, err := g.call(fn, w.WriteAt, func(expr ast.Expr) bool {
 		call, ok := expr.(*ast.SelectorExpr)
-		return ok && (call.Sel.Name == "Write" || call.Sel.Name == "WriteFile" && g.importPath(fn, nameIdentifier(call.X)) == "os")
+		return ok && (call.Sel.Name == "Write" ||
+			call.Sel.Name == "WriteFile" && g.importPath(fn, nameIdentifier(call.X)) == "os" ||
+			call.Sel.Name == "Fprintf" && g.importPath(fn, nameIdentifier(call.X)) == "fmt")
 	})
 	if err != nil {
 		return err
@@ -49,6 +51,12 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 		if len(write.Args) == 3 {
 			path, payload = write.Args[0], write.Args[1]
 		}
+	case "Fprintf":
+		open = g.nameOpenFileForWrite(fn, write)
+		if open == nil || !sameNameExpression(write, w.Value) || f.Role != "destination" {
+			return fmt.Errorf("write_evidence.file: укажите Fprintf на дескрипторе из os.OpenFile, полный вызов как value и роль destination")
+		}
+		path = open.Args[0]
 	case "Write":
 		open = g.nameOpenFileForWrite(fn, write)
 		if open == nil {
@@ -142,10 +150,17 @@ func (g *queryGoSource) nameFileDestinationMatches(fn queryFunc, pair *NameObjec
 
 func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) *ast.CallExpr {
 	sel, ok := write.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Write" || len(write.Args) != 1 {
+	if !ok {
 		return nil
 	}
-	receiver := nameIdentifier(sel.X)
+	var receiver string
+	formatted := sel.Sel.Name == "Fprintf"
+	switch {
+	case sel.Sel.Name == "Write" && len(write.Args) == 1:
+		receiver = nameIdentifier(sel.X)
+	case formatted && len(write.Args) >= 2 && g.importPath(fn, nameIdentifier(sel.X)) == "fmt":
+		receiver = nameIdentifier(write.Args[0])
+	}
 	if receiver == "" {
 		return nil
 	}
@@ -174,11 +189,18 @@ func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) 
 		if err != nil {
 			return nil
 		}
-		offset := g.fset.Position(opener.X.Pos()).Offset
+		openOffset := g.fset.Position(opener.X.Pos()).Offset
+		formatOffset := g.fset.Position(sel.X.Pos()).Offset
+		openImport, formatImport := false, !formatted
 		for node := range ast.Preorder(tree) {
-			if id, ok := node.(*ast.Ident); ok && fset.Position(id.Pos()).Offset == offset && id.Obj == nil {
-				return open
+			if id, ok := node.(*ast.Ident); ok && id.Obj == nil {
+				offset := fset.Position(id.Pos()).Offset
+				openImport = openImport || offset == openOffset
+				formatImport = formatImport || offset == formatOffset
 			}
+		}
+		if openImport && formatImport {
+			return open
 		}
 	}
 	return nil

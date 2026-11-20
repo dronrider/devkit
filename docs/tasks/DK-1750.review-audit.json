@@ -2642,6 +2642,1718 @@
           "location": "tools/dashboard/tasks_test.go:125",
           "observation": "TestMain не возвращает прикладного результата; код завершения передаётся os.Exit.",
           "result": "not_applicable"
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
+          "check": "writes",
+          "location": "tools/shipctl/checkrun.go:98",
+          "observation": "Добавляет к аргументам taskctl run выбранный харнес; далее запускает команду с этими аргументами.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Raise"
+            ],
+            "actual": "args",
+            "actual_at": "tools/shipctl/checkrun.go:119",
+            "proof": {
+              "expression": "args",
+              "words": [
+                {
+                  "word": "Raise",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun.go:123",
+                    "quote": "cmd := exec.CommandContext(ctx, \"taskctl\", args...)",
+                    "text": "Аргументы используются для команды подъёма проверяющего.",
+                    "value": "args"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkrun.go:119",
+                    "target": "args",
+                    "value": "append(args, \"--harness\", harness)"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/checkrun.go:98",
+                  "at": "tools/shipctl/checkrun.go:123",
+                  "expression": "args"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Raise",
+            "target": "args",
+            "value": "append(args, \"--harness\", harness)",
+            "write_at": "tools/shipctl/checkrun.go:119"
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:199#checkRuns",
+          "check": "writes",
+          "location": "tools/shipctl/checkrun.go:199",
+          "observation": "Обновляет строку rows[id] после перевода в Check и передаёт карту в checkrun.Run.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "check",
+              "Runs"
+            ],
+            "actual": "rows",
+            "actual_at": "tools/shipctl/checkrun.go:209",
+            "proof": {
+              "expression": "rows[id]",
+              "words": [
+                {
+                  "word": "check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun.go:209",
+                    "quote": "rows[id] = r",
+                    "text": "Карта строк проверки дополнена обновлённой строкой.",
+                    "value": "rows[id]"
+                  }
+                },
+                {
+                  "word": "Runs",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun.go:209",
+                    "quote": "rows[id] = r",
+                    "text": "Карта строк проверки дополнена обновлённой строкой.",
+                    "value": "rows[id]"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkrun.go:209",
+                    "target": "rows[id]",
+                    "value": "r"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/checkrun.go:199",
+                  "at": "tools/shipctl/checkrun.go:214",
+                  "expression": "rows"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Runs",
+            "target": "rows[id]",
+            "value": "r",
+            "write_at": "tools/shipctl/checkrun.go:209"
+          }
+        },
+        {
+          "object": "tools/shipctl/main.go:195#main",
+          "check": "writes",
+          "location": "tools/shipctl/main.go:195",
+          "observation": "Главная функция устанавливает текущий каталог по умолчанию, если глобальный каталог не указан, и использует его при создании флагов команды.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "main"
+            ],
+            "actual": "gdir",
+            "actual_at": "tools/shipctl/main.go:208",
+            "proof": {
+              "expression": "gdir",
+              "words": [
+                {
+                  "word": "main",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/main.go:225",
+                    "quote": "dir := fs.String(\"C\", gdir, \"стартовая директория\")",
+                    "text": "Главная функция использует начальный каталог как значение флага C.",
+                    "value": "gdir"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/main.go:208",
+                    "target": "gdir",
+                    "value": "\".\""
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/main.go:195",
+                  "at": "tools/shipctl/main.go:225",
+                  "expression": "gdir"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "main",
+            "target": "gdir",
+            "value": "\".\"",
+            "write_at": "tools/shipctl/main.go:208"
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:32#shipCarrier.raiseCodex",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex.go:32",
+          "observation": "Записывает разобранные поля вердикта agentctl в fields и сверяет модель, харнес и effort перед запуском worker.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "raise",
+              "Codex"
+            ],
+            "actual": "fields",
+            "actual_at": "tools/shipctl/checkcodex.go:44",
+            "proof": {
+              "expression": "fields[key]",
+              "words": [
+                {
+                  "word": "raise",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex.go:47",
+                    "quote": "if fields[\"model\"] != p.Choice.Model || fields[\"harness\"] != p.Choice.Harness || fields[\"effort\"] == \"\" {",
+                    "text": "Перед подъёмом проверяется содержимое fields.",
+                    "value": "fields[\"model\"]"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex.go:47",
+                    "quote": "if fields[\"model\"] != p.Choice.Model || fields[\"harness\"] != p.Choice.Harness || fields[\"effort\"] == \"\" {",
+                    "text": "Выбранный харнес сравнивают с сохранённым в fields.",
+                    "value": "fields[\"harness\"]"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkcodex.go:44",
+                    "target": "fields[key]",
+                    "value": "strings.TrimSpace(value)"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/checkcodex.go:32",
+                  "at": "tools/shipctl/checkcodex.go:47",
+                  "expression": "fields[\"model\"]"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Codex",
+            "target": "fields[key]",
+            "value": "strings.TrimSpace(value)",
+            "write_at": "tools/shipctl/checkcodex.go:44"
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:91#codexCheckWorker",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex.go:91",
+          "observation": "Записывает PID и группу процесса в состояние проверки, сохраняет состояние; dashboard читает эти поля при остановке.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "codex",
+              "Check",
+              "Worker"
+            ],
+            "actual": "PID",
+            "actual_at": "tools/shipctl/checkcodex.go:175",
+            "proof": {
+              "expression": "state.State.Run.PID",
+              "words": [
+                {
+                  "word": "codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex.go:175",
+                    "quote": "state.State.Run.PID, state.State.Run.Group = os.Getpid(), syscall.Getpgrp()",
+                    "text": "Команда Codex задаётся в tools/shipctl/checkcodex.go:147; PID её worker сохраняется здесь.",
+                    "value": "state.State.Run.PID"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex.go:175",
+                    "quote": "state.State.Run.PID, state.State.Run.Group = os.Getpid(), syscall.Getpgrp()",
+                    "text": "Состояние запуска check создано в checkcodex.go:170-171 и содержит PID.",
+                    "value": "state.State.Run.PID"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex.go:175",
+                    "quote": "state.State.Run.PID, state.State.Run.Group = os.Getpid(), syscall.Getpgrp()",
+                    "text": "PID текущего процесса worker записан в состояние.",
+                    "value": "state.State.Run.PID"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkcodex.go:175",
+                    "target": "state.State.Run.PID",
+                    "value": "os.Getpid()"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/dashboard/checkstop.go:15",
+                  "at": "tools/dashboard/checkstop.go:27",
+                  "expression": "run.PID"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Worker",
+            "target": "state.State.Run.PID",
+            "value": "os.Getpid()",
+            "write_at": "tools/shipctl/checkcodex.go:175"
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:19#TestCodexCheckWorkerHelper",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:19",
+          "observation": "Помощник вызывает worker, который сохраняет PID запуска проверки.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Helper"
+            ],
+            "actual": "PID",
+            "actual_at": "tools/shipctl/checkcodex.go:175",
+            "proof": {
+              "expression": "state.State.Run.PID",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:23",
+                    "quote": "codexCheckWorker(os.Getenv(\"CHECK_ORDER\"))",
+                    "text": "Помощник вызывает worker Codex с заказом проверки.",
+                    "value": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:23",
+                    "quote": "codexCheckWorker(os.Getenv(\"CHECK_ORDER\"))",
+                    "text": "Помощник вызывает worker Codex с заказом проверки.",
+                    "value": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:23",
+                    "quote": "codexCheckWorker(os.Getenv(\"CHECK_ORDER\"))",
+                    "text": "Помощник вызывает worker Codex с заказом проверки.",
+                    "value": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:23",
+                    "quote": "codexCheckWorker(os.Getenv(\"CHECK_ORDER\"))",
+                    "text": "Помощник вызывает worker Codex с заказом проверки.",
+                    "value": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                },
+                {
+                  "word": "Helper",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:23",
+                    "quote": "codexCheckWorker(os.Getenv(\"CHECK_ORDER\"))",
+                    "text": "Помощник вызывает worker Codex с заказом проверки.",
+                    "value": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkcodex.go:175",
+                    "target": "state.State.Run.PID",
+                    "value": "os.Getpid()"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/dashboard/checkstop.go:15",
+                  "at": "tools/dashboard/checkstop.go:27",
+                  "expression": "run.PID"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Helper",
+            "target": "state.State.Run.PID",
+            "value": "os.Getpid()",
+            "write_at": "tools/shipctl/checkcodex.go:175",
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:23",
+                "declaration": "tools/shipctl/checkcodex.go:91",
+                "bindings": [
+                  {
+                    "parameter": "raw",
+                    "argument": "os.Getenv(\"CHECK_ORDER\")"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:27#TestCodexCheckWorkerStartsFreshTurn",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:27",
+          "observation": "Создаёт временный файл задачи через write и writeAt для сценария остановки.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Starts",
+              "Fresh",
+              "Turn"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Starts",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Fresh",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Turn",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:29",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Turn",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:29",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:102",
+          "observation": "Создаёт временный файл задачи через write и writeAt для сценария остановки.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Respects",
+              "Stop"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Respects",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Stop",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Stop",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:104",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:121",
+          "observation": "Создаёт временный файл задачи через write и writeAt для сценария остановки.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Does",
+              "Not",
+              "Duplicate"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Does",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Not",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Duplicate",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Создание временной задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Duplicate",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:123",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:66",
+          "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Fails",
+              "Before",
+              "Turn"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Fails",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Before",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Turn",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Turn",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:75",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:142",
+          "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Stops",
+              "Descendant"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Stops",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Descendant",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Descendant",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:144",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+          "check": "writes",
+          "location": "tools/shipctl/checkcodex_test.go:209",
+          "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Codex",
+              "Check",
+              "Worker",
+              "Reports",
+              "Late",
+              "Log",
+              "Failure"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Worker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Reports",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Late",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Log",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                },
+                {
+                  "word": "Failure",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
+                    "text": "Фикстура задачи для проверяемого сценария worker Codex.",
+                    "value": "home"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Failure",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkcodex_test.go:220",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "home"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "\"docs/tasks/XR-1.md\""
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "\"# XR-1\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun_test.go:504#TestCheckRunCodexEntry",
+          "check": "writes",
+          "location": "tools/shipctl/checkrun_test.go:504",
+          "observation": "Стенд записывает файл конфигурации выката для сценария входа check-run Codex.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Check",
+              "Run",
+              "Codex",
+              "Entry"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:284",
+            "proof": {
+              "expression": "os.WriteFile(path, []byte(content), 0o644)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:509",
+                    "quote": "root, calls := checkStand(t)",
+                    "text": "Готовит стенд для теста входа check-run Codex.",
+                    "value": "checkStand(t)"
+                  }
+                },
+                {
+                  "word": "Check",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:509",
+                    "quote": "root, calls := checkStand(t)",
+                    "text": "Готовит стенд для теста входа check-run Codex.",
+                    "value": "checkStand(t)"
+                  }
+                },
+                {
+                  "word": "Run",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:509",
+                    "quote": "root, calls := checkStand(t)",
+                    "text": "Готовит стенд для теста входа check-run Codex.",
+                    "value": "checkStand(t)"
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:509",
+                    "quote": "root, calls := checkStand(t)",
+                    "text": "Готовит стенд для теста входа check-run Codex.",
+                    "value": "checkStand(t)"
+                  }
+                },
+                {
+                  "word": "Entry",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:509",
+                    "quote": "root, calls := checkStand(t)",
+                    "text": "Готовит стенд для теста входа check-run Codex.",
+                    "value": "checkStand(t)"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Entry",
+            "target": "path",
+            "value": "[]byte(content)",
+            "write_at": "tools/shipctl/ops_test.go:284",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/checkrun_test.go:509",
+                "declaration": "tools/shipctl/checkrun_test.go:217",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/checkrun_test.go:220",
+                "declaration": "tools/shipctl/testcmd_test.go:11",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "body",
+                    "argument": "\"deploy = true\\nautonomous = true\\n\""
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/testcmd_test.go:13",
+                "declaration": "tools/shipctl/ops_test.go:272",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "deployConfigPath"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "body"
+                  }
+                ]
+              },
+              {
+                "at": "tools/shipctl/ops_test.go:274",
+                "declaration": "tools/shipctl/ops_test.go:279",
+                "bindings": [
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "name",
+                    "argument": "name"
+                  },
+                  {
+                    "parameter": "content",
+                    "argument": "content"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun_test.go:548#TestRaiseWithoutModelReportsRefusal",
+          "check": "writes",
+          "location": "tools/shipctl/checkrun_test.go:548",
+          "observation": "Присваивает report результат Raise без модели и читает поле Failed в проверке.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Raise",
+              "Without",
+              "Model",
+              "Reports",
+              "Refusal"
+            ],
+            "actual": "report",
+            "actual_at": "tools/shipctl/checkrun_test.go:550",
+            "proof": {
+              "expression": "report",
+              "type": "checkrun.Report",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                },
+                {
+                  "word": "Raise",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                },
+                {
+                  "word": "Without",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                },
+                {
+                  "word": "Model",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                },
+                {
+                  "word": "Reports",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                },
+                {
+                  "word": "Refusal",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/checkrun_test.go:550",
+                    "quote": "report := carrier.Raise(checkrun.Plan{})",
+                    "text": "Пустой Plan без модели направлен в Raise; тест читает отказ из report.",
+                    "value": "report"
+                  }
+                }
+              ],
+              "assignment": {
+                "type_at": "tools/shipctl/checkrun.go:98",
+                "writes": [
+                  {
+                    "at": "tools/shipctl/checkrun_test.go:550",
+                    "target": "report",
+                    "value": "carrier.Raise(checkrun.Plan{})"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/checkrun_test.go:548",
+                  "at": "tools/shipctl/checkrun_test.go:551",
+                  "expression": "report.Failed"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Refusal",
+            "target": "report",
+            "value": "carrier.Raise(checkrun.Plan{})",
+            "write_at": "tools/shipctl/checkrun_test.go:550"
+          }
+        },
+        {
+          "object": "tools/shipctl/notify_test.go:26#TestMain",
+          "check": "writes",
+          "location": "tools/shipctl/notify_test.go:26",
+          "observation": "Получает код запуска тестов и передаёт его в os.Exit; при ошибке уборки может заменить ноль на 1.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Main"
+            ],
+            "actual": "code",
+            "actual_at": "tools/shipctl/notify_test.go:30",
+            "proof": {
+              "expression": "code",
+              "type": "int",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/notify_test.go:30",
+                    "quote": "code := runsguard.Guard(m)",
+                    "text": "Главная функция теста получает код запуска guard и передаёт его при завершении.",
+                    "value": "code"
+                  }
+                },
+                {
+                  "word": "Main",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/notify_test.go:30",
+                    "quote": "code := runsguard.Guard(m)",
+                    "text": "Главная функция теста получает код запуска guard и передаёт его при завершении.",
+                    "value": "code"
+                  }
+                }
+              ],
+              "assignment": {
+                "type_at": "internal/runsguard/runsguard.go:39",
+                "writes": [
+                  {
+                    "at": "tools/shipctl/notify_test.go:30",
+                    "target": "code",
+                    "value": "runsguard.Guard(m)"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/shipctl/notify_test.go:26",
+                  "at": "tools/shipctl/notify_test.go:39",
+                  "expression": "code"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Main",
+            "target": "code",
+            "value": "runsguard.Guard(m)",
+            "write_at": "tools/shipctl/notify_test.go:30"
+          }
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+          "check": "writes",
+          "location": "tools/dashboard/checkstop_test.go:101",
+          "observation": "Тест задаёт нулевое время ожидания, чтобы проверить сообщение о неосвобождённом замке.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Run",
+              "Stop",
+              "Codex",
+              "Checker",
+              "Reports",
+              "Unreleased",
+              "Lock"
+            ],
+            "actual": "checkStopTimeout",
+            "actual_at": "tools/dashboard/checkstop_test.go:104",
+            "proof": {
+              "expression": "checkStopTimeout",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Run",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Stop",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Checker",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Reports",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Unreleased",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                },
+                {
+                  "word": "Lock",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/checkstop_test.go:104",
+                    "quote": "checkStopTimeout = 0",
+                    "value": "checkStopTimeout",
+                    "text": "Тест задаёт нулевой срок ожидания."
+                  }
+                }
+              ],
+              "assignment": {
+                "writes": [
+                  {
+                    "at": "tools/dashboard/checkstop_test.go:104",
+                    "target": "checkStopTimeout",
+                    "value": "0"
+                  }
+                ],
+                "use": {
+                  "declaration": "tools/dashboard/checkstop.go:15",
+                  "at": "tools/dashboard/checkstop.go:38",
+                  "expression": "checkStopTimeout"
+                }
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "Lock",
+            "target": "checkStopTimeout",
+            "value": "0",
+            "write_at": "tools/dashboard/checkstop_test.go:104"
+          }
         }
       ],
       "files": [

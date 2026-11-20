@@ -14290,10 +14290,10 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID,
         scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection, rec.launch) });
     }
-    // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
-    // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
-    // следующей пересборки панели, и сверка может снять их эхом, если текст
-    // нашёлся в транскрипте этого разговора.
+    // echoSweep отдаёт нераспознанные записи со старого адреса для одного показа.
+    // Они стоят до следующей пересборки либо до появления своей записи
+    // в ленте. Сверка использует ID из квитанции или исходный текст,
+    // если ID не было.
     for (const rec of once || []) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
@@ -14442,9 +14442,9 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // своей же реплики не узнавала (снимок пользователя: реплика из
     // транскрипта на своём месте, ниже ход Bash, а под ним тот же текст
     // пузырём «вы, доставлено»).
-    // Сверка идёт по сырому тексту отправленного, а не по показанному:
-    // в ленте текст собран разметкой, и сравнивать с ним отправленное значит
-    // сравнивать разное.
+    // Рабочий Codex сверяет ID из квитанции с записью в ленте.
+    // Без ID сверяется исходный текст отправки. Показанный текст может
+    // отличаться из-за разметки.
     reconcile(list) {
       if (!mine.length || !list || !list.length) return;
       let went = false;

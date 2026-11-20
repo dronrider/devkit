@@ -691,6 +691,46 @@ def capacity(root, rows, call=None, agentctl=None):
     return max(0, limit - busy), "%s %d, живых сессий %d" % (src, limit, busy)
 
 
+def app_terminal_incidents(root, rows, runs, home=None, act=True):
+    candidates = {row["id"] for row in rows if row.get("_section") == "in-progress"
+                  and not row.get("held_by")}
+    ended = {task: run for task, run in runs.items()
+             if task in candidates and not run["stopped"]
+             and run.get("appRecoveryTerminal") is True and run.get("appRecoveryWhy")}
+    if not ended:
+        return []
+    import duty
+    hook = duty.incidents_mod()
+    if hook is None:
+        return ["корень %s: журнал инцидентов Codex недоступен" % root]
+    entries = {(item.get("task"), (item.get("identity") or {}).get("id"))
+               for item in hook.read(home=home) if item.get("reason") == hook.APP_RECOVERY_OUT
+               and item.get("root") == str(root)}
+    lines = []
+    for task, run in sorted(ended.items()):
+        if (task, run["id"]) in entries:
+            continue
+        why = run["appRecoveryWhy"]
+        if not act:
+            lines.append("задача %s: для дежурного записался бы исход Codex, %s" % (task, why))
+            continue
+        ident = hook.report(task, hook.APP_RECOVERY_OUT, why, run=run["appChat"],
+                            root=str(root), home=home, identity={"id": run["id"]})
+        lines.append("задача %s: %s, %s" %
+                     (task, "инцидент " + ident if ident else "инцидент Codex не записался", why))
+    return lines
+
+
+def app_terminal_root(root, call=None, taskctl=None, home=None):
+    """Передаёт исход Codex по корню без этапов в реестре сторожка."""
+    import taskstate
+    rows, err = board_rows(root, call=call, taskctl=taskctl)
+    if err:
+        return ["корень %s: исход Codex не передан, доска не прочиталась, %s" % (root, err)]
+    runs = taskstate.app_runs(home, root, (r.get("id") or "" for r in rows))
+    return app_terminal_incidents(root, rows, runs, home=home)
+
+
 def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
               left=None):
     """Подъём строк одного корня, осиротевших и с лежащей репликой человека.
@@ -703,8 +743,17 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     rows, err = board_rows(root, call=call, taskctl=taskctl)
     if err:
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
-    incident_words, halted = incident_rows(rows, root=root, home=home, act=act)
-    replied, stale = split_reply_rows(root, rows, home=home)
+    import taskstate
+    userhome = user_home(home)
+    app_runs = taskstate.app_runs(userhome, root, (r.get("id") or "" for r in rows))
+    other_rows = [r for r in rows if r.get("id") not in app_runs]
+    incident_words, halted = incident_rows(other_rows, root=root, home=home, act=act)
+    incident_words += app_terminal_incidents(root, rows, app_runs, home=userhome, act=act)
+    replied, stale = split_reply_rows(root, other_rows, home=home)
+    for task, run in sorted(app_runs.items()):
+        if not head_up(task, home):
+            incident_words.append("задача %s в %s: рабочий чат Codex %s ведёт дашборд"
+                                  % (task, root, run["appChat"]))
     # Строку живого цикла цели конвейер не трогает (DK-1442): исполнителя ей
     # поднимает сам цикл, и второе окно той же задачи вело бы правку одного
     # дерева двумя руками. Отчёт говорит об этом словами. Тишина неотличима
@@ -712,7 +761,7 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     # её поднимает taskctl run --reply, а не исполнитель.
     led = {}
     diagnostics = []
-    for r, why in diagnostic_rows(rows, home=home):
+    for r, why in diagnostic_rows(other_rows, home=home):
         if str(r.get("id") or "").upper() in halted:
             continue
         goal = cycle_alive(root, r.get("id") or "")
@@ -729,7 +778,7 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     said = {f.id for f in found}
     kept = []
     for f in [Find(r.get("id") or "", ORDER % (r.get("id") or ""), row_why(r), False)
-              for r in orphan_rows(rows)
+              for r in orphan_rows(other_rows)
               if (r.get("id") or "") not in said and not r.get("held_by")
               and r.get("id") not in diagnosed
               and str(r.get("id") or "").upper() not in halted]:

@@ -23,6 +23,26 @@ class TaskStateTest(unittest.TestCase):
                      "run":{"id":"run-one", "harness":"glm-code-2", "model":"glm-5.3", "pid":0, "attempt":self.attempt}}
         self.name.write_text(json.dumps(self.data))
 
+    def test_legacy_app_run_requires_matching_persisted_identity(self):
+        self.data["run"]["pid"] = 999999
+        self.name.write_text(json.dumps(self.data))
+        directory = self.home / ".devkit" / "chats"
+        directory.mkdir()
+        sid = "as-original"
+        stored = directory / (sid + ".json")
+        chat = {"task": "DK-1", "thread": "thread-one", "protocol": "codex",
+                "taskRunSession": sid, "taskRunID": "run-one", "taskRunPID": 999999,
+                "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
+                "model": "glm-5.3"}
+        stored.write_text(json.dumps(chat))
+        runs = taskstate.app_runs(self.home, self.root, ["DK-1"])
+        self.assertEqual(runs["DK-1"]["appChat"], sid)
+        for field, value in (("taskRunRoot", "/other"), ("taskRunID", "other"),
+                             ("taskRunSession", "other"), ("taskRunPID", 1)):
+            with self.subTest(field=field):
+                stored.write_text(json.dumps(dict(chat, **{field: value})))
+                self.assertEqual(taskstate.app_runs(self.home, self.root, ["DK-1"]), {})
+
     def test_owner_acknowledgment_preserves_identity(self):
         taskstate.acknowledge(self.home, self.root, "DK-1", "run-one", os.getpid())
         got = taskstate.identity(self.home, self.root, "DK-1", os.getpid())

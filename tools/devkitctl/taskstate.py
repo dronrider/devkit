@@ -19,20 +19,87 @@ def path(home, root, task):
     return Path(home) / ".devkit" / "task-state" / key / (task + ".json")
 
 
-def read(home, root, task):
-    name = path(home, root, task)
+def _read_file(name):
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, encoding="utf-8") as stream:
         raw = stream.read(65537)
     if len(raw) > 65536:
         raise ValueError("слишком большое состояние задачи")
-    data = json.loads(raw)
+    return json.loads(raw)
+
+
+def read(home, root, task):
+    data = _read_file(path(home, root, task))
     if (not isinstance(data, dict) or data.get("version") != 1 or
             data.get("root") != os.path.realpath(root) or
             data.get("task") != task.upper() or
             type(data.get("stopped")) is not bool):
         raise ValueError("чужое либо неизвестное состояние задачи")
     return data
+
+
+def app_runs(home, root, tasks):
+    """Возвращает рабочие запуски Codex для ограждения общих подъёмов."""
+    home = Path.home() if home is None else Path(home)
+    confirmed, legacy = {}, {}
+    root = os.path.realpath(root)
+    for task in set(tasks):
+        try:
+            data = read(home, root, task)
+        except (OSError, ValueError):
+            continue
+        run = data.get("run")
+        if not isinstance(run, dict) or not run.get("id"):
+            continue
+        if isinstance(run.get("appChat"), str) and run["appChat"]:
+            confirmed[task] = dict(run, stopped=data["stopped"])
+        elif type(run.get("pid")) is int and run["pid"] > 0:
+            legacy[task] = dict(run, stopped=data["stopped"])
+    if not legacy:
+        return confirmed
+
+    # После обновления дашборд перенесёт адрес чата в Run. До этого тик
+    # узнаёт прежний запуск по обоим сохранённым экземплярам его реквизитов.
+    for file in (home / ".devkit" / "chats").glob("as*.json"):
+        try:
+            with file.open(encoding="utf-8") as stream:
+                chat = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(chat, dict) or not isinstance(chat.get("task"), str):
+            continue
+        task = chat["task"]
+        run = legacy.get(task)
+        if (run and chat.get("protocol") == "codex" and chat.get("thread")
+                and chat.get("taskRunSession") == file.stem
+                and chat.get("taskRunRoot") == root
+                and chat.get("taskRunID") == run["id"]
+                and chat.get("taskRunPID") == run["pid"]
+                and chat.get("harness") == run.get("harness")
+                and chat.get("model") == run.get("model")):
+            confirmed[task] = dict(run, appChat=file.stem)
+    return confirmed
+
+
+def terminal_app_roots(home):
+    """Находит корни для передачи исчерпанных восстановлений дежурному."""
+    roots = set()
+    for name in (Path(home) / ".devkit" / "task-state").glob("*/*.json"):
+        try:
+            data = _read_file(name)
+            if not isinstance(data, dict):
+                continue
+            root, task = data.get("root"), data.get("task")
+            run = data.get("run")
+            if (data.get("version") == 1 and data.get("stopped") is False
+                    and isinstance(root, str) and os.path.isabs(root)
+                    and isinstance(task, str) and path(home, root, task) == name
+                    and isinstance(run, dict) and run.get("appChat")
+                    and run.get("appRecoveryTerminal") is True):
+                roots.add(root)
+        except (OSError, ValueError):
+            continue
+    return roots
 
 
 @contextlib.contextmanager

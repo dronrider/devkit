@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -194,6 +195,54 @@ def day_spent(home=None, now=None):
         if not (-float("inf") < when < float("inf")) or when >= edge:
             spent += 1
     return spent
+
+
+def reserve_record(root, task, incident, home=None):
+    mark = new_mark()
+    rec = {"kind": "reserve", "when": datetime.now().strftime(STAMP), "at": time.time(),
+           "attempt": mark, "incident": incident, "task": task, "root": root}
+    if not _append(rec, home=home):
+        raise BudgetError("сбой записи бюджета, запуск запрещён")
+    return mark
+
+
+def finish_record(mark, outcome, home=None):
+    return _append({"kind": "result", "when": datetime.now().strftime(STAMP),
+                    "attempt": mark, "outcome": outcome}, home=home)
+
+
+def app_reserve(root, task, incident):
+    """Резерв рабочего чата под машинным замком, взятым дашбордом."""
+    if not os.path.isabs(root) or not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", task) or not incident:
+        raise BudgetError("неверный адрес попытки восстановления Codex")
+    root = os.path.realpath(root)
+    incident = "app:" + incident
+    record, finished = attempt_for(incident, root)
+    if record is not None:
+        if finished or record.get("task") != task:
+            raise BudgetError("попытка восстановления Codex с этим адресом уже закрыта либо занята")
+        return record["attempt"]
+    used = day_spent()
+    if used >= DAY_TRIES:
+        raise BudgetError("лимит восстановлений за 24 часа исчерпан (%d из %d)" % (used, DAY_TRIES))
+    return reserve_record(root, task, incident)
+
+
+def app_finish(mark, outcome):
+    """Закрывает резерв рабочего чата под тем же машинным замком."""
+    if not MARK_RE.fullmatch(mark) or outcome not in OUTCOME_WORDS:
+        raise BudgetError("неверный исход попытки восстановления Codex")
+    records = [rec for rec in _read() if rec.get("attempt") == mark]
+    if not any(rec["kind"] == "reserve" and isinstance(rec.get("incident"), str)
+               and rec["incident"].startswith("app:") for rec in records):
+        raise BudgetError("резерв восстановления Codex не найден")
+    for rec in records:
+        if rec["kind"] == "result":
+            if rec.get("outcome") != outcome:
+                raise BudgetError("резерв восстановления Codex уже закрыт другим исходом")
+            return
+    if not finish_record(mark, outcome):
+        raise BudgetError("исход восстановления Codex не записался в журнал")
 
 
 def proof_for(mark, croot, task, home=None):
@@ -529,12 +578,10 @@ def resume(hook, rec, root, call=None, taskctl=None, home=None, act=True,
         if why or _owner_state(task, str(devhome)) in ("live", "unclear"):
             say(why or "владелец изменился перед запуском, запуск запрещён")
             return lines
-        mark = new_mark()
-        line = {"kind": "reserve", "when": datetime.now().strftime(STAMP), "at": time.time(),
-                "attempt": mark, "incident": ident, "task": task,
-                "root": croot}
-        if not _append(line, home=home):
-            say("сбой записи бюджета, запуск запрещён")
+        try:
+            mark = reserve_record(croot, task, ident, home=home)
+        except BudgetError as error:
+            say(str(error))
             return lines
         outcome, extra = _launch_and_confirm(
             hook, ident, mark, task, root, croot, str(devhome),
@@ -664,8 +711,7 @@ def _outcome_line(mark, outcome, why):
 def _finish(hook, ident, mark, outcome, home, why, line,
             croot=None, task=None, devhome=None, deadline=None):
     def persist(outcome, why, line):
-        if not _append({"kind": "result", "when": datetime.now().strftime(STAMP),
-                        "attempt": mark, "outcome": outcome}, home=home):
+        if not finish_record(mark, outcome, home=home):
             return outcome, line + "; исход не записался в журнал, инцидент остаётся открытым"
         if hook is None:
             return outcome, line + "; журнал инцидента недоступен"
@@ -703,3 +749,21 @@ def duty_which(name):
     """Бинарь связки из PATH либо из каталогов релиза, как у duty.which."""
     import duty
     return duty.which(name)
+
+
+def main(args):
+    try:
+        if len(args) == 4 and args[0] == "app-reserve":
+            print(app_reserve(*args[1:]))
+        elif len(args) == 3 and args[0] == "app-finish":
+            app_finish(*args[1:])
+        else:
+            raise BudgetError("нужен app-reserve <корень> <задача> <попытка> либо app-finish <резерв> <исход>")
+    except (BudgetError, OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

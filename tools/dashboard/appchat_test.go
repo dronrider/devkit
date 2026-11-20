@@ -129,6 +129,13 @@ for raw in sys.stdin:
         log("resume " + str(params.get("threadId", "")))
         log("policy " + json.dumps(params))
         emit({"id": mid, "result": configured(params, params.get("threadId"))})
+    elif m == "thread/read":
+        try:
+            with open("fake-app-history") as f: turns = json.load(f)
+        except FileNotFoundError:
+            turns = []
+        log("read " + params.get("threadId", ""))
+        emit({"id": mid, "result": {"thread": {"id": params.get("threadId"), "status": {"type": "idle"}, "turns": turns}}})
     elif m == "turn/start":
         log("params " + json.dumps(params))
         log("turn " + str(params.get("effort", "")))
@@ -136,6 +143,14 @@ for raw in sys.stdin:
         text = ""
         for part in params.get("input") or []:
             text = text + " " + str(part.get("text", ""))
+        if mode() == "recover-die":
+            with open("fake-app-history", "w") as f:
+                json.dump([{"id": "interrupted-turn", "status": "interrupted", "itemsView": "full",
+                            "items": [{"type": "userMessage", "clientId": params.get("clientUserMessageId")}]}], f)
+            sys.exit(2)
+        if mode() == "rejected-model":
+            emit({"id": mid, "error": {"message": "unsupported model"}})
+            continue
         if mode() == "early":
             note("item/completed", {"item": {"type": "agentMessage",
                 "text": "ответ на реплику:" + text}})
@@ -143,6 +158,8 @@ for raw in sys.stdin:
             emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
             continue
         emit({"id": mid, "result": {"turn": {"id": "turn-1"}}})
+        if params.get("model") and mode() != "ack-only":
+            note("item/agentMessage/delta", {"threadId": "th-1", "turnId": "turn-1", "delta": "working"})
         if mode() == "approval-denied":
             note("item/completed", {"item": {"type": "commandExecution", "command": "agentctl plan", "aggregatedOutput": "automatic approval review rejected: service access denied", "exitCode": 1}})
             note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
@@ -160,7 +177,7 @@ for raw in sys.stdin:
         if mode() == "die":
             sys.stderr.write("токен кончился\n")
             sys.exit(3)
-        if mode() in ("mute", "deaf"):
+        if mode() in ("mute", "deaf", "ack-only"):
             continue
         note("item/completed", {"item": {"type": "commandExecution",
             "command": "ls -la", "aggregatedOutput": "итог команды", "exitCode": 0}})
@@ -170,7 +187,7 @@ for raw in sys.stdin:
     elif m == "test/finish":
         if not params.get("keepOpen"):
             with open(os.path.join(os.getcwd(), "task-state"), "w") as f: f.write("архиве")
-        note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}})
+        note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-1", "status": params.get("status", "completed")}})
         emit({"id": mid, "result": {}})
     elif m == "turn/interrupt":
         log("interrupt")

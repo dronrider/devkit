@@ -598,11 +598,12 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 // effort это ручной уровень глубины размышления из меню запуска (DK-1570):
 // пусто у всех дорог, кроме кнопки, где человек подвинул ползунок. Едет он
 // парой окружения в приставку головы, и живёт ровно этот подъём.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string) (taskhead.Result, error) {
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string, automaticContinuation bool) (taskhead.Result, error) {
 	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden, effort)
 	if err != nil {
 		return taskhead.Result{}, err
 	}
+	q.AutomaticContinuation = automaticContinuation
 	res, err := taskhead.Raise(q)
 	if err != nil {
 		return res, err
@@ -998,7 +999,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что

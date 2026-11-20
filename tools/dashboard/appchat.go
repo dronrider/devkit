@@ -40,10 +40,10 @@ type appChat struct {
 	project   string
 	automatic bool
 
-	mu        sync.Mutex
-	busy      bool
-	turnAt    time.Time
-	taskNotes chan appTaskNote
+	mu       sync.Mutex
+	busy     bool
+	turnAt   time.Time
+	taskTurn *appTaskTurn
 }
 
 func (c *appChat) busyNow() bool {
@@ -518,6 +518,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		c.thread = got.Thread.ID
 	}
 	var actual struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
 		ApprovalPolicy string `json:"approvalPolicy"`
 		Reviewer       string `json:"approvalsReviewer"`
 		Sandbox        struct {
@@ -526,6 +529,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}
 	if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
 		return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
+	}
+	if thread != "" && c.automatic && actual.Thread.ID != thread {
+		return fail(errors.New("клиент не подтвердил ID исходной нити Codex"))
 	}
 	s.appMu.Lock()
 	s.appChats[sid] = c
@@ -579,22 +585,18 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 // appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец
 // хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.
 func (s *server) appNote(sid, method string, params json.RawMessage) {
-	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
-		return
-	}
 	s.appMu.Lock()
 	if c := s.appChats[sid]; c != nil {
 		c.mu.Lock()
-		if method == "turn/completed" && c.taskNotes != nil {
-			select {
-			case c.taskNotes <- appTaskNote{Method: method, Params: append(json.RawMessage(nil), params...)}:
-			default:
-				c.proc.kill()
-			}
+		if c.taskTurn != nil {
+			c.taskTurn.note(method, params, time.Now())
 		}
 		c.mu.Unlock()
 	}
 	s.appMu.Unlock()
+	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
+		return
+	}
 	now := s.now().UTC().Format(time.RFC3339)
 	if method == "turn/completed" {
 		var p struct {
@@ -608,7 +610,7 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		s.appMu.Lock()
 		if c := s.appChats[sid]; c != nil && (p.ThreadID == "" || p.ThreadID == c.thread) {
 			c.mu.Lock()
-			if c.taskNotes == nil {
+			if c.taskTurn == nil {
 				c.busy = false
 			}
 			c.mu.Unlock()
@@ -726,21 +728,53 @@ func (s *server) appSayRecord(sid, text string) {
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
 	if a := s.appTaskFind(sid, "", ""); a != nil {
+		if a.recover {
+			s.appTaskAcceptSay(w, sid, text, claim)
+			return
+		}
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
+		return
+	}
+	wasTaskRun := st.TaskRun
+	continuation, err := s.appTaskContinuation(found, sid, &st)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
 		return
 	}
 	model, harness := st.Model, st.Harness
 	if model == "" {
 		model, harness = s.chatChoice(sid, "")
 	}
+	var entry appTaskMessage
+	if continuation {
+		if live := s.appLive(sid); live != nil && live.busyNow() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+			return
+		}
+		entry, err = s.appTaskQueueAdd(sid, claim, text)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		if entry.Accepted {
+			s.chatSayDone(sid, claim, "appserver")
+			writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver"})
+			return
+		}
+	}
 	if !chatModelCurrent(w, model) {
+		if continuation {
+			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. Исходная модель "+model+" недоступна", true, "model-"+st.TaskRunID)
+		}
 		return
 	}
 	h := s.chatHarnessOf(model, harness)
-	if h == nil || !h.foreign() {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
-			"подписка разговора не определилась (модель %s): разложить слой: devkitctl doctor --fix",
-			chatModelName(model, harness))})
+	if h == nil || !h.foreign() || continuation && st.Harness != h.Name {
+		why := fmt.Sprintf("подписка разговора не определилась (модель %s): разложить слой: devkitctl doctor --fix", chatModelName(model, harness))
+		if continuation {
+			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. "+why, true, "harness-"+st.TaskRunID)
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": why})
 		return
 	}
 	// Уровень глубины ложится в запись разговора каждым изменением, а не только
@@ -753,18 +787,33 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}
-	wasTaskRun := st.TaskRun
-	continuation, err := s.appTaskContinuation(found, sid, &st)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
-		return
-	}
 	if continuation {
-		if live := s.appLive(sid); live != nil && live.busyNow() {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+		waiting, err := s.appTaskRecoveryWaiting(found, sid, st)
+		if err != nil {
+			why := "Реплика сохранена в очереди. " + err.Error()
+			s.appTaskRecoveryNote(sid, why, true, "waiting-"+st.TaskRunID)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": why})
 			return
 		}
-		s.raiseAppTask(w, found, sid, st, h, "", text, true, claim)
+		if waiting {
+			s.appTaskQueued(w, sid, claim)
+			return
+		}
+		lock, err := s.appTaskLaunchLock(sid)
+		if errors.Is(err, chat.ErrLocked) {
+			s.appTaskQueued(w, sid, claim)
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		defer lock.Close()
+		if s.appTaskFind(sid, "", "") != nil {
+			s.appTaskQueued(w, sid, claim)
+			return
+		}
+		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry.Claim)
 		return
 	}
 	if wasTaskRun && !st.TaskRun {
@@ -975,12 +1024,16 @@ func (s *server) appStatus(w http.ResponseWriter, sid string) {
 		out["status"] = "ход идёт"
 		c.mu.Lock()
 		at := c.turnAt
+		last := at
+		if c.taskTurn != nil {
+			last = c.taskTurn.last
+		}
 		c.mu.Unlock()
 		if !at.IsZero() {
 			age := s.now().Sub(at)
 			out["since"] = at.UnixMilli()
 			out["sec"] = int(age / time.Second)
-			if age > appBusyCap {
+			if s.now().Sub(last) > appBusyCap {
 				out["status"] = "ход идёт подозрительно долго"
 			}
 		}

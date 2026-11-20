@@ -329,9 +329,18 @@ func cmdServe(home, staticDir string) error {
 	// Просроченный вход снимается тем же кругом, а не ленивым нажатием
 	// «Войти»: открытая и забытая ссылка иначе держит tmux с живым клиентом.
 	keeperStop := make(chan struct{})
-	defer close(keeperStop)
 	go srv.quotaKeeper(keeperStop)
-	defer srv.appTasksClose()
+	recoveryDone := make(chan struct{})
+	go func() {
+		defer close(recoveryDone)
+		srv.appTaskRecoveryKeeper(keeperStop)
+	}()
+	defer func() {
+		close(keeperStop)
+		srv.appTasksClose()
+		<-recoveryDone
+		srv.appTasksClose()
+	}()
 	go srv.loginKeeper(keeperStop)
 	// Сторож поднятых сессий: смерть подъёма замечает он, когда на разговор
 	// никто не смотрит (chatwatch.go).

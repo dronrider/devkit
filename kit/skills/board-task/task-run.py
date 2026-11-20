@@ -787,6 +787,8 @@ class Pipeline:
         self.proj = opts["proj"]
         self.project = opts["project"]
         self.reply_once = opts.get("reply_once", False)
+        self.app_task_chat = os.environ.get("DEVKIT_APP_TASK_CHAT", "")
+        self.app_task_recover = bool(self.app_task_chat) and os.environ.get("DEVKIT_APP_TASK_RECOVER") == "1"
         self.order = opts["order"]
         self.again = opts["again"]
         self.passes = opts["passes"]
@@ -1232,6 +1234,17 @@ class Pipeline:
             # Нештатная остановка при живой строке: дежурного поднимет тик по
             # записи, автоматический подъём строки до разбора стоит (DK-1415).
             self.incident(kind, why)
+        if self.app_task_chat and self.run_id and code != APP_TASK_BROKEN:
+            try:
+                state = recovery_state()
+                home = os.path.expanduser("~")
+                with state.locked(home, self.proj, self.id) as data:
+                    run = data.get("run") or {}
+                    if run.get("id") == self.run_id and run.get("appChat") == self.app_task_chat:
+                        run.pop("appRecovery", None)
+                        state.save(home, self.proj, self.id, data)
+            except (OSError, ValueError, ImportError) as error:
+                self.say("состояние завершения Codex не сохранилось: %s" % error)
         self.account_tails(why)
         self.drop_head()
         self.log("конвейер %s встал: %s, %s в %s" % (self.sess, why, self.id, sect or "неизвестно где"), code)
@@ -1482,7 +1495,7 @@ class Pipeline:
                                  code if code and code > 0 else 1, pane=True)
 
     def initial_order(self):
-        if self.reply_once:
+        if self.reply_once or self.app_task_recover:
             return self.order
         path = self.rotate_tail()
         if os.path.isfile(path):
@@ -2660,6 +2673,8 @@ class Pipeline:
             self.log("выход головы конвейера %s, %s в %s, проход %d из %d, %d с"
                      % (self.sess, self.id, after, n, self.passes, int(spent)), code)
             self.say("голова вышла кодом %d за %d с, задача в %s" % (code, int(spent), after))
+            if self.app_task_chat and code == APP_TASK_BROKEN:
+                self.stop(code, after, "оборвалась связь с рабочим разговором Codex", loud=False)
             if self.reply_once:
                 self.stop(code, after, "ответ на реплику завершён", loud=False)
             if after == DONE:
@@ -2710,16 +2725,23 @@ class Pipeline:
                   kind=PASSES_REASON)
 
 
+APP_TASK_BROKEN = 75
+
+
 def app_turn_client(argv):
     import socket
     if len(argv) != 4 or argv[2] != "-p":
         die("носитель app-server ждёт socket token -p order")
-    with socket.socket(socket.AF_UNIX) as sock:
-        sock.connect(argv[0])
-        stream = sock.makefile("rw", encoding="utf-8")
-        stream.write(json.dumps({"token": argv[1], "order": argv[3]}) + "\n")
-        stream.flush()
-        answer = json.loads(stream.readline())
+    try:
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.connect(argv[0])
+            stream = sock.makefile("rw", encoding="utf-8")
+            stream.write(json.dumps({"token": argv[1], "order": argv[3]}) + "\n")
+            stream.flush()
+            answer = json.loads(stream.readline())
+    except (OSError, ValueError) as error:
+        sys.stderr.write("task-run: связь с рабочим разговором Codex оборвалась: %s\n" % error)
+        return APP_TASK_BROKEN
     if answer.get("error"):
         sys.stderr.write("task-run: %s\n" % answer["error"])
     return int(answer.get("code", 2))

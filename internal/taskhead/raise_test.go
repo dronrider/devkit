@@ -970,3 +970,44 @@ func TestContinuationExpectedRunPreservesStoppedState(t *testing.T) {
 		t.Fatalf("client started: %s", got)
 	}
 }
+
+func TestAppRecoveryReservesAutomaticWakeUntilWorkEnds(t *testing.T) {
+	s := newStand(t, true, true)
+	q := s.req()
+	q.Order = "Продолжай выполнение DK-1"
+	q.AutomaticContinuation = true
+	g, err := taskstate.Acquire(s.home, s.root, q.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.StartRun(taskstate.Run{ID: "original", Harness: "codex", Model: "model", AppChat: "as-original", AppRecovery: true}); err != nil {
+		g.Close()
+		t.Fatal(err)
+	}
+	g.Close()
+	res, err := Raise(q)
+	if err != nil || res.Code != CodeBusy {
+		t.Fatalf("wake обошёл восстановление: %+v %v", res, err)
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "new-session") {
+		t.Fatalf("wake поднял другой профиль: %s", got)
+	}
+	g, err = taskstate.Acquire(s.home, s.root, q.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := g.State.Run; run.ID != "original" || run.AppChat != "as-original" {
+		g.Close()
+		t.Fatalf("wake заменил исходный запуск: %+v", run)
+	}
+	g.State.Run.AppRecovery = false
+	err = g.Save()
+	g.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = Raise(q)
+	if err != nil || res.Code != CodeRaised {
+		t.Fatalf("штатный wake после завершения: %+v %v", res, err)
+	}
+}

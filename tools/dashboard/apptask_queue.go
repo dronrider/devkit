@@ -1,0 +1,196 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
+)
+
+type appTaskMessage struct {
+	ID       string `json:"id"`
+	Claim    string `json:"claim"`
+	Text     string `json:"text,omitempty"`
+	Sent     bool   `json:"sent,omitempty"`
+	Accepted bool   `json:"accepted,omitempty"`
+}
+
+func (s *server) appTaskQueue(sid string, change func(*[]appTaskMessage) bool) error {
+	path := filepath.Join(chatStoreDir(s.cfg.Home), "app-task-queue", sid+".json")
+	lock, err := chat.Lock(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	var entries []appTaskMessage
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		if err = json.Unmarshal(raw, &entries); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if !change(&entries) {
+		return nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".queue-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	err = json.NewEncoder(f).Encode(entries)
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil || closeErr != nil {
+		return errors.Join(err, closeErr)
+	}
+	if err = os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+func (s *server) appTaskQueueAdd(sid, claim, text string) (appTaskMessage, error) {
+	entry := appTaskMessage{ID: msgID(), Claim: claim, Text: text}
+	if entry.Claim == "" {
+		entry.Claim = entry.ID
+	}
+	conflict := false
+	err := s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
+		for _, old := range *entries {
+			if old.Claim == entry.Claim {
+				conflict = !old.Accepted && old.Text != text
+				entry = old
+				return false
+			}
+		}
+		*entries = append(*entries, entry)
+		return true
+	})
+	if conflict {
+		err = errors.New("ключ реплики уже занят другим текстом")
+	}
+	return entry, err
+}
+
+func (s *server) appTaskQueueImport(p *Project, sid, id string) error {
+	name := chat.TaskName(id)
+	var moved []string
+	for _, line := range chat.ReadLines(chat.Path(p.Path, name)) {
+		if !chat.ForMe(line, sid) {
+			continue
+		}
+		claim := fmt.Sprintf("inbox-%x", sha256.Sum256([]byte(line)))
+		if _, err := s.appTaskQueueAdd(sid, claim, chat.Said(line)); err != nil {
+			return err
+		}
+		moved = append(moved, line)
+	}
+	if len(moved) == 0 {
+		return nil
+	}
+	_, err := chat.TakeLines(p.Path, name, moved)
+	return err
+}
+
+func (s *server) appTaskQueueNext(sid string) (appTaskMessage, error) {
+	var entry appTaskMessage
+	err := s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
+		for _, candidate := range *entries {
+			if !candidate.Accepted {
+				entry = candidate
+				break
+			}
+		}
+		return false
+	})
+	return entry, err
+}
+
+func (s *server) appTaskQueueMark(sid, id string, sent, accepted bool) error {
+	return s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
+		for i := range *entries {
+			entry := &(*entries)[i]
+			if entry.ID == id {
+				entry.Sent, entry.Accepted = sent, accepted
+				if accepted {
+					entry.Text = ""
+				}
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func (s *server) appTaskQueueFeed(sid string, entry appTaskMessage) error {
+	it := reply{Role: "user", Text: entry.Text, Wire: entry.Text, Time: s.now().UTC().Format(time.RFC3339),
+		App: &appFeedEvent{Method: "devkit/appTaskMessage", Item: map[string]any{"id": entry.ID}}}
+	appFeedDisplay(&it)
+	return s.appFeedAppend(sid, []reply{it})
+}
+
+type appTaskThread struct {
+	ID     string `json:"id"`
+	Status struct {
+		Type string `json:"type"`
+	} `json:"status"`
+	Turns []struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		ItemsView string `json:"itemsView"`
+		Items     []struct {
+			Type     string `json:"type"`
+			ClientID string `json:"clientId"`
+		} `json:"items"`
+	} `json:"turns"`
+}
+
+func appTaskReadThread(c *appChat) (*appTaskThread, error) {
+	raw, err := c.proc.call("thread/read", map[string]any{"threadId": c.thread, "includeTurns": true})
+	if err != nil {
+		return nil, fmt.Errorf("не удалось сверить исходную нить Codex: %w", err)
+	}
+	var got struct {
+		Thread appTaskThread `json:"thread"`
+	}
+	if json.Unmarshal(raw, &got) != nil || got.Thread.ID != c.thread || got.Thread.Status.Type == "" || got.Thread.Turns == nil {
+		return nil, errors.New("клиент не подтвердил историю и состояние исходной нити Codex")
+	}
+	if got.Thread.Status.Type == "active" {
+		return nil, errors.New("в исходной нити Codex ещё идёт операция")
+	}
+	for _, turn := range got.Thread.Turns {
+		if turn.Status == "inProgress" {
+			return nil, errors.New("в исходной нити Codex ещё идёт ход")
+		}
+		if turn.ItemsView != "full" {
+			return nil, errors.New("клиент не подтвердил полные записи ходов исходной нити Codex")
+		}
+	}
+	return &got.Thread, nil
+}
+
+func (t *appTaskThread) accepted(id string) bool {
+	for _, turn := range t.Turns {
+		for _, item := range turn.Items {
+			if item.Type == "userMessage" && item.ClientID == id {
+				return true
+			}
+		}
+	}
+	return false
+}

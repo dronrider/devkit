@@ -3315,6 +3315,19 @@ class TestStartupRecovery(unittest.TestCase):
         self.pipe.rotate_note = unittest.mock.Mock()
         return self.pipe.rotate()
 
+    def test_fresh_codex_start_reads_rotation_tail(self):
+        self.tail()
+        args = task_run.parse_args(["DK-1", "-C", self.tmp.name,
+                                    "--order", "Продолжай работу", "--", "client"])
+        for recovery in ("", "1"):
+            with self.subTest(recovery=recovery), unittest.mock.patch.dict(os.environ, {
+                    "DEVKIT_APP_TASK_CHAT": SID, "DEVKIT_APP_TASK_RECOVER": recovery}):
+                pipe = task_run.Pipeline(args)
+                if recovery:
+                    self.assertEqual(pipe.initial_order(), "Продолжай работу")
+                else:
+                    self.assertIn(pipe.rotate_tail(), pipe.initial_order())
+
     def test_rotation_replaces_only_profile_session(self):
         self.pipe.client += ["--name", SID]
         self.pipe.model = "test-model"

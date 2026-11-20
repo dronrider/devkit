@@ -3119,6 +3119,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
 	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		if st.TaskRunID != "" && st.Task != "" && st.Project == found.Name && !s.appTaskStopOrphan(w, found.Path, sid, st) {
+			return
+		}
 		if body.Drop || body.Kill {
 			s.appDrop(sid, "снятие под перезапуск")
 			writeJSON(w, http.StatusOK, map[string]any{"way": "gone",
@@ -3303,7 +3306,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	taskIDs := sessions.Works(records)
 	stored := s.chatStoreRead(sid)
 	chosenModel, _ := s.chatChoice(sid, guardLast.Tmux)
-	if !chatModelCurrent(w, chosenModel) {
+	if stored.TaskRunID == "" && !chatModelCurrent(w, chosenModel) {
 		return
 	}
 	if stored.Blank && stored.Task != "" {

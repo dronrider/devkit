@@ -22,7 +22,7 @@ func appTaskEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
 	writeTaskRunFake(t, filepath.Dir(e.proj))
 	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
 	putDoc(t, kit, "RULES.board.core.md", readFile(t, filepath.Join(os.Getenv("DEVKIT_HOME"), "RULES.board.core.md")))
-	for _, rel := range []string{taskhead.TaskRunRel, "tools/devkitctl/taskstate.py"} {
+	for _, rel := range []string{taskhead.TaskRunRel, "tools/devkitctl/taskstate.py", "tools/devkitctl/recovery.py"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)

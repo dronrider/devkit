@@ -103,7 +103,7 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
-	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "")
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "", true)
 	if err != nil {
 		// Замок держит живая голова, поднятая мимо дашборда: ответ дойдёт до
 		// неё так же, как до живой tmux-сессии выше, и возвращать строку в
@@ -374,7 +374,7 @@ func (s *server) taskReplyRaise(proj *Project, id string) (checkRunReport, bool)
 	}
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
 	order := taskhead.ReplyOrder(id)
-	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "")
+	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "", true)
 	if err != nil {
 		// Замок держит голова, поднятая мимо дашборда: реплика дойдёт до неё
 		// подхватом, как дошла бы до живой tmux-сессии.

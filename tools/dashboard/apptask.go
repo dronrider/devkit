@@ -19,25 +19,153 @@ import (
 	"github.com/dronrider/devkit/internal/taskstate"
 )
 
-type appTaskNote struct {
-	Method string
-	Params json.RawMessage
+type appTaskTurn struct {
+	thread string
+	turn   string
+	last   time.Time
+	early  map[string]appTaskActivity
+	work   bool
+	wake   chan struct{}
+	ends   chan json.RawMessage
+}
+
+type appTaskActivity struct {
+	last time.Time
+	work bool
+}
+
+func appTaskTurnID(method string, params json.RawMessage, thread string) string {
+	var ids struct {
+		Thread string `json:"threadId"`
+		TurnID string `json:"turnId"`
+		Turn   struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(params, &ids) != nil || ids.Thread != thread {
+		return ""
+	}
+	if method == "turn/started" || method == "turn/completed" {
+		return ids.Turn.ID
+	}
+	return ids.TurnID
+}
+
+func appTaskWorkEvent(method string, params json.RawMessage) bool {
+	switch method {
+	case "item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/reasoning/textDelta", "item/plan/delta":
+		return true
+	case "item/started", "item/completed":
+		var event struct {
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(params, &event) == nil {
+			switch event.Item.Type {
+			case "agentMessage", "reasoning", "commandExecution", "fileChange", "mcpToolCall", "collabAgentToolCall":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// The chat lock guards activity while the request is still returning its turn ID.
+func (t *appTaskTurn) note(method string, params json.RawMessage, now time.Time) {
+	turn := appTaskTurnID(method, params, t.thread)
+	if turn == "" || t.turn != "" && t.turn != turn {
+		return
+	}
+	work := appTaskWorkEvent(method, params)
+	if t.turn == "" {
+		t.early[turn] = appTaskActivity{last: now, work: t.early[turn].work || work}
+	} else {
+		t.last, t.work = now, t.work || work
+	}
+	if method == "turn/completed" {
+		select {
+		case t.ends <- params:
+		default:
+		}
+	}
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (c *appChat) waitTaskTurn(t *appTaskTurn, turn string, stop <-chan struct{}, cap time.Duration, confirm func()) error {
+	c.mu.Lock()
+	t.turn = turn
+	if activity := t.early[turn]; activity.last.After(t.last) {
+		t.last, t.work = activity.last, activity.work
+	}
+	t.early = nil
+	c.mu.Unlock()
+	remaining := func() time.Duration {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return time.Until(t.last.Add(cap))
+	}
+	timer := time.NewTimer(remaining())
+	defer timer.Stop()
+	for {
+		if confirm != nil {
+			c.mu.Lock()
+			work := t.work
+			c.mu.Unlock()
+			if work {
+				confirm()
+				confirm = nil
+			}
+		}
+		select {
+		case <-stop:
+			return errors.New("конвейер задачи остановлен")
+		case <-c.proc.dead:
+			return fmt.Errorf("процесс клиента вышел: %s", c.proc.errWhyFmt())
+		case <-timer.C:
+			if left := remaining(); left > 0 {
+				timer.Reset(left)
+				continue
+			}
+			return errors.New("ход конвейера не подавал признаков работы в отведённый срок")
+		case <-t.wake:
+			timer.Reset(remaining())
+		case params := <-t.ends:
+			complete, err := appTaskCompletion(params, t.thread, turn)
+			if complete {
+				if err == nil && confirm != nil {
+					confirm()
+				}
+				c.mu.Lock()
+				c.busy = false
+				c.mu.Unlock()
+				return err
+			}
+		}
+	}
 }
 
 type appTask struct {
-	sid       string
-	root      string
-	task      string
-	home      string
-	dir       string
-	listener  net.Listener
-	token     string
-	launched  chan struct{}
-	ready     chan error
-	stop      chan struct{}
-	once      sync.Once
-	lifecycle sync.Mutex
-	pid       int
+	sid        string
+	root       string
+	task       string
+	home       string
+	dir        string
+	listener   net.Listener
+	token      string
+	launched   chan struct{}
+	ready      chan error
+	stop       chan struct{}
+	once       sync.Once
+	lifecycle  sync.Mutex
+	pid        int
+	recover    bool
+	replyOnce  bool
+	replyClaim string
+	firstClaim string
 }
 
 func (s *server) appTaskClose(a *appTask) {
@@ -97,19 +225,21 @@ func (s *server) appTaskServe(a *appTask, p *Project) {
 		}
 		err = s.appTaskPass(a, p, conn)
 		conn.Close()
-		if err != nil {
-			select {
-			case a.ready <- err:
-			default:
-			}
-			s.appFeedAppend(a.sid, []reply{{Role: "assistant", Fail: true, Text: "конвейер задачи прерван: " + err.Error(), Time: s.now().UTC().Format(time.RFC3339)}})
-			s.appDrop(a.sid, "проход задачи завершился отказом")
-			select {
-			case <-a.stop:
-				return
-			default:
-			}
+		if err == nil {
+			continue
 		}
+		select {
+		case <-a.stop:
+			return
+		default:
+		}
+		s.appTaskRecoveryFailure(a.sid, a.root, a.task, a.pid, err)
+		s.appDrop(a.sid, "проход задачи завершился отказом")
+		select {
+		case a.ready <- err:
+		default:
+		}
+		return
 	}
 }
 
@@ -129,7 +259,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	defer func() {
 		code, why := 0, ""
 		if err != nil {
-			code, why = 2, err.Error()
+			code, why = 75, err.Error()
 		}
 		json.NewEncoder(conn).Encode(map[string]any{"code": code, "error": why})
 	}()
@@ -153,8 +283,8 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	c := s.appLive(a.sid)
 	if c == nil {
 		h := s.chatHarnessOf(st.Model, st.Harness)
-		if !h.foreign() {
-			return errors.New("подписка конвейера Codex не определилась")
+		if !h.foreign() || h.Name != st.Harness {
+			return errors.New("исходная подписка конвейера Codex недоступна")
 		}
 		c, err = s.appSpawn(a.sid, h, st.Model, chatTree(p.Path, st.Task), p.Name, st.Thread, a.stop)
 		if err != nil {
@@ -170,19 +300,45 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 			return err
 		}
 	}
-	notes := make(chan appTaskNote, 128)
+	if a.recover && req.Order == appTaskRecoveryOrder {
+		if err := s.appTaskRecoveryGuard(p, a.sid, st); err != nil {
+			return err
+		}
+	}
+
+	order, queued, err := s.appTaskNextOrder(a, p, c, req.Order)
+	if err != nil {
+		return err
+	}
+	turn := &appTaskTurn{thread: c.thread, last: time.Now(), early: make(map[string]appTaskActivity),
+		wake: make(chan struct{}, 1), ends: make(chan json.RawMessage, 128)}
 	c.mu.Lock()
 	if c.busy {
 		c.mu.Unlock()
 		return errAppTurnBusy
 	}
-	c.taskNotes = notes
+	c.taskTurn = turn
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); c.taskNotes = nil; c.mu.Unlock() }()
-	s.appSayRecord(a.sid, req.Order)
-	raw, err := c.proc.call("turn/start", s.appTurnParams(c, req.Order, st.CxEffort))
+	defer func() { c.mu.Lock(); c.taskTurn = nil; c.mu.Unlock() }()
+	params := s.appTurnParams(c, order, st.CxEffort)
+	if a.recover {
+		params["model"] = st.Model
+	}
+	if queued.ID != "" {
+		if err = s.appTaskQueueMark(a.sid, queued.ID, true, false); err != nil {
+			return err
+		}
+		params["clientUserMessageId"] = queued.ID
+	} else {
+		s.appSayRecord(a.sid, order)
+	}
+	raw, err := c.proc.call("turn/start", params)
 	if err != nil {
+		var rejected *appError
+		if queued.ID != "" && errors.As(err, &rejected) && appTaskRecoveryPermanent(err) {
+			err = errors.Join(err, s.appTaskQueueMark(a.sid, queued.ID, false, false))
+		}
 		return err
 	}
 	var started struct {
@@ -193,45 +349,56 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	if json.Unmarshal(raw, &started) != nil || started.Turn.ID == "" {
 		return errors.New("клиент не назвал ID хода конвейера")
 	}
-	a.lifecycle.Unlock()
-	locked = false
-	select {
-	case a.ready <- nil:
-	default:
-	}
-	timer := time.NewTimer(appBusyCap)
-	defer timer.Stop()
-	for {
-		select {
-		case <-a.stop:
-			return errors.New("конвейер задачи остановлен")
-		case <-c.proc.dead:
-			return fmt.Errorf("процесс клиента вышел: %s", c.proc.errWhyFmt())
-		case <-timer.C:
-			return errors.New("ход конвейера не завершился в срок")
-		case n := <-notes:
-			if n.Method != "turn/completed" {
-				continue
-			}
-			complete, err := appTaskCompletion(n.Params, c.thread, started.Turn.ID)
-			if complete {
-				c.mu.Lock()
-				c.busy = false
-				c.mu.Unlock()
-				return err
-			}
+	if queued.ID != "" {
+		if err = s.appTaskQueueFeed(a.sid, queued); err != nil {
+			return err
 		}
 	}
+	a.lifecycle.Unlock()
+	locked = false
+	ready := func() {
+		if a.replyOnce && a.firstClaim == "" {
+			a.firstClaim = queued.Claim
+		}
+		select {
+		case a.ready <- nil:
+		default:
+		}
+	}
+	var confirm func()
+	if a.recover && req.Order == appTaskRecoveryOrder {
+		confirm = func() {
+			s.appTaskRecoveryNote(a.sid, "Конвейер Codex продолжен в исходном разговоре", false, "confirmed-"+st.TaskRunID)
+			ready()
+		}
+	} else {
+		ready()
+	}
+	if err = c.waitTaskTurn(turn, started.Turn.ID, a.stop, appBusyCap, confirm); err != nil {
+		return err
+	}
+	if queued.ID != "" {
+		if err = s.appTaskQueueMark(a.sid, queued.ID, true, true); err != nil {
+			return err
+		}
+	}
+	s.appTaskRecoveryProgress(a.sid, a.root, a.task, a.pid)
+	return nil
 }
 
 func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *Harness, tier, effort, order string) {
 	sid := "as" + msgID()
 	st := chatStore{Task: id, Project: p.Name, Model: h.tierModel(tier), Harness: h.Name, Protocol: h.Protocol, TaskRun: true, CxEffort: effort, Born: s.now().Unix()}
-	s.raiseAppTask(w, p, sid, st, h, tier, order, false, "")
+	s.raiseAppTask(w, p, sid, st, h, tier, order, false, false, "")
 }
 
-func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce bool, claim string) {
+func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce, recover bool, claim string) error {
 	id := st.Task
+	respond := func(status int, body map[string]string) {
+		if w != nil {
+			writeJSON(w, status, body)
+		}
+	}
 	if st.CxEffort == "" {
 		raw, err := runProcQuiet(p.Path, true, binPath(agentctlBin), "pick", id)
 		if err == nil {
@@ -241,11 +408,13 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 			st.CxEffort = "medium"
 		}
 	}
-	fail := func(err error) {
-		if !taskhead.Working(taskhead.LockPath(realHomeFn(), id)) {
-			s.mainChatAssign(id, sid, p.Name, "работа")
+	fail := func(err error) error {
+		if !recover {
+			if !taskhead.Working(taskhead.LockPath(realHomeFn(), id)) {
+				s.mainChatAssign(id, sid, p.Name, "работа")
+			}
+			s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true, Text: "конвейер задачи не поднялся: " + err.Error(), Time: s.now().UTC().Format(time.RFC3339)}})
 		}
-		s.appFeedAppend(sid, []reply{{Role: "assistant", Fail: true, Text: "конвейер задачи не поднялся: " + err.Error(), Time: s.now().UTC().Format(time.RFC3339)}})
 		status := http.StatusBadGateway
 		body := map[string]string{"error": err.Error(), "session": sid}
 		var conflict *appThreadWriterConflict
@@ -253,55 +422,56 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 			status = http.StatusConflict
 			body["refused"] = err.Error()
 		}
-		writeJSON(w, status, body)
+		respond(status, body)
+		return err
 	}
-	if !replyOnce {
+	if !replyOnce && !recover {
 		if err := s.chatStoreWrite(sid, st); err != nil {
-			fail(err)
-			return
+			return fail(err)
 		}
 	}
 	dir, err := os.MkdirTemp("/tmp", "dk-at-")
 	if err != nil {
-		fail(err)
-		return
+		return fail(err)
 	}
 	socket := filepath.Join(dir, "turn")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		os.RemoveAll(dir)
-		fail(err)
-		return
+		return fail(err)
 	}
 	if err = os.Chmod(socket, 0600); err != nil {
 		listener.Close()
 		os.RemoveAll(dir)
-		fail(err)
-		return
+		return fail(err)
 	}
 	q, err := s.headRequest(p, id, "", h, st.Model, order, runPrompt("in-progress", id), "работа", false, st.CxEffort)
 	if err != nil {
 		listener.Close()
 		os.RemoveAll(dir)
-		fail(err)
-		return
+		return fail(err)
 	}
-	a := &appTask{sid: sid, root: p.Path, task: id, home: q.Home, dir: dir, listener: listener, token: msgID(), launched: make(chan struct{}), ready: make(chan error, 1), stop: make(chan struct{})}
+	a := &appTask{sid: sid, root: p.Path, task: id, home: q.Home, dir: dir, listener: listener, token: msgID(), launched: make(chan struct{}), ready: make(chan error, 1), stop: make(chan struct{}), recover: recover, replyOnce: replyOnce, replyClaim: claim}
 	q.ContinueStopped, q.ExpectedRun = replyOnce, st.TaskRunID
-	q.AppServer = &taskhead.AppServerCarrier{ReplyOnce: replyOnce, Command: []string{"python3", taskRunPath(s.cfg.Roots), "--app-turn-client", socket, a.token}}
+	q.AppServer = &taskhead.AppServerCarrier{ReplyOnce: replyOnce, Chat: sid, Recover: recover, Command: []string{"python3", taskRunPath(s.cfg.Roots), "--app-turn-client", socket, a.token}}
+	if recover {
+		q.AppServer.BeforeStart = func() error { return s.appTaskRecoveryGuard(p, sid, st) }
+	}
+
 	s.appMu.Lock()
 	for _, existing := range s.appTasks {
 		if existing.sid == sid || existing.root == p.Path && existing.task == id {
 			s.appMu.Unlock()
 			listener.Close()
 			os.RemoveAll(dir)
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт"})
-			return
+			why := errors.New("конвейер задачи уже идёт")
+			respond(http.StatusConflict, map[string]string{"error": why.Error()})
+			return why
 		}
 	}
 	s.appTasks[sid] = a
 	s.appMu.Unlock()
-	if replyOnce {
+	if replyOnce || recover {
 		if live := s.appLive(sid); live != nil && live.busyNow() {
 			s.appMu.Lock()
 			delete(s.appTasks, sid)
@@ -309,8 +479,9 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 			listener.Close()
 			os.RemoveAll(dir)
 			close(a.launched)
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
-			return
+			why := errors.New("ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп")
+			respond(http.StatusConflict, map[string]string{"error": why.Error()})
+			return why
 		}
 		s.appDrop(sid, "возобновление рабочего запуска задачи")
 	}
@@ -335,16 +506,18 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 	if err != nil || res.Code != taskhead.CodeRaised {
 		s.appTaskClose(a)
 		if err == nil && res.Code == taskhead.CodeBusy {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "общий замок головы занят")})
-			return
+			why := errors.New(runBusy(id, "общий замок головы занят"))
+			respond(http.StatusConflict, map[string]string{"error": why.Error()})
+			return why
 		}
 		if err == nil {
 			err = fmt.Errorf("запуск не удался: %v", res.Lines)
 		}
-		fail(err)
-		return
+		return fail(err)
 	}
-	s.mainChatAssign(id, sid, p.Name, "работа")
+	if !recover {
+		s.mainChatAssign(id, sid, p.Name, "работа")
+	}
 	s.appWorkers.Go(func() {
 		tick := time.NewTicker(100 * time.Millisecond)
 		defer tick.Stop()
@@ -369,17 +542,21 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 			err = errors.New("оболочка задачи вышла до первого хода")
 		}
 	case <-time.After(appCallCap):
-		err = errors.New("оболочка задачи не начала первый ход в срок")
+		err = errors.New("оболочка задачи не подтвердила первый рабочий ход в срок")
 	}
 	if err != nil {
 		s.appTaskClose(a)
-		fail(err)
-		return
+		return fail(err)
 	}
 	if replyOnce {
+		if a.firstClaim != claim {
+			s.appTaskQueued(w, sid, claim)
+			return nil
+		}
 		s.chatSayDone(sid, claim, "appserver")
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
+	respond(http.StatusOK, map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort})
+	return nil
 }
 
 func (s *server) appTaskToolEnv(sid string, st chatStore, env map[string]string) {
@@ -395,6 +572,15 @@ func (s *server) appTaskToolEnv(sid string, st chatStore, env map[string]string)
 	env["DEVKIT_EFFORT"] = st.CxEffort
 }
 
+type appTaskTurnFailure struct {
+	id, status string
+	cause      json.RawMessage
+}
+
+func (e *appTaskTurnFailure) Error() string {
+	return fmt.Sprintf("ход %s завершился состоянием %s: %s", e.id, e.status, e.cause)
+}
+
 func appTaskCompletion(params json.RawMessage, thread, turn string) (bool, error) {
 	var end struct {
 		Thread string `json:"threadId"`
@@ -408,7 +594,7 @@ func appTaskCompletion(params json.RawMessage, thread, turn string) (bool, error
 		return false, nil
 	}
 	if end.Turn.Status != "completed" {
-		return true, fmt.Errorf("ход %s завершился состоянием %s: %s", end.Turn.ID, end.Turn.Status, end.Turn.Error)
+		return true, &appTaskTurnFailure{id: end.Turn.ID, status: end.Turn.Status, cause: end.Turn.Error}
 	}
 	return true, nil
 }
@@ -469,7 +655,7 @@ func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (boo
 	}
 	defer state.Close()
 	run := state.State.Run
-	if run == nil || run.ID == "" || run.PID != st.TaskRunPID || run.Harness != st.Harness || run.Model != st.Model {
+	if run == nil || run.ID == "" || run.PID != st.TaskRunPID || run.Harness != st.Harness || run.Model != st.Model || run.AppChat != "" && run.AppChat != sid {
 		return false, errors.New("исходный запуск задачи изменился либо не подтверждён")
 	}
 	if st.TaskRunID != "" {

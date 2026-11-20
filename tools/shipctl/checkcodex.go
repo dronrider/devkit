@@ -186,8 +186,13 @@ func codexCheckWorker(raw string) {
 			// Отдельный канал нужен после ответа check-run. Файл журнала
 			// уже недоступен, а вызывающий процесс мог завершиться.
 			logCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = exec.CommandContext(logCtx, "logger", "-t", "shipctl", o.ID+": "+logErr.Error()).Run()
+			sinkErr := exec.CommandContext(logCtx, "logger", "-t", "shipctl", o.ID+": "+logErr.Error()).Run()
 			cancel()
+			if sinkErr != nil {
+				diagnostic := "check-run " + o.ID + ": " + logErr.Error() + ", logger: " + sinkErr.Error()
+				diagnostic = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(diagnostic)
+				_ = appendRunLog(o.Root, diagnostic, 1)
+			}
 		}
 		var event struct {
 			Type     string `json:"type"`

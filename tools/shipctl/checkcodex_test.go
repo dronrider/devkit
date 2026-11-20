@@ -203,77 +203,92 @@ wait
 }
 
 func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
-	home := t.TempDir()
-	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
-	logPath := filepath.Join(home, ".devkit", "heads", "XR-1-check.log")
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gatePath := filepath.Join(home, "gate")
-	for _, path := range []string{logPath, gatePath} {
-		if err := syscall.Mkfifo(path, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reader, err := os.OpenFile(logPath, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	gate, err := os.OpenFile(gatePath, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer gate.Close()
-	bin := t.TempDir()
-	for name, script := range map[string]string{
-		"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\n",
-		"logger":   "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
+	for _, tc := range []struct {
+		name       string
+		loggerFail int
+		diagnostic string
+	}{
+		{"system_log", 0, "-t shipctl XR-1: запись журнала Codex"},
+		{"project_log", 1, "check-run XR-1: запись журнала Codex"},
 	} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	alertPath := filepath.Join(home, "alert")
-	finishedPath := filepath.Join(home, "finished")
-	raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: "XR-1", Harness: "codex"})
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
-	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw),
-		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath)
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if cmd.ProcessState == nil {
-			cancel()
-			_ = cmd.Wait()
-		}
-	}()
-	var start codexCheckStart
-	if err := json.NewDecoder(out).Decode(&start); err != nil || !start.Started {
-		t.Fatalf("проверяющий не запущен: %+v, %v", start, err)
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := gate.WriteString("continue\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(finishedPath); err != nil {
-		t.Fatalf("проверяющий не закончил ход: %v", err)
-	}
-	alert, err := os.ReadFile(alertPath)
-	if err != nil || !strings.Contains(string(alert), "-t shipctl XR-1: запись журнала Codex") {
-		t.Fatalf("системный журнал: %q, %v", alert, err)
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
+			logPath := filepath.Join(home, ".devkit", "heads", "XR-1-check.log")
+			if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gatePath := filepath.Join(home, "gate")
+			for _, path := range []string{logPath, gatePath} {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reader, err := os.OpenFile(logPath, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reader.Close()
+			gate, err := os.OpenFile(gatePath, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gate.Close()
+			bin := t.TempDir()
+			for name, script := range map[string]string{
+				"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\n",
+				"logger":   "#!/bin/sh\nif [ \"$CHECK_LOGGER_FAIL\" = 1 ]; then exit 1; fi\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
+			} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			alertPath := filepath.Join(home, "alert")
+			finishedPath := filepath.Join(home, "finished")
+			raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: "XR-1", Harness: "codex"})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
+			cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw),
+				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath,
+				"CHECK_LOGGER_FAIL="+strconv.Itoa(tc.loggerFail))
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if cmd.ProcessState == nil {
+					cancel()
+					_ = cmd.Wait()
+				}
+			}()
+			var start codexCheckStart
+			if err := json.NewDecoder(out).Decode(&start); err != nil || !start.Started {
+				t.Fatalf("проверяющий не запущен: %+v, %v", start, err)
+			}
+			if err := reader.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gate.WriteString("continue\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(finishedPath); err != nil {
+				t.Fatalf("проверяющий не закончил ход: %v", err)
+			}
+			if tc.loggerFail != 0 {
+				alertPath = filepath.Join(home, ".devkit", "log")
+			}
+			alert, err := os.ReadFile(alertPath)
+			if err != nil || !strings.Contains(string(alert), tc.diagnostic) {
+				t.Fatalf("предупреждение в %s: %q, %v", alertPath, alert, err)
+			}
+		})
 	}
 }

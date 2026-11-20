@@ -1334,9 +1334,17 @@ shipctl -C ~/projects/myproj check-run
 Для Codex команда запускает `codex exec --json` в отдельном процессе. Модель и
 усилие берутся из `agentctl check`. Запуск подтверждается после событий нового
 потока и начала хода. Пока идёт проверка, процесс занимает замок задачи.
-Журнал лежит в `~/.devkit/heads/<ID>-check.log`. Если ход завершился без
-отметки smoke, следующий тик сможет повторить запуск. Для остальных харнесов
-используется `taskctl run`.
+Журнал лежит в `~/.devkit/heads/<ID>-check.log`. При отказе записи shipctl
+сообщает об ошибке в системный журнал с меткой `shipctl`. Приёмка продолжается.
+Если ход завершился без отметки smoke, следующий тик сможет повторить запуск.
+Для остальных харнесов используется `taskctl run`.
+
+Интеграционные тесты старта новой сессии запускаются отдельно:
+
+```sh
+devkitctl test tools/shipctl -run '^Test(CodexCheckWorker|CheckRunCodexEntry)'
+devkitctl test tools/dashboard -run '^TestRunStopCodexChecker'
+```
 
 ## Контроль задачи по сроку
 

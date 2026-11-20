@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/runsguard"
 )
 
 // TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF):
@@ -24,7 +26,8 @@ import (
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
-	code := m.Run()
+	os.Unsetenv("CODEX_THREAD_ID")
+	code := runsguard.Guard(m)
 	if floorRoot != "" {
 		if err := os.RemoveAll(floorRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "уборка общего стенда: %v\n", err)

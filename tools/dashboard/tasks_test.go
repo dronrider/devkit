@@ -124,6 +124,7 @@ func buildDashboard(t *testing.T) string {
 // подмена дома снаружи уводила его уведомитель мимо собственного журнала.
 func TestMain(m *testing.M) {
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
+	os.Unsetenv("CODEX_THREAD_ID")
 	// Каталог подписки на время прогона пустой: реестр читается и оттуда
 	// (DK-1335), и живые записи сессии, запустившей тесты, попадали бы в
 	// карту peers подменённого дома.

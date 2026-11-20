@@ -29,14 +29,6 @@ type codexCheckStart struct {
 	Message       string
 }
 
-var codexWorkerCommand = func(raw string) (*exec.Cmd, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	return exec.Command(exe, "__check-codex", raw), nil
-}
-
 func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 	id := p.Row.ID
 	ctx, cancel := context.WithTimeout(context.Background(), checkRunTimeout)
@@ -56,10 +48,11 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, вердикт agentctl check изменился или не назвал effort", id, checkrun.NotRaised)}
 	}
 	order, _ := json.Marshal(codexCheckOrder{c.root, c.home, id, p.Choice.Model, fields["effort"], p.Choice.Harness, p.Order})
-	cmd, err := codexWorkerCommand(string(order))
+	exe, err := os.Executable()
 	if err != nil {
 		return checkrun.Report{Failed: true, Line: id + ": " + checkrun.NotRaised + ", " + err.Error()}
 	}
+	cmd := exec.Command(exe, "__check-codex", string(order))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	pipe, err := cmd.StdoutPipe()
 	if err == nil {
@@ -190,6 +183,11 @@ func codexCheckWorker(raw string) {
 		line := scan.Bytes()
 		if _, err := fmt.Fprintln(log, string(line)); err != nil && logErr == nil {
 			logErr = fmt.Errorf("запись журнала Codex: %w", err)
+			// Отдельный канал нужен после ответа check-run. Файл журнала
+			// уже недоступен, а вызывающий процесс мог завершиться.
+			logCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = exec.CommandContext(logCtx, "logger", "-t", "shipctl", o.ID+": "+logErr.Error()).Run()
+			cancel()
 		}
 		var event struct {
 			Type     string `json:"type"`

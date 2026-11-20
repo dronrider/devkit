@@ -1,34 +1,34 @@
 {
   "version": 1,
   "id": "DK-1525",
-  "base_sha": "95e43b8e76dc1d7fd814c3d1b034ddca48d204a5",
-  "head_sha": "3dd0df8d07ea99008a0d24aac31167384ddda7fc",
-  "code_hash": "1992f4ad5e17d8b1faa1266f10bbe210a3f03e65db258ef179695f2c8e28c34f",
+  "base_sha": "c6216c6e0f288d9239d6029e567cbd24be8b8edf",
+  "head_sha": "e6133790f003540ecf2a6d1e3624d168e7a4602d",
+  "code_hash": "c9a48f760a03d0c50a0fecb38916bf2585d2eef582c2e5c25c592f26d239325c",
   "task_hash": "20dbc312626fb4b5fedf85732c89a15b4d1b5c6ac7cfba95edcf7c30a1cfb8e0",
   "sources": [
     {
       "name": "common-architecture",
       "path": "common:RULES.architecture.md",
       "status": "present",
-      "hash": "58778d01c2e28a2ffd716b031237339ce11350042eb8bb3fe6182e61bca6219c"
+      "hash": "db5798bb65fe4c35c2867b0f4d81b49d087ae87c35ac85f20483c63004f43956"
     },
     {
       "name": "common-style",
       "path": "common:RULES.style.md",
       "status": "present",
-      "hash": "e2ae87327992a08def620ed62438612acdc57027e80cd1fe2aa3d02a6c0cbbe0"
+      "hash": "2096a3b68b867b7f40f6e76610a2054c95637b333dcd6970591b6f4a57eb8ca1"
     },
     {
       "name": "common-tests",
       "path": "common:RULES.md",
       "status": "present",
-      "hash": "a9d923b7ac267135799ce0770886e8051e54ec1b3d0392b1cdbc3e0fa8ab584e"
+      "hash": "dd65fbb7edf8754ffaafded6d5d7c896effabc130db5bdf3de939a9f608a82da"
     },
     {
       "name": "project-architecture",
       "path": "project:docs/ARCHITECTURE.md",
       "status": "present",
-      "hash": "44a0bfaf8ade236d54cd6f6ed8810436d8cc51a2ca644a60b05b6a7201790306"
+      "hash": "7dfd9787d5886b70cbe3f589bdc2967a36a52de7bc0951b2924901cf915bd4be"
     },
     {
       "name": "project-style",
@@ -46,7 +46,11 @@
     "result": "checked",
     "evidence": [
       "согласованный результат и границы (docs/tasks/DK-1525.md: Чего хотим, Границы, DoD). Неполная мысль сохраняется; воспроизводимые баги и согласованные задачи исключены; интерфейс выделен отдельно.",
-      "маршрут новой идеи (RULES.board.core.md; kit/skills/board-draft/SKILL.md: Новая идея человека; kit/skills/board-groom/SKILL.md: Процедура). Ядро направляет в board-draft, тот обновляет черновик и передаёт в groom по явной просьбе после готовности."
+      "маршрут новой идеи (RULES.board.core.md; kit/skills/board-draft/SKILL.md: Новая идея человека; kit/skills/board-groom/SKILL.md: Процедура). Ядро направляет в board-draft, тот обновляет черновик и передаёт в groom по явной просьбе после готовности.",
+      "После финальной редактуры RULES.board.core.md и секции «Новая задача» порядок сохранён: новая идея через черновик, баг и согласованная задача прежним путём; AGENTS.md воспроизводит ядро, хеш 2e05c720e9a2. Прогоны завершены: 87, 90 и 91 по 3/3.",
+      "На b3e74b7a0 board-draft уточняет форму подраздела «Вопрос»: вопрос постановки или явное отсутствие открытых вопросов; условие готовности и граница груминга прежние. Живые прогоны ещё выполняются.",
+      "На 5fd2d930e ядро вновь относит чтение версии по ссылке к пункту очереди и сохраняет guard перед show. Синтетический баг 91 не обязан иметь ссылку; прежде кандидат ошибочно запрашивал её. Живой повтор 91 подтвердил создание бага без требования ссылки: 3/3. AGENTS.md совпадает с ядром, хеш 35f037c996a2.",
+      "После слияния с базой c6216c6e предметные правила, навыки и сценарии относительно 5fd2d930e побайтно не изменились; проверка обновлённой схемы аудита и живые прогоны проведены отдельно."
     ]
   },
   "rules": [
@@ -83,17 +87,11 @@
     {
       "id": "common-architecture:ARCH-003",
       "source": "common-architecture",
-      "text": "- **ARCH-003.** Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию; совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
-      "applicability": "applicable",
+      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Критерий подробно определён в board-draft; ядро и остальные навыки направляют к нему.",
-      "evidence": [
-        {
-          "object": "критерий SCQA",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md",
-          "observation": "Четыре вида фактов совпадают в draft и groom; ядро отсылает к draft."
-        }
-      ]
+      "reason": "Добавлены инструкции и отдельные сценарии, а не новая общая исполняемая логика; синтетическая final_price воспроизводит конкретный баг. Изменения не создают переиспользуемого модуля или общей функции.",
+      "evidence": []
     },
     {
       "id": "common-architecture:ARCH-004",
@@ -107,17 +105,16 @@
     {
       "id": "common-architecture:ARCH-005",
       "source": "common-architecture",
-      "text": "- **ARCH-005.** Для операции определены допустимые входы, результат, ошибки и побочные\n  эффекты. Вызывающему не нужно читать реализацию, чтобы понять, можно ли\n  повторить вызов и какое состояние останется после отказа.",
-      "applicability": "applicable",
+      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа.",
+      "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Новая последовательность описывает сохранение, неполноту, продолжение и переход к грумингу.",
-      "evidence": [
-        {
-          "object": "интервью и продолжение",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md",
-          "observation": "Незавершённый черновик остаётся по ID; после готовности снимается метка и показывается SCQA."
-        }
-      ]
+      "reason": "Изменяются инструкции агенту, а не схема операции или поля API: новые типы, null, сериализуемые поля и конфигурируемая выдача не вводятся; final_price существует только как намеренно ошибочная фикстура.",
+      "checks": [
+        "schema",
+        "output",
+        "consumer"
+      ],
+      "evidence": []
     },
     {
       "id": "common-architecture:ARCH-006",
@@ -155,7 +152,7 @@
       "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Источником остаётся файл черновика, который агент обновляет по тому же ID; новый кэш не создан.",
+      "reason": "Источником остаётся файл черновика, который агент обновляет по тому же ID; новый кэш не создан. Дополнена допустимая форма подраздела «Вопрос»; запись по тому же ID сохранена.",
       "evidence": [
         {
           "object": "жизненный цикл черновика",
@@ -219,10 +216,65 @@
       "id": "common-architecture:ARCH-014",
       "source": "common-architecture",
       "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
-      "applicability": "not_applicable",
+      "applicability": "applicable",
       "result": "checked",
-      "reason": "Код диагностики и работа с секретами в диффе не меняются.",
-      "evidence": []
+      "reason": "Проверен статус запуска сценарной shell-проверки в общем потребителе; неуспех даёт отрицательный результат и заметку, детали вывода добавляются при наличии.",
+      "evidence": [
+        {
+          "object": "tools/obeycheck/run.go:173",
+          "location": "tools/obeycheck/run.go:173",
+          "observation": "shOut возвращает err; отсутствие ошибки устанавливает Green, иначе попытка остаётся красной, а при пустой Note записывается причина.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "Вызов возвращает отказ выполнения shell-проверки."
+              }
+            ],
+            "classification": [
+              {
+                "location": "tools/obeycheck/run.go:193",
+                "text": "Причина отказа помещается в Note, если нет предшествующей заметки.",
+                "quote": "a.Note = fmt.Sprintf(\"проверка: %v\", err)",
+                "value": "Note",
+                "verdict": "match"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "tools/obeycheck/run.go:54",
+                "text": "Note хранит описание результата неуспешной попытки.",
+                "quote": "Note    string"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/obeycheck/run.go:198",
+                "text": "Потребителю возвращается попытка с отрицательным Green и заметкой.",
+                "value": "a.Green=false"
+              }
+            ],
+            "cause": [
+              {
+                "location": "tools/obeycheck/run.go:193",
+                "text": "При пустой Note ошибка включается в заметку; ранее записанная причина таймаута сохраняется.",
+                "verdict": "preserved"
+              }
+            ],
+            "message": [
+              {
+                "location": "tools/obeycheck/run.go:195",
+                "text": "При наличии вывода он добавляется к заметке один раз.",
+                "verdict": "once"
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "tools/obeycheck/run.go:173"
+      ]
     },
     {
       "id": "common-architecture:ARCH-015",
@@ -231,6 +283,10 @@
       "applicability": "not_applicable",
       "result": "checked",
       "reason": "Дифф не меняет запросы БД, ORM или загрузку данных.",
+      "checks": [
+        "usage",
+        "order"
+      ],
       "evidence": []
     },
     {
@@ -240,6 +296,10 @@
       "applicability": "not_applicable",
       "result": "checked",
       "reason": "Дифф не добавляет последовательности запросов БД или ORM.",
+      "checks": [
+        "with_consumer",
+        "without_consumer"
+      ],
       "evidence": []
     },
     {
@@ -254,19 +314,80 @@
     {
       "id": "common-architecture:ARCH-018",
       "source": "common-architecture",
-      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Дифф не выполняет запросы к БД в цикле и не меняет пакетирование.",
+      "reason": "Ни новые сценарии, ни изменённые навыки не выполняют SQL или обращения к драйверу БД, включая циклы и помощники.",
+      "checks": [
+        "calls",
+        "inputs",
+        "batch"
+      ],
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "reason": "Сгенерированная вставка правила и метаданные; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "RULES.board.core.md",
+          "reason": "Добавлено текстовое правило новой идеи; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "RULES.board.md",
+          "reason": "Добавлен абзац порядка интервью; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "kit/skills/board-draft/SKILL.md",
+          "reason": "Добавлена текстовая инструкция интервью, записи черновика и перехода к грумингу; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "kit/skills/board-groom/SKILL.md",
+          "reason": "Добавлен текст готовности SCQA и возврата в интервью; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "kit/skills/board-task/SKILL.md",
+          "reason": "Добавлены правила маршрута новой идеи; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "kit/skills/interview/SKILL.md",
+          "reason": "Уточнён текст о стадии интервью board-draft; исполняемых объявлений и обращений к БД нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/87-idea-complete.md",
+          "reason": "Проверка полной идеи читает один файл черновика и ищет разделы и шаблоны. Запросов SQL, драйвера БД и циклического обращения к нему в сценарии нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/88-idea-resume.md",
+          "reason": "Подготовка создаёт черновик через taskctl, проверка читает OB-003 и ищет разделы и шаблоны. Запросов SQL, драйвера БД и циклического обращения к нему в сценарии нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/89-idea-incomplete.md",
+          "reason": "Проверка считает файлы и строки и ищет текст в черновике командами find, grep и wc. Запросов SQL, драйвера БД и циклического обращения к нему в сценарии нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/90-idea-existing-work.md",
+          "reason": "Проверка считает файлы черновиков командами find и wc. Запросов SQL, драйвера БД и циклического обращения к нему в сценарии нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/91-idea-repro-bug.md",
+          "reason": "Подготовка создаёт синтетический discount.py, проверка читает доску и файл задачи командами grep. Запросов SQL, драйвера БД и циклического обращения к нему в сценарии нет."
+        }
+      ],
       "evidence": []
     },
     {
       "id": "common-architecture:ARCH-019",
       "source": "common-architecture",
-      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Слои доступа к БД и бизнес-логики не изменены; новых запросов нет.",
+      "reason": "В изменениях нет SQL, параметров отбора, слоя хранилища или вызовов драйвера.",
+      "checks": [
+        "boundaries",
+        "parameters",
+        "binding",
+        "proposed_binding"
+      ],
       "evidence": []
     },
     {
@@ -299,10 +420,14 @@
     {
       "id": "common-architecture:ARCH-023",
       "source": "common-architecture",
-      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Новых пользовательских опций и переключателей нет.",
+      "reason": "Изменения не вводят конфигурации с перечислением рабочих элементов или пользовательских опций.",
+      "checks": [
+        "behavior",
+        "basis"
+      ],
       "evidence": []
     },
     {
@@ -356,13 +481,454 @@
       "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Имена сценариев 87-91 отражают полную идею, продолжение, неполноту, согласованную задачу и баг; локальные text, part, name и pattern соответствуют данным.",
+      "reason": "Сверены имена локальных переменных двух проверок, параметры и контракт функции в воспроизводимом синтетическом баге; некорректная реализация final_price задана как вход теста.",
+      "checks": [
+        "meaning",
+        "result",
+        "writes"
+      ],
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "RULES.board.core.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "RULES.board.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "kit/skills/board-draft/SKILL.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "kit/skills/board-groom/SKILL.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "kit/skills/board-task/SKILL.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "kit/skills/interview/SKILL.md",
+          "reason": "Изменён текст правил или навыка; объявления кода и идентификаторы не добавлены."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/87-idea-complete.md",
+          "objects": [
+            "tools/obeycheck/scenarios/87-idea-complete.md:23#text",
+            "tools/obeycheck/scenarios/87-idea-complete.md:24#name",
+            "tools/obeycheck/scenarios/87-idea-complete.md:25#part",
+            "tools/obeycheck/scenarios/87-idea-complete.md:27#pattern"
+          ]
+        },
+        {
+          "path": "tools/obeycheck/scenarios/88-idea-resume.md",
+          "objects": [
+            "tools/obeycheck/scenarios/88-idea-resume.md:54#text",
+            "tools/obeycheck/scenarios/88-idea-resume.md:56#name",
+            "tools/obeycheck/scenarios/88-idea-resume.md:57#part",
+            "tools/obeycheck/scenarios/88-idea-resume.md:59#pattern"
+          ]
+        },
+        {
+          "path": "tools/obeycheck/scenarios/89-idea-incomplete.md",
+          "reason": "Проверка считает файлы и строки и ищет текст в черновике командами find, grep и wc. Новых объявлений функций, типов или переменных в исполняемых блоках нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/90-idea-existing-work.md",
+          "reason": "Проверка считает файлы черновиков командами find и wc. Новых объявлений функций, типов или переменных в исполняемых блоках нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/91-idea-repro-bug.md",
+          "objects": [
+            "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#final_price",
+            "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#price",
+            "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#discount"
+          ]
+        }
+      ],
       "evidence": [
         {
-          "object": "инструкции и проверки сценариев",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md; tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "Имена сценариев 87-91 отражают полную идею, продолжение, неполноту, согласованную задачу и баг; локальные text, part, name и pattern соответствуют данным."
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:23#text",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:23",
+          "observation": "Имя text означает «текст» и соответствует использованию в сценарии: Содержит прочитанный и приведённый к нижнему регистру текст черновика; затем используется в поиске разделов.",
+          "symbol": "text",
+          "word_checks": [
+            {
+              "word": "text",
+              "meaning": "текст",
+              "fact": "Содержит прочитанный и приведённый к нижнему регистру текст черновика; затем используется в поиске разделов.",
+              "location": "tools/obeycheck/scenarios/87-idea-complete.md:23",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:23#text",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:23",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:23#text",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:23",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:24#name",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:24",
+          "observation": "Имя name означает «имя» и соответствует использованию в сценарии: Последовательно принимает имена четырёх подразделов SCQA и подставляется в выражение поиска.",
+          "symbol": "name",
+          "word_checks": [
+            {
+              "word": "name",
+              "meaning": "имя",
+              "fact": "Последовательно принимает имена четырёх подразделов SCQA и подставляется в выражение поиска.",
+              "location": "tools/obeycheck/scenarios/87-idea-complete.md:24",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:24#name",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:24",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:24#name",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:24",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:25#part",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:25",
+          "observation": "Имя part означает «часть» и соответствует использованию в сценарии: Хранит совпадение раздела, затем проверяет наличие и непустое содержимое.",
+          "symbol": "part",
+          "word_checks": [
+            {
+              "word": "part",
+              "meaning": "часть",
+              "fact": "Хранит совпадение раздела, затем проверяет наличие и непустое содержимое.",
+              "location": "tools/obeycheck/scenarios/87-idea-complete.md:25",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:25#part",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:25",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:25#part",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:25",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:27#pattern",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:27",
+          "observation": "Имя pattern означает «шаблон» и соответствует использованию в сценарии: Последовательно принимает регулярные выражения для фактов и используется в re.search.",
+          "symbol": "pattern",
+          "word_checks": [
+            {
+              "word": "pattern",
+              "meaning": "шаблон",
+              "fact": "Последовательно принимает регулярные выражения для фактов и используется в re.search.",
+              "location": "tools/obeycheck/scenarios/87-idea-complete.md:27",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:27#pattern",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:27",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:27#pattern",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:27",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:54#text",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:54",
+          "observation": "Имя text означает «текст» и соответствует использованию в сценарии: Содержит прочитанный и приведённый к нижнему регистру текст черновика; затем используется в поиске разделов.",
+          "symbol": "text",
+          "word_checks": [
+            {
+              "word": "text",
+              "meaning": "текст",
+              "fact": "Содержит прочитанный и приведённый к нижнему регистру текст черновика; затем используется в поиске разделов.",
+              "location": "tools/obeycheck/scenarios/88-idea-resume.md:54",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:54#text",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:54",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:54#text",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:54",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:56#name",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:56",
+          "observation": "Имя name означает «имя» и соответствует использованию в сценарии: Последовательно принимает имена четырёх подразделов SCQA и подставляется в выражение поиска.",
+          "symbol": "name",
+          "word_checks": [
+            {
+              "word": "name",
+              "meaning": "имя",
+              "fact": "Последовательно принимает имена четырёх подразделов SCQA и подставляется в выражение поиска.",
+              "location": "tools/obeycheck/scenarios/88-idea-resume.md:56",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:56#name",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:56",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:56#name",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:56",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:57#part",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:57",
+          "observation": "Имя part означает «часть» и соответствует использованию в сценарии: Хранит совпадение раздела, затем проверяет наличие и непустое содержимое.",
+          "symbol": "part",
+          "word_checks": [
+            {
+              "word": "part",
+              "meaning": "часть",
+              "fact": "Хранит совпадение раздела, затем проверяет наличие и непустое содержимое.",
+              "location": "tools/obeycheck/scenarios/88-idea-resume.md:57",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:57#part",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:57",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:57#part",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:57",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:59#pattern",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:59",
+          "observation": "Имя pattern означает «шаблон» и соответствует использованию в сценарии: Последовательно принимает регулярные выражения для фактов и используется в re.search.",
+          "symbol": "pattern",
+          "word_checks": [
+            {
+              "word": "pattern",
+              "meaning": "шаблон",
+              "fact": "Последовательно принимает регулярные выражения для фактов и используется в re.search.",
+              "location": "tools/obeycheck/scenarios/88-idea-resume.md:59",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:59#pattern",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:59",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:59#pattern",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:59",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#final_price",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Контракт фикстуры обещает итоговую цену после скидки. Код намеренно возвращает исходную цену для воспроизведения ошибки; имя соответствует заданному API, его несоответствие реализации является предметом теста.",
+          "symbol": "final_price",
+          "word_checks": [
+            {
+              "word": "final",
+              "meaning": "итоговая",
+              "fact": "Промпт требует цену после вычитания скидки и приводит 5 вместо ожидаемых 3.",
+              "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:19",
+              "result": "checked"
+            },
+            {
+              "word": "price",
+              "meaning": "цена",
+              "fact": "Функция принимает и возвращает price; результат сравнивается с ожидаемой суммой.",
+              "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:13",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#final_price",
+          "check": "result",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Фикстура возвращает входной price вместо согласованной итоговой цены: это намеренно заданный дефект для проверки маршрута багов, а не ошибка имени API.",
+          "object_comparison": {
+            "expected": [
+              "final",
+              "price"
+            ],
+            "actual": "price",
+            "actual_at": "tools/obeycheck/scenarios/91-idea-repro-bug.md:13",
+            "equivalent_at": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12"
+          },
+          "result_evidence": {
+            "word": "price",
+            "returned": "Возвращается исходный аргумент price; для 5 и 2 фактически 5 вместо ожидаемых 3.",
+            "return_at": "tools/obeycheck/scenarios/91-idea-repro-bug.md:13",
+            "consumer": "Промпт запускает final_price(5, 2) и фиксирует фактические 5 и ожидаемые 3.",
+            "consumer_at": "tools/obeycheck/scenarios/91-idea-repro-bug.md:20"
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#final_price",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Тело функции содержит только return price, изменений файлов или других данных не делает; файл discount.py создаёт отдельная shell-подготовка сценария."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#price",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Имя price означает «цена» и соответствует использованию в сценарии: Принимает цену и возвращается как намеренно неверный результат тестовой функции.",
+          "symbol": "price",
+          "word_checks": [
+            {
+              "word": "price",
+              "meaning": "цена",
+              "fact": "Принимает цену и возвращается как намеренно неверный результат тестовой функции.",
+              "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#price",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#price",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#discount",
+          "check": "meaning",
+          "result": "checked",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Имя discount означает «скидка» и соответствует использованию в сценарии: Принимает скидку, но намеренно игнорируется в синтетическом примере ошибки.",
+          "symbol": "discount",
+          "word_checks": [
+            {
+              "word": "discount",
+              "meaning": "скидка",
+              "fact": "Принимает скидку, но намеренно игнорируется в синтетическом примере ошибки.",
+              "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#discount",
+          "check": "result",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Это имя локальной переменной или параметра, не самостоятельная вызываемая операция; возвращаемого этой сущностью результата нет."
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#discount",
+          "check": "writes",
+          "result": "not_applicable",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:12",
+          "observation": "Это имя локальной переменной или параметра, не вызываемая операция с внешним изменением; использование и присваивание разобраны в meaning."
         }
+      ],
+      "objects": [
+        "tools/obeycheck/scenarios/87-idea-complete.md:23#text",
+        "tools/obeycheck/scenarios/87-idea-complete.md:24#name",
+        "tools/obeycheck/scenarios/87-idea-complete.md:25#part",
+        "tools/obeycheck/scenarios/87-idea-complete.md:27#pattern",
+        "tools/obeycheck/scenarios/88-idea-resume.md:54#text",
+        "tools/obeycheck/scenarios/88-idea-resume.md:56#name",
+        "tools/obeycheck/scenarios/88-idea-resume.md:57#part",
+        "tools/obeycheck/scenarios/88-idea-resume.md:59#pattern",
+        "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#final_price",
+        "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#price",
+        "tools/obeycheck/scenarios/91-idea-repro-bug.md:12#discount"
       ]
     },
     {
@@ -449,15 +1015,15 @@
     {
       "id": "common-style:STYLE-009",
       "source": "common-style",
-      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Фикстура final_price задаёт пример расчёта цены. Остальные изменения описывают проверки сценариев.",
+      "reason": "Скрипты проверок выполняют только чтения и преобразования, нужные для своих утверждений. Финальная цена взята из синтетического примера с ошибкой.",
       "evidence": [
         {
-          "object": "инструкции и проверки сценариев",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md; tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "Фикстура final_price задаёт пример расчёта цены. Остальные изменения описывают проверки сценариев."
+          "object": "проверки 87, 88 и фикстура 91",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md; 88-idea-resume.md; 91-idea-repro-bug.md",
+          "observation": "Чтение SCQA и поиск шаблонов используются assert; final_price вызывается воспроизведением; отдельного вычисления без потребителя не добавлено."
         }
       ]
     },
@@ -479,16 +1045,108 @@
     {
       "id": "common-style:STYLE-011",
       "source": "common-style",
-      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "В сценариях set -eu и assert останавливают проверку при первом несоответствии; этапы подготовки и проверки разделены.",
+      "reason": "Прослежен общий вход всех пяти shell-проверок, использование статуса и результата, остановка при отказе и возврат наблюдаемой попытки.",
       "evidence": [
         {
-          "object": "инструкции и проверки сценариев",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md; tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "В сценариях set -eu и assert останавливают проверку при первом несоответствии; этапы подготовки и проверки разделены."
+          "object": "tools/obeycheck/run.go:173",
+          "location": "tools/obeycheck/run.go:173",
+          "observation": "Каждая проверка запускается через shOut, код выхода задаёт Green и отказ сохраняется в попытке; judge следует за успешной проверкой.",
+          "result": "checked",
+          "facts": {
+            "entry": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:16",
+                "text": "Вход соответствующего shell-сценария. Всего проверено пять сценариев с номерами от 87 до 91."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:47",
+                "text": "Вход соответствующего shell-сценария. Всего проверено пять сценариев с номерами от 87 до 91."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+                "text": "Вход соответствующего shell-сценария. Всего проверено пять сценариев с номерами от 87 до 91."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Вход соответствующего shell-сценария. Всего проверено пять сценариев с номерами от 87 до 91."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:29",
+                "text": "Вход соответствующего shell-сценария. Всего проверено пять сценариев с номерами от 87 до 91."
+              }
+            ],
+            "condition": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:16",
+                "text": "Сценарий задаёт проверку артефактов; 87, 88, 89 и 91 используют set -eu, а 90 содержит одну команду test."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:47",
+                "text": "Сценарий задаёт проверку артефактов; 87, 88, 89 и 91 используют set -eu, а 90 содержит одну команду test."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+                "text": "Сценарий задаёт проверку артефактов; 87, 88, 89 и 91 используют set -eu, а 90 содержит одну команду test."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Сценарий задаёт проверку артефактов; 87, 88, 89 и 91 используют set -eu, а 90 содержит одну команду test."
+              },
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:29",
+                "text": "Сценарий задаёт проверку артефактов; 87, 88, 89 и 91 используют set -eu, а 90 содержит одну команду test."
+              }
+            ],
+            "step": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "shOut выполняет сценарную проверку и возвращает её статус и вывод.",
+                "failure": true
+              }
+            ],
+            "use": [
+              {
+                "location": "tools/obeycheck/run.go:174",
+                "text": "Код ошибки используется для выбора успешной и неуспешной ветки.",
+                "related": "tools/obeycheck/run.go:173",
+                "value": "err",
+                "verdict": "used"
+              }
+            ],
+            "outcome": [
+              {
+                "location": "tools/obeycheck/run.go:175",
+                "text": "При успешной проверке устанавливается Green."
+              }
+            ],
+            "control": [
+              {
+                "location": "tools/obeycheck/run.go:192",
+                "text": "При отказе сохраняется заметка; успешная ветка вызывает судью, если он задан."
+              }
+            ],
+            "return_value": [
+              {
+                "location": "tools/obeycheck/run.go:198",
+                "text": "Возвращается объект попытки с Green и Note.",
+                "value": "a"
+              }
+            ],
+            "return_error": [
+              {
+                "location": "tools/obeycheck/run.go:193",
+                "text": "Ошибка проверки отражается в Note при отсутствии ранее установленной заметки; цвет остаётся отрицательным.",
+                "value": "err"
+              }
+            ]
+          }
         }
+      ],
+      "objects": [
+        "tools/obeycheck/run.go:173"
       ]
     },
     {
@@ -539,31 +1197,187 @@
     {
       "id": "common-style:STYLE-015",
       "source": "common-style",
-      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.",
-      "applicability": "applicable",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом.",
+      "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Новых комментариев в проверках нет; подписи подготовки, промпта и проверки отражают назначение.",
-      "evidence": [
+      "reason": "В 12 изменённых файлах отсутствуют новые или изменённые комментарии к исполняемому коду; Markdown-заголовки и текст инструкций не являются комментариями к коду.",
+      "files": [
         {
-          "object": "инструкции и проверки сценариев",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md; tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "Новых комментариев в проверках нет; подписи подготовки, промпта и проверки отражают назначение."
+          "path": "AGENTS.md",
+          "reason": "Изменён текст инструкции; комментариев к коду нет, маркеры AGENTS.md служат границами сгенерированной вставки."
+        },
+        {
+          "path": "RULES.board.core.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "RULES.board.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "kit/skills/board-draft/SKILL.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "kit/skills/board-groom/SKILL.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "kit/skills/board-task/SKILL.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "kit/skills/interview/SKILL.md",
+          "reason": "Изменён текст инструкции; комментариев к исполняемому коду в изменении нет."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/87-idea-complete.md",
+          "reason": "Проверка полной идеи читает один файл черновика и ищет разделы и шаблоны. Комментариев к исполняемым shell/Python-блокам нет; заголовки Markdown описывают сценарий."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/88-idea-resume.md",
+          "reason": "Подготовка создаёт черновик через taskctl, проверка читает OB-003 и ищет разделы и шаблоны. Комментариев к исполняемым shell/Python-блокам нет; заголовки Markdown описывают сценарий."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/89-idea-incomplete.md",
+          "reason": "Проверка считает файлы и строки и ищет текст в черновике командами find, grep и wc. Комментариев к исполняемым shell/Python-блокам нет; заголовки Markdown описывают сценарий."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/90-idea-existing-work.md",
+          "reason": "Проверка считает файлы черновиков командами find и wc. Комментариев к исполняемым shell/Python-блокам нет; заголовки Markdown описывают сценарий."
+        },
+        {
+          "path": "tools/obeycheck/scenarios/91-idea-repro-bug.md",
+          "reason": "Подготовка создаёт синтетический discount.py, проверка читает доску и файл задачи командами grep. Комментариев к исполняемым shell/Python-блокам нет; заголовки Markdown описывают сценарий."
         }
-      ]
+      ],
+      "evidence": []
     },
     {
       "id": "common-style:STYLE-016",
       "source": "common-style",
-      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Текст навыков описывает результат, ограничения и этапы: создание/обновление черновика, неполноту, продолжение и передачу в груминг.",
+      "reason": "Сопоставлены описания маршрута в ядре и board-draft с изменёнными инструкциями draft, task, groom и interview; формулировки согласованы.",
       "evidence": [
         {
-          "object": "инструкции и проверки сценариев",
-          "location": "RULES.board.core.md; RULES.board.md; kit/skills/board-draft/SKILL.md; board-task/SKILL.md; board-groom/SKILL.md; interview/SKILL.md; tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "Текст навыков описывает результат, ограничения и этапы: создание/обновление черновика, неполноту, продолжение и передачу в груминг."
+          "object": "kit/skills/board-draft/SKILL.md:29",
+          "location": "kit/skills/board-draft/SKILL.md:29",
+          "observation": "Связанное описание и соответствующий шаг указывают один порядок и ограничения для новой идеи.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "RULES.board.core.md:12",
+                "text": "Согласованное описание этапа.",
+                "quote": "Уточни по `board-draft` лишь недостающее"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "kit/skills/board-draft/SKILL.md:29",
+                "text": "Действующий текст этапа для агента.",
+                "quote": "Сначала запиши исходную мысль черновиком."
+              }
+            ]
+          }
+        },
+        {
+          "object": "kit/skills/board-task/SKILL.md:25",
+          "location": "kit/skills/board-task/SKILL.md:26",
+          "observation": "Связанное описание и соответствующий шаг указывают один порядок и ограничения для новой идеи.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "RULES.board.core.md:12",
+                "text": "Согласованное описание этапа.",
+                "quote": "Уточни по `board-draft` лишь недостающее"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "kit/skills/board-task/SKILL.md:26",
+                "text": "Действующий текст этапа для агента.",
+                "quote": "`board-draft` до готовности SCQA."
+              }
+            ]
+          }
+        },
+        {
+          "object": "kit/skills/board-groom/SKILL.md:40",
+          "location": "kit/skills/board-groom/SKILL.md:40",
+          "observation": "Связанное описание и соответствующий шаг указывают один порядок и ограничения для новой идеи.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "kit/skills/board-draft/SKILL.md:43",
+                "text": "Согласованное описание этапа.",
+                "quote": "передай готовую запись в `board-groom` отдельным этапом."
+              }
+            ],
+            "implementation": [
+              {
+                "location": "kit/skills/board-groom/SKILL.md:40",
+                "text": "Действующий текст этапа для агента.",
+                "quote": "сначала проверь готовность SCQA"
+              }
+            ]
+          }
+        },
+        {
+          "object": "kit/skills/interview/SKILL.md:42",
+          "location": "kit/skills/interview/SKILL.md:44",
+          "observation": "Связанное описание и соответствующий шаг указывают один порядок и ограничения для новой идеи.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "kit/skills/board-draft/SKILL.md:41",
+                "text": "Согласованное описание этапа.",
+                "quote": "архитектуру, ранг, цену и состав задач здесь не выбирают."
+              }
+            ],
+            "implementation": [
+              {
+                "location": "kit/skills/interview/SKILL.md:44",
+                "text": "Действующий текст этапа для агента.",
+                "quote": "ранг, цену или состав задач."
+              }
+            ]
+          }
+        },
+        {
+          "object": "kit/skills/board-draft/SKILL.md:38",
+          "location": "kit/skills/board-draft/SKILL.md:39",
+          "result": "checked",
+          "observation": "Для готового SCQA уточнено содержание раздела «Вопрос»: допускается вопрос постановки или явное отсутствие открытых вопросов.",
+          "facts": {
+            "statement": [
+              {
+                "location": "RULES.board.core.md:12",
+                "text": "Ядро требует показать готовый SCQA четырьмя частями.",
+                "quote": "покажи готовый SCQA четырьмя"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "kit/skills/board-draft/SKILL.md:39",
+                "text": "Уточняется содержимое подраздела «Вопрос» без повторного вопроса.",
+                "quote": "постановки или напиши «Открытых вопросов нет», если их нет."
+              }
+            ]
+          }
         }
+      ],
+      "objects": [
+        "kit/skills/board-draft/SKILL.md:29",
+        "kit/skills/board-task/SKILL.md:25",
+        "kit/skills/board-groom/SKILL.md:40",
+        "kit/skills/interview/SKILL.md:42",
+        "kit/skills/board-draft/SKILL.md:38"
       ]
     },
     {
@@ -572,17 +1386,17 @@
       "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Для изменённых правил добавлены сценарии 87-91; положительный переход к явно запрошенному грумингу дополнительно проверен живым сценарием 1/1.",
+      "reason": "Для изменённых правил добавлены сценарии 87-91; положительный переход к явно запрошенному грумингу дополнительно проверен живым сценарием 1/1. Прогоны на новом ядре ещё выполняются; результаты на 3dd0df8d являются историческими.",
       "evidence": [
         {
           "object": "явный груминг после полной идеи",
           "location": "/private/tmp/devkit-dk-1525-obey.DW4RuQas/scenarios/explicit-groom.md; explicit-groom/explicit-groom-candidate-1/transcript; project/.devkit/log; project/docs/tasks/drafts/OB-003.md",
-          "observation": "Стенд 1/1: taskctl draft предшествует guard/show/decide; в прежнем черновике появились три пользовательских сценария, в ответе показан SCQA, задач на доску не добавлено."
+          "observation": "Историческое свидетельство для 3dd0df8d: Стенд 1/1: taskctl draft предшествует guard/show/decide; в прежнем черновике появились три пользовательских сценария, в ответе показан SCQA, задач на доску не добавлено."
         },
         {
           "object": "основные переходы",
           "location": "Файлы 87-91 в tools/obeycheck/scenarios/",
-          "observation": "87 и 91 прошли 3/3, 88 прошёл 4/4; полная и неполная идея, продолжение, согласованная задача и новый баг представлены сценариями."
+          "observation": "Историческое свидетельство для 3dd0df8d: 87 и 91 прошли 3/3, 88 прошёл 4/4; полная и неполная идея, продолжение, согласованная задача и новый баг представлены сценариями."
         }
       ]
     },
@@ -607,36 +1421,447 @@
     {
       "id": "common-tests:TEST-004",
       "source": "common-tests",
-      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Интеграционные и сквозные проверки\n  получают явную группу и запускаются отдельно от юнитов; конкретное деление\n  файлов, меток и команд задаёт проект. Общая фикстура не должна незаметно\n  подключать интеграционную инфраструктуру юнитам. Проверять бизнес-результат\n  в интеграционном тесте допустимо; важно указать фактический уровень теста и\n  сохранить возможность запуска изолированных проверок.",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Obeycheck представляет собой живой сценарный прогон с агентом и отдельным судьёй, а не изолированный unit.",
+      "reason": "Пять сценариев проверяются в отдельных живых прогонах. Go-тест разбирает файлы и проверяет их синтаксис через sh -n. Юнитный запуск и сценарный стенд имеют отдельные входы.",
       "evidence": [
         {
-          "object": "уровень проверок",
-          "location": "tools/obeycheck/scenarios/87-idea-complete.md, 88-idea-resume.md, 89-idea-incomplete.md, 90-idea-existing-work.md, 91-idea-repro-bug.md",
-          "observation": "В сценариях указаны конец: сессия, подготовка, промпт, проверка и судья."
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:16",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:16",
+          "observation": "Сценарий запускается отдельным стендом как живой системный тест; проверка парсинга в Go не выполняет сценарий.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:16",
+                "text": "Секция проверки сценария содержит shell-команды для артефактов синтетического проекта."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "В живом прогоне проверка выполняется отдельным shell после запуска сессии агента.",
+                "verdict": "external"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:247",
+                "text": "Тест Go читает и проверяет разбор сценариев; в строке 266 он запускает sh -n, но не запускает агентские сессии. Его нельзя считать полностью изолированным юнитом."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/obeycheck/main.go:28",
+                "text": "Отдельный запуск obeycheck --only выбирает именованный сценарий и выполняет живую сессию."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:47",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:47",
+          "observation": "Сценарий запускается отдельным стендом как живой системный тест; проверка парсинга в Go не выполняет сценарий.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:47",
+                "text": "Секция проверки сценария содержит shell-команды для артефактов синтетического проекта."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "В живом прогоне проверка выполняется отдельным shell после запуска сессии агента.",
+                "verdict": "external"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:247",
+                "text": "Тест Go читает и проверяет разбор сценариев; в строке 266 он запускает sh -n, но не запускает агентские сессии. Его нельзя считать полностью изолированным юнитом."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/obeycheck/main.go:28",
+                "text": "Отдельный запуск obeycheck --only выбирает именованный сценарий и выполняет живую сессию."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+          "location": "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+          "observation": "Сценарий запускается отдельным стендом как живой системный тест; проверка парсинга в Go не выполняет сценарий.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+                "text": "Секция проверки сценария содержит shell-команды для артефактов синтетического проекта."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "В живом прогоне проверка выполняется отдельным shell после запуска сессии агента.",
+                "verdict": "external"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:247",
+                "text": "Тест Go читает и проверяет разбор сценариев; в строке 266 он запускает sh -n, но не запускает агентские сессии. Его нельзя считать полностью изолированным юнитом."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/obeycheck/main.go:28",
+                "text": "Отдельный запуск obeycheck --only выбирает именованный сценарий и выполняет живую сессию."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "observation": "Сценарий запускается отдельным стендом как живой системный тест; проверка парсинга в Go не выполняет сценарий.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Секция проверки сценария содержит shell-команды для артефактов синтетического проекта."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "В живом прогоне проверка выполняется отдельным shell после запуска сессии агента.",
+                "verdict": "external"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:247",
+                "text": "Тест Go читает и проверяет разбор сценариев; в строке 266 он запускает sh -n, но не запускает агентские сессии. Его нельзя считать полностью изолированным юнитом."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/obeycheck/main.go:28",
+                "text": "Отдельный запуск obeycheck --only выбирает именованный сценарий и выполняет живую сессию."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:29",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:29",
+          "observation": "Сценарий запускается отдельным стендом как живой системный тест; проверка парсинга в Go не выполняет сценарий.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:29",
+                "text": "Секция проверки сценария содержит shell-команды для артефактов синтетического проекта."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/obeycheck/run.go:173",
+                "text": "В живом прогоне проверка выполняется отдельным shell после запуска сессии агента.",
+                "verdict": "external"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:247",
+                "text": "Тест Go читает и проверяет разбор сценариев; в строке 266 он запускает sh -n, но не запускает агентские сессии. Его нельзя считать полностью изолированным юнитом."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/obeycheck/main.go:28",
+                "text": "Отдельный запуск obeycheck --only выбирает именованный сценарий и выполняет живую сессию."
+              }
+            ]
+          }
         }
+      ],
+      "objects": [
+        "tools/obeycheck/scenarios/87-idea-complete.md:16",
+        "tools/obeycheck/scenarios/88-idea-resume.md:47",
+        "tools/obeycheck/scenarios/89-idea-incomplete.md:14",
+        "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+        "tools/obeycheck/scenarios/91-idea-repro-bug.md:29"
       ]
     },
     {
       "id": "common-tests:TEST-005",
       "source": "common-tests",
-      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "Исправленные проверки различают содержимое и этапы; на 3dd0df8d живые прогоны 87 и 91 прошли 3/3, 88 прошёл 4/4.",
+      "reason": "Структура и гарантии четырёх сценариев проверены. Зачтённые прогоны: 87 3/3 против 0/3, 88 4/4 против 0/4 на пустой базе, 90 3/3 против 3/3, 91 3/3 против 2/3. Исторически 89 дал 2/3 против 0/3 на старой базе.",
+      "checks": [
+        "strength",
+        "overlap"
+      ],
       "evidence": [
         {
-          "object": "полная идея и продолжение",
-          "location": "tools/obeycheck/scenarios/87-idea-complete.md; 88-idea-resume.md",
-          "observation": "87 проверяет разделы и факты, 88 требует прежний OB-003, факты и снятие метки; живые прогоны 3/3 и 4/4."
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+          "check": "strength",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+          "result": "checked",
+          "observation": "Живой прогон 87: 3/3 против 0/3, показаны четыре части и осмысленный «Вопрос».",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+                "text": "Независимое утверждение сценария.",
+                "quote": "assert part and part.group(1).strip(), name"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+                "text": "Указан проверяемый исход для сценария.",
+                "value": "ожидаемое состояние"
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+                "text": "Пустой раздел должен сделать сценарий красным."
+              }
+            ]
+          }
         },
         {
-          "object": "новый воспроизводимый баг",
-          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md",
-          "observation": "Независимый баг скидки приводит к строке bug и сохраняет пример; живые прогоны 3/3."
+          "object": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+          "check": "overlap",
+          "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+          "result": "checked",
+          "kind": "single",
+          "observation": "Системная проверка поведения агента отличается от компонентной проверки разбора сценариев; поиск по соответствующим сценариям и парсеру не показал той же гарантии на низком уровне.",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:26",
+                "text": "Полная идея: все четыре раздела сохранены, а готовый SCQA показан без дополнительных вопросов.",
+                "quote": "assert part and part.group(1).strip(), name",
+                "related": "tools/obeycheck/scenarios/87-idea-complete.md:1"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/obeycheck/scenarios/87-idea-complete.md:3",
+                "text": "Живая сессия агента и проверка её артефактов.",
+                "value": "system"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:245",
+                "text": "Go-тест читает сценарии и проверяет их разбор и синтаксис shell, не поведение агента.",
+                "value": "component"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+          "check": "strength",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+          "result": "checked",
+          "observation": "Живой прогон 88 на неизменённых предметах: 4/4 против 0/4 на пустой базе; тот же черновик обновлён с прежними ограничениями.",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+                "text": "Независимое утверждение сценария.",
+                "quote": "assert part and part.group(1).strip(), name"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+                "text": "Указан проверяемый исход для сценария.",
+                "value": "ожидаемое состояние"
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+                "text": "Отсутствующий или пустой раздел должен сделать сценарий красным."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+          "check": "overlap",
+          "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+          "result": "checked",
+          "kind": "single",
+          "observation": "Системная проверка поведения агента отличается от компонентной проверки разбора сценариев; поиск по соответствующим сценариям и парсеру не показал той же гарантии на низком уровне.",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:58",
+                "text": "После перерыва сохраняется исходный OB-003, ответы и ограничения; снимается метка незавершённости.",
+                "quote": "assert part and part.group(1).strip(), name",
+                "related": "tools/obeycheck/scenarios/88-idea-resume.md:1"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/obeycheck/scenarios/88-idea-resume.md:3",
+                "text": "Живая сессия агента и проверка её артефактов.",
+                "value": "system"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:245",
+                "text": "Go-тест читает сценарии и проверяет их разбор и синтаксис shell, не поведение агента.",
+                "value": "component"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "check": "strength",
+          "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "result": "checked",
+          "observation": "Живой прогон 90: 3/3 против 3/3, согласованная задача продолжена без нового черновика.",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Независимое утверждение сценария.",
+                "quote": "test \"$(find docs/tasks/drafts -name 'OB-*.md' | wc -l | tr -d ' ')\" = 0"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Указан проверяемый исход для сценария.",
+                "value": "ожидаемое состояние"
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Если создан черновик, проверка должна завершиться отказом."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "check": "overlap",
+          "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+          "result": "checked",
+          "kind": "single",
+          "observation": "Системная проверка поведения агента отличается от компонентной проверки разбора сценариев; поиск по соответствующим сценариям и парсеру не показал той же гарантии на низком уровне.",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+                "text": "Согласованная задача продолжается без нового черновика.",
+                "quote": "test \"$(find docs/tasks/drafts -name 'OB-*.md' | wc -l | tr -d ' ')\" = 0",
+                "related": "tools/obeycheck/scenarios/90-idea-existing-work.md:1"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/obeycheck/scenarios/90-idea-existing-work.md:3",
+                "text": "Живая сессия агента и проверка её артефактов.",
+                "value": "system"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:245",
+                "text": "Go-тест читает сценарии и проверяет их разбор и синтаксис shell, не поведение агента.",
+                "value": "component"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+          "check": "strength",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+          "result": "checked",
+          "observation": "Живой прогон 91: 3/3 против 2/3; все три кандидата оформили баг и пример без запроса ссылки.",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+                "text": "Независимое утверждение сценария.",
+                "quote": "grep -E '^\\| OB-003 \\| [^|]+ \\| bug \\|' docs/TASKS.md"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+                "text": "Указан проверяемый исход для сценария.",
+                "value": "ожидаемое состояние"
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+                "text": "Строка типа task вместо bug должна сделать проверку красной."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+          "check": "overlap",
+          "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+          "result": "checked",
+          "kind": "single",
+          "observation": "Системная проверка поведения агента отличается от компонентной проверки разбора сценариев; поиск по соответствующим сценариям и парсеру не показал той же гарантии на низком уровне.",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:32",
+                "text": "Новый воспроизводимый баг оформляется строкой bug с командой воспроизведения.",
+                "quote": "grep -E '^\\| OB-003 \\| [^|]+ \\| bug \\|' docs/TASKS.md",
+                "related": "tools/obeycheck/scenarios/91-idea-repro-bug.md:1"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/obeycheck/scenarios/91-idea-repro-bug.md:3",
+                "text": "Живая сессия агента и проверка её артефактов.",
+                "value": "system"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/obeycheck/scenario_test.go:245",
+                "text": "Go-тест читает сценарии и проверяет их разбор и синтаксис shell, не поведение агента.",
+                "value": "component"
+              }
+            ]
+          }
         }
+      ],
+      "objects": [
+        "tools/obeycheck/scenarios/87-idea-complete.md:26",
+        "tools/obeycheck/scenarios/88-idea-resume.md:58",
+        "tools/obeycheck/scenarios/90-idea-existing-work.md:13",
+        "tools/obeycheck/scenarios/91-idea-repro-bug.md:32"
       ]
     },
     {
@@ -645,12 +1870,12 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "На копиях реально прошедших кандидатов вручную испытаны применимые мутации проверок: три контроля прошли, 12 изменений обнаружены.",
+      "reason": "На копиях реально прошедших кандидатов вручную испытаны применимые мутации проверок: три контроля прошли, 12 изменений обнаружены. Проверки сценариев не изменились после 3dd0df8d; мутации выполнены до ребейза.",
       "evidence": [
         {
           "object": "мутации сценариев 87, 88 и 91",
           "location": "tools/obeycheck/scenarios/87-idea-complete.md; 88-idea-resume.md; 91-idea-repro-bug.md",
-          "observation": "По сообщению исполнителя 3 контроля вернули 0; 12 мутаций вернули 1: потеря разделов и фактов, неверная метка, лишняя строка или черновик, дубль/смена ID, неверный тип и отсутствие команды."
+          "observation": "Историческое свидетельство до ребейза: По сообщению исполнителя 3 контроля вернули 0; 12 мутаций вернули 1: потеря разделов и фактов, неверная метка, лишняя строка или черновик, дубль/смена ID, неверный тип и отсутствие команды."
         }
       ]
     },
@@ -760,6 +1985,15 @@
       "evidence": []
     },
     {
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Правило о замене моделей чатов и сохранении исторического ID: дифф к базе меняет инструкции доски и сценарии obeycheck, каталог моделей и выбор модели чата не затронуты.",
+      "evidence": []
+    },
+    {
       "id": "project-architecture:block-feefa59680bc01df",
       "source": "project-architecture",
       "text": "## Инварианты",
@@ -850,12 +2084,12 @@
       "evidence": []
     },
     {
-      "id": "project-architecture:block-71c48ce43f26ae0a",
+      "id": "project-architecture:block-b6ca4d1bc2e089cd",
       "source": "project-architecture",
-      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Автопроверка дополнительных прав включена для груминга и работающего\n  конвейера с формы. Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  получает `never` без токена замка. Закрытая задача продолжает обычный\n  разговор с `never`. Недоступная задача и сменившийся запуск приводят\n  к видимому отказу.",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу.",
       "applicability": "not_applicable",
       "result": "checked",
-      "reason": "Блок описывает «- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель   проходов штатной `task-run.py` (`tools/...». Изменение ограничено правилами интервью и сценариями obeycheck.",
+      "reason": "Блок описывает app-server запуска задач, политику доступа и токен замка; дифф к базе не меняет запуск чатов, taskhead, taskstate или права доступа.",
       "evidence": []
     },
     {

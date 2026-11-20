@@ -172,18 +172,18 @@ func (s *server) appSharedReconnect(p *Project, sid string, st chatStore) error 
 	return err
 }
 
-func (s *server) appSharedReceipt(c *appChat, claim string) string {
+func (s *server) appSharedReceiptPath(c *appChat, claim string) string {
 	key := sha256.Sum256([]byte(c.sid + "\x00" + claim))
 	return filepath.Join(chatStoreDir(s.cfg.Home), "appserver", "receipts", fmt.Sprintf("%x", key))
 }
 
-func (s *server) appSharedPending(c *appChat, claim string) bool {
-	_, err := os.Stat(s.appSharedReceipt(c, claim))
+func (s *server) appSharedReceiptMayExist(c *appChat, claim string) bool {
+	_, err := os.Stat(s.appSharedReceiptPath(c, claim))
 	return !os.IsNotExist(err)
 }
 
 func (s *server) appSharedDelivered(c *appChat, claim string) bool {
-	file := s.appSharedReceipt(c, claim)
+	file := s.appSharedReceiptPath(c, claim)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return false
@@ -200,7 +200,7 @@ func (s *server) appSharedDelivered(c *appChat, claim string) bool {
 }
 
 func (s *server) appSharedHold(c *appChat, claim string) error {
-	path := s.appSharedReceipt(c, claim)
+	path := s.appSharedReceiptPath(c, claim)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func (s *server) appSharedHold(c *appChat, claim string) error {
 
 func (s *server) appSharedRelease(c *appChat, claim string) {
 	if claim != "" {
-		os.Remove(s.appSharedReceipt(c, claim))
+		os.Remove(s.appSharedReceiptPath(c, claim))
 	}
 }
 

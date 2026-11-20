@@ -85,7 +85,7 @@ func TestAppSharedDirectStartReusesAcceptedSession(t *testing.T) {
 	if err := e.s.appSharedHold(c, claim); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(e.s.appSharedReceipt(c, claim), []byte("accepted\n"), 0600); err != nil {
+	if err := os.WriteFile(e.s.appSharedReceiptPath(c, claim), []byte("accepted\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	e.s.appMu.Lock()

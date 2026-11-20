@@ -633,7 +633,7 @@ func (s *server) appTurn(c *appChat, text string, record bool, claims ...string)
 		if s.appSharedDelivered(c, claim) {
 			return nil
 		}
-		if s.appSharedPending(c, claim) {
+		if s.appSharedReceiptMayExist(c, claim) {
 			return errAppSharedUnknown
 		}
 	}
@@ -656,7 +656,7 @@ func (s *server) appTurn(c *appChat, text string, record bool, claims ...string)
 	if err == nil {
 		_, err = c.proc.call("turn/start", params)
 		if c.shared && err == nil && claim != "" {
-			if receiptErr := os.WriteFile(s.appSharedReceipt(c, claim), []byte("accepted\n"), 0600); receiptErr != nil {
+			if receiptErr := os.WriteFile(s.appSharedReceiptPath(c, claim), []byte("accepted\n"), 0600); receiptErr != nil {
 				s.logf("квитанция реплики %s разговора %s не записалась: %v", claim, c.sid, receiptErr)
 			}
 		}

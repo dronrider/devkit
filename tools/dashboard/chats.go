@@ -3083,9 +3083,9 @@ func (s *server) chatForeignLive(projPath, sid string) bool {
 	return ok && info.mod.After(s.now().Add(-sessionLiveTTL))
 }
 
-// handleChatStop прерывает идущий ход чата. Прервать можно только то, что
-// поднято нашей tmux: у окна vscode и у мёртвой сессии клавиатуры отсюда нет,
-// и кнопки стопа у них на экране тоже нет.
+// handleChatStop прерывает ход чата. Для терминального чата нужен доступ
+// к клавиатуре своего окна tmux. Ход и конвейер app-server останавливаются
+// через клиент дашборда.
 func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3289,9 +3289,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
 }
 
-// handleChatSay доставляет реплику диалогу. Правило одно на три состояния:
-// живому процессу реплика подаётся прямо в него, кончившемуся поднимается
-// продолжение той же сессии, а окно vscode дашборду не принадлежит, и туда
+// handleChatSay принимает реплику разговора. Во время восстановления
+// Codex реплика сохраняется в очереди. Для терминального клиента дашборд
+// использует живую сессию или продолжает завершившуюся. В окно vscode
 // человек пишет сам.
 func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
@@ -3349,9 +3349,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
-		// Effort это ручной уровень глубины из ползунка меню модели (DK-1570).
-		// Едет он только с репликой, которая поднимает сессию: живому процессу
-		// уровень не доставить, и выбор ждёт следующего подъёма.
+		// Effort это уровень глубины из меню модели (DK-1570). У app-server
+		// выбор применяется в следующем ходе. Для терминального клиента
+		// глубина передаётся при подъёме процесса.
 		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {

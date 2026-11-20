@@ -746,11 +746,12 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     import taskstate
     userhome = user_home(home)
     app_runs = taskstate.app_runs(userhome, root, (r.get("id") or "" for r in rows))
-    other_rows = [r for r in rows if r.get("id") not in app_runs]
+    owned = {task: run for task, run in app_runs.items() if taskstate.app_handles_recovery(run)}
+    other_rows = [r for r in rows if r.get("id") not in owned]
     incident_words, halted = incident_rows(other_rows, root=root, home=home, act=act)
     incident_words += app_terminal_incidents(root, rows, app_runs, home=userhome, act=act)
     replied, stale = split_reply_rows(root, other_rows, home=home)
-    for task, run in sorted(app_runs.items()):
+    for task, run in sorted(owned.items()):
         if not head_up(task, home):
             incident_words.append("задача %s в %s: рабочий чат Codex %s ведёт дашборд"
                                   % (task, root, run["appChat"]))

@@ -429,7 +429,8 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
     import taskstate
     tasks = (item[0] for item in marks + incidents)
     app_runs = taskstate.app_runs(home, root, tasks)
-    restoring = {task for task, run in app_runs.items()
+    owned = {task: run for task, run in app_runs.items() if taskstate.app_handles_recovery(run)}
+    restoring = {task for task, run in owned.items()
                  if not run["stopped"] and run.get("appRecoveryTerminal") is not True}
 
     known = read_state(home=home)
@@ -440,7 +441,7 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
         lines.append("корень %s: дежурный по %s ждёт исхода восстановления чата Codex"
                      % (root, task))
     for task, why, raw in marks:
-        if task in app_runs:
+        if task in owned:
             continue
         sig = signature(why)
         if sig in known or sig in seen:
@@ -531,7 +532,7 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
     # свои, и каждый дописывается в запись инцидента. Очередь общая с метками
     # файлов задач: подпись одна, и дежурный по ней тоже один.
     for task, why, rec in incidents:
-        run = app_runs.get(task)
+        run = owned.get(task)
         app_terminal = rec.get("reason") == hook.APP_RECOVERY_OUT
         if app_terminal:
             if (not run or run["stopped"] or run.get("appRecoveryTerminal") is not True

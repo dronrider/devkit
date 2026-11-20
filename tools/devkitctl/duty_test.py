@@ -422,7 +422,7 @@ class IncidentDutyTest(unittest.TestCase):
         path.parent.mkdir(parents=True)
         data = {"version": 1, "root": root, "task": self.TASK, "stopped": False,
                 "run": {"id": "run-one", "appChat": "as-original", "harness": "codex",
-                        "model": "sol", "pid": 999999}}
+                        "model": "sol", "pid": 999999, "appRecovery": True}}
         taskstate.save(self.home, root, self.TASK, data)
         self.task_file("- 2026-10-10 %s: проходы исчерпаны.\n" % duty.DUTY_MARK)
         lines = self.duty_lines()

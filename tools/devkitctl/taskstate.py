@@ -77,8 +77,13 @@ def app_runs(home, root, tasks):
                 and chat.get("taskRunPID") == run["pid"]
                 and chat.get("harness") == run.get("harness")
                 and chat.get("model") == run.get("model")):
-            confirmed[task] = dict(run, appChat=file.stem)
+            confirmed[task] = dict(run, appChat=file.stem, appRecovery=chat.get("taskRun") is True)
     return confirmed
+
+
+def app_handles_recovery(run):
+    return (run["stopped"] or run.get("appRecovery") is True
+            or run.get("appRecoveryTerminal") is True)
 
 
 def terminal_app_roots(home):

@@ -32,11 +32,16 @@ class TaskStateTest(unittest.TestCase):
         stored = directory / (sid + ".json")
         chat = {"task": "DK-1", "thread": "thread-one", "protocol": "codex",
                 "taskRunSession": sid, "taskRunID": "run-one", "taskRunPID": 999999,
+                "taskRun": True,
                 "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
                 "model": "glm-5.3"}
         stored.write_text(json.dumps(chat))
         runs = taskstate.app_runs(self.home, self.root, ["DK-1"])
         self.assertEqual(runs["DK-1"]["appChat"], sid)
+        self.assertTrue(taskstate.app_handles_recovery(runs["DK-1"]))
+        stored.write_text(json.dumps(dict(chat, taskRun=False)))
+        finished = taskstate.app_runs(self.home, self.root, ["DK-1"])["DK-1"]
+        self.assertFalse(taskstate.app_handles_recovery(finished))
         for field, value in (("taskRunRoot", "/other"), ("taskRunID", "other"),
                              ("taskRunSession", "other"), ("taskRunPID", 1)):
             with self.subTest(field=field):

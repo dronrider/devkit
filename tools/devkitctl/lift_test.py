@@ -971,9 +971,11 @@ class ReplyCase(unittest.TestCase):
         data = {"version": 1, "root": os.path.realpath(root), "task": "DK-40",
                 "stopped": False, "run": {"id": "run-one", "appChat": "as-original",
                 "harness": "codex", "model": "sol", "pid": 999999}}
-        for terminal in (False, True):
-            with self.subTest(terminal=terminal):
-                data["run"]["appRecoveryTerminal"] = terminal
+        for active, terminal, stopped in ((True, False, False), (False, True, False),
+                                          (False, False, True)):
+            with self.subTest(active=active, terminal=terminal, stopped=stopped):
+                data["run"].update(appRecovery=active, appRecoveryTerminal=terminal)
+                data["stopped"] = stopped
                 taskstate.save(self.home, root, "DK-40", data)
                 call = Fake(board([row("DK-40", "разработка", "сессии нет, брошена")]))
                 lines, raised = lift.lift_root(root, call=call, taskctl="taskctl",
@@ -982,6 +984,13 @@ class ReplyCase(unittest.TestCase):
                 self.assertFalse([a for a in call.calls if "run" in a], call.calls)
                 self.assertIn("Codex", " ".join(lines))
                 self.assertTrue((self.root / ".devkit/chat/task-DK-40.in").is_file())
+
+        data["stopped"] = False
+        taskstate.save(self.home, root, "DK-40", data)
+        call = Fake(board([row("DK-40", "разработка", "сессии нет, брошена")]))
+        _, raised = lift.lift_root(root, call=call, taskctl="taskctl", home=str(devhome))
+        self.assertEqual(raised, 1)
+        self.assertTrue([a for a in call.calls if "--reply" in a], call.calls)
 
     def test_lift_root_raises_with_reply_order(self):
         """Заход поднимает строку с репликой своим заказом: «продолжай» увело бы

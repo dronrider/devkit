@@ -7781,11 +7781,12 @@ async function wireFeed(project, sid, opts) {
         talk[at] = item;
         draw();
       } else if (item.role === "user") {
-        acceptItem(item);
+        es.onmessage(ev);
       }
     });
-    const acceptItem = (item) => {
+    es.onmessage = (ev) => {
       seen = Date.now();
+      const item = JSON.parse(ev.data);
       // Свой хвост поток шлёт заново, и без отсева те же реплики легли бы в
       // ленту вторым разом. Отсев по ключу, а не по номеру: номер записи
       // считается местом в слитой ленте и от заезда к заезду плывёт.
@@ -7801,7 +7802,6 @@ async function wireFeed(project, sid, opts) {
       draw();
       if (opts.onItem) opts.onItem(item);
     };
-    es.onmessage = (ev) => acceptItem(JSON.parse(ev.data));
     es.onerror = () => {
       if (gone()) return;
       // Обрыв это не повод рвать всё: браузер ретраит сам, и второй поток

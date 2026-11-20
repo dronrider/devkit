@@ -863,6 +863,13 @@ func TestStaticChatKeepsPlace(t *testing.T) {
 	if on < 0 || off < on {
 		t.Fatal("в ленте нет обработчика потока: дострение проверять не на чем")
 	}
+	replace := strings.Index(body, `es.addEventListener("replace"`)
+	if replace < 0 || replace > on {
+		t.Fatal("поток ленты не принимает замену прежней реплики")
+	}
+	if !strings.Contains(body[replace:on], "es.onmessage(ev);") {
+		t.Error("замена реплики за пределами окна не попадает в обычный поток")
+	}
 	stream := body[on:off]
 	if !strings.Contains(stream, "draw();") {
 		t.Error("пришедшая потоком реплика не перерисовывает ленту")

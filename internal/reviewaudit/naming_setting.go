@@ -163,8 +163,12 @@ func nameEnvironmentUse(fn queryFunc, call *ast.CallExpr) bool {
 		if !ok || id.Name == "_" || id.Obj == nil {
 			continue
 		}
-		for node := range ast.Preorder(cond.Cond) {
-			if read, ok := node.(*ast.Ident); ok && read.Obj == id.Obj {
+		comparison, ok := cond.Cond.(*ast.BinaryExpr)
+		if !ok || (comparison.Op != token.EQL && comparison.Op != token.NEQ) {
+			continue
+		}
+		for _, expr := range []ast.Expr{comparison.X, comparison.Y} {
+			if read, ok := expr.(*ast.Ident); ok && read.Obj == id.Obj {
 				return true
 			}
 		}

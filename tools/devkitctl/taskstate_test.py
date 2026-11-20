@@ -59,7 +59,8 @@ class TaskStateTest(unittest.TestCase):
                 "taskRunSession": sid, "taskRunID": "run-one", "taskRunPID": 999999,
                 "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
                 "model": "glm-5.3"}
-        (directory / (sid + ".json")).write_text(json.dumps(chat))
+        stored = directory / (sid + ".json")
+        stored.write_text(json.dumps(chat))
 
         log = self.home / ".devkit" / "heads" / "DK-1.log"
         log.parent.mkdir()
@@ -72,12 +73,16 @@ class TaskStateTest(unittest.TestCase):
             os.utime(log, (modified, modified))
 
         def recovery_owned():
-            run = taskstate.app_runs(self.home, self.root, ["DK-1"])["DK-1"]
-            return taskstate.app_handles_recovery(run)
+            run = taskstate.app_runs(self.home, self.root, ["DK-1"]).get("DK-1")
+            return run is not None and taskstate.app_handles_recovery(run)
 
         write_log(old + launch)
         self.assertFalse(recovery_owned())
         write_log(old + launch, new + launch)
+        self.assertTrue(recovery_owned())
+        # В раздельном HOME адрес сохранён в конфиге дашборда. Тик в
+        # машинном HOME всё равно видит незавершённый проход оболочки.
+        stored.unlink()
         self.assertTrue(recovery_owned())
         write_log(old + launch, new + launch, new + " task-run DK-1: стоп: штатное завершение")
         self.assertFalse(recovery_owned())

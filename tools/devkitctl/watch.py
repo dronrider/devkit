@@ -1216,7 +1216,7 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
         if task:
             import taskstate
             run = taskstate.app_runs(home, root, [task]).get(task)
-            if run and run["appChat"] == field(row, "сессия"):
+            if run and run["appChat"] in ("", field(row, "сессия")):
                 state.pop(sid, None)
                 continue
 

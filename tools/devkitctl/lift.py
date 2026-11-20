@@ -753,8 +753,9 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     replied, stale = split_reply_rows(root, other_rows, home=home)
     for task, run in sorted(owned.items()):
         if not head_up(task, home):
-            incident_words.append("задача %s в %s: рабочий чат Codex %s ведёт дашборд"
-                                  % (task, root, run["appChat"]))
+            chat = " " + run["appChat"] if run["appChat"] else ""
+            incident_words.append("задача %s в %s: рабочий чат Codex%s ведёт дашборд"
+                                  % (task, root, chat))
     # Строку живого цикла цели конвейер не трогает (DK-1442): исполнителя ей
     # поднимает сам цикл, и второе окно той же задачи вело бы правку одного
     # дерева двумя руками. Отчёт говорит об этом словами. Тишина неотличима

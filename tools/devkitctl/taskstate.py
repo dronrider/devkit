@@ -115,6 +115,13 @@ def app_runs(home, root, tasks):
             active = (chat.get("taskRun") is True
                       or _interrupted_app_pass(home, task, run.get("started")))
             confirmed[task] = dict(run, appChat=file.stem, appRecovery=active)
+
+    # Дашборд может хранить чаты в своём HOME, а оболочка пишет журнал в
+    # машинном. До сверки адреса дашбордом незавершённый проход удерживает
+    # общий подъём, но сам по себе к запуску не ведёт.
+    for task, run in legacy.items():
+        if task not in confirmed and _interrupted_app_pass(home, task, run.get("started")):
+            confirmed[task] = dict(run, appChat="", appRecovery=True)
     return confirmed
 
 

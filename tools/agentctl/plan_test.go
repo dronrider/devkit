@@ -480,3 +480,17 @@ func TestPlanDashboardSession(t *testing.T) {
 		t.Fatalf("явная сессия потеряна: %+v %v", a, err)
 	}
 }
+
+func TestPlanCodexSession(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{"CODEX_THREAD_ID": "codex-thread", planEnvTmux: "terminal"})
+	a, err := planResolve(home, "", "", env)
+	if err != nil || a.sid != "codex-thread" || a.tmux {
+		t.Fatalf("план Codex: %+v %v", a, err)
+	}
+	env = planEnv(map[string]string{"DEVKIT_CHAT_SESSION_ID": "dashboard", "CODEX_THREAD_ID": "codex-thread"})
+	a, err = planResolve(home, "", "", env)
+	if err != nil || a.sid != "dashboard" {
+		t.Fatalf("приоритет панели: %+v %v", a, err)
+	}
+}

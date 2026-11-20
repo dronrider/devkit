@@ -2,6 +2,101 @@ package reviewaudit
 
 import "testing"
 
+func TestNameAssignmentFieldDeclarationAndGlobalArgument(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+type Address struct {
+ file string
+}
+func resolve() Address {
+ var a Address
+ a.file = "path"
+ return a
+}
+func consume() string {
+ a := resolve()
+ return a.file
+}
+var timeout int
+func TestTimeout() {
+ timeout = 0
+}
+func use() int {
+ return add(timeout)
+}
+func add(n int) int { return n }
+`)
+	g := newQueryGoSource(source)
+	fn, _ := g.declaration(at("func resolve"))
+	writeAt := at("a.file =")
+	proof := &NameObjectProof{Expression: "a.file", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "a.file", Value: `"path"`}}, Use: NameCodeUse{Declaration: at("func consume"), At: at("return a.file"), Expression: "a.file"}}}
+	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "file", ActualAt: at(" file string"), Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
+	if err := g.checkNameAssignment(e, fn); err != nil {
+		t.Fatal(err)
+	}
+	proof.Expression = `a.file = "other"`
+	if err := g.checkNameAssignment(e, fn); err == nil {
+		t.Fatal("подменённая правая часть принята")
+	}
+	proof.Expression = `a.file = "path"`
+	if err := g.checkNameAssignment(e, fn); err != nil {
+		t.Fatal(err)
+	}
+	e.ObjectComparison.ActualAt = at("var timeout")
+	if err := g.checkNameAssignment(e, fn); err == nil {
+		t.Fatal("чужое объявление принято")
+	}
+	fn, _ = g.declaration(at("func TestTimeout"))
+	writeAt = at("timeout = 0")
+	proof = &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return add"), Expression: "timeout"}}}
+	e = Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
+	if err := g.checkNameAssignment(e, fn); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNameAssignmentRejectsShadowedGlobal(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+var timeout int
+func TestTimeout() {
+ timeout := 0
+ _ = timeout
+}
+
+func use() int {
+ return timeout
+}
+`)
+	g := newQueryGoSource(source)
+	fn, _ := g.declaration(at("func TestTimeout"))
+	writeAt := at("timeout := 0")
+	proof := &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return timeout"), Expression: "timeout"}}}
+	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
+	if err := g.checkNameAssignment(e, fn); err == nil {
+		t.Fatal("локальное значение принято за глобальное")
+	}
+}
+
+func TestNameAssignmentReadsGlobalArgument(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+var timeout int
+func TestTimeout() {
+ timeout = 0
+}
+func use() int {
+ return add(timeout)
+}
+func add(n int) int { return n }
+`)
+	g := newQueryGoSource(source)
+	fn, _ := g.declaration(at("func TestTimeout"))
+	writeAt := at("timeout = 0")
+	proof := &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return add"), Expression: "timeout"}}}
+	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
+	if err := g.checkNameAssignment(e, fn); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNameAssignmentChecksValueAndWrittenObject(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
  type Item struct { Attributes, Objects int }

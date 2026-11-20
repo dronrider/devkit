@@ -7,6 +7,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 type NameSettingWrite struct {
@@ -18,6 +19,9 @@ type NameSettingWrite struct {
 func (g *queryGoSource) checkNameSettingWrite(e Evidence, fn queryFunc) error {
 	p, w := e.ObjectComparison, e.WriteEvidence
 	proof := p.Proof.Setting
+	if line, err := g.nameProofLine(fn, proof.SubtestAt); err == nil && line == g.fset.Position(fn.node.Pos()).Line {
+		return g.checkNameEnvironmentSetting(e, fn)
+	}
 	run, parents, err := g.call(fn, proof.SubtestAt, func(x ast.Expr) bool {
 		sel, ok := x.(*ast.SelectorExpr)
 		if !ok || sel.Sel.Name != "Run" {
@@ -75,6 +79,72 @@ func (g *queryGoSource) checkNameSettingWrite(e Evidence, fn queryFunc) error {
 	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{
 		w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true,
 	}))
+}
+
+func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) error {
+	p, w := e.ObjectComparison, e.WriteEvidence
+	proof := p.Proof.Setting
+	if !strings.HasPrefix(fn.node.Name.Name, "Test") {
+		return fmt.Errorf("proof.setting: требуется тестовая функция")
+	}
+	set, err := g.nameCallExpression(fn, w.WriteAt, p.Proof.Expression)
+	if err != nil || len(set.Args) != 2 || nameSettingKey(set.Args[0]) != w.Target || w.Target != p.Actual || p.ActualAt != w.WriteAt || !sameNameExpression(set.Args[1], w.Value) || !nameSettingStatement(fn, set) {
+		return fmt.Errorf("proof.setting: укажите прямой вызов t.Setenv с точными ключом и значением")
+	}
+	sel, ok := set.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Setenv" {
+		return fmt.Errorf("proof.setting: требуется t.Setenv")
+	}
+	receiver, ok := sel.X.(*ast.Ident)
+	if !ok || receiver.Obj == nil {
+		return fmt.Errorf("proof.setting: не найден параметр теста")
+	}
+	validReceiver := false
+	for _, field := range fn.node.Type.Params.List {
+		if typ, ok := field.Type.(*ast.StarExpr); ok && g.namePackageSelector(fn, typ.X, "testing", "T") && nameHasParameter(field, nameIdentifier(sel.X)) {
+			for _, param := range field.Names {
+				if param.Obj == receiver.Obj {
+					validReceiver = true
+				}
+			}
+		}
+	}
+	if !validReceiver {
+		return fmt.Errorf("proof.setting: t.Setenv должен вызываться на параметре *testing.T")
+	}
+	if e.Result == "checked" && len(nameProofObjects(p)) > 0 && !sameObjectName(nameProofObjects(p), identifierWords(w.Target)) {
+		return fmt.Errorf("proof.setting: записанный ключ не подтверждает объект в имени")
+	}
+	use, err := g.nameCallExpression(fn, proof.Use.At, proof.Use.Expression)
+	if err != nil || use.Pos() <= set.End() {
+		return fmt.Errorf("proof.setting.use: требуется вызов после записи")
+	}
+	for node := range ast.Preorder(fn.node.Body) {
+		if stmt, ok := node.(*ast.AssignStmt); ok && stmt.Pos() < set.Pos() {
+			for _, target := range stmt.Lhs {
+				if id, ok := target.(*ast.Ident); ok && id.Obj == receiver.Obj {
+					return fmt.Errorf("proof.setting: параметр теста был изменён")
+				}
+			}
+		}
+		if call, ok := node.(*ast.CallExpr); ok && call.Pos() > set.End() && call.Pos() < use.Pos() {
+			if s, ok := call.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "Setenv" && nameIdentifier(s.X) == nameIdentifier(sel.X) && len(call.Args) > 0 && nameSettingKey(call.Args[0]) == w.Target {
+				return fmt.Errorf("proof.setting.use: ключ изменился до вызова")
+			}
+			if (g.namePackageSelector(fn, call.Fun, "os", "Setenv") || g.namePackageSelector(fn, call.Fun, "os", "Unsetenv")) && len(call.Args) > 0 && nameSettingKey(call.Args[0]) == w.Target {
+				return fmt.Errorf("proof.setting.use: ключ изменился до вызова")
+			}
+		}
+	}
+	reader, err := g.declaration(proof.Use.Declaration)
+	if err != nil || reader.base != fn.base || !g.nameSettingConsumer(fn, reader, use) {
+		return fmt.Errorf("proof.setting.use.declaration: укажите реализацию вызванной функции")
+	}
+	get, _, err := g.call(reader, proof.ReadAt, func(x ast.Expr) bool { return g.namePackageSelector(reader, x, "os", "Getenv") })
+	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target {
+		return fmt.Errorf("proof.setting.read_at: укажите чтение того же ключа")
+	}
+	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true}))
 }
 
 func nameHasParameter(field *ast.Field, name string) bool {

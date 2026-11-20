@@ -100,19 +100,19 @@ func add(n int) int { return n }
 func TestNameAssignmentChecksValueAndWrittenObject(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
  type Item struct { Attributes, Objects int }
- func addInvoiceAttributes(item *Item, value int) {
+ func addInvoiceAttributes(item *Item, value int) int {
   item.Attributes = value
   item.Objects = value
+  return item.Attributes
  }
- func consume(item *Item) int { return item.Attributes }
  `)
 	word := "Attributes"
 	writeAt := at("item.Attributes = value")
 	proof := &NameObjectProof{Expression: "item.Attributes", Assignment: &NameAssignmentWrite{
 		Writes: []NameAssignmentSite{{At: writeAt, Target: "item.Attributes", Value: "value"}},
-		Use:    NameCodeUse{Declaration: at("func consume"), At: at("func consume"), Expression: "item.Attributes"},
+		Use:    NameCodeUse{Declaration: at("func addInvoiceAttributes"), At: at("return item.Attributes"), Expression: "item.Attributes"},
 	}, Words: []NameProofWord{
-		{Word: "Invoice", Role: "context", Fact: ReviewFact{Location: at("func consume"), Quote: "return item.Attributes", Value: "item.Attributes", Text: "Читается атрибут."}},
+		{Word: "Invoice", Role: "context", Fact: ReviewFact{Location: at("return item.Attributes"), Quote: "return item.Attributes", Value: "item.Attributes", Text: "Читается атрибут."}},
 		{Word: word, Role: "object", Fact: ReviewFact{Location: writeAt, Quote: "item.Attributes = value", Value: "item.Attributes", Text: "Поле записывается."}},
 	}}
 	entry := Evidence{Check: "writes", Result: "checked", ObjectComparison: &NameObjectComparison{Expected: []string{"Invoice", word}, Actual: "Attributes", ActualAt: writeAt, Proof: proof},
@@ -200,11 +200,13 @@ func TestNameAPIOnlyUsesSchemasOfSuccessfulResponses(t *testing.T) {
 
 func TestNameAssignmentRejectsUnrelatedFieldConsumer(t *testing.T) {
 	for _, tc := range []struct {
-		name, bindings string
+		name, bindings, beforeWrite, beforeReturn string
 	}{
-		{"independent_instance", `a := Address{file: "different"}`},
-		{"changed_field", "a := resolve()\n a.file = \"different\""},
-		{"shadowed_call", "resolve := func() Address { return Address{} }\n a := resolve()"},
+		{"independent_instance", `a := Address{file: "different"}`, "", ""},
+		{"changed_field", "a := resolve()\n a.file = \"different\"", "", ""},
+		{"shadowed_call", "resolve := func() Address { return Address{} }\n a := resolve()", "", ""},
+		{"unreachable_return", "a := resolve()", "", `if true { return Address{file: "different"} }`},
+		{"alias", "a := resolve()", "p := &a", `p.file = "different"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, at := nameProofFixture(t, `package sample
@@ -213,7 +215,9 @@ type Address struct {
 }
 func resolve() Address {
  var a Address
+ `+tc.beforeWrite+`
  a.file = "written"
+ `+tc.beforeReturn+`
  return a
 }
 func consume() string {
@@ -232,8 +236,11 @@ func consume() string {
 				ObjectComparison: &NameObjectComparison{Actual: "file", ActualAt: at("file string"), Proof: proof},
 				WriteEvidence:    &WriteEvidence{WriteAt: writeAt},
 			}
-			if err := g.checkNameAssignment(e, fn); err == nil {
-				t.Fatal("принято чтение поля другого значения")
+			for _, actualAt := range []string{at("file string"), writeAt} {
+				e.ObjectComparison.ActualAt = actualAt
+				if err := g.checkNameAssignment(e, fn); err == nil {
+					t.Fatalf("принято чтение поля другого значения при actual_at=%s", actualAt)
+				}
 			}
 		})
 	}

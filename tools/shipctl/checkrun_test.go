@@ -544,3 +544,11 @@ esac
 		t.Fatal("Codex ушёл через taskctl run")
 	}
 }
+
+func TestRaiseWithoutModelReportsRefusal(t *testing.T) {
+	carrier := &shipCarrier{}
+	report := carrier.Raise(checkrun.Plan{})
+	if !report.Failed || report.Raised || !strings.Contains(report.Line, "модель проверяющего не названа") {
+		t.Fatalf("ожидался отказ без модели: %+v", report)
+	}
+}

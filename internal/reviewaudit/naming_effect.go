@@ -229,7 +229,10 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 		}
 		for node := range ast.Preorder(x) {
 			if field, ok := node.(*ast.SelectorExpr); ok && field.Sel.Name == pair.Actual {
-				return pair.ActualAt == e.WriteEvidence.WriteAt || nameBoundFieldUse(fn, consumer, assignedNode, field)
+				if written, ok := assignedNode.(*ast.SelectorExpr); ok && nameIdentifier(written.X) != "" {
+					return nameBoundFieldUse(fn, consumer, written, field, len(e.WriteEvidence.Calls) > 0)
+				}
+				return pair.ActualAt == e.WriteEvidence.WriteAt
 			}
 			if id, ok := node.(*ast.Ident); ok && id.Name == pair.Actual && (consumer.node.Body == fn.node.Body || g.nameAssignmentGlobal(fn, consumer, id, assignedNode)) {
 				return true
@@ -251,10 +254,9 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	return checkNameWriteWordLinks(p.Words, nameWriteLines(e, proofLines))
 }
 
-// nameBoundFieldUse ties a declared field to a read from the written instance.
-func nameBoundFieldUse(writer, reader queryFunc, assigned ast.Expr, read *ast.SelectorExpr) bool {
-	field, ok := assigned.(*ast.SelectorExpr)
-	if !ok || writer.file != reader.file {
+// nameBoundFieldUse ties a field read to the written instance.
+func nameBoundFieldUse(writer, reader queryFunc, field, read *ast.SelectorExpr, parameterContract bool) bool {
+	if writer.file != reader.file {
 		return false
 	}
 	source, sourceOK := field.X.(*ast.Ident)
@@ -273,8 +275,22 @@ func nameBoundFieldUse(writer, reader queryFunc, assigned ast.Expr, read *ast.Se
 	if !direct {
 		return false
 	}
+	switch declaration := source.Obj.Decl.(type) {
+	case *ast.ValueSpec, *ast.AssignStmt:
+		decl, ok := declaration.(ast.Node)
+		if !ok || !nameFieldUnchanged(writerBody, decl, writeStmt, field) {
+			return false
+		}
+	}
 	if writerBody == readerBody {
 		return source.Obj == destination.Obj && nameFieldUnchanged(writerBody, writeStmt, readStmt, field)
+	}
+	if source.Obj == destination.Obj && writerBody.End() < readStmt.Pos() && len(writerBody.List) > 0 && writerBody.List[len(writerBody.List)-1] == writeStmt {
+		return nameFieldClosureCalled(readerBody, writerBody, readStmt, read)
+	}
+	if parameterContract && nameSameFieldParameter(source, destination) {
+		return nameFieldUnchanged(writerBody, source.Obj.Decl.(*ast.Field), writeStmt, field) &&
+			nameFieldUnchanged(readerBody, destination.Obj.Decl.(*ast.Field), readStmt, read)
 	}
 	binding, ok := destination.Obj.Decl.(*ast.AssignStmt)
 	if !ok || len(binding.Rhs) != 1 || nameFieldStatement(readerBody, binding) != binding {
@@ -295,12 +311,60 @@ func nameBoundFieldUse(writer, reader queryFunc, assigned ast.Expr, read *ast.Se
 	if slot < 0 || !nameFieldUnchanged(readerBody, binding, readStmt, read) {
 		return false
 	}
-	for _, stmt := range writerBody.List {
-		ret, ok := stmt.(*ast.ReturnStmt)
-		if !ok || slot >= len(ret.Results) || !nameFieldUnchanged(writerBody, writeStmt, ret, field) {
+	next := slices.Index(writerBody.List, ast.Stmt(writeStmt)) + 1
+	if next == 0 || next >= len(writerBody.List) {
+		return false
+	}
+	ret, ok := writerBody.List[next].(*ast.ReturnStmt)
+	if !ok || slot >= len(ret.Results) {
+		return false
+	}
+	id, ok := ret.Results[slot].(*ast.Ident)
+	return ok && id.Obj == source.Obj
+}
+
+// nameSameFieldParameter permits a separately declared reader for a proven
+// call-chain write to a parameter. Both parameters must have the same named
+// pointer type, and the caller verifies that neither binding was replaced.
+func nameSameFieldParameter(source, destination *ast.Ident) bool {
+	a, fromParameter := source.Obj.Decl.(*ast.Field)
+	b, toParameter := destination.Obj.Decl.(*ast.Field)
+	if !fromParameter || !toParameter {
+		return false
+	}
+	aPointer, fromPointer := a.Type.(*ast.StarExpr)
+	bPointer, toPointer := b.Type.(*ast.StarExpr)
+	if !fromPointer || !toPointer {
+		return false
+	}
+	aType, fromType := aPointer.X.(*ast.Ident)
+	bType, toType := bPointer.X.(*ast.Ident)
+	return fromType && toType && aType.Obj != nil && aType.Obj == bType.Obj
+}
+
+func nameFieldClosureCalled(readerBody, writerBody *ast.BlockStmt, use ast.Stmt, field *ast.SelectorExpr) bool {
+	declaration, ok := nameFieldStatement(readerBody, writerBody).(*ast.AssignStmt)
+	if !ok || len(declaration.Lhs) != 1 || len(declaration.Rhs) != 1 {
+		return false
+	}
+	lit, ok := declaration.Rhs[0].(*ast.FuncLit)
+	binding, named := declaration.Lhs[0].(*ast.Ident)
+	if !ok || lit.Body != writerBody || !named || binding.Obj == nil {
+		return false
+	}
+	for _, stmt := range readerBody.List {
+		effect, ok := stmt.(*ast.ExprStmt)
+		if !ok {
 			continue
 		}
-		if id, ok := ret.Results[slot].(*ast.Ident); ok && id.Obj == source.Obj {
+		call, ok := effect.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		callee, ok := call.Fun.(*ast.Ident)
+		if ok && callee.Obj == binding.Obj &&
+			nameValueUnchanged(readerBody, declaration, effect, binding.Name) &&
+			nameFieldUnchanged(readerBody, effect, use, field) {
 			return true
 		}
 	}
@@ -316,7 +380,7 @@ func nameFieldStatement(body *ast.BlockStmt, node ast.Node) ast.Stmt {
 	return nil
 }
 
-func nameFieldUnchanged(body *ast.BlockStmt, from, to ast.Stmt, field *ast.SelectorExpr) bool {
+func nameFieldUnchanged(body *ast.BlockStmt, from, to ast.Node, field *ast.SelectorExpr) bool {
 	if !nameValueUnchanged(body, from, to, nameIdentifier(field.X)) {
 		return false
 	}
@@ -332,9 +396,17 @@ func nameFieldUnchanged(body *ast.BlockStmt, from, to ast.Stmt, field *ast.Selec
 		if stmt.Pos() <= from.Pos() || stmt.Pos() >= to.Pos() {
 			continue
 		}
-		switch stmt.(type) {
+		switch stmt := stmt.(type) {
 		case *ast.ReturnStmt, *ast.BranchStmt:
 			return false
+		case *ast.IfStmt:
+			if id, ok := stmt.Cond.(*ast.Ident); ok && id.Name == "true" && id.Obj == nil {
+				for _, bodyStmt := range stmt.Body.List {
+					if _, returns := bodyStmt.(*ast.ReturnStmt); returns {
+						return false
+					}
+				}
+			}
 		}
 		for n := range ast.Preorder(stmt) {
 			switch n := n.(type) {

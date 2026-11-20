@@ -11,8 +11,8 @@ type nameSynctestMatch struct {
 	scenario *ast.FuncLit
 }
 
-// Only test callbacks whose execution is guaranteed by testing are traversed.
-// Other literals remain opaque, except a goroutine invoked directly by the scenario.
+// Traverse literals passed to recognized testing callbacks and directly invoked
+// goroutines. This checks syntax and scope, not runtime reachability or filters.
 func (g *queryGoSource) nameSynctestNode(fn queryFunc, at, expression string, assignment bool) *nameSynctestMatch {
 	line, err := g.nameProofLine(fn, at)
 	if err != nil || !strings.HasPrefix(fn.node.Name.Name, "Test") {

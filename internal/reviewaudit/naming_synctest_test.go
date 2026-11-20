@@ -2,11 +2,35 @@ package reviewaudit
 
 import (
 	"go/ast"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
+// synctestProofFixture supplies a single source file without invoking git.
+func synctestProofFixture(t *testing.T, code string) (*evidenceSource, func(string) string) {
+	t.Helper()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "sample.go"), code)
+	files, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { files.Close() })
+	source := &evidenceSource{root: root, reportPath: filepath.Join(root, "report.json"), files: files, cache: map[string][]string{}, names: map[string]bool{"sample.go": true}}
+	return source, func(text string) string {
+		i := strings.Index(code, text)
+		if i < 0 {
+			t.Fatalf("no %q in fixture", text)
+		}
+		return "sample.go:" + strconv.Itoa(1+strings.Count(code[:i], "\n"))
+	}
+}
+
 func TestNameAssignmentSynctestScenario(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	source, at := synctestProofFixture(t, `package sample
 import "testing"
 import "testing/synctest"
 func TestTurn(t *testing.T) {
@@ -49,7 +73,7 @@ func TestNameAssignmentSynctestRejectsForeignCallbacks(t *testing.T) {
 		{"foreign Run", `import "testing/synctest"`, `fake.Run("x", func(t *testing.T) { synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) }) })`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source, at := nameProofFixture(t, "package sample\nimport \"testing\"\n"+tc.imports+"\nfunc TestTurn(t *testing.T) {\n"+tc.body+"\n}\n")
+			source, at := synctestProofFixture(t, "package sample\nimport \"testing\"\n"+tc.imports+"\nfunc TestTurn(t *testing.T) {\n"+tc.body+"\n}\n")
 			g := newQueryGoSource(source)
 			fn, err := g.declaration(at("func TestTurn"))
 			if err != nil {
@@ -63,7 +87,7 @@ func TestNameAssignmentSynctestRejectsForeignCallbacks(t *testing.T) {
 }
 
 func TestNameAssignmentSynctestSubtestsAndNestedClosure(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	source, at := synctestProofFixture(t, `package sample
 import "testing"
 import "testing/synctest"
 func TestTurn(t *testing.T) {
@@ -114,7 +138,7 @@ func TestTurn(t *testing.T) {
 }
 
 func TestNameAssignmentSynctestFieldPaths(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	source, at := synctestProofFixture(t, `package sample
 import "testing"
 import "testing/synctest"
 func TestField(t *testing.T) {
@@ -150,7 +174,7 @@ func TestField(t *testing.T) {
 	}
 }
 func TestNameAssignmentSynctestRejectsShadowedIndex(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	source, at := synctestProofFixture(t, `package sample
 import "testing"
 import "testing/synctest"
 func TestTurn(t *testing.T) {
@@ -175,7 +199,7 @@ func TestTurn(t *testing.T) {
 }
 
 func TestNameAssignmentSynctestRejectsComputedTargets(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	source, at := synctestProofFixture(t, `package sample
 import "testing"
 import "testing/synctest"
 func TestTargets(t *testing.T) {

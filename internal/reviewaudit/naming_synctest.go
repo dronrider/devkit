@@ -106,6 +106,21 @@ func (g *queryGoSource) nameSynctestNode(fn queryFunc, at, expression string, as
 	return matches[0]
 }
 
+// Only a local variable has a stable lexical binding that this proof checks.
+// Indexed targets and selector chains may refer to different storage after an
+// index or an intermediate pointer changes between the write and the read.
+func nameSynctestTargetRoot(fn queryFunc, expr ast.Expr) *ast.Ident {
+	node, ok := expr.(*ast.Ident)
+	if !ok || node.Obj == nil || node.Obj.Kind != ast.Var {
+		return nil
+	}
+	decl, ok := node.Obj.Decl.(ast.Node)
+	if !ok || decl.Pos() < fn.node.Pos() || decl.End() > fn.node.End() {
+		return nil
+	}
+	return node
+}
+
 func nameSynctestUsesBinding(n ast.Node, binding *ast.Object, target string) bool {
 	if binding == nil {
 		return false

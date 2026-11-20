@@ -157,8 +157,11 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 		stmt := node.(*ast.AssignStmt)
 		slot := slices.IndexFunc(stmt.Lhs, func(x ast.Expr) bool { return sameNameExpression(x, site.Target) })
 		if scenario != nil {
-			root := nameWriteRoot(stmt.Lhs[slot])
-			if root == nil || root.Obj == nil || (binding != nil && binding != root.Obj) {
+			root := nameSynctestTargetRoot(fn, stmt.Lhs[slot])
+			if root == nil {
+				return fmt.Errorf("proof.assignment: в synctest укажите простую локальную переменную; поля и индексы не поддерживаются")
+			}
+			if binding != nil && binding != root.Obj {
 				return fmt.Errorf("proof.assignment: записи должны относиться к одному значению")
 			}
 			binding = root.Obj

@@ -149,3 +149,57 @@ func TestField(t *testing.T) {
 		}
 	}
 }
+func TestNameAssignmentSynctestRejectsShadowedIndex(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+import "testing"
+import "testing/synctest"
+func TestTurn(t *testing.T) {
+ synctest.Test(t, func(t *testing.T) {
+  var x [2]struct { turn int }
+  i := 0
+  x[i].turn = 1
+  { i := 1; use(x[i].turn) }
+ })
+}
+`)
+	g := newQueryGoSource(source)
+	fn, err := g.declaration(at("func TestTurn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write, read := at("x[i].turn = 1"), at("i := 1; use(x[i].turn)")
+	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "turn", ActualAt: write, Proof: &NameObjectProof{Expression: "x[i].turn", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: write, Target: "x[i].turn", Value: "1"}}, Use: NameCodeUse{Declaration: at("func TestTurn"), At: read, Expression: "x[i].turn"}}}}, WriteEvidence: &WriteEvidence{WriteAt: write}}
+	if err := g.checkNameAssignment(e, fn); err == nil {
+		t.Fatal("accepted shadowed index i")
+	}
+}
+
+func TestNameAssignmentSynctestRejectsComputedTargets(t *testing.T) {
+	source, at := nameProofFixture(t, `package sample
+import "testing"
+import "testing/synctest"
+func TestTargets(t *testing.T) {
+ synctest.Test(t, func(t *testing.T) {
+  var x struct { field int }
+  var a [2]int
+  x.field = 1
+  a[0] = 1
+  use(x.field, a[0])
+ })
+}
+`)
+	g := newQueryGoSource(source)
+	fn, err := g.declaration(at("func TestTargets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ line, target string }{{"x.field = 1", "x.field"}, {"a[0] = 1", "a[0]"}} {
+		write := g.nameSynctestNode(fn, at(tc.line), tc.target, true)
+		if write == nil {
+			t.Fatalf("assignment %s not found", tc.target)
+		}
+		if nameSynctestTargetRoot(fn, write.node.(*ast.AssignStmt).Lhs[0]) != nil {
+			t.Errorf("accepted computed target %s", tc.target)
+		}
+	}
+}

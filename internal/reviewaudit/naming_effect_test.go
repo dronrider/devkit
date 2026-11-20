@@ -197,3 +197,44 @@ func TestNameAPIOnlyUsesSchemasOfSuccessfulResponses(t *testing.T) {
 		t.Fatal("поле должно быть достижимо только из схемы успешного ответа")
 	}
 }
+
+func TestNameAssignmentRejectsUnrelatedFieldConsumer(t *testing.T) {
+	for _, tc := range []struct {
+		name, bindings string
+	}{
+		{"independent_instance", `a := Address{file: "different"}`},
+		{"changed_field", "a := resolve()\n a.file = \"different\""},
+		{"shadowed_call", "resolve := func() Address { return Address{} }\n a := resolve()"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameProofFixture(t, `package sample
+type Address struct {
+ file string
+}
+func resolve() Address {
+ var a Address
+ a.file = "written"
+ return a
+}
+func consume() string {
+ `+tc.bindings+`
+ return a.file
+}
+`)
+			g := newQueryGoSource(source)
+			fn, _ := g.declaration(at("func resolve"))
+			writeAt := at("a.file = \"written\"")
+			proof := &NameObjectProof{Expression: "a.file", Assignment: &NameAssignmentWrite{
+				Writes: []NameAssignmentSite{{At: writeAt, Target: "a.file", Value: `"written"`}},
+				Use:    NameCodeUse{Declaration: at("func consume"), At: at("return a.file"), Expression: "a.file"},
+			}}
+			e := Evidence{
+				ObjectComparison: &NameObjectComparison{Actual: "file", ActualAt: at("file string"), Proof: proof},
+				WriteEvidence:    &WriteEvidence{WriteAt: writeAt},
+			}
+			if err := g.checkNameAssignment(e, fn); err == nil {
+				t.Fatal("принято чтение поля другого значения")
+			}
+		})
+	}
+}

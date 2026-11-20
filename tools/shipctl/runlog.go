@@ -24,14 +24,16 @@ func logRun(code int) {
 	if err != nil {
 		return
 	}
-	dir := filepath.Join(root, ".devkit")
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return
-	}
-	f, err := os.OpenFile(filepath.Join(dir, "log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	_ = appendRunLog(root, logCmd, code)
+}
+
+func appendRunLog(root, command string, code int) error {
+	path := filepath.Join(root, ".devkit", "log")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\tshipctl\t%s\t%d\t%s\n", time.Now().Format("2006-01-02T15:04:05"), logCmd, code, taskhead.ExitClass(code))
+	_, err = fmt.Fprintf(f, "%s\tshipctl\t%s\t%d\t%s\n", time.Now().Format("2006-01-02T15:04:05"), command, code, taskhead.ExitClass(code))
+	return err
 }

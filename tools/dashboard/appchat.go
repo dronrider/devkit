@@ -40,10 +40,10 @@ type appChat struct {
 	project   string
 	automatic bool
 
-	mu        sync.Mutex
-	busy      bool
-	turnAt    time.Time
-	taskNotes chan appTaskNote
+	mu       sync.Mutex
+	busy     bool
+	turnAt   time.Time
+	taskTurn *appTaskTurn
 }
 
 func (c *appChat) busyNow() bool {
@@ -579,22 +579,18 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 // appNote разбирает уведомления сервера: элементы хода ложатся в ленту, конец
 // хода гасит занятость, а ошибка хода приходит словами в тот же хвост ленты.
 func (s *server) appNote(sid, method string, params json.RawMessage) {
-	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
-		return
-	}
 	s.appMu.Lock()
 	if c := s.appChats[sid]; c != nil {
 		c.mu.Lock()
-		if method == "turn/completed" && c.taskNotes != nil {
-			select {
-			case c.taskNotes <- appTaskNote{Method: method, Params: append(json.RawMessage(nil), params...)}:
-			default:
-				c.proc.kill()
-			}
+		if c.taskTurn != nil {
+			c.taskTurn.note(method, params, time.Now())
 		}
 		c.mu.Unlock()
 	}
 	s.appMu.Unlock()
+	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
+		return
+	}
 	now := s.now().UTC().Format(time.RFC3339)
 	if method == "turn/completed" {
 		var p struct {
@@ -608,7 +604,7 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		s.appMu.Lock()
 		if c := s.appChats[sid]; c != nil && (p.ThreadID == "" || p.ThreadID == c.thread) {
 			c.mu.Lock()
-			if c.taskNotes == nil {
+			if c.taskTurn == nil {
 				c.busy = false
 			}
 			c.mu.Unlock()
@@ -975,12 +971,16 @@ func (s *server) appStatus(w http.ResponseWriter, sid string) {
 		out["status"] = "ход идёт"
 		c.mu.Lock()
 		at := c.turnAt
+		last := at
+		if c.taskTurn != nil {
+			last = c.taskTurn.last
+		}
 		c.mu.Unlock()
 		if !at.IsZero() {
 			age := s.now().Sub(at)
 			out["since"] = at.UnixMilli()
 			out["sec"] = int(age / time.Second)
-			if age > appBusyCap {
+			if s.now().Sub(last) > appBusyCap {
 				out["status"] = "ход идёт подозрительно долго"
 			}
 		}

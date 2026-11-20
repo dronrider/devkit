@@ -870,6 +870,17 @@ func (s *server) chatStoreRead(key string) chatStore {
 }
 
 func (s *server) chatStoreWrite(key string, st chatStore) error {
+	return s.chatStoreUpdate(key, func(previous chatStore) chatStore {
+		st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+		st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
+		if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
+			st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+		}
+		return st
+	})
+}
+
+func (s *server) chatStoreUpdate(key string, update func(chatStore) chatStore) error {
 	dir := chatStoreDir(s.cfg.Home)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -879,12 +890,7 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 		return err
 	}
 	defer lock.Close()
-	previous := s.chatStoreRead(key)
-	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
-	st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
-	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
-		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
-	}
+	st := update(s.chatStoreRead(key))
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -3077,9 +3083,9 @@ func (s *server) chatForeignLive(projPath, sid string) bool {
 	return ok && info.mod.After(s.now().Add(-sessionLiveTTL))
 }
 
-// handleChatStop прерывает идущий ход чата. Прервать можно только то, что
-// поднято нашей tmux: у окна vscode и у мёртвой сессии клавиатуры отсюда нет,
-// и кнопки стопа у них на экране тоже нет.
+// handleChatStop прерывает ход чата. Для терминального чата нужен доступ
+// к клавиатуре своего окна tmux. Ход и конвейер app-server останавливаются
+// через клиент дашборда.
 func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3094,9 +3100,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	// Стоп бывает двух родов, и род называет зовущий: обычный это Escape в
-	// живой терминал, а клин снимается сигналом самому процессу. Мёртвому
-	// терминалу Escape подать некуда, и разговор в клине оставался бы вечным.
+	// При идущем ходе обычный стоп посылает Escape в окно tmux.
+	// При клине сигнал получает сам процесс. Без терминала
+	// Escape подать некуда.
 	var body struct {
 		Kill bool `json:"kill"`
 		// Drop это третий род: снять живую сессию целиком под перезапуск
@@ -3109,7 +3115,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
-		if !s.recoveryChatStopped(w, found, sid, "stop") {
+		if !s.updateChatRecoveryState(w, found, sid, "stop") {
 			return
 		}
 		s.appTaskClose(a)
@@ -3119,6 +3125,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
 	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		if st.TaskRunID != "" && st.Task != "" && st.Project == found.Name && !s.appTaskStopOrphan(w, found.Path, sid, st) {
+			return
+		}
 		if body.Drop || body.Kill {
 			s.appDrop(sid, "снятие под перезапуск")
 			writeJSON(w, http.StatusOK, map[string]any{"way": "gone",
@@ -3128,7 +3137,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		s.appStop(w, sid)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "stop") {
+	if !s.updateChatRecoveryState(w, found, sid, "stop") {
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -3280,10 +3289,10 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
 }
 
-// handleChatSay доставляет реплику диалогу. Правило одно на три состояния:
-// живому процессу реплика подаётся прямо в него, кончившемуся поднимается
-// продолжение той же сессии, а окно vscode дашборду не принадлежит, и туда
-// человек пишет сам.
+// handleChatSay принимает реплику разговора. Во время восстановления
+// Codex реплика сохраняется в очереди. Для терминального клиента дашборд
+// использует живую сессию или продолжает завершившуюся. Клиент без
+// своей tmux-сессии может принять реплику по сокету.
 func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3303,7 +3312,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	taskIDs := sessions.Works(records)
 	stored := s.chatStoreRead(sid)
 	chosenModel, _ := s.chatChoice(sid, guardLast.Tmux)
-	if !chatModelCurrent(w, chosenModel) {
+	if stored.TaskRunID == "" && !chatModelCurrent(w, chosenModel) {
 		return
 	}
 	if stored.Blank && stored.Task != "" {
@@ -3340,9 +3349,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
-		// Effort это ручной уровень глубины из ползунка меню модели (DK-1570).
-		// Едет он только с репликой, которая поднимает сессию: живому процессу
-		// уровень не доставить, и выбор ждёт следующего подъёма.
+		// Effort это уровень глубины из меню модели (DK-1570). У app-server
+		// выбор применяется в следующем ходе. Для терминального клиента
+		// глубина передаётся при подъёме процесса.
 		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
@@ -3396,12 +3405,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Повтор той же записи дальше не едет. Отправитель повторяет её, когда не
-	// увидел ответа ручки, а не увидеть его он может и после доставки: связь
-	// рвётся на обратном пути, панель считает реплику неушедшей и шлёт снова.
-	// Живой случай: одна реплика доехала до сессии пятью копиями подряд, пять
-	// отдельных отправок с разницей в минуты, и каждая легла в очередь клиента,
-	// потому что общего ключа у повторов не было вовсе.
+	// Ответ ручки может потеряться после доставки. Панель повторяет
+	// отправку с тем же ключом, и сервер возвращает состояние первой
+	// попытки, пока помнит ключ (до часа). Очередь рабочего Codex
+	// дополнительно сверяет его со своими сохранёнными записями.
+	// Подтверждение доставки очищает текст в очереди, а ключ остаётся
+	// доступен для сверки последующих повторов.
 	claim := body.MsgID
 	if claim != "" {
 		if prev, taken := s.chatSayStart(sid, claim); !taken {
@@ -3436,13 +3445,13 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
 		return
 	}
-	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
-	// нет, реплика уходит процессу app-server, а лента живёт файлом.
+	// У app-server своя лента. При восстановлении реплика ждёт в очереди,
+	// пока дашборд не сможет передать её клиенту исходной нити.
 	if stored.Protocol != "" {
 		s.appSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "continue") {
+	if !s.updateChatRecoveryState(w, found, sid, "continue") {
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
@@ -4596,7 +4605,7 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")
-	if (wasModel != model || wasHarness != harness) && !s.recoveryChatStopped(w, found, sid, "invalidate") {
+	if (wasModel != model || wasHarness != harness) && !s.updateChatRecoveryState(w, found, sid, "invalidate") {
 		return
 	}
 	st := s.chatStoreRead(sid)
@@ -4711,7 +4720,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	// Заказ собирается по месту: ветки живого чата и резюма несут своё имя

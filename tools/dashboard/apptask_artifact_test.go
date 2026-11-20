@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 func appArtifactEnv(t *testing.T, mode string) (*testEnv, *http.Client) {
@@ -205,4 +208,75 @@ func TestAppTaskContextInstalledArtifact(t *testing.T) {
 		t.Fatal("artifact изменил старое дерево")
 	}
 	t.Log("artifact: devkit-autonomous from current root, live update, same-thread resume and autonomous=false passed")
+}
+
+func appTaskRecoveryFixture(t *testing.T, e *testEnv) {
+	t.Helper()
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+  exec) shift 4; exec "$@" ;;
+  quota) printf '%s' '{"schema":"agentctl/quota","version":1,"harness":"codextest","fresh":true,"complete":true,"available":true}' ;;
+  *) printf '%s' '`+appHarnessJSON+`' ;;
+esac`)
+	appTaskBoard(t, e, "in-progress")
+	putDoc(t, e.proj, "task-state", "in-progress")
+}
+
+func TestAppTaskRecoveryInstalledArtifact(t *testing.T) {
+	if os.Getenv("DEVKIT_TASK_RUN_ARTIFACT") == "" {
+		t.Skip("DEVKIT_TASK_RUN_ARTIFACT не назван")
+	}
+	e, c, restart := appArtifactRestartable(t, "mute")
+	runtime := os.Getenv("DEVKIT_TASK_RUN_ARTIFACT")
+	root := strings.TrimSuffix(runtime, string(filepath.Separator)+filepath.FromSlash(taskhead.TaskRunRel))
+	rel := filepath.Join("tools", "devkitctl", "recovery.py")
+	bridge, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
+	if err := os.WriteFile(filepath.Join(kit, rel), bridge, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("recovery artifact sha256 %x", sha256.Sum256(bridge))
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	before := e.s.chatStoreRead(sid)
+	text := "Забери реплику после перезапуска"
+	if _, err := chat.Put(e.proj, chat.TaskName(before.Task), text, chat.TaskLine(e.s.now(), text)); err != nil {
+		t.Fatal(err)
+	}
+	restart()
+	putDoc(t, e.home, ".devkit/app-task-tick", "test tick\n")
+	appWaitFeed(t, e, sid, "Конвейер Codex продолжен в исходном разговоре")
+	after := e.s.chatStoreRead(sid)
+	if after.Thread != before.Thread || after.Harness != before.Harness || after.Model != before.Model || after.TaskRunID == before.TaskRunID {
+		t.Fatalf("before %+v after %+v", before, after)
+	}
+	if !taskhead.Working(taskhead.LockPath(e.home, before.Task)) || e.s.mainChatBind(before.Task).Chat != sid {
+		t.Fatal("lost lock or main chat")
+	}
+	count := 0
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Role == "user" && item.Text == text {
+			count++
+		}
+	}
+	if count != 1 || len(chat.ReadLines(chat.Path(e.proj, chat.TaskName(before.Task)))) != 0 {
+		t.Fatalf("scheduled reply was not delivered exactly once: %d", count)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if strings.Count(log, "resume th-1") != 1 || !strings.Contains(log, "read th-1") {
+		t.Fatalf("thread was not reconciled: %s", log)
+	}
+	c = e.loggedClient(t)
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop %d: %s", resp.StatusCode, raw)
+	}
+	waitAppTaskLockGone(t, e)
+	t.Log("Перезапуск дашборда, сверка исходной нити, реплика в одном экземпляре, прежняя подписка и общий замок подтверждены")
 }

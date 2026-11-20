@@ -100,14 +100,15 @@ func (e *appFeedEvent) identity() string {
 }
 
 type appFeedIndex struct {
+	mu      sync.Mutex
 	info    os.FileInfo
 	offset  int64
 	pending []byte
 	seen    map[string]bool
 }
 
-// Поля индекса меняются под файловым замком appFeedAppend. appMu защищает
-// только таблицу индексов, чтение диска не задерживает остальные разговоры.
+// appMu защищает таблицу индексов. Свой замок каждого индекса
+// упорядочивает доступ к его полям в горутинах одного процесса.
 func (s *server) appFeedIndex(sid string) *appFeedIndex {
 	s.appMu.Lock()
 	defer s.appMu.Unlock()
@@ -192,12 +193,14 @@ func (s *server) appFeedAppend(sid string, items []reply) error {
 		return err
 	}
 	defer lock.Close()
+	idx := s.appFeedIndex(sid)
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	idx := s.appFeedIndex(sid)
 	if err := idx.refresh(f); err != nil {
 		return err
 	}
@@ -419,9 +422,9 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
 var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
 
-// appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
-// продолжением. Отказ на любом шаге убивает процесс и называется словами с
-// хвостом stderr, потому что причины входа клиент пишет именно туда.
+// appSpawn поднимает клиент и готовит новую либо прежнюю нить. При отказе
+// после запуска клиенту посылается сигнал остановки. Собранный хвост stderr
+// добавляется к ошибке, если он непуст.
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
 	s.appMu.Lock()
 	if s.appStarting[sid] != nil || s.appChats[sid] != nil {
@@ -467,8 +470,8 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}
 	fail := func(err error) (*appChat, error) {
 		proc.kill()
-		// Хвост stderr читается после смерти процесса: клиент пишет причину
-		// отказа туда, и гонять чтение раньше выхода значило бы терять её.
+		// kill ждёт закрытия dead до пяти секунд. Дополнительная пауза
+		// даёт сборщику stderr дочитать причину отказа.
 		time.Sleep(200 * time.Millisecond)
 		if tail := strings.TrimSpace(proc.errTail()); tail != "" {
 			return nil, fmt.Errorf("%w (%s)", err, tail)
@@ -518,6 +521,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 		c.thread = got.Thread.ID
 	}
 	var actual struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
 		ApprovalPolicy string `json:"approvalPolicy"`
 		Reviewer       string `json:"approvalsReviewer"`
 		Sandbox        struct {
@@ -526,6 +532,9 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	}
 	if json.Unmarshal(configured, &actual) != nil || actual.ApprovalPolicy != "on-request" || actual.Reviewer != "auto_review" || actual.Sandbox.Type != "workspaceWrite" {
 		return fail(fmt.Errorf("клиент не подтвердил workspace-write и автоматическую проверку эскалаций; обновите Codex"))
+	}
+	if thread != "" && c.automatic && actual.Thread.ID != thread {
+		return fail(errors.New("клиент не подтвердил ID исходной нити Codex"))
 	}
 	s.appMu.Lock()
 	s.appChats[sid] = c
@@ -716,27 +725,85 @@ func (s *server) appSayRecord(sid, text string) {
 	}
 }
 
-// appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
-// разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
-// называются словами, молчания тут не бывает.
+func (s *server) appTaskSaveEffort(w http.ResponseWriter, sid, effort string) bool {
+	if effort == "" {
+		return true
+	}
+	if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+		current.CxEffort = effort
+		return current
+	}); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "глубина разговора не записалась: " + err.Error()})
+		return false
+	}
+	if live := s.appLive(sid); live != nil {
+		live.setEffort(effort)
+	}
+	return true
+}
+
+// appSay передаёт реплику обычному разговору, при необходимости поднимая
+// клиент. У рабочего чата задачи реплика идёт в очередь восстановления
+// или однопроходного продолжения. Занятый исходный конвейер может отказать.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	st := s.chatStoreRead(sid)
 	if a := s.appTaskFind(sid, "", ""); a != nil {
+		if a.recover {
+			if !s.appTaskSaveEffort(w, sid, effort) {
+				return
+			}
+			s.appTaskAcceptSay(w, sid, text, claim)
+			return
+		}
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
+		return
+	}
+	wasTaskRun := st.TaskRun
+	continuation, err := s.appTaskContinuation(found, sid, &st)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
 		return
 	}
 	model, harness := st.Model, st.Harness
 	if model == "" {
 		model, harness = s.chatChoice(sid, "")
 	}
+	var entry appTaskMessage
+	if continuation {
+		if live := s.appLive(sid); live != nil && live.busyNow() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+			return
+		}
+		if !s.appTaskSaveEffort(w, sid, effort) {
+			return
+		}
+		if effort != "" {
+			st.CxEffort = effort
+		}
+		entry, err = s.appTaskQueueAdd(sid, claim, text)
+		if err != nil {
+			appTaskQueueError(w, err)
+			return
+		}
+		if entry.Accepted {
+			s.chatSayDone(sid, claim, "appserver")
+			writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
+			return
+		}
+	}
 	if !chatModelCurrent(w, model) {
+		if continuation {
+			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. Исходная модель "+model+" недоступна", true, "model-"+st.TaskRunID)
+		}
 		return
 	}
 	h := s.chatHarnessOf(model, harness)
-	if h == nil || !h.foreign() {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
-			"подписка разговора не определилась (модель %s): разложить слой: devkitctl doctor --fix",
-			chatModelName(model, harness))})
+	if h == nil || !h.foreign() || continuation && st.Harness != h.Name {
+		why := fmt.Sprintf("подписка разговора не определилась (модель %s): разложить слой: devkitctl doctor --fix", chatModelName(model, harness))
+		if continuation {
+			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. "+why, true, "harness-"+st.TaskRunID)
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": why})
 		return
 	}
 	// Уровень глубины ложится в запись разговора каждым изменением, а не только
@@ -749,18 +816,33 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	if st.CxEffort == "" {
 		st.CxEffort = "medium"
 	}
-	wasTaskRun := st.TaskRun
-	continuation, err := s.appTaskContinuation(found, sid, &st)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
-		return
-	}
 	if continuation {
-		if live := s.appLive(sid); live != nil && live.busyNow() {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
+		waiting, err := s.appTaskRecoveryWaiting(found, sid, st)
+		if err != nil {
+			why := "Реплика сохранена в очереди. " + err.Error()
+			s.appTaskRecoveryNote(sid, why, true, "waiting-"+st.TaskRunID)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": why})
 			return
 		}
-		s.raiseAppTask(w, found, sid, st, h, "", text, true, claim)
+		if waiting {
+			s.appTaskQueued(w, sid, entry.ID)
+			return
+		}
+		lock, err := s.appTaskLaunchLock(sid)
+		if errors.Is(err, chat.ErrLocked) {
+			s.appTaskQueued(w, sid, entry.ID)
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		defer lock.Close()
+		if s.appTaskFind(sid, "", "") != nil {
+			s.appTaskQueued(w, sid, entry.ID)
+			return
+		}
+		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry)
 		return
 	}
 	if wasTaskRun && !st.TaskRun {
@@ -897,7 +979,7 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 // остаётся вечным ни в одном исходе, и лента называет случившееся словами.
 func (s *server) appStop(w http.ResponseWriter, sid string) {
 	if a := s.appTaskFind(sid, "", ""); a != nil {
-		if !s.recoveryStopped(w, a.root, a.task, true) {
+		if !s.setRecoveryStopped(w, a.root, a.task, true) {
 			return
 		}
 		s.appTaskClose(a)

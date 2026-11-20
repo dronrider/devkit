@@ -24,6 +24,9 @@ import (
 // TaskRunRel это оболочка конвейера задачи внутри дерева devkit.
 const TaskRunRel = "kit/skills/board-task/task-run.py"
 
+// CodexAppProtocol задаёт протокол носителя задачи через app-server.
+const CodexAppProtocol = "codex"
+
 // NotifierRel это уведомитель, которым зовётся человек.
 const NotifierRel = "hooks/notify.py"
 
@@ -75,6 +78,7 @@ func ExitClass(code int) string {
 // Ступени лестницы, словом для вывода и журнала.
 const (
 	RungLock     = "замок"
+	RungAppChat  = "рабочий чат Codex"
 	RungLive     = "живое окно"
 	RungWindow   = "новое окно"
 	RungHeadless = "headless"
@@ -131,11 +135,17 @@ type Request struct {
 	// без него, как раньше.
 	Name      string
 	AppServer *AppServerCarrier
+	// AutomaticContinuation distinguishes an automatic wake from a manual
+	// launch using the same task order.
+	AutomaticContinuation bool
 }
 
 type AppServerCarrier struct {
-	Command   []string
-	ReplyOnce bool
+	Command     []string
+	ReplyOnce   bool
+	Chat        string
+	Recover     bool
+	BeforeStart func() error
 }
 
 // Result это исход лестницы.
@@ -175,9 +185,8 @@ func (q *Request) pickModel(res *Result) {
 	res.say("модель %s по вердикту agentctl pick", model)
 }
 
-// Raise ведёт лестницу носителей. Ошибка это сломанная раскладка (нет
-// профиля, нет секции [head]), а всё, что случилось на ступенях, лежит в
-// Result.
+// Raise ведёт лестницу носителей. Ошибка означает отказ предполёта
+// или сбой раскладки. Исходы выбора носителя записываются в Result.
 func Raise(q Request) (Result, error) {
 	var res Result
 	if err := GuardGroomRun(q.Root, os.Getenv("DEVKIT_GROOM_SOURCE"), os.Getenv("DEVKIT_GROOM_MODE"), q.ID); err != nil {
@@ -211,8 +220,20 @@ func Raise(q Request) (Result, error) {
 	if state.State.Stopped && !q.ContinueStopped {
 		return res, fmt.Errorf("задача остановлена пользователем; используйте явное продолжение")
 	}
+	old := state.State.Run
+	if q.AppServer != nil && q.AppServer.Recover {
+		if old == nil || !old.AppRecovery || old.AppRecoveryTerminal || old.AppChat != q.AppServer.Chat || old.Harness != q.Harness || old.Model != q.Model ||
+			Alive(old.PID) || old.Group > 0 && !errors.Is(syscall.Kill(-old.Group, 0), syscall.ESRCH) || Alive(Owner(LockPath(q.Home, q.ID))) {
+			return res, fmt.Errorf("исходный конвейер Codex сменился либо ещё работает")
+		}
+	}
+	diagnostic := old != nil && old.AppChat != "" && old.AppRecoveryTerminal && strings.HasPrefix(q.Order, "Разбери неизвестный отказ конвейера ")
+	if q.AppServer == nil && old != nil && old.AppChat != "" && (old.AppRecovery || old.AppRecoveryTerminal) && !q.ContinueStopped && q.automaticContinuation() {
+		res.Code, res.Rung = CodeBusy, RungAppChat
+		res.say("%s: запуск закреплён за рабочим разговором Codex", q.ID)
+		return res, nil
+	}
 	if q.RecoveryAttempt != "" {
-		old := state.State.Run
 		if q.PreviousRun == "" || old == nil || old.ID != q.PreviousRun || old.PID <= 0 || old.Group <= 0 || !errors.Is(syscall.Kill(-old.Group, 0), syscall.ESRCH) || Owner(LockPath(q.Home, q.ID)) != old.PID || Alive(old.PID) || old.Harness == "" || old.Model == "" || old.Harness != q.Harness || old.Model != q.Model {
 			return res, fmt.Errorf("исходный запуск восстановления не подтверждён либо изменился")
 		}
@@ -240,6 +261,12 @@ func Raise(q Request) (Result, error) {
 	defer Release(lock, me)
 	if err := tx.Close(); err != nil {
 		return res, err
+	}
+
+	if q.AppServer != nil && q.AppServer.BeforeStart != nil {
+		if err := q.AppServer.BeforeStart(); err != nil {
+			return res, err
+		}
 	}
 
 	tmux, _ := exec.LookPath("tmux")
@@ -270,15 +297,28 @@ func Raise(q Request) (Result, error) {
 		res.say("клиент %s не нашёлся в PATH: поднимать голову нечем", head.Bin)
 	default:
 		q.pickModel(&res)
-		q.runID = newSessionID()
-		if q.runID == "" {
-			return res, fmt.Errorf("не удалось создать ID запуска")
-		}
-		if q.ContinueStopped {
-			state.State.Stopped = false
-		}
-		if err = state.Start(q.runID, q.Harness, q.Model, q.RecoveryAttempt); err != nil {
-			return res, err
+		if !diagnostic {
+			q.runID = newSessionID()
+			if q.runID == "" {
+				return res, fmt.Errorf("не удалось создать ID запуска")
+			}
+			if q.ContinueStopped {
+				state.State.Stopped = false
+			}
+			run := taskstate.Run{ID: q.runID, Harness: q.Harness, Model: q.Model, Attempt: q.RecoveryAttempt}
+			if q.AppServer != nil {
+				run.AppChat, run.AppRecovery = q.AppServer.Chat, !q.AppServer.ReplyOnce
+				if q.AppServer.Recover {
+					run.AppRecoveryAttempts = old.AppRecoveryAttempts
+				}
+				if q.AppServer.ReplyOnce && old != nil && old.AppChat == run.AppChat && old.AppRecoveryTerminal {
+					run.AppRecoveryAttempts = old.AppRecoveryAttempts
+					run.AppRecoveryTerminal, run.AppRecoveryWhy = true, old.AppRecoveryWhy
+				}
+			}
+			if err = state.StartRun(run); err != nil {
+				return res, err
+			}
 		}
 
 		if tmux != "" && q.newWindow(tmux, runner, head, lock, me, &res) {
@@ -302,6 +342,11 @@ func Raise(q Request) (Result, error) {
 	res.Code, res.Rung = CodeCalled, RungCall
 	q.callHuman(head, &res)
 	return res, nil
+}
+
+func (q Request) automaticContinuation() bool {
+	return q.AutomaticContinuation || q.RecoveryAttempt != "" || q.Order == "" || q.Order == "продолжай" ||
+		strings.HasPrefix(q.Order, ReplyOrderPrefix) || strings.HasPrefix(q.Order, "продолжай "+q.ID+", эту строку ты уже вёл.")
 }
 
 // Preflight отвечает, есть ли чем поднять голову, не трогая ни замка, ни tmux:
@@ -448,6 +493,14 @@ func (q Request) env(me int, name string) []string {
 		"DEVKIT_TASK_RUN_MODEL=" + q.Model,
 		"DEVKIT_RECOVERY_ATTEMPT=" + q.RecoveryAttempt,
 		LockFromEnv + "=" + fmt.Sprint(me),
+	}
+	if q.AppServer != nil && q.AppServer.Chat != "" {
+		pairs = append(pairs, "DEVKIT_APP_TASK_CHAT="+q.AppServer.Chat)
+		if q.AppServer.Recover {
+			pairs = append(pairs, "DEVKIT_APP_TASK_RECOVER=1")
+		} else {
+			pairs = append(pairs, "DEVKIT_APP_TASK_RECOVER=")
+		}
 	}
 	if name != "" {
 		pairs = append(pairs, "DEVKIT_TMUX="+name)
@@ -793,7 +846,7 @@ func (q Request) readHead() (Head, error) {
 			}
 		}
 	}
-	if protocol != "codex" || len(q.AppServer.Command) == 0 {
+	if protocol != CodexAppProtocol || len(q.AppServer.Command) == 0 {
 		return Head{}, fmt.Errorf("носитель app-server требует профиль protocol=codex и команду доставки")
 	}
 	return Head{Client: q.AppServer.Command, Bin: q.AppServer.Command[0], TurnEnd: TurnExit}, nil

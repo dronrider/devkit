@@ -574,14 +574,13 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 		Prefix: s.headlessEnv(id, sess, hidden) + effortPair(effort), Name: chatName}, nil
 }
 
-// startTaskSession поднимает голову задачи общим подъёмом taskhead.Raise: та
-// же лестница носителей и тот же замок, что у `taskctl run` (DK-935). Дорог
-// сюда четыре: кнопка экрана, подъём ответом человека (wake.go), прогон
-// сценария после выката (checkrun.go) и второй круг ревью (round.go). Заказ
-// каждой собирает зовущий: первый проход зависит от статуса строки, следующие
-// всегда «продолжай», потому что строку к тому времени уже двигали. Правила
-// плана и канала в текст заказа не приписываются (DK-612): их доставляет хук
-// старта сессии.
+// startTaskSession поднимает голову задачи через taskhead.Raise.
+// Лестница носителей и замок общие с taskctl run (DK-935).
+// Этим путём идут кнопка запуска, пробуждение ответом, подъём
+// по лежащей реплике, передача работы, проверка после выката
+// и второй круг ревью. Вызывающая функция задаёт первый
+// и последующие заказы. Правила плана и канала доставляет
+// хук старта сессии (DK-612).
 //
 // role это слово, которым названа голова в списке чатов: «работа» у кнопки
 // экрана, ответа человека и второго круга ревью, «проверка» у прогона
@@ -591,18 +590,19 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 // голову для него, а прогон проверки и второй круг ревью поднимает тик без
 // него, и запись уходит из списка панели.
 //
-// Занятый замок это *headBusy: голову уже поднял кто-то другой, чаще всего тик
-// командой `taskctl run`. Лестница, которой поднять голову нечем, зовёт
-// человека сама, а сюда приходит ошибкой со своими строками.
+// *headBusy означает занятый замок либо закреплённое восстановление
+// рабочего чата Codex. Причину называют исход и ступень taskhead.Raise.
+// Лестница без доступного носителя зовёт человека и возвращает ошибку.
 //
 // effort это ручной уровень глубины размышления из меню запуска (DK-1570):
 // пусто у всех дорог, кроме кнопки, где человек подвинул ползунок. Едет он
 // парой окружения в приставку головы, и живёт ровно этот подъём.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string) (taskhead.Result, error) {
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string, automaticContinuation bool) (taskhead.Result, error) {
 	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden, effort)
 	if err != nil {
 		return taskhead.Result{}, err
 	}
+	q.AutomaticContinuation = automaticContinuation
 	res, err := taskhead.Raise(q)
 	if err != nil {
 		return res, err
@@ -665,13 +665,12 @@ func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness
 	return ""
 }
 
-// headBusy это отказ занятого замка головы задачи.
+// headBusy хранит причину, по которой подъём отложен.
 type headBusy struct{ id, where string }
 
 func (e *headBusy) Error() string { return runBusy(e.id, e.where) }
 
-// runBusy это отказ запуска поверх живой работы. Слова одни у живой
-// tmux-сессии и у занятого замка: для человека причина одна, работа уже идёт.
+// runBusy сообщает, почему второй запуск сейчас невозможен.
 func runBusy(id, where string) string {
 	return fmt.Sprintf("работа %s уже идёт (%s): запускать поверх живой сессии нельзя, сначала стоп", id, where)
 }
@@ -700,8 +699,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		ID string `json:"id"`
-		// Harness это выбранная подписка. Пусто значит «как раньше»: список не
-		// прочитан или экран старый, и работа идёт на подписке по умолчанию.
+		// Пустой Harness оставляет выбор вердикту запуска. Если вердикт
+		// не назвал подписку, используется подписка по умолчанию.
 		Harness string `json:"harness"`
 		// Tier это выбранный человеком ярус. Пусто значит «как назначено»: у
 		// задачи ярус называет вердикт agentctl pick, у цели это pro.
@@ -749,7 +748,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	kind := "task"
@@ -998,7 +997,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что
@@ -1056,7 +1055,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !s.recoveryStopped(w, found.Path, id, true) {
+	if !s.setRecoveryStopped(w, found.Path, id, true) {
 		return
 	}
 	if a := s.appTaskFind("", found.Path, id); a != nil {

@@ -47,7 +47,7 @@ func TestAppTaskSilenceProbeWire(t *testing.T) {
 			peerErr <- json.NewEncoder(peer).Encode(map[string]any{"id": req.ID, "result": map[string]any{"thread": map[string]any{"id": "thread-1", "turns": []any{map[string]any{"id": "turn-1", "status": "completed"}}}}})
 		}()
 		done := make(chan error, 1)
-		go func() { done <- c.waitTaskTurn(turn, "turn-1", nil, 30*time.Minute) }()
+		go func() { done <- c.waitTaskTurn(turn, "turn-1", nil, 30*time.Minute, nil) }()
 		synctest.Wait()
 		time.Sleep(30*time.Minute - time.Nanosecond)
 		synctest.Wait()

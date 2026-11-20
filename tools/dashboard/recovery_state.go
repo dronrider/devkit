@@ -9,15 +9,15 @@ import (
 	"github.com/dronrider/devkit/internal/taskstate"
 )
 
-func (s *server) recoveryStopped(w http.ResponseWriter, root, id string, stopped bool) bool {
-	if err := taskstate.SetStopped(s.cfg.Home, root, id, stopped); err != nil {
+func (s *server) setRecoveryStopped(w http.ResponseWriter, root, id string, stopped bool) bool {
+	if err := taskstate.SetStopped(realHomeFn(), root, id, stopped); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "состояние ручной остановки не сохранено: " + err.Error()})
 		return false
 	}
 	return true
 }
 
-func (s *server) recoveryChatStopped(w http.ResponseWriter, found *Project, sid, action string) bool {
+func (s *server) updateChatRecoveryState(w http.ResponseWriter, found *Project, sid, action string) bool {
 	records := s.bindsAll()[sid]
 	tasks := sessions.Works(records)
 	if id := sessions.LastTask(records); id != "" {
@@ -42,9 +42,9 @@ func (s *server) recoveryChatStopped(w http.ResponseWriter, found *Project, sid,
 			seen[key] = true
 			var err error
 			if action == "invalidate" {
-				err = taskstate.Invalidate(s.cfg.Home, root, id)
+				err = taskstate.Invalidate(realHomeFn(), root, id)
 			} else {
-				err = taskstate.SetStopped(s.cfg.Home, root, id, action == "stop")
+				err = taskstate.SetStopped(realHomeFn(), root, id, action == "stop")
 			}
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "состояние запуска не сохранено: " + err.Error()})

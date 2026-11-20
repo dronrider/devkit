@@ -403,7 +403,7 @@ def remember(sig, home=None):
 
 
 def duty_root(root, call=None, taskctl=None, home=None, act=True,
-              recovery_call=_RECOVERY_DEFAULT):
+              recovery_call=_RECOVERY_DEFAULT, app_only=False):
     """Поднимает дежурного по неразобранным записям исхода корня.
 
     Подпись отказа занимает зафиксированный результат разбора, а не запуск
@@ -420,15 +420,29 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
         recovery_call = call
     call = subprocess.run if call is None else call
     lines = []
-    marks = task_marks(root)
+    marks = [] if app_only else task_marks(root)
     incidents, hook = incident_marks(root, home=home)
+    if app_only and hook is not None:
+        incidents = [item for item in incidents if item[2].get("reason") == hook.APP_RECOVERY_OUT]
     if not marks and not incidents:
         return lines
+    import taskstate
+    tasks = (item[0] for item in marks + incidents)
+    app_runs = taskstate.app_runs(home, root, tasks)
+    owned = {task: run for task, run in app_runs.items() if taskstate.app_handles_recovery(run)}
+    restoring = {task for task, run in owned.items()
+                 if not run["stopped"] and run.get("appRecoveryTerminal") is not True}
+
     known = read_state(home=home)
     tries = read_tries(home=home)
     fresh = set()
     seen = set()
+    for task in sorted(restoring):
+        lines.append("корень %s: дежурный по %s ждёт исхода восстановления чата Codex"
+                     % (root, task))
     for task, why, raw in marks:
+        if task in owned:
+            continue
         sig = signature(why)
         if sig in known or sig in seen:
             # Отказ уже разобран либо уже взят в этом заходе: граница DK-1115,
@@ -518,13 +532,22 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
     # свои, и каждый дописывается в запись инцидента. Очередь общая с метками
     # файлов задач: подпись одна, и дежурный по ней тоже один.
     for task, why, rec in incidents:
+        run = owned.get(task)
+        app_terminal = rec.get("reason") == hook.APP_RECOVERY_OUT
+        if app_terminal:
+            if (not run or run["stopped"] or run.get("appRecoveryTerminal") is not True
+                    or (rec.get("identity") or {}).get("id") != run["id"]):
+                continue
+        elif run:
+            continue
+        legacy_recovery = rec.get("reason") == hook.PROC_GONE
         sig = signature(why)
         ident = rec.get("id") or ""
         if sig in known or sig in seen:
             continue
         seen.add(sig)
         if not act:
-            if rec.get("reason") == hook.PROC_GONE:
+            if legacy_recovery:
                 import recovery
                 lines += recovery.resume(hook, rec, root, call=recovery_call,
                                          taskctl=taskctl, home=home, act=False)
@@ -546,7 +569,7 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
             lines.append("корень %s: по %s появился черновик %s, инцидент %s "
                          "закрыт черновиком" % (root, task, draft, ident))
             continue
-        if rec.get("reason") == hook.PROC_GONE:
+        if legacy_recovery:
             # Первый этап автоматической починки (DK-1645): исчезнувший
             # конвейер поднимается одной проверенной попыткой с бюджетом,
             # машинным замком и доказательством хода. Диагностический

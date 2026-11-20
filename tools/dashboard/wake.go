@@ -26,22 +26,22 @@ import (
 // поднимать и кому подъём не отдавать, живут в одном месте, потому что вторая
 // копия этих правил разошлась бы с первой на первой же правке.
 //
-// Возврат строки из Blocked живёт тут же, а не у зовущих: снять парковку и
-// поднять сессию это один ход. Пока сессия не поднялась, строка стоит
-// припаркованной вопросом, и повторить подъём есть кому.
+// Здесь же снимается парковка вопросом. При ошибке после снятия парковки
+// функция пытается вернуть строку в Blocked с тем же вопросом. При занятом
+// замке или закреплённом рабочем Codex строка остаётся в работе.
 
 // taskWake поднимает сессию по одной разбуженной строке. Возврат тот же, что у
 // подъёма прогона: слова отчёта и два признака, чтобы зовущий знал, поднялось
 // ли что-нибудь и была ли поломка.
 //
-// Порядок ходов тут важнее самих ходов. Парковка вопросом это единственное, чем
-// строку видно тому, кто повторит подъём: тик берёт будимых из Blocked с
-// причиной «вопрос: ...» (wake в tools/devkitctl/watch.py), а лежащий во входе
-// ответ никуда не девается и ждёт следующего захода. Поэтому всё, чем подъём
-// может отказать, спрашивается до снятия парковки, а снимается она последним
-// ходом перед самим подъёмом. Снятая раньше времени, она оставляла бы строку в
-// работе без сессии и без признака ожидания: такую не подхватит ни тик, ни
-// панель, и это ровно тот случай, из которого выросла задача.
+// Тик видит ожидающую строку в Blocked по причине «вопрос: ...» (wake
+// в tools/devkitctl/watch.py). Реплика ждёт во входе, пока её не подхватят.
+// Перед новым запуском проверяется возможность подъёма, затем снимается
+// парковка, чтобы оболочка увидела строку в работе. Ожидающий ответ
+// остаётся доступен из поднятой сессии. Занятый замок и закреплённый
+// рабочий Codex откладывают запуск. При прочих отказах repark пытается
+// вернуть строку в Blocked с прежней причиной, если парковку сняли здесь.
+// Исход возврата входит в сообщение об отказе.
 func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) checkRunReport {
 	row, ok := rows[id]
 	if !ok {
@@ -103,14 +103,13 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
-	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "")
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "", true)
 	if err != nil {
-		// Замок держит живая голова, поднятая мимо дашборда: ответ дойдёт до
-		// неё так же, как до живой tmux-сессии выше, и возвращать строку в
-		// Blocked незачем.
+		// После снятия парковки ответ заберёт живая голова либо дашборд
+		// при возобновлении рабочего чата.
 		var busy *headBusy
 		if errors.As(err, &busy) {
-			return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт (" + busy.where + ")"}
+			return checkRunReport{Line: continuationWaitLine(id, busy.where, res.Rung)}
 		}
 		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error() +
 			s.repark(proj.Path, id, row.Block, parked)}
@@ -350,6 +349,13 @@ func (s *server) headModel(tier string) string {
 	return own.tierModel(tier)
 }
 
+func continuationWaitLine(id, why, rung string) string {
+	if rung == taskhead.RungAppChat {
+		return id + ": " + why
+	}
+	return id + ": подъём не нужен, работа уже идёт (" + why + ")"
+}
+
 // taskReplyRaise поднимает голову задачи по реплике, легшей в её чат (DK-1194).
 // Дорога та же, что у подъёма ответом: одна лестница носителей, один замок, один
 // предполёт. Отличий два, и оба идут от повода.
@@ -374,13 +380,11 @@ func (s *server) taskReplyRaise(proj *Project, id string) (checkRunReport, bool)
 	}
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
 	order := taskhead.ReplyOrder(id)
-	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "")
+	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "", true)
 	if err != nil {
-		// Замок держит голова, поднятая мимо дашборда: реплика дойдёт до неё
-		// подхватом, как дошла бы до живой tmux-сессии.
 		var busy *headBusy
 		if errors.As(err, &busy) {
-			return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт (" + busy.where + ")"}, false
+			return checkRunReport{Line: continuationWaitLine(id, busy.where, res.Rung)}, false
 		}
 		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error()},
 			res.Code == taskhead.CodeCalled

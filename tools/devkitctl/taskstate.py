@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 
@@ -19,20 +20,135 @@ def path(home, root, task):
     return Path(home) / ".devkit" / "task-state" / key / (task + ".json")
 
 
-def read(home, root, task):
-    name = path(home, root, task)
+def _read_file(name):
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(fd, encoding="utf-8") as stream:
         raw = stream.read(65537)
     if len(raw) > 65536:
         raise ValueError("слишком большое состояние задачи")
-    data = json.loads(raw)
+    return json.loads(raw)
+
+
+def read(home, root, task):
+    data = _read_file(path(home, root, task))
     if (not isinstance(data, dict) or data.get("version") != 1 or
             data.get("root") != os.path.realpath(root) or
             data.get("task") != task.upper() or
             type(data.get("stopped")) is not bool):
         raise ValueError("чужое либо неизвестное состояние задачи")
     return data
+
+
+def _interrupted_app_pass(home, task, started):
+    """Читает незавершённый проход прежнего дашборда по журналу оболочки."""
+    try:
+        since = datetime.fromisoformat(started)
+        if since.tzinfo is None:
+            return False
+        after = since.replace(microsecond=0).timestamp()
+        with (home / ".devkit" / "heads" / (task + ".log")).open("rb") as log:
+            stat = os.fstat(log.fileno())
+            if stat.st_mtime < since.timestamp():
+                return False
+            log.seek(max(0, stat.st_size - 64 * 1024))
+            lines = log.read(64 * 1024).decode("utf-8", errors="replace").splitlines()
+    except (OSError, TypeError, ValueError, OverflowError):
+        return False
+
+    active = False
+    for line in lines:
+        stamp, sep, event = line.partition(" task-run %s: " % task)
+        if not sep:
+            continue
+        try:
+            at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
+        except (ValueError, OverflowError, OSError):
+            continue
+        if at < after:
+            continue
+        if event.startswith("проход поднят:") and "--app-turn-client" in event:
+            active = True
+        elif event.startswith(("голова вышла кодом ", "стоп: ")):
+            active = False
+    return active
+
+
+def app_runs(home, root, tasks):
+    """Возвращает рабочие запуски Codex для ограждения общих подъёмов."""
+    home = Path.home() if home is None else Path(home)
+    confirmed, legacy = {}, {}
+    root = os.path.realpath(root)
+    for task in set(tasks):
+        try:
+            data = read(home, root, task)
+        except (OSError, ValueError):
+            continue
+        run = data.get("run")
+        if not isinstance(run, dict) or not run.get("id"):
+            continue
+        if isinstance(run.get("appChat"), str) and run["appChat"]:
+            confirmed[task] = dict(run, stopped=data["stopped"])
+        elif type(run.get("pid")) is int and run["pid"] > 0:
+            legacy[task] = dict(run, stopped=data["stopped"])
+    if not legacy:
+        return confirmed
+
+    # После обновления дашборд перенесёт адрес чата в Run. До этого тик
+    # узнаёт прежний запуск по обоим сохранённым экземплярам его реквизитов.
+    for file in (home / ".devkit" / "chats").glob("as*.json"):
+        try:
+            with file.open(encoding="utf-8") as stream:
+                chat = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(chat, dict) or not isinstance(chat.get("task"), str):
+            continue
+        task = chat["task"]
+        run = legacy.get(task)
+        if (run and chat.get("protocol") == "codex" and chat.get("thread")
+                and chat.get("taskRunSession") == file.stem
+                and chat.get("taskRunRoot") == root
+                and chat.get("taskRunID") == run["id"]
+                and chat.get("taskRunPID") == run["pid"]
+                and chat.get("harness") == run.get("harness")
+                and chat.get("model") == run.get("model")):
+            active = (chat.get("taskRun") is True
+                      or _interrupted_app_pass(home, task, run.get("started")))
+            confirmed[task] = dict(run, appChat=file.stem, appRecovery=active)
+
+    # Дашборд может хранить чаты в своём HOME, а оболочка пишет журнал в
+    # машинном. До сверки адреса дашбордом незавершённый проход удерживает
+    # общий подъём, но сам по себе к запуску не ведёт.
+    for task, run in legacy.items():
+        if task not in confirmed and _interrupted_app_pass(home, task, run.get("started")):
+            confirmed[task] = dict(run, appChat="", appRecovery=True)
+    return confirmed
+
+
+def app_handles_recovery(run):
+    return (run["stopped"] or run.get("appRecovery") is True
+            or run.get("appRecoveryTerminal") is True)
+
+
+def terminal_app_roots(home):
+    """Находит корни для передачи исчерпанных восстановлений дежурному."""
+    roots = set()
+    for name in (Path(home) / ".devkit" / "task-state").glob("*/*.json"):
+        try:
+            data = _read_file(name)
+            if not isinstance(data, dict):
+                continue
+            root, task = data.get("root"), data.get("task")
+            run = data.get("run")
+            if (data.get("version") == 1 and data.get("stopped") is False
+                    and isinstance(root, str) and os.path.isabs(root)
+                    and isinstance(task, str) and path(home, root, task) == name
+                    and isinstance(run, dict) and run.get("appChat")
+                    and run.get("appRecoveryTerminal") is True):
+                roots.add(root)
+        except (OSError, ValueError):
+            continue
+    return roots
 
 
 @contextlib.contextmanager

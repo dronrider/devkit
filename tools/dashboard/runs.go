@@ -665,13 +665,12 @@ func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness
 	return ""
 }
 
-// headBusy это отказ занятого замка головы задачи.
+// headBusy хранит причину, по которой подъём отложен.
 type headBusy struct{ id, where string }
 
 func (e *headBusy) Error() string { return runBusy(e.id, e.where) }
 
-// runBusy это отказ запуска поверх живой работы. Слова одни у живой
-// tmux-сессии и у занятого замка: для человека причина одна, работа уже идёт.
+// runBusy сообщает, почему второй запуск сейчас невозможен.
 func runBusy(id, where string) string {
 	return fmt.Sprintf("работа %s уже идёт (%s): запускать поверх живой сессии нельзя, сначала стоп", id, where)
 }

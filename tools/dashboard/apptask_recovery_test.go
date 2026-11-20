@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -597,5 +599,235 @@ func TestAppTaskRecoveryMigratesLegacyStopFromConfigHome(t *testing.T) {
 				t.Fatalf("старый явный стоп потерян или старый запуск подменён: %+v", state.State)
 			}
 		})
+	}
+}
+
+func TestAppTaskRecoveryDeliversRepeatedTaskMessage(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	runner := filepath.Join(filepath.Dir(e.proj), "devkit", taskhead.TaskRunRel)
+	runnerBody := readFile(t, runner)
+	if !strings.Contains(runnerBody, "IDLE_LIMIT = 3") {
+		t.Fatal("idle limit missing from fixture")
+	}
+	if err := os.WriteFile(runner, []byte(strings.Replace(runnerBody, "IDLE_LIMIT = 3", "IDLE_LIMIT = 10", 1)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitTaskStopped(t, e, sid)
+	e.s.appWorkers.Wait()
+
+	project, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("project missing")
+	}
+	if err := e.s.appTaskRecover(project, sid); err != nil {
+		t.Fatal(err)
+	}
+	live := e.s.appLive(sid)
+	if live == nil {
+		t.Fatal("recovered client missing")
+	}
+
+	text := "Повтори проверку"
+	stamp := time.Now().Truncate(time.Minute)
+	e.s.now = func() time.Time { return stamp }
+	say := func() {
+		t.Helper()
+		resp := postTaskMessage(t, c, e, "XR-002", text)
+		raw := body(t, resp)
+		t.Logf("message response: %s", raw)
+		if resp.StatusCode != http.StatusOK || strings.Contains(raw, `"repeat":true`) {
+			t.Fatalf("new task message %d: %s", resp.StatusCode, raw)
+		}
+	}
+	finish := func() {
+		t.Helper()
+		a := e.s.appTaskFind(sid, "", "")
+		if a == nil {
+			t.Fatal("recovered task missing")
+		}
+		a.lifecycle.Lock()
+		a.lifecycle.Unlock()
+		if _, err := live.proc.call("test/finish", map[string]bool{"keepOpen": true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForInput := func(text string, want int) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+			count := 0
+			for _, line := range strings.Split(log, "\n") {
+				raw, ok := strings.CutPrefix(line, "input ")
+				if !ok {
+					continue
+				}
+				var parts []struct{ Text string }
+				if json.Unmarshal([]byte(raw), &parts) == nil && len(parts) == 1 && parts[0].Text == text {
+					count++
+				}
+			}
+			if count >= want {
+				return
+			}
+			select {
+			case <-tick.C:
+			case <-deadline:
+				t.Fatalf("input %q: got %d, want %d; inbox: %v; log: %s", text, count, want, chat.ReadLines(chat.Path(e.proj, chat.TaskName("XR-002"))), log)
+			}
+		}
+	}
+
+	say()
+	finish()
+	waitForInput(text, 1)
+	finish()
+	waitForInput("Продолжай выполнение XR-002", 2)
+	say()
+	finish()
+	waitForInput(text, 2)
+}
+
+func TestAppTaskImportAssignsStableIDsToLegacyLines(t *testing.T) {
+	for _, raw := range []string{"2026-11-20 12:34, из дашборда: текст", "2026-11-20 12:34, сессии test-session, из дашборда: текст", "текст", "текст [app-import:abc]"} {
+		t.Run(raw, func(t *testing.T) {
+			e, _ := appTaskEnv(t, "mute")
+			p, ok := e.s.projectByName("demo")
+			if !ok {
+				t.Fatal("project missing")
+			}
+			const sid, name = "test-session", "task-XR-002"
+			text := chat.Said(raw)
+			previous := ""
+			for i := 0; i < 2; i++ {
+				if _, err := chat.Put(e.proj, name, text, raw); err != nil {
+					t.Fatal(err)
+				}
+				if err := e.s.appTaskQueueImport(p, sid, "XR-002"); err != nil {
+					t.Fatal(err)
+				}
+				entry, err := e.s.appTaskQueueNext(sid)
+				if err != nil || entry.ID == "" || entry.Claim == previous || entry.Text != text {
+					t.Fatalf("entry %+v: %v", entry, err)
+				}
+				previous = entry.Claim
+				if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {
+					t.Fatal(err)
+				}
+				if next, err := e.s.appTaskQueueNext(sid); err != nil || next.ID != "" {
+					t.Fatalf("duplicate %+v: %v", next, err)
+				}
+			}
+
+		})
+	}
+}
+
+func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitTaskStopped(t, e, sid)
+	e.s.appWorkers.Wait()
+	p, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("project missing")
+	}
+	if err := e.s.appTaskRecover(p, sid); err != nil {
+		t.Fatal(err)
+	}
+	before := e.s.chatStoreRead(sid)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"новая реплика","msg_id":"effort-test","effort":"low"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("say %d: %s", resp.StatusCode, raw)
+	}
+	after := e.s.chatStoreRead(sid)
+	if after.CxEffort != "low" || after.TaskRunID != before.TaskRunID || after.Thread != before.Thread {
+		t.Fatalf("settings before %+v after %+v", before, after)
+	}
+	if live := e.s.appLive(sid); live == nil || live.effortNow() != "low" {
+		t.Fatal("live client did not receive effort")
+	}
+}
+
+func TestAppTaskImportLeavesOtherAddressee(t *testing.T) {
+	e, _ := appTaskEnv(t, "mute")
+	p, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("project missing")
+	}
+	line := "2026-11-20 12:34, сессии other, из дашборда: текст"
+	if _, err := chat.Put(e.proj, "task-XR-002", "текст", line); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskQueueImport(p, "test-session", "XR-002"); err != nil {
+		t.Fatal(err)
+	}
+	lines := chat.ReadLines(chat.Path(e.proj, "task-XR-002"))
+	if len(lines) != 1 || lines[0] != line {
+		t.Fatalf("other addressee: %v", lines)
+	}
+	if next, err := e.s.appTaskQueueNext("test-session"); err != nil || next.ID != "" {
+		t.Fatalf("entry %+v: %v", next, err)
+	}
+}
+
+func TestAppTaskImportRetriesAfterQueueFailure(t *testing.T) {
+	e, _ := appTaskEnv(t, "mute")
+	p, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("project missing")
+	}
+	const sid, name = "test-session", "task-XR-002"
+	if _, err := chat.Put(e.proj, name, "текст", "текст"); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join(chatStoreDir(e.s.cfg.Home), "app-task-queue", sid+".json")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskQueueImport(p, sid, "XR-002"); err == nil {
+		t.Fatal("queue failure was ignored")
+	}
+	lines := chat.ReadLines(chat.Path(e.proj, name))
+	if len(lines) != 1 || chat.Said(lines[0]) != "текст" || chat.Addressee(lines[0]) != sid {
+		t.Fatalf("saved input: %v", lines)
+	}
+	if err := os.Remove(queue); err != nil {
+		t.Fatal(err)
+	}
+	claim := fmt.Sprintf("inbox-%x", sha256.Sum256([]byte(lines[0])))
+	if _, err := e.s.appTaskQueueAdd(sid, claim, "текст"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskQueueImport(p, sid, "XR-002"); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := e.s.appTaskQueueNext(sid)
+	if err != nil || entry.Claim != claim {
+		t.Fatalf("entry %+v: %v", entry, err)
+	}
+	if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := e.s.appTaskQueueNext(sid); err != nil || next.ID != "" {
+		t.Fatalf("duplicate %+v: %v", next, err)
+	}
+	if lines := chat.ReadLines(chat.Path(e.proj, name)); len(lines) != 0 {
+		t.Fatalf("input remains: %v", lines)
 	}
 }

@@ -179,9 +179,10 @@ func (s *server) appTaskClose(a *appTask) {
 		a.lifecycle.Lock()
 		defer a.lifecycle.Unlock()
 		s.appDrop(a.sid, "конвейер задачи остановлен")
-		st := s.chatStoreRead(a.sid)
-		st.TaskRun = false
-		if err := s.chatStoreWrite(a.sid, st); err != nil {
+		if err := s.chatStoreUpdate(a.sid, func(st chatStore) chatStore {
+			st.TaskRun = false
+			return st
+		}); err != nil {
 			s.logf("конец конвейера %s не записался: %v", a.task, err)
 		}
 		s.appMu.Lock()
@@ -296,7 +297,11 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		default:
 		}
 		st.Thread = c.thread
-		if err = s.chatStoreWrite(a.sid, st); err != nil {
+		if err = s.chatStoreUpdate(a.sid, func(current chatStore) chatStore {
+			current.Thread = c.thread
+			st.CxEffort = current.CxEffort
+			return current
+		}); err != nil {
 			return err
 		}
 	}
@@ -497,7 +502,10 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 				err = errors.New("состояние запуска задачи не подтверждено")
 			} else {
 				st.TaskRun, st.TaskRunRoot, st.TaskRunID, st.TaskRunSession = true, state.State.Root, state.State.Run.ID, sid
-				err = s.chatStoreWrite(sid, st)
+				err = s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+					current.TaskRun, current.TaskRunRoot, current.TaskRunID, current.TaskRunSession, current.TaskRunPID = st.TaskRun, st.TaskRunRoot, st.TaskRunID, st.TaskRunSession, st.TaskRunPID
+					return current
+				})
 			}
 			state.Close()
 		}

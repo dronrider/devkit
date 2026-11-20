@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
@@ -86,24 +88,50 @@ func (s *server) appTaskQueueAdd(sid, claim, text string) (appTaskMessage, error
 	return entry, err
 }
 
+var appInboxID = regexp.MustCompile(`(?:^| )\[app-import:[a-f0-9-]+\]$`)
+var appInboxStamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}`)
+
+func appTaskImportLine(line, sid string) string {
+	if !chat.ForMe(line, sid) {
+		return line
+	}
+	head, tail, dashboard := strings.Cut(line, ", из дашборда: ")
+	if dashboard && chat.Addressee(line) == sid && appInboxID.MatchString(head) {
+		return line
+	}
+	mark := ", [app-import:" + msgID() + "]"
+	address := ""
+	if chat.Addressee(line) == "" {
+		address = ", сессии " + sid
+	}
+	if dashboard {
+		return head + address + mark + ", из дашборда: " + tail
+	}
+	stamp := appInboxStamp.FindString(line)
+	if stamp == "" {
+		stamp = "вход"
+	}
+	return stamp + address + mark + ", из дашборда: " + line
+
+}
+
 func (s *server) appTaskQueueImport(p *Project, sid, id string) error {
-	name := chat.TaskName(id)
-	var moved []string
-	for _, line := range chat.ReadLines(chat.Path(p.Path, name)) {
-		if !chat.ForMe(line, sid) {
-			continue
+	return chat.TransferLines(p.Path, chat.TaskName(id), func(line string) string {
+		return appTaskImportLine(line, sid)
+	}, func(lines []string) ([]string, error) {
+		var keep []string
+		for _, line := range lines {
+			if !chat.ForMe(line, sid) {
+				keep = append(keep, line)
+				continue
+			}
+			claim := fmt.Sprintf("inbox-%x", sha256.Sum256([]byte(line)))
+			if _, err := s.appTaskQueueAdd(sid, claim, chat.Said(line)); err != nil {
+				return nil, err
+			}
 		}
-		claim := fmt.Sprintf("inbox-%x", sha256.Sum256([]byte(line)))
-		if _, err := s.appTaskQueueAdd(sid, claim, chat.Said(line)); err != nil {
-			return err
-		}
-		moved = append(moved, line)
-	}
-	if len(moved) == 0 {
-		return nil
-	}
-	_, err := chat.TakeLines(p.Path, name, moved)
-	return err
+		return keep, nil
+	})
 }
 
 func (s *server) appTaskQueueNext(sid string) (appTaskMessage, error) {

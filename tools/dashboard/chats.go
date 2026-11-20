@@ -870,6 +870,17 @@ func (s *server) chatStoreRead(key string) chatStore {
 }
 
 func (s *server) chatStoreWrite(key string, st chatStore) error {
+	return s.chatStoreUpdate(key, func(previous chatStore) chatStore {
+		st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+		st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
+		if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
+			st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+		}
+		return st
+	})
+}
+
+func (s *server) chatStoreUpdate(key string, update func(chatStore) chatStore) error {
 	dir := chatStoreDir(s.cfg.Home)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -879,12 +890,7 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 		return err
 	}
 	defer lock.Close()
-	previous := s.chatStoreRead(key)
-	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
-	st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
-	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
-		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
-	}
+	st := update(s.chatStoreRead(key))
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err

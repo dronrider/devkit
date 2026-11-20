@@ -722,6 +722,23 @@ func (s *server) appSayRecord(sid, text string) {
 	}
 }
 
+func (s *server) appTaskSaveEffort(w http.ResponseWriter, sid, effort string) bool {
+	if effort == "" {
+		return true
+	}
+	if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+		current.CxEffort = effort
+		return current
+	}); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "глубина разговора не записалась: " + err.Error()})
+		return false
+	}
+	if live := s.appLive(sid); live != nil {
+		live.setEffort(effort)
+	}
+	return true
+}
+
 // appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
 // разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
 // называются словами, молчания тут не бывает.
@@ -729,6 +746,9 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	st := s.chatStoreRead(sid)
 	if a := s.appTaskFind(sid, "", ""); a != nil {
 		if a.recover {
+			if !s.appTaskSaveEffort(w, sid, effort) {
+				return
+			}
 			s.appTaskAcceptSay(w, sid, text, claim)
 			return
 		}
@@ -750,6 +770,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		if live := s.appLive(sid); live != nil && live.busyNow() {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "ход прежнего клиента ещё идёт: дождитесь ответа либо остановите его кнопкой стоп"})
 			return
+		}
+		if !s.appTaskSaveEffort(w, sid, effort) {
+			return
+		}
+		if effort != "" {
+			st.CxEffort = effort
 		}
 		entry, err = s.appTaskQueueAdd(sid, claim, text)
 		if err != nil {

@@ -100,14 +100,15 @@ func (e *appFeedEvent) identity() string {
 }
 
 type appFeedIndex struct {
+	mu      sync.Mutex
 	info    os.FileInfo
 	offset  int64
 	pending []byte
 	seen    map[string]bool
 }
 
-// Поля индекса меняются под файловым замком appFeedAppend. appMu защищает
-// только таблицу индексов, чтение диска не задерживает остальные разговоры.
+// appMu защищает таблицу индексов. Свой замок каждого индекса
+// упорядочивает доступ к его полям в горутинах одного процесса.
 func (s *server) appFeedIndex(sid string) *appFeedIndex {
 	s.appMu.Lock()
 	defer s.appMu.Unlock()
@@ -192,12 +193,14 @@ func (s *server) appFeedAppend(sid string, items []reply) error {
 		return err
 	}
 	defer lock.Close()
+	idx := s.appFeedIndex(sid)
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	idx := s.appFeedIndex(sid)
 	if err := idx.refresh(f); err != nil {
 		return err
 	}

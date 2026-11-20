@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -497,5 +498,49 @@ func TestCheckRunPassesActualViaToTaskctl(t *testing.T) {
 	}
 	if !strings.Contains(out, "подписка owner") {
 		t.Fatalf("выбор не виден: %s", out)
+	}
+}
+
+func TestCheckRunCodexEntry(t *testing.T) {
+	shipctl := filepath.Join(t.TempDir(), "shipctl")
+	if out, err := exec.Command("go", "build", "-o", shipctl, ".").CombinedOutput(); err != nil {
+		t.Fatalf("сборка shipctl: %v %s", err, out)
+	}
+	root, calls := checkStand(t)
+	bin := t.TempDir()
+	args := filepath.Join(bin, "args")
+	script := `#!/bin/sh
+case "$1" in
+pick) printf 'tier: base\n' ;;
+harness) printf '%s\n' '{"harnesses":[{"name":"codex","enabled":true,"default":true,"models":[{"tier":"base","model":"model"}]}]}' ;;
+-C) printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
+exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}' ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CHECK_ARGS", args)
+	t.Setenv("TASKCTL_RUN_CODE", "2")
+	cmd := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("check-run: %v %s", err, out)
+	}
+	var reports []struct {
+		Raised bool   `json:"raised"`
+		Line   string `json:"line"`
+	}
+	if err := json.Unmarshal([]byte(out), &reports); err != nil || len(reports) != 1 || !reports[0].Raised || !strings.Contains(reports[0].Line, "fresh") {
+		t.Fatalf("ответ: %s %v", out, err)
+	}
+	data, err := os.ReadFile(args)
+	if err != nil || !strings.Contains(string(data), "Прогони агентскую часть сценария проверки XR-001") {
+		t.Fatalf("заказ: %s %v", data, err)
+	}
+	if strings.Contains(readCalls(t, calls), "run XR-001") {
+		t.Fatal("Codex ушёл через taskctl run")
 	}
 }

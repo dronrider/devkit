@@ -33,6 +33,7 @@ import (
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
+	os.Unsetenv("CODEX_THREAD_ID")
 	// CLAUDE_CONFIG_DIR гасится тоже: прогон из-под живой сессии несёт каталог
 	// подписки с чужими записями реестра, и строка этапа читала бы их, пока
 	// тест ставит свой.

@@ -29,6 +29,7 @@ import (
 // параллельном прогоне пакетов ловил сторож соседа (DK-911).
 func TestMain(m *testing.M) {
 	os.Unsetenv(sessions.SessionEnv)
+	os.Unsetenv("CODEX_THREAD_ID")
 	os.Unsetenv("DEVKIT_TASK")
 	os.Unsetenv(runDepthEnv)
 	os.Unsetenv(taskhead.LockFromEnv)

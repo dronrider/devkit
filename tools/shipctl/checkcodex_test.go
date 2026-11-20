@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/taskhead"
 	"github.com/dronrider/devkit/internal/taskstate"
@@ -200,54 +202,78 @@ wait
 	}
 }
 
-func TestCheckRunCodexEntry(t *testing.T) {
-	root, calls := checkStand(t)
-	bin := t.TempDir()
-	args := filepath.Join(bin, "args")
-	script := `#!/bin/sh
-case "$1" in
-pick) printf 'tier: base\n' ;;
-harness) printf '%s\n' '{"harnesses":[{"name":"codex","enabled":true,"default":true,"models":[{"tier":"base","model":"model"}]}]}' ;;
--C) printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
-exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}' ;;
-*) exit 1 ;;
-esac
-`
-	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {
+func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
+	logPath := filepath.Join(home, ".devkit", "heads", "XR-1-check.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CHECK_ARGS", args)
-	home := t.TempDir()
-	previous := codexWorkerCommand
-	defer func() { codexWorkerCommand = previous }()
-	codexWorkerCommand = func(raw string) (*exec.Cmd, error) {
-		var order codexCheckOrder
-		if err := json.Unmarshal([]byte(raw), &order); err != nil {
-			return nil, err
+	gatePath := filepath.Join(home, "gate")
+	for _, path := range []string{logPath, gatePath} {
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
 		}
-		order.Home = home
-		payload, _ := json.Marshal(order)
-		cmd := exec.Command(os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
-		cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(payload))
-		return cmd, nil
 	}
-	out, failed, err := cmdCheckRun(root, nil, true)
-	if err != nil || failed {
-		t.Fatalf("check-run: %v %v %s", err, failed, out)
+	reader, err := os.OpenFile(logPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var reports []struct {
-		Raised bool   `json:"raised"`
-		Line   string `json:"line"`
+	defer reader.Close()
+	gate, err := os.OpenFile(gatePath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(out), &reports); err != nil || len(reports) != 1 || !reports[0].Raised || !strings.Contains(reports[0].Line, "fresh") {
-		t.Fatalf("ответ: %s %v", out, err)
+	defer gate.Close()
+	bin := t.TempDir()
+	for name, script := range map[string]string{
+		"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\n",
+		"logger":   "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	data, err := os.ReadFile(args)
-	if err != nil || !strings.Contains(string(data), "Прогони агентскую часть сценария проверки XR-001") {
-		t.Fatalf("заказ: %s %v", data, err)
+	alertPath := filepath.Join(home, "alert")
+	finishedPath := filepath.Join(home, "finished")
+	raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: "XR-1", Harness: "codex"})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
+	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(readCalls(t, calls), "run XR-001") {
-		t.Fatal("Codex ушёл через taskctl run")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			cancel()
+			_ = cmd.Wait()
+		}
+	}()
+	var start codexCheckStart
+	if err := json.NewDecoder(out).Decode(&start); err != nil || !start.Started {
+		t.Fatalf("проверяющий не запущен: %+v, %v", start, err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.WriteString("continue\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(finishedPath); err != nil {
+		t.Fatalf("проверяющий не закончил ход: %v", err)
+	}
+	alert, err := os.ReadFile(alertPath)
+	if err != nil || !strings.Contains(string(alert), "-t shipctl XR-1: запись журнала Codex") {
+		t.Fatalf("системный журнал: %q, %v", alert, err)
 	}
 }

@@ -1346,6 +1346,14 @@ shipctl -C ~/projects/myproj check-run
 ```sh
 devkitctl test tools/shipctl -run '^Test(CodexCheckWorker|CheckRunCodexEntry)'
 devkitctl test tools/dashboard -run '^TestRunStopCodexChecker'
+devkitctl test internal -run '^TestName(Assignment|Setting|FileDestinationExpression|FormattedFileDestination)'
+```
+
+Изолированные проверки ID сессии и привязки поля к объекту:
+
+```sh
+devkitctl test internal -run '^Test(OwnCodexSession|NameBoundFieldUse)$'
+devkitctl test tools/agentctl -run '^TestPlanCodexSession$'
 ```
 
 ## Контроль задачи по сроку

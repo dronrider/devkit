@@ -1,6 +1,11 @@
 package reviewaudit
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"testing"
+)
 
 func TestNameAssignmentFieldDeclarationAndGlobalArgument(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
@@ -241,6 +246,41 @@ func consume() string {
 				if err := g.checkNameAssignment(e, fn); err == nil {
 					t.Fatalf("принято чтение поля другого значения при actual_at=%s", actualAt)
 				}
+			}
+		})
+	}
+}
+
+func TestNameBoundFieldUse(t *testing.T) {
+	for _, tc := range []struct {
+		name, receiver string
+		valid          bool
+	}{
+		{"returned_instance", "resolve()", true},
+		{"independent_instance", `Address{file: "other"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const file = "sample.go"
+			tree, err := parser.ParseFile(token.NewFileSet(), file, `package sample
+type Address struct{ file string }
+func resolve() Address {
+ var a Address
+ a.file = "path"
+ return a
+}
+func consume() string {
+ a := `+tc.receiver+`
+ return a.file
+}
+`, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writer, reader := tree.Decls[1].(*ast.FuncDecl), tree.Decls[2].(*ast.FuncDecl)
+			field := writer.Body.List[1].(*ast.AssignStmt).Lhs[0].(*ast.SelectorExpr)
+			read := reader.Body.List[1].(*ast.ReturnStmt).Results[0].(*ast.SelectorExpr)
+			if got := nameBoundFieldUse(queryFunc{file: file, node: writer}, queryFunc{file: file, node: reader}, field, read, false); got != tc.valid {
+				t.Fatalf("связь экземпляра: %v, ожидалось %v", got, tc.valid)
 			}
 		})
 	}

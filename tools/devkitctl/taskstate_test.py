@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from datetime import datetime
 
 import taskstate
 
@@ -47,6 +48,39 @@ class TaskStateTest(unittest.TestCase):
             with self.subTest(field=field):
                 stored.write_text(json.dumps(dict(chat, **{field: value})))
                 self.assertEqual(taskstate.app_runs(self.home, self.root, ["DK-1"]), {})
+
+    def test_legacy_app_run_keeps_ownership_after_interrupted_daemon_shutdown(self):
+        self.data["run"].update(pid=999999, started="2026-11-20T10:00:00+03:00")
+        self.name.write_text(json.dumps(self.data))
+        directory = self.home / ".devkit" / "chats"
+        directory.mkdir()
+        sid = "as-original"
+        chat = {"task": "DK-1", "thread": "thread-one", "protocol": "codex",
+                "taskRunSession": sid, "taskRunID": "run-one", "taskRunPID": 999999,
+                "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
+                "model": "glm-5.3"}
+        (directory / (sid + ".json")).write_text(json.dumps(chat))
+
+        log = self.home / ".devkit" / "heads" / "DK-1.log"
+        log.parent.mkdir()
+        old = datetime.fromisoformat("2026-11-20T09:59:59+03:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        new = datetime.fromisoformat("2026-11-20T10:00:01+03:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        launch = " task-run DK-1: проход поднят: python3 task-run.py --app-turn-client"
+        def write_log(*lines):
+            log.write_text("\n".join(lines) + "\n")
+            modified = datetime.fromisoformat("2026-11-20T10:00:02+03:00").timestamp()
+            os.utime(log, (modified, modified))
+
+        def recovery_owned():
+            run = taskstate.app_runs(self.home, self.root, ["DK-1"])["DK-1"]
+            return taskstate.app_handles_recovery(run)
+
+        write_log(old + launch)
+        self.assertFalse(recovery_owned())
+        write_log(old + launch, new + launch)
+        self.assertTrue(recovery_owned())
+        write_log(old + launch, new + launch, new + " task-run DK-1: стоп: штатное завершение")
+        self.assertFalse(recovery_owned())
 
     def test_owner_acknowledgment_preserves_identity(self):
         taskstate.acknowledge(self.home, self.root, "DK-1", "run-one", os.getpid())

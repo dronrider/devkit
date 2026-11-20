@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 
@@ -36,6 +37,40 @@ def read(home, root, task):
             type(data.get("stopped")) is not bool):
         raise ValueError("чужое либо неизвестное состояние задачи")
     return data
+
+
+def _interrupted_app_pass(home, task, started):
+    """Читает незавершённый проход прежнего дашборда по журналу оболочки."""
+    try:
+        since = datetime.fromisoformat(started)
+        if since.tzinfo is None:
+            return False
+        after = since.replace(microsecond=0).timestamp()
+        with (home / ".devkit" / "heads" / (task + ".log")).open("rb") as log:
+            stat = os.fstat(log.fileno())
+            if stat.st_mtime < since.timestamp():
+                return False
+            log.seek(max(0, stat.st_size - 64 * 1024))
+            lines = log.read(64 * 1024).decode("utf-8", errors="replace").splitlines()
+    except (OSError, TypeError, ValueError, OverflowError):
+        return False
+
+    active = False
+    for line in lines:
+        stamp, sep, event = line.partition(" task-run %s: " % task)
+        if not sep:
+            continue
+        try:
+            at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
+        except (ValueError, OverflowError, OSError):
+            continue
+        if at < after:
+            continue
+        if event.startswith("проход поднят:") and "--app-turn-client" in event:
+            active = True
+        elif event.startswith(("голова вышла кодом ", "стоп: ")):
+            active = False
+    return active
 
 
 def app_runs(home, root, tasks):
@@ -77,7 +112,9 @@ def app_runs(home, root, tasks):
                 and chat.get("taskRunPID") == run["pid"]
                 and chat.get("harness") == run.get("harness")
                 and chat.get("model") == run.get("model")):
-            confirmed[task] = dict(run, appChat=file.stem, appRecovery=chat.get("taskRun") is True)
+            active = (chat.get("taskRun") is True
+                      or _interrupted_app_pass(home, task, run.get("started")))
+            confirmed[task] = dict(run, appChat=file.stem, appRecovery=active)
     return confirmed
 
 

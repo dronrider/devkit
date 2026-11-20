@@ -149,9 +149,14 @@ func codexCheckWorker(raw string) {
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.Dir = o.Root
 	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "CLAUDE_CODE_SESSION_ID=") && !strings.HasPrefix(env, "CODEX_THREAD_ID=") && !strings.HasPrefix(env, "DEVKIT_CHAT_SESSION_ID=") && !strings.HasPrefix(env, "DEVKIT_TASK=") && !strings.HasPrefix(env, "DEVKIT_TMUX=") && !strings.HasPrefix(env, "DEVKIT_TASK_RUN_ID=") && !strings.HasPrefix(env, "DEVKIT_HEADLESS=") && !strings.HasPrefix(env, "DEVKIT_CLOUD_ACK=") && !strings.HasPrefix(env, taskhead.LockFromEnv+"=") {
-			cmd.Env = append(cmd.Env, env)
+		key, _, _ := strings.Cut(env, "=")
+		switch key {
+		case "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "DEVKIT_CHAT_SESSION_ID",
+			"DEVKIT_TASK", "DEVKIT_TMUX", "DEVKIT_TASK_RUN_ID", "DEVKIT_HEADLESS",
+			"DEVKIT_RUN_DEPTH", "DEVKIT_PARENT_SESSION", "DEVKIT_CLOUD_ACK", taskhead.LockFromEnv:
+			continue
 		}
+		cmd.Env = append(cmd.Env, env)
 	}
 	cmd.Env = append(cmd.Env, "DEVKIT_TASK="+o.ID, fmt.Sprintf("%s=%d", taskhead.LockFromEnv, os.Getpid()))
 	cmd.Stderr = log

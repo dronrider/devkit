@@ -33,14 +33,14 @@ func TestCodexCheckWorkerStartsFreshTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := filepath.Join(home, "arguments")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" \"${CLAUDE_CODE_SESSION_ID-unset}\" \"${CODEX_THREAD_ID-unset}\" \"${DEVKIT_TASK-unset}\" > \"$CHECK_ARGS\"\ncat \"$CHECK_EVENTS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" \"${CLAUDE_CODE_SESSION_ID-unset}\" \"${CODEX_THREAD_ID-unset}\" \"${DEVKIT_TASK-unset}\" \"${DEVKIT_RUN_DEPTH-unset}\" \"${DEVKIT_PARENT_SESSION-unset}\" > \"$CHECK_ARGS\"\ncat \"$CHECK_EVENTS\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	o := codexCheckOrder{Root: home, Home: home, ID: "XR-1", Model: "model", Effort: "high", Harness: "codex", Order: "проверить"}
 	raw, _ := json.Marshal(o)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
-	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw), "CHECK_ARGS="+log, "CHECK_EVENTS="+events, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CLAUDE_CODE_SESSION_ID=parent", "CODEX_THREAD_ID=parent", "DEVKIT_TASK=OTHER")
+	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw), "CHECK_ARGS="+log, "CHECK_EVENTS="+events, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CLAUDE_CODE_SESSION_ID=parent", "CODEX_THREAD_ID=parent", "DEVKIT_TASK=OTHER", "DEVKIT_RUN_DEPTH=1", "DEVKIT_PARENT_SESSION=parent")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("воркер: %v %s", err, out)
@@ -53,7 +53,7 @@ func TestCodexCheckWorkerStartsFreshTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--approve-for-me", "--model model", "model_reasoning_effort=\"high\"", "проверить", "unset\nunset\nXR-1"} {
+	for _, want := range []string{"--approve-for-me", "--model model", "model_reasoning_effort=\"high\"", "проверить", "unset\nunset\nXR-1\nunset\nunset"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("нет %q в %q", want, args)
 		}

@@ -127,6 +127,8 @@ func TestNameSettingEnvironmentGuard(t *testing.T) {
 		{"empty", `t.Setenv("OTHER", "")`, `if sid := strings.TrimSpace(os.Getenv("OTHER")); sid != "" { return sid }`, true},
 		{"nonempty", `t.Setenv("OTHER", "value")`, `if sid := strings.TrimSpace(os.Getenv("OTHER")); sid != "" { return sid }`, false},
 		{"reset", `t.Setenv("OTHER", ""); t.Setenv("OTHER", "value")`, `if sid := strings.TrimSpace(os.Getenv("OTHER")); sid != "" { return sid }`, false},
+		{"else", `t.Setenv("OTHER", "")`, `if sid := strings.TrimSpace(os.Getenv("OTHER")); sid != "" { return sid } else { return "wrong" }`, false},
+		{"indirect_reset", `t.Setenv("OTHER", ""); resetOther()`, `if sid := strings.TrimSpace(os.Getenv("OTHER")); sid != "" { return sid }`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,6 +145,7 @@ func Own() string {
  `+tc.guard+`
  return os.Getenv("TOKEN")
 }
+func resetOther() { _ = os.Setenv("OTHER", "value") }
 `)
 			g := newQueryGoSource(source)
 			fn, _ := g.declaration(at("func TestOwn"))

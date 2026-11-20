@@ -3441,8 +3441,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
 		return
 	}
-	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
-	// нет, реплика уходит процессу app-server, а лента живёт файлом.
+	// Реплика чата чужого протокола уходит запросом к app-server.
+	// Дашборд хранит его ленту в отдельном файле.
 	if stored.Protocol != "" {
 		s.appSay(w, found, sid, text, claim, body.Effort, body.Manual)
 		return
@@ -4301,9 +4301,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.chatBlankStart(w, found, sid, st.Task, text, model, harness, effort, claim, "start")
 		return
 	}
-	// Разговор чужого протокола поднимается на месте: процесс app-server
-	// продолжает нить из записи, лента остаётся тем же адресом, и терминальная
-	// механика его не касается.
+	// Клиент app-server продолжает нить из записи. Адрес ленты сохраняется.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		s.appSay(w, found, sid, text, claim, effort, false)
 		return
@@ -4867,8 +4865,7 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	// Состояние разговора чужого протокола это состояние его процесса: реестра
-	// транскриптов у дороги нет, и возраст хода считает сервер.
+	// У чата чужого протокола проверяем состояние клиента, нити и хода.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		if st.SharedSocket != "" {
 			if st.Project != found.Name {

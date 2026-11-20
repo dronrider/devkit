@@ -1,10 +1,8 @@
 package main
 
-// Сервер приложения клиента чужого протокола (Codex app-server): дочерний
-// процесс с обменом JSONL по stdin/stdout. Контракт проверен прямым прогоном
-// установленного клиента (DK-1624): запрос это строка с id и method, ответ
-// приходит тем же id, уведомления (method без id) идут между ответами, и
-// конца хода_result самого по себе не значит: ждут уведомление turn/completed.
+// Codex app-server принимает JSON-RPC через stdin/stdout отдельного процесса
+// или через WebSocket общего сервера. Ответ сохраняет ID запроса. Уведомление
+// turn/completed обозначает конец хода независимо от ответа на turn/start.
 
 import (
 	"bufio"
@@ -59,8 +57,8 @@ type appServer struct {
 	nextID  int64
 	closed  bool
 
-	// Смерть процесса видна один раз: канал закрывается, а слова причины
-	// собираются из stderr к этому моменту.
+	// Закрытие клиента видно один раз. Для отдельного процесса причина
+	// может включать хвост stderr.
 	dead   chan struct{}
 	deadDo sync.Once
 	errMu  sync.Mutex
@@ -97,7 +95,7 @@ func (s *server) appServerStart(h *Harness, dir, agentctl string, note func(meth
 	return p, nil
 }
 
-// readOut разбирает stdout: ответы находят ждущего по id, уведомления уходят
+// readOut разбирает поток JSONL: ответы находят ждущего по ID, уведомления уходят
 // в note. Пустой method у ответа без id это мусор протокола, и он молчит.
 func (p *appServer) readOut(r io.Reader) {
 	br := bufio.NewReaderSize(r, 64*1024)
@@ -185,8 +183,8 @@ func (p *appServer) errTail() string {
 	return strings.Join(p.errLog, "\n")
 }
 
-// errWhyFmt это причина смерти словами: отказ процесса, а при молчаливом
-// выходе хвост stderr, которым клиент обычно и называет свою причину.
+// errWhyFmt возвращает причину закрытия и последние строки stderr,
+// когда завершился отдельный процесс.
 func (p *appServer) errWhyFmt() string {
 	p.errMu.Lock()
 	why, tail := p.errWhy, strings.Join(p.errLog, "\n")
@@ -208,8 +206,8 @@ func (p *appServer) errWhyFmt() string {
 	return "процесс вышел молча"
 }
 
-// call шлёт запрос и ждёт ответа. Пустой msg это смерть процесса: refusal
-// собирается из причины смерти.
+// call отправляет запрос и ждёт ответа. Пустой msg означает, что клиент
+// закрылся. Ошибка называет причину закрытия.
 func (p *appServer) call(method string, params any) (json.RawMessage, error) {
 	p.mu.Lock()
 	if p.closed {
@@ -252,7 +250,7 @@ func (p *appServer) call(method string, params any) (json.RawMessage, error) {
 }
 
 // notify шлёт уведомление без ответа: им останавливают ход, и отказ записи
-// значит, что процесс уже мёртв.
+// значит, что клиент уже закрылся.
 func (p *appServer) notify(method string, params any) error {
 	body, err := json.Marshal(struct {
 		Method string `json:"method"`
@@ -270,8 +268,8 @@ func (p *appServer) notify(method string, params any) error {
 	return err
 }
 
-// kill снимает процесс: им кончают ход, на который клиент не отвечает, и
-// снимают живой процесс под смену модели. Повторный вызов безобиден.
+// kill завершает отдельный процесс или закрывает соединение с общим сервером.
+// Повторный вызов безопасен.
 func (p *appServer) kill() {
 	if p.cmd == nil {
 		p.in.Close()
@@ -284,7 +282,7 @@ func (p *appServer) kill() {
 	}
 }
 
-// gone говорит, закрылся ли процесс.
+// gone сообщает, закрылся ли клиент.
 func (p *appServer) gone() bool {
 	select {
 	case <-p.dead:

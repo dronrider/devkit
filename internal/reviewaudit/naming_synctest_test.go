@@ -67,15 +67,16 @@ func TestTurn(t *testing.T) {
 }
 
 func TestNameAssignmentSynctestRejectsForeignCallbacks(t *testing.T) {
-	for _, tc := range []struct{ name, imports, body string }{
-		{"foreign package", `import "example.com/synctest"`, `synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) })`},
-		{"shadowed package", `import "testing/synctest"`, `synctest := fake; synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) })`},
-		{"uninvoked closure", `import "testing/synctest"`, `f := func() { synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) }) }; _ = f`},
-		{"unrelated callback", `import "testing/synctest"`, `other(func(t *testing.T) { turn := makeTurn(); use(turn) })`},
-		{"foreign Run", `import "testing/synctest"`, `fake.Run("x", func(t *testing.T) { synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) }) })`},
+	for _, tc := range []struct{ name, imports, body, signature string }{
+		{"foreign package", `import "example.com/synctest"`, `synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) })`, "(t *testing.T)"},
+		{"shadowed package", `import "testing/synctest"`, `synctest := fake; synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) })`, "(t *testing.T)"},
+		{"uninvoked closure", `import "testing/synctest"`, `f := func() { synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) }) }; _ = f`, "(t *testing.T)"},
+		{"unrelated callback", `import "testing/synctest"`, `other(func(t *testing.T) { turn := makeTurn(); use(turn) })`, "(t *testing.T)"},
+		{"foreign Run", `import "testing/synctest"`, `fake.Run("x", func(t *testing.T) { synctest.Test(t, func(t *testing.T) { turn := makeTurn(); use(turn) }) })`, "(t *testing.T)"},
+		{"missing testing T", `import "testing/synctest"`, `synctest.Test(nil, func(t *testing.T) { turn := makeTurn(); use(turn) })`, "()"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source, at := synctestProofFixture(t, "package sample\nimport \"testing\"\n"+tc.imports+"\nfunc TestTurn(t *testing.T) {\n"+tc.body+"\n}\n")
+			source, at := synctestProofFixture(t, "package sample\nimport \"testing\"\n"+tc.imports+"\nfunc TestTurn"+tc.signature+" {\n"+tc.body+"\n}\n")
 			g := newQueryGoSource(source)
 			fn, err := g.declaration(at("func TestTurn"))
 			if err != nil {

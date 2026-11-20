@@ -3100,9 +3100,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	// Стоп бывает двух родов, и род называет зовущий: обычный это Escape в
-	// живой терминал, а клин снимается сигналом самому процессу. Мёртвому
-	// терминалу Escape подать некуда, и разговор в клине оставался бы вечным.
+	// В tmux обычный стоп посылает Escape в живой терминал. При клине
+	// сигнал получает сам процесс. Когда терминала уже нет, Escape
+	// подать некуда.
 	var body struct {
 		Kill bool `json:"kill"`
 		// Drop это третий род: снять живую сессию целиком под перезапуск
@@ -3291,8 +3291,8 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 
 // handleChatSay принимает реплику разговора. Во время восстановления
 // Codex реплика сохраняется в очереди. Для терминального клиента дашборд
-// использует живую сессию или продолжает завершившуюся. В окно vscode
-// человек пишет сам.
+// использует живую сессию или продолжает завершившуюся. Клиент без
+// своей tmux-сессии может принять реплику по сокету.
 func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3445,8 +3445,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
 		return
 	}
-	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
-	// нет, реплика уходит процессу app-server, а лента живёт файлом.
+	// У app-server своя лента. При восстановлении реплика ждёт в очереди,
+	// пока дашборд не сможет передать её клиенту исходной нити.
 	if stored.Protocol != "" {
 		s.appSay(w, found, sid, text, claim, body.Effort)
 		return

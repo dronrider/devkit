@@ -15193,7 +15193,8 @@ function chatPanel(project, st) {
             else if (r.body.held) echo.queued(m, r.body.why || "реплика отложена в файл задачи", r.body.task);
             else echo.sent(m);
           } else if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
-          else if (r.body.way === "queued" || r.body.stuck) echo.queued(m, r.body.stuck || r.body.message);
+          else if (r.body.stuck) echo.queued(m, r.body.stuck);
+          else if (r.body.way === "queued") echo.queued(m, r.body.message);
           else echo.sent(m);
           // Дорога сервера приложения отвечает словами сразу, а ответ клиента
           // приходит в ленту ходом: слово уходит в панель, чтобы отправка не

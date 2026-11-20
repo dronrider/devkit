@@ -107,6 +107,56 @@ func TestAppTaskRecoveryRestartsSameThread(t *testing.T) {
 	}
 }
 
+func TestAppTaskRecoveryReportsQueueImportFailure(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	before := e.s.chatStoreRead(sid)
+	e.s.appTasksClose()
+	waitAppTaskLockGone(t, e)
+	e.s.appWorkers.Wait()
+
+	const text = "Сохрани ожидающую реплику"
+	name := chat.TaskName(before.Task)
+	if _, err := chat.Put(e.proj, name, text, chat.TaskLine(e.s.now(), text)); err != nil {
+		t.Fatal(err)
+	}
+	queue := filepath.Join(chatStoreDir(e.s.cfg.Home), "app-task-queue", sid+".json")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		e.s.appTaskRecoveryTick(nil)
+	}
+	notes := 0
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Role == "note" && item.Fail && strings.Contains(item.Text, "не перенесены ожидающие реплики") {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("в исходном чате нужна одна причина отказа переноса, получено %d", notes)
+	}
+	input := chat.ReadLines(chat.Path(e.proj, name))
+	if len(input) != 1 || chat.Said(input[0]) != text || e.s.appTaskFind(sid, "", "") != nil {
+		t.Fatalf("перенос с отказом изменил вход или запустил задачу: %v", input)
+	}
+
+	if err := os.Remove(queue); err != nil {
+		t.Fatal(err)
+	}
+	e.s.appTaskRecoveryTick(nil)
+	appWaitFeed(t, e, sid, text)
+	after := e.s.chatStoreRead(sid)
+	if after.Thread != before.Thread || after.TaskRunID == before.TaskRunID {
+		t.Fatalf("после восстановления очереди не продолжилась исходная нить: %q -> %q", before.Thread, after.Thread)
+	}
+}
+
 func TestAppTaskRecoveryHonorsStopAndExhaustion(t *testing.T) {
 	for _, mode := range []string{"stopped", "exhausted", "model"} {
 		t.Run(mode, func(t *testing.T) {

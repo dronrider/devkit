@@ -24,6 +24,9 @@ import (
 // TaskRunRel это оболочка конвейера задачи внутри дерева devkit.
 const TaskRunRel = "kit/skills/board-task/task-run.py"
 
+// CodexAppProtocol задаёт протокол носителя задачи через app-server.
+const CodexAppProtocol = "codex"
+
 // NotifierRel это уведомитель, которым зовётся человек.
 const NotifierRel = "hooks/notify.py"
 
@@ -843,7 +846,7 @@ func (q Request) readHead() (Head, error) {
 			}
 		}
 	}
-	if protocol != "codex" || len(q.AppServer.Command) == 0 {
+	if protocol != CodexAppProtocol || len(q.AppServer.Command) == 0 {
 		return Head{}, fmt.Errorf("носитель app-server требует профиль protocol=codex и команду доставки")
 	}
 	return Head{Client: q.AppServer.Command, Bin: q.AppServer.Command[0], TurnEnd: TurnExit}, nil

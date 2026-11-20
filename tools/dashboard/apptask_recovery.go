@@ -135,7 +135,7 @@ func (s *server) appTaskRecoveryTick(stop <-chan struct{}) {
 			continue
 		}
 		st := s.chatStoreRead(sid)
-		if st.Protocol != "codex" || st.TaskRunPID <= 0 || st.Thread == "" || st.Task == "" {
+		if st.Protocol != taskhead.CodexAppProtocol || st.TaskRunPID <= 0 || st.Thread == "" || st.Task == "" {
 			continue
 		}
 		p, ok := s.projectByName(st.Project)
@@ -231,6 +231,10 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		return nil
 	}
 	if err := s.appTaskQueueImport(p, sid, st.Task); err != nil {
+		if !errors.Is(err, chat.ErrLocked) {
+			err = fmt.Errorf("не перенесены ожидающие реплики: %w", err)
+			s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+err.Error(), true, "queue-"+run.ID)
+		}
 		return err
 	}
 	h, err := s.appTaskRecoveryHarness(st)
@@ -270,7 +274,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		state.Close()
 		return nil
 	}
-	incident := fmt.Sprintf("codex-%s-%d", current.ID, current.AppRecoveryAttempts+1)
+	incident := fmt.Sprintf("%s-%s-%d", taskhead.CodexAppProtocol, current.ID, current.AppRecoveryAttempts+1)
 	mark, err := s.appTaskBudgetCommand(home, "app-reserve", canonical, st.Task, incident)
 	if err != nil {
 		state.Close()
@@ -464,7 +468,7 @@ func (s *server) appTaskRecoveryEligible(p *Project, st chatStore) (bool, error)
 
 func (s *server) appTaskRecoveryHarness(st chatStore) (*Harness, error) {
 	for _, h := range s.harnesses().Harnesses {
-		if h.Name != st.Harness || h.Protocol != "codex" {
+		if h.Name != st.Harness || h.Protocol != taskhead.CodexAppProtocol {
 			continue
 		}
 		if h.HooksGap != "" {

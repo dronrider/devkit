@@ -236,7 +236,8 @@ class RunDropsPipelineTail(unittest.TestCase):
         # окружения команды целиком, стенд заводит собственные записи.
         import os
         import sys
-        names = ("DEVKIT_TASK", "DEVKIT_RUN_DEPTH", "DEVKIT_TASK_LOCK_FROM",
+        names = ("DEVKIT_CHAT_SESSION_ID", "DEVKIT_EFFORT", "DEVKIT_TASK", "DEVKIT_RUN_DEPTH",
+                 "DEVKIT_TASK_LOCK_FROM",
                  "DEVKIT_TASK_HEAD_SESSION", "DEVKIT_TASK_HEAD_SESSION_ARGS",
                  "DEVKIT_TASK_RUN_ID", "DEVKIT_TASK_RUN_MODEL",
                  "DEVKIT_RECOVERY_ATTEMPT")

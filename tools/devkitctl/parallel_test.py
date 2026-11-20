@@ -175,6 +175,8 @@ class ComponentEnvTest(unittest.TestCase):
     """
 
     POISON = {
+        "DEVKIT_CHAT_SESSION_ID": "parent-chat-session",
+        "DEVKIT_EFFORT": "high",
         "DEVKIT_TASK": "DK-1",
         "DEVKIT_RUN_DEPTH": "2",
         "DEVKIT_TASK_LOCK_FROM": "замок делегата",
@@ -236,12 +238,32 @@ class ComponentEnvTest(unittest.TestCase):
                          "ротация board-task красна при живом хвосте головы:\n%s"
                          % "\n".join(out.splitlines()[-40:]))
 
+    def test_chat_session_does_not_reach_component(self):
+        argv = [sys.executable, "-c",
+                "import os; print(os.environ.get('DEVKIT_CHAT_SESSION_ID', 'absent'))"]
+        proc = subprocess.run(argv, env=parallel.command_env(argv),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "absent")
+        self.assertEqual(os.environ["DEVKIT_CHAT_SESSION_ID"], "parent-chat-session")
+
+    def test_effort_does_not_reach_component(self):
+        argv = [sys.executable, "-c",
+                "import os; print(os.environ.get('DEVKIT_EFFORT', 'absent'))"]
+        proc = subprocess.run(argv, env=parallel.command_env(argv),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "absent")
+        self.assertEqual(os.environ["DEVKIT_EFFORT"], "high")
+
 
 class RunnerDropsPipelineTail(unittest.TestCase):
     """Список хвоста конвейера у раннера сверяется со selfcheck (DK-1694).
 
-    Хвост живёт в трёх копиях, а ComponentEnvTest проверяет свои восемь имён
-    по собственному списку раннера: девятое имя, добавленное в selfcheck
+    Хвост живёт в трёх копиях, а ComponentEnvTest проверяет свой набор имён
+    отдельно от списка раннера: новое имя, добавленное в selfcheck
     и забытое в parallel, уезжало бы в компоненты официального прогона
     незамеченным. Эталон здесь список selfcheck, тот же, что у песочницы
     сюит в testenv_test.

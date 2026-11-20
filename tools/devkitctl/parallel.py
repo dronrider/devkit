@@ -252,6 +252,8 @@ def with_priority(argv):
 # TestRotateHandoff. Стенды снимают тот же хвост своими копиями списка в
 # selfcheck и testenv, намеренные настройки запуска сюда не входят.
 PIPE_ENV_DROP = (
+    "DEVKIT_CHAT_SESSION_ID",
+    "DEVKIT_EFFORT",
     "DEVKIT_TASK",
     "DEVKIT_RUN_DEPTH",
     "DEVKIT_TASK_LOCK_FROM",

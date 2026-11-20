@@ -35,6 +35,8 @@ PY = sys.executable
 # запуска, воронка снимала голову кодом 2. Хвост снимается с песочницы
 # целиком: тест, которому он нужен, передаёт свои значения поверх.
 PIPE_ENV_DROP = (
+    "DEVKIT_CHAT_SESSION_ID",
+    "DEVKIT_EFFORT",
     "DEVKIT_TASK",
     "DEVKIT_RUN_DEPTH",
     "DEVKIT_TASK_LOCK_FROM",

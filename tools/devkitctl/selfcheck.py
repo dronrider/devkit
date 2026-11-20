@@ -60,6 +60,8 @@ GIT_ENV = {
 # круг заводит собственные, а чужой DEVKIT_TASK_RUN_ID заставлял стендовый
 # task-run искать чужую запись восстановления и снимать голову кодом 2.
 PIPE_ENV_DROP = (
+    "DEVKIT_CHAT_SESSION_ID",
+    "DEVKIT_EFFORT",
     "DEVKIT_TASK",
     "DEVKIT_RUN_DEPTH",
     "DEVKIT_TASK_LOCK_FROM",

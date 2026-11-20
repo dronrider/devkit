@@ -92,9 +92,9 @@ JSON не собирается. Флаги команды лежат в `tools/a
 
 ## Адрес файла
 
-Команда ищет адрес по порядку в `DEVKIT_CHAT_SESSION_ID`,
-`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` и `DEVKIT_TMUX`.
-Без адреса в окружении команда требует флаг `--sid`.
+Явный `--sid` задаёт адрес файла. Без флага команда смотрит по порядку в
+`DEVKIT_CHAT_SESSION_ID`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` и
+`DEVKIT_TMUX`. Если ни одна переменная не задана, команда просит `--sid`.
 
 ## Субагент
 

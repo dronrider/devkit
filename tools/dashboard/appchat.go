@@ -356,8 +356,9 @@ func (s *server) appLive(sid string) *appChat {
 	return nil
 }
 
-// appDead убирает мёртвый процесс из реестра и, если ход был открыт, называет
-// его обрыв в ленте: вечного ожидания ответа дорога не оставляет.
+// appDead удаляет закрытого клиента из реестра. При обрыве отдельного
+// процесса лента сообщает о незавершённом ходе. Общий сервер может продолжить
+// ход, пока дашборд переподключается.
 func (s *server) appDead(sid string, expected *appChat) {
 	s.appMu.Lock()
 	c := s.appChats[sid]
@@ -451,9 +452,9 @@ func (s *server) appTurnParams(c *appChat, text, effort string) map[string]any {
 var errAppStarting = errors.New("клиент разговора уже запускается: дождитесь запуска и повторите отправку")
 var errAppTurnBusy = errors.New("ход уже идёт: дождитесь ответа либо остановите ход кнопкой стоп")
 
-// appSpawn поднимает процесс сервера приложения и готовит нить: свежую либо
-// продолжением. Отказ на любом шаге убивает процесс и называется словами с
-// хвостом stderr, потому что причины входа клиент пишет именно туда.
+// appSpawn готовит новую или сохранённую нить через отдельный процесс
+// либо общее соединение. При отказе закрывает клиент и возвращает причину.
+// Для отдельного процесса к причине добавляется хвост stderr.
 func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread string, cancelled ...<-chan struct{}) (*appChat, error) {
 	s.appMu.Lock()
 	if s.appStarting[sid] != nil || s.appChats[sid] != nil {
@@ -605,8 +606,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 			return fail(err)
 		}
 	}
-	// Смерть процесса после подъёма: о ней узнаёт лента сразу же, а не следующим
-	// заходом человека в разговор.
+	// Закрытие клиента сразу освобождает запись для переподключения.
 	s.appWorkers.Go(func() {
 		<-proc.dead
 		s.appDead(sid, c)
@@ -861,9 +861,8 @@ func (s *server) appSayRecord(sid, text string) {
 	}
 }
 
-// appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
-// разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
-// называются словами, молчания тут не бывает.
+// appSay отправляет реплику через живого клиента или поднимает соединение.
+// При отказе доставки, занятости и обрыве возвращает причину в панель.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string, manual bool) {
 	s.appMu.Lock()
 	if s.appSayLocks == nil {
@@ -1193,7 +1192,7 @@ func (s *server) appDrop(sid, why string) {
 		return
 	}
 	c.proc.kill()
-	s.logf("процесс app-server разговора %s снят: %s", sid, why)
+	s.logf("клиент app-server разговора %s закрыт: %s", sid, why)
 }
 
 // appStatus сообщает панели, жив ли клиент (процесс или соединение), идёт ли

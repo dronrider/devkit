@@ -243,9 +243,8 @@ func (s *server) appFeedRead(sid string) []reply {
 	return appFeedParse(data)
 }
 
-// appFeedParse разбирает ленту из прочитанного файла: ключ и номер записи это
-// её строка в файле, и разбор отделён от чтения, чтобы поток брал записи и
-// смещение хвоста из одного снимка.
+// appFeedParse разбирает снимок ленты. Обычная запись получает номер строки,
+// а замена сохраняет позицию прежнего эха.
 func appFeedParse(data []byte) []reply {
 	out := []reply{}
 	positions := map[int]int{}
@@ -1008,7 +1007,7 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 			"модель %s не определилась подпиской чужого протокола", chatModelName(model, harness))})
 		return
 	}
-	socket, err := appNewSharedSocket(h, st)
+	socket, err := appSharedSocketPath(h, st)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "refused": err.Error()})
 		return
@@ -1321,9 +1320,8 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// appFeedStream это лента живым потоком: хвост файла уезжает событиями по
-// мере записи, как у транскриптной ленты. Ключ записи это её номер в файле, и
-// счётчик продолжает нумерацию чтения без разрыва.
+// appFeedStream отправляет дописанные строки ленты. У новой записи ключ
+// берётся из номера строки. Событие replace использует ключ заменяемой записи.
 func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file string) {
 	f, ok := sseOpen(w)
 	if !ok {

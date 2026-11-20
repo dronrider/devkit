@@ -3283,10 +3283,8 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
 }
 
-// handleChatSay доставляет реплику диалогу. Правило одно на три состояния:
-// живому процессу реплика подаётся прямо в него, кончившемуся поднимается
-// продолжение той же сессии, а окно vscode дашборду не принадлежит, и туда
-// человек пишет сам.
+// handleChatSay доставляет реплику живому клиенту или возобновляет сессию.
+// Окном VS Code управляет сам человек.
 func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3345,9 +3343,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
-		// Effort это ручной уровень глубины из ползунка меню модели (DK-1570).
-		// Едет он только с репликой, которая поднимает сессию: живому процессу
-		// уровень не доставить, и выбор ждёт следующего подъёма.
+		// Effort задаёт глубину хода из меню модели (DK-1570). App-server
+		// применяет её при отправке, терминальный клиент при подъёме.
 		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
@@ -4571,9 +4568,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
-	// новая нить заводится следующим ходом, а лента остаётся: это и есть
-	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
+	// При смене модели отдельный клиент закрывается и следующий ход создаёт
+	// новую нить. Общий чат закрывает соединение, но сохраняет прежнюю нить.
+	// Лента остаётся в обоих случаях.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		wasModel, wasHarness := st.Model, st.Harness
 		st.Model, st.Harness = model, harness

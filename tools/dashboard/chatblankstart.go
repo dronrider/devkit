@@ -118,7 +118,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 			s.appStartRecord(w, found, id, blank, text, model, harness, effort, chatStore{SharedFirst: claim})
 		} else {
 			if st.Protocol == "" {
-				socket, err := appNewSharedSocket(h, st)
+				socket, err := appSharedSocketPath(h, st)
 				if err != nil {
 					writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "refused": err.Error()})
 					return

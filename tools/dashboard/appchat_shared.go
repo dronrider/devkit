@@ -34,7 +34,7 @@ func appSharedHome(h *Harness) string {
 	return filepath.Join(realHomeFn(), ".codex")
 }
 
-func appNewSharedSocket(h *Harness, st chatStore) (string, error) {
+func appSharedSocketPath(h *Harness, st chatStore) (string, error) {
 	if !appSharedHarness(h) || st.GroomSource != "" || st.TaskRun || st.TaskRunPID != 0 {
 		return "", nil
 	}
@@ -240,7 +240,7 @@ func (s *server) appSharedTurnError(w http.ResponseWriter, err error) bool {
 // appSharedMigrate сохраняет адрес общего сервера до следующего хода.
 // appMu и c.mu резервируют прежнего клиента, пока обновляется запись разговора.
 func (s *server) appSharedMigrate(sid string, h *Harness, st *chatStore) error {
-	socket, err := appNewSharedSocket(h, *st)
+	socket, err := appSharedSocketPath(h, *st)
 	if err != nil || socket == "" {
 		return err
 	}

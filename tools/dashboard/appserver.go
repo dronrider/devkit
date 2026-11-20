@@ -249,8 +249,8 @@ func (p *appServer) call(method string, params any) (json.RawMessage, error) {
 	}
 }
 
-// notify шлёт уведомление без ответа: им останавливают ход, и отказ записи
-// значит, что клиент уже закрылся.
+// notify отправляет уведомление без RPC-ответа. Ошибка записи сообщает,
+// что дашборд не смог отправить уведомление.
 func (p *appServer) notify(method string, params any) error {
 	body, err := json.Marshal(struct {
 		Method string `json:"method"`

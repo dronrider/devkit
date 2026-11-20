@@ -19,9 +19,200 @@ import (
 	"github.com/dronrider/devkit/internal/taskstate"
 )
 
-type appTaskNote struct {
-	Method string
-	Params json.RawMessage
+type appTaskTurn struct {
+	thread string
+	turn   string
+	last   time.Time
+	seq    uint64
+	early  map[string]appTaskActivity
+	wake   chan struct{}
+	ends   chan json.RawMessage
+}
+
+type appTaskActivity struct{ last time.Time }
+
+func appTaskTurnID(method string, params json.RawMessage, thread string) string {
+	var ids struct {
+		Thread string `json:"threadId"`
+		TurnID string `json:"turnId"`
+		Turn   struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(params, &ids) != nil || ids.Thread != thread {
+		return ""
+	}
+	if method == "turn/started" || method == "turn/completed" {
+		return ids.Turn.ID
+	}
+	return ids.TurnID
+}
+
+// The chat lock guards activity while the request is still returning its turn ID.
+func (t *appTaskTurn) note(method string, params json.RawMessage, now time.Time) {
+	turn := appTaskTurnID(method, params, t.thread)
+	if turn == "" || t.turn != "" && t.turn != turn {
+		return
+	}
+	t.seq++
+	if t.turn == "" {
+		t.early[turn] = appTaskActivity{last: now}
+	} else {
+		t.last = now
+	}
+	if method == "turn/completed" {
+		select {
+		case t.ends <- params:
+		default:
+		}
+	}
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (c *appChat) waitTaskTurn(t *appTaskTurn, turn string, stop <-chan struct{}, cap time.Duration) error {
+	return c.waitTaskTurnProbe(t, turn, stop, cap, func() (json.RawMessage, error) {
+		return c.proc.call("thread/read", map[string]any{"threadId": t.thread, "includeTurns": true})
+	})
+}
+
+func (c *appChat) waitTaskTurnProbe(t *appTaskTurn, turn string, stop <-chan struct{}, cap time.Duration, probe func() (json.RawMessage, error)) error {
+	c.mu.Lock()
+	t.turn = turn
+	if activity := t.early[turn]; activity.last.After(t.last) {
+		t.last = activity.last
+	}
+	t.early = nil
+	c.mu.Unlock()
+	remaining := func() time.Duration { c.mu.Lock(); defer c.mu.Unlock(); return time.Until(t.last.Add(cap)) }
+	finish := func(err error) error {
+		c.mu.Lock()
+		c.busy = false
+		c.mu.Unlock()
+		return err
+	}
+	type probeResult struct {
+		raw json.RawMessage
+		err error
+		seq uint64
+	}
+	var results <-chan probeResult
+	timer := time.NewTimer(remaining())
+	defer timer.Stop()
+	for {
+		select {
+		case <-stop:
+			return errors.New("конвейер задачи остановлен")
+		case <-c.proc.dead:
+			return fmt.Errorf("процесс клиента вышел: %s", c.proc.errWhyFmt())
+		case <-timer.C:
+			c.mu.Lock()
+			left, seq := time.Until(t.last.Add(cap)), t.seq
+			c.mu.Unlock()
+			if left > 0 {
+				timer.Reset(left)
+				continue
+			}
+			ch := make(chan probeResult, 1)
+			results = ch
+			go func() { raw, err := probe(); ch <- probeResult{raw, err, seq} }()
+		case <-t.wake:
+			if results == nil {
+				timer.Reset(remaining())
+			}
+		case params := <-t.ends:
+			select {
+			case <-stop:
+				return errors.New("конвейер задачи остановлен")
+			default:
+			}
+			complete, err := appTaskCompletion(params, t.thread, turn)
+			if complete {
+				return finish(err)
+			}
+		case result := <-results:
+			results = nil
+			active, status, err := appTaskProbeStatus(result.raw, t.thread, turn, result.err)
+			// A newer event wins over a stale response, including errors and terminal states.
+			c.mu.Lock()
+			if t.seq != result.seq {
+				c.mu.Unlock()
+				timer.Reset(remaining())
+				continue
+			}
+			select {
+			case <-stop:
+				c.mu.Unlock()
+				return errors.New("конвейер задачи остановлен")
+			default:
+			}
+			select {
+			case <-c.proc.dead:
+				c.mu.Unlock()
+				return fmt.Errorf("процесс клиента вышел: %s", c.proc.errWhyFmt())
+			default:
+			}
+			if err != nil {
+				c.mu.Unlock()
+				return err
+			}
+			if active {
+				t.last = time.Now()
+				c.mu.Unlock()
+				timer.Reset(cap)
+				continue
+			}
+			_, err = appTaskCompletion(status, t.thread, turn)
+			c.busy = false
+			c.mu.Unlock()
+			return err
+		}
+	}
+}
+
+// The exact turn supplies terminal status. An active matching thread also
+// renews waiting when Codex has not yet projected the running turn into history.
+func appTaskProbeStatus(raw json.RawMessage, thread, turn string, callErr error) (bool, json.RawMessage, error) {
+	if callErr != nil {
+		return false, nil, fmt.Errorf("не удалось проверить ход Codex после тишины: %w", callErr)
+	}
+	var response struct {
+		Thread struct {
+			ID     string `json:"id"`
+			Status struct {
+				Type string `json:"type"`
+			} `json:"status"`
+			Turns []json.RawMessage `json:"turns"`
+		} `json:"thread"`
+	}
+	if json.Unmarshal(raw, &response) != nil || response.Thread.ID != thread {
+		return false, nil, errors.New("не удалось проверить ход Codex: нить не подтверждена")
+	}
+	for _, entry := range response.Thread.Turns {
+		var item struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		if json.Unmarshal(entry, &item) != nil || item.ID != turn {
+			continue
+		}
+		switch item.Status {
+		case "inProgress":
+			return true, nil, nil
+		case "completed", "failed", "interrupted":
+			params, err := json.Marshal(struct {
+				Thread string          `json:"threadId"`
+				Turn   json.RawMessage `json:"turn"`
+			}{thread, entry})
+			return false, params, err
+		}
+	}
+	if response.Thread.Status.Type == "active" {
+		return true, nil, nil
+	}
+	return false, nil, errors.New("не удалось проверить ход Codex: состояние хода не подтверждено")
 }
 
 type appTask struct {
@@ -170,16 +361,16 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 			return err
 		}
 	}
-	notes := make(chan appTaskNote, 128)
+	turn := &appTaskTurn{thread: c.thread, last: time.Now(), early: make(map[string]appTaskActivity), wake: make(chan struct{}, 1), ends: make(chan json.RawMessage, 128)}
 	c.mu.Lock()
 	if c.busy {
 		c.mu.Unlock()
 		return errAppTurnBusy
 	}
-	c.taskNotes = notes
+	c.taskTurn = turn
 	c.busy, c.turnAt = true, s.now()
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); c.taskNotes = nil; c.mu.Unlock() }()
+	defer func() { c.mu.Lock(); c.taskTurn = nil; c.mu.Unlock() }()
 	s.appSayRecord(a.sid, req.Order)
 	raw, err := c.proc.call("turn/start", s.appTurnParams(c, req.Order, st.CxEffort))
 	if err != nil {
@@ -199,29 +390,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	case a.ready <- nil:
 	default:
 	}
-	timer := time.NewTimer(appBusyCap)
-	defer timer.Stop()
-	for {
-		select {
-		case <-a.stop:
-			return errors.New("конвейер задачи остановлен")
-		case <-c.proc.dead:
-			return fmt.Errorf("процесс клиента вышел: %s", c.proc.errWhyFmt())
-		case <-timer.C:
-			return errors.New("ход конвейера не завершился в срок")
-		case n := <-notes:
-			if n.Method != "turn/completed" {
-				continue
-			}
-			complete, err := appTaskCompletion(n.Params, c.thread, started.Turn.ID)
-			if complete {
-				c.mu.Lock()
-				c.busy = false
-				c.mu.Unlock()
-				return err
-			}
-		}
-	}
+	return c.waitTaskTurn(turn, started.Turn.ID, a.stop, appBusyCap)
 }
 
 func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *Harness, tier, effort, order string) {

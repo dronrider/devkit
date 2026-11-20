@@ -1045,3 +1045,57 @@ func TestAppTaskImportRetriesAfterQueueFailure(t *testing.T) {
 		t.Fatalf("input remains: %v", lines)
 	}
 }
+
+func TestAppTaskRecoveryReportsUnreadableRunState(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	before := e.s.chatStoreRead(sid)
+	e.s.appTasksClose()
+	waitAppTaskLockGone(t, e)
+	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
+
+	path, _, err := taskstate.Path(e.home, e.proj, before.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := e.s.appTaskRecoveryTick(nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const reason = "Восстановление конвейера Codex ждёт: не прочитано состояние рабочего запуска"
+	notes := 0
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Role == "note" && item.Fail && item.Text == reason {
+			notes++
+		}
+	}
+	if notes != 1 || e.s.appTaskFind(sid, "", "") != nil {
+		t.Fatalf("ожидалась одна причина в исходном чате и отсутствие запуска, записей: %d", notes)
+	}
+
+	if err := os.WriteFile(path, saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskRecoveryTick(nil); err != nil {
+		t.Fatal(err)
+	}
+	appWaitFeed(t, e, sid, "Конвейер Codex продолжен в исходном разговоре")
+	after := e.s.chatStoreRead(sid)
+	if after.Thread != before.Thread || after.TaskRunID == before.TaskRunID {
+		t.Fatalf("после восстановления состояния не продолжилась исходная нить: %q -> %q", before.Thread, after.Thread)
+	}
+}

@@ -658,6 +658,20 @@ func TestAppTaskRecoveryDeliversRepeatedTaskMessage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	inputCount := func(log, text string) int {
+		count := 0
+		for _, line := range strings.Split(log, "\n") {
+			raw, ok := strings.CutPrefix(line, "input ")
+			if !ok {
+				continue
+			}
+			var parts []struct{ Text string }
+			if json.Unmarshal([]byte(raw), &parts) == nil && len(parts) == 1 && parts[0].Text == text {
+				count++
+			}
+		}
+		return count
+	}
 	waitForInput := func(text string, want int) {
 		t.Helper()
 		deadline := time.After(5 * time.Second)
@@ -665,19 +679,12 @@ func TestAppTaskRecoveryDeliversRepeatedTaskMessage(t *testing.T) {
 		defer tick.Stop()
 		for {
 			log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
-			count := 0
-			for _, line := range strings.Split(log, "\n") {
-				raw, ok := strings.CutPrefix(line, "input ")
-				if !ok {
-					continue
-				}
-				var parts []struct{ Text string }
-				if json.Unmarshal([]byte(raw), &parts) == nil && len(parts) == 1 && parts[0].Text == text {
-					count++
-				}
-			}
-			if count >= want {
+			count := inputCount(log, text)
+			if count == want {
 				return
+			}
+			if count > want {
+				t.Fatalf("input %q duplicated: got %d, want %d", text, count, want)
 			}
 			select {
 			case <-tick.C:
@@ -695,9 +702,14 @@ func TestAppTaskRecoveryDeliversRepeatedTaskMessage(t *testing.T) {
 	say()
 	finish()
 	waitForInput(text, 2)
+	finish()
+	waitForInput("Продолжай выполнение XR-002", 3)
+	if count := inputCount(readFile(t, filepath.Join(e.proj, "fake-app-log")), text); count != 2 {
+		t.Fatalf("input %q: got %d, want 2", text, count)
+	}
 }
 
-func TestAppTaskImportAssignsStableIDsToLegacyLines(t *testing.T) {
+func TestAppTaskImportAssignsDistinctIDsToLegacyLines(t *testing.T) {
 	for _, raw := range []string{"2026-11-20 12:34, из дашборда: текст", "2026-11-20 12:34, сессии test-session, из дашборда: текст", "текст", "текст [app-import:abc]"} {
 		t.Run(raw, func(t *testing.T) {
 			e, _ := appTaskEnv(t, "mute")
@@ -707,7 +719,7 @@ func TestAppTaskImportAssignsStableIDsToLegacyLines(t *testing.T) {
 			}
 			const sid, name = "test-session", "task-XR-002"
 			text := chat.Said(raw)
-			previous := ""
+			var previous appTaskMessage
 			for i := 0; i < 2; i++ {
 				if _, err := chat.Put(e.proj, name, text, raw); err != nil {
 					t.Fatal(err)
@@ -716,10 +728,10 @@ func TestAppTaskImportAssignsStableIDsToLegacyLines(t *testing.T) {
 					t.Fatal(err)
 				}
 				entry, err := e.s.appTaskQueueNext(sid)
-				if err != nil || entry.ID == "" || entry.Claim == previous || entry.Text != text {
+				if err != nil || entry.ID == "" || entry.ID == previous.ID || entry.Claim == previous.Claim || entry.Text != text {
 					t.Fatalf("entry %+v: %v", entry, err)
 				}
-				previous = entry.Claim
+				previous = entry
 				if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {
 					t.Fatal(err)
 				}
@@ -811,14 +823,15 @@ func TestAppTaskImportRetriesAfterQueueFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim := fmt.Sprintf("inbox-%x", sha256.Sum256([]byte(lines[0])))
-	if _, err := e.s.appTaskQueueAdd(sid, claim, "текст"); err != nil {
+	stored, err := e.s.appTaskQueueAdd(sid, claim, "текст")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.appTaskQueueImport(p, sid, "XR-002"); err != nil {
 		t.Fatal(err)
 	}
 	entry, err := e.s.appTaskQueueNext(sid)
-	if err != nil || entry.Claim != claim {
+	if err != nil || entry.Claim != claim || entry.ID != stored.ID {
 		t.Fatalf("entry %+v: %v", entry, err)
 	}
 	if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {

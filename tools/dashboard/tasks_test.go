@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/loadfail"
+	"github.com/dronrider/devkit/internal/runsguard"
 	"github.com/dronrider/devkit/internal/sessions"
 )
 
@@ -143,7 +144,7 @@ func TestMain(m *testing.M) {
 	// где тесты гоняют (замечание ревью DK-1163). Тест со своим домом ставит
 	// его поверх (swapClientHome).
 	clientHomeFn = func(string) string { return spare }
-	code := m.Run()
+	code := runsguard.Guard(m)
 	// Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет
 	// строку реестра в машинный дом (runs.go, headRequest), и стенд без
 	// подмены дома (useHeadHome) ложит её сюда. Файл читают все тесты прогона

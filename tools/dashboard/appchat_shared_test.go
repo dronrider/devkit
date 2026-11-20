@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -161,5 +164,66 @@ func TestAppSharedUnknownReceiptWaitsForMatchingUserItem(t *testing.T) {
 	appendUser("current", "item-3", "request")
 	if err := s.appTurn(c, "same text", true, "request"); err != nil {
 		t.Fatalf("собственная реплика не подтвердила доставку: %v", err)
+	}
+}
+
+func TestAppSharedMigrateIdleAndBusy(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "dk-shared-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv(appSharedSocketEnv, socket)
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+	h := &Harness{Name: "codex", Protocol: "codex"}
+	st := chatStore{Thread: "old-thread", Project: "demo"}
+	if err := s.chatStoreWrite("as-old", st); err != nil {
+		t.Fatal(err)
+	}
+	in, out := io.Pipe()
+	defer in.Close()
+	dead := make(chan struct{})
+	close(dead)
+	c := &appChat{sid: "as-old", proc: &appServer{in: out, dead: dead}, busy: true}
+	s.appChats[c.sid] = c
+	if err := s.appSharedMigrate(c.sid, h, &st); !errors.Is(err, errAppTurnBusy) {
+		t.Fatalf("busy: %v", err)
+	}
+	if s.chatStoreRead(c.sid).SharedSocket != "" || s.appChats[c.sid] != c {
+		t.Fatal("active client was changed")
+	}
+	c.busy = false
+	if err := s.appSharedMigrate(c.sid, h, &st); err != nil {
+		t.Fatal(err)
+	}
+	got := s.chatStoreRead(c.sid)
+	if got.SharedSocket != socket || got.Thread != "old-thread" || s.appChats[c.sid] != nil {
+		t.Fatalf("binding: %+v", got)
+	}
+	if !c.busyNow() {
+		t.Fatal("removed client can accept another turn")
+	}
+}
+
+func TestAppSharedMigrateSkipsExcludedProfiles(t *testing.T) {
+	t.Setenv(appSharedSocketEnv, filepath.Join(t.TempDir(), "codex.sock"))
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+	for _, tc := range []struct {
+		h  *Harness
+		st chatStore
+	}{
+		{&Harness{Protocol: "codex"}, chatStore{Thread: "t", TaskRun: true}},
+		{&Harness{Protocol: "codex"}, chatStore{Thread: "t", GroomSource: "DK-1"}},
+		{&Harness{Protocol: "other"}, chatStore{Thread: "t"}},
+	} {
+		if err := s.appSharedMigrate("as-excluded", tc.h, &tc.st); err != nil || tc.st.SharedSocket != "" {
+			t.Fatalf("excluded: %+v %v", tc, err)
+		}
 	}
 }

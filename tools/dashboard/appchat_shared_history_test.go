@@ -16,6 +16,22 @@ func TestAppSharedImageOnlyUserMessage(t *testing.T) {
 	}
 }
 
+func TestAppSharedDedupOrphanLegacyEcho(t *testing.T) {
+	old := reply{Role: "user", Wire: "same", Time: "2026-11-20T06:39:48Z"}
+	index := appLegacyEchoes([]reply{old}, "thread-1")
+	item := reply{
+		Role: "user", Wire: old.Wire, Time: "2026-11-20T06:39:49Z",
+		App: &appFeedEvent{ThreadID: "thread-1", TurnID: "unrecorded", Item: map[string]any{"clientId": "desktop"}},
+	}
+	if index.consume(item) {
+		t.Fatal("реплика из Codex совпала со старым эхом дашборда")
+	}
+	delete(item.App.Item, "clientId")
+	if !index.consume(item) || index.consume(item) {
+		t.Fatal("старое эхо должно поглотить только одну запись истории")
+	}
+}
+
 func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	const first = `{"data":[{"id":"turn-1","status":"completed","startedAt":10,"items":[
 		{"type":"userMessage","id":"user-1","startedAtMs":11000,"content":[{"type":"text","text":"первая"},{"type":"localImage"},{"type":"text","text":"строка"}]},
@@ -64,6 +80,16 @@ func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	chat := &appChat{sid: "as-history", thread: "thread-1", proc: proc}
 	home := t.TempDir()
 	s := newServer(&Config{Home: home}, nil, nil)
+	previous := []reply{
+		{Role: "user", Text: "первая\nстрока", Wire: "первая\nстрока"},
+		{Role: "assistant", Text: "первый ответ", App: &appFeedEvent{
+			Method: "item/completed", ThreadID: chat.thread, TurnID: "turn-1",
+			Item: map[string]any{"id": "agent-1", "type": "agentMessage"},
+		}},
+	}
+	if err := s.appFeedAppend(chat.sid, previous); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.appSharedBackfill(chat); err != nil {
 		t.Fatal(err)
 	}
@@ -81,9 +107,8 @@ func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("в ленте %d записей, жду 3: %+v", len(items), items)
 	}
-	if items[0].Role != "user" || items[0].Text != "первая\nстрока\n[изображение]" || items[0].Wire != "первая\nстрока" ||
-		items[0].Time != "1970-01-01T00:00:11Z" || items[0].App.identity() !=
-		appEventIdentity("item/completed", chat.thread, "turn-1", "user-1") {
+	if items[0].Role != "user" || items[0].Text != "первая\nстрока" || items[0].Wire != "первая\nстрока" ||
+		items[0].App != nil {
 		t.Fatalf("первая реплика: %+v", items[0])
 	}
 	if items[1].Role != "assistant" || items[1].Text != "первый ответ" {

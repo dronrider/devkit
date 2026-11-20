@@ -840,6 +840,17 @@ func (s *server) appSayRecord(sid, text string) {
 // разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
 // называются словами, молчания тут не бывает.
 func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
+	s.appMu.Lock()
+	if s.appSayLocks == nil {
+		s.appSayLocks = map[string]*sync.Mutex{}
+	}
+	if s.appSayLocks[sid] == nil {
+		s.appSayLocks[sid] = &sync.Mutex{}
+	}
+	lock := s.appSayLocks[sid]
+	s.appMu.Unlock()
+	lock.Lock()
+	defer lock.Unlock()
 	st := s.chatStoreRead(sid)
 	if st.SharedSocket != "" && st.Project != found.Name {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "общий разговор не найден в проекте"})
@@ -899,6 +910,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			return
 		}
 		s.appDrop(sid, "закрытая задача продолжается обычным разговором")
+	}
+	if !wasTaskRun && st.SharedSocket == "" && st.Thread != "" && st.Project == found.Name && !s.appAutomaticReview(sid, st) {
+		if err := s.appSharedMigrate(sid, h, &st); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
+			return
+		}
 	}
 	dir := chatTree(found.Path, st.Task)
 	if st.GroomTree != "" {
@@ -1068,9 +1085,9 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 		"message": "чат поднят дорогой app-server: ответ придёт в ленту этого разговора"})
 }
 
-// appStop останавливает ход: сперва уведомлением прерывания, а клиент,
-// который не ответил на него за пару секунд, снимается процессом. Ход не
-// остаётся вечным ни в одном исходе, и лента называет случившееся словами.
+// appStop просит прервать ход. Общему серверу отправляется RPC с ID хода.
+// Отдельный клиент получает уведомление. Если ответа нет, дашборд снимает
+// процесс и сообщает об этом в ленте.
 func (s *server) appStop(w http.ResponseWriter, sid string) {
 	if a := s.appTaskFind(sid, "", ""); a != nil {
 		if !s.recoveryStopped(w, a.root, a.task, true) {
@@ -1127,8 +1144,8 @@ func (s *server) appStop(w http.ResponseWriter, sid string) {
 		"message": "клиент не принял прерывание, процесс снят: разговор продолжится новой репликой"})
 }
 
-// appDrop снимает процесс разговора целиком: под смену модели, уборку в архив
-// и перезапуск. Лента остаётся, нить клиента продолжится следующим подъёмом.
+// appDrop снимает отдельный процесс или закрывает соединение с общим сервером
+// при смене модели, уборке в архив и перезапуске. Лента и нить остаются.
 func (s *server) appDrop(sid, why string) {
 	s.appMu.Lock()
 	for s.appStarting[sid] != nil {
@@ -1147,8 +1164,8 @@ func (s *server) appDrop(sid, why string) {
 	s.logf("процесс app-server разговора %s снят: %s", sid, why)
 }
 
-// appStatus это состояние разговора для опроса панели: жив ли процесс, идёт
-// ли ход и сколько он длится. Возраст хода говорит сервер, не браузер.
+// appStatus сообщает панели, жив ли клиент (процесс или соединение), идёт ли
+// ход и сколько он длится. Возраст хода считает сервер, не браузер.
 func (s *server) appStatus(w http.ResponseWriter, sid string) {
 	c := s.appLive(sid)
 	if c == nil {

@@ -47,8 +47,8 @@ func (e *appError) Error() string {
 	return fmt.Sprintf("код %v", e.Code)
 }
 
-// appServer это поднятый процесс сервера приложения. Горутина чтения разбирает
-// stdout построчно: ответы уходят ждущим по карте, уведомления зовут note.
+// appServer обслуживает RPC дочернего процесса или общего сервера Codex.
+// Горутина чтения доставляет ответы по ID запроса и передаёт уведомления в note.
 type appServer struct {
 	cmd  *exec.Cmd
 	in   io.WriteCloser
@@ -68,10 +68,8 @@ type appServer struct {
 	errWhy string
 }
 
-// appServerStart поднимает сервер приложения клиента через обвязку agentctl
-// exec: пары окружения подписки (каталог конфигурации, токен) кладёт она, и
-// чат мимо обвязки не идёт (то же правило, что у tmux-дороги, DK-1271). dir это
-// рабочий каталог разговора: нить клиента привязывается к нему и работает в нём.
+// appServerStart запускает отдельный процесс через agentctl exec. Обёртка
+// передаёт ему окружение подписки (DK-1271). Нить работает в каталоге dir.
 func (s *server) appServerStart(h *Harness, dir, agentctl string, note func(method string, params json.RawMessage), env ...string) (*appServer, error) {
 	cmd := exec.Command(agentctl, "exec", "--harness", h.Name, "--", h.Bin, "app-server", "--stdio")
 	cmd.Dir = dir

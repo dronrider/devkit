@@ -149,6 +149,15 @@ func (b *appSharedNotifications) deliver(method string, params json.RawMessage) 
 }
 
 func (s *server) appSharedReconnect(p *Project, sid string, st chatStore) error {
+	s.appMu.Lock()
+	send := s.appSayLocks[sid]
+	s.appMu.Unlock()
+	if send != nil {
+		if !send.TryLock() {
+			return nil
+		}
+		defer send.Unlock()
+	}
 	if s.appLive(sid) != nil {
 		return nil
 	}
@@ -226,4 +235,50 @@ func (s *server) appSharedTurnError(w http.ResponseWriter, err error) bool {
 		return true
 	}
 	return false
+}
+
+// appSharedMigrate сохраняет адрес общего сервера до следующего хода.
+// appMu и c.mu резервируют прежнего клиента, пока обновляется запись разговора.
+func (s *server) appSharedMigrate(sid string, h *Harness, st *chatStore) error {
+	socket, err := appNewSharedSocket(h, *st)
+	if err != nil || socket == "" {
+		return err
+	}
+	if node, err := os.Stat(socket); err != nil || node.Mode()&os.ModeSocket == 0 {
+		return nil
+	}
+	s.appMu.Lock()
+	if s.appStarting[sid] != nil {
+		s.appMu.Unlock()
+		return errAppStarting
+	}
+	c := s.appChats[sid]
+	if c != nil {
+		c.mu.Lock()
+		if c.busy {
+			c.mu.Unlock()
+			s.appMu.Unlock()
+			return errAppTurnBusy
+		}
+	}
+	st.SharedSocket = socket
+	if err = s.chatStoreWrite(sid, *st); err != nil {
+		st.SharedSocket = ""
+		if c != nil {
+			c.mu.Unlock()
+		}
+		s.appMu.Unlock()
+		return fmt.Errorf("привязка общего чата не сохранилась: %w", err)
+	}
+	if c != nil {
+		// Обладатель прежней ссылки на c увидит занятого клиента.
+		c.busy = true
+		delete(s.appChats, sid)
+		c.mu.Unlock()
+	}
+	s.appMu.Unlock()
+	if c != nil {
+		c.proc.kill()
+	}
+	return nil
 }

@@ -18,3 +18,35 @@ func TestFresh(dir string) {
 	e.WriteEvidence.File.Path = e.ObjectComparison.Actual
 	assertTargetCheck(t, checkNameEntry(e, at("func TestFresh"), identifierWords("TestFresh"), source), "фактический путь")
 }
+
+func TestNameFormattedFileDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name, extra, output, want string
+	}{
+		{"format", "", `fmt.Fprintf(out, "%s", text)`, ""},
+		{"unrelated_file", "", `fmt.Fprintf(other, "%s", text)`, "дескрипторе"},
+		{"shadowed_formatter", "fmt := localFormatter{}", `fmt.Fprintf(out, "%s", text)`, "дескрипторе"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameProofFixture(t, `package sample
+import "fmt"
+import "os"
+func WriteFile(path, text string, other *os.File) {
+ out, err := os.OpenFile(path, os.O_APPEND, 0600)
+ if err != nil { return }
+ `+tc.extra+`
+ `+tc.output+`
+}
+`)
+			openAt, writeAt := at("out, err :="), at(tc.output)
+			word := "File"
+			e := Evidence{
+				Check: "writes", Result: "checked",
+				ObjectComparison: &NameObjectComparison{Expected: []string{"File"}, Actual: "path", ActualAt: openAt},
+				WriteEvidence: &WriteEvidence{Word: &word, Target: "path", Value: tc.output, WriteAt: writeAt,
+					File: &NameFileWrite{Path: "path", Role: "destination"}},
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func WriteFile"), []string{"Write", "File"}, source), tc.want)
+		})
+	}
+}

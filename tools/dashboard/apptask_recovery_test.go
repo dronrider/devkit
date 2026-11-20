@@ -790,9 +790,34 @@ func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
 	if after.CxEffort != "low" || after.TaskRunID != before.TaskRunID || after.Thread != before.Thread {
 		t.Fatalf("settings before %+v after %+v", before, after)
 	}
-	if live := e.s.appLive(sid); live == nil || live.effortNow() != "low" {
+	live := e.s.appLive(sid)
+	if live == nil || live.effortNow() != "low" {
 		t.Fatal("live client did not receive effort")
 	}
+	if _, err := live.proc.call("test/finish", map[string]bool{"keepOpen": true}); err != nil {
+		t.Fatal(err)
+	}
+	appWaitFeed(t, e, sid, entry.Text)
+	feed := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+	raw = body(t, feed)
+	if feed.StatusCode != http.StatusOK {
+		t.Fatalf("лента %d: %s", feed.StatusCode, raw)
+	}
+	var delivered struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &delivered); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range delivered.Items {
+		if item.Role == "user" && item.Text == entry.Text {
+			if item.App == nil || item.App.Method != "devkit/appTaskMessage" || item.App.Item["id"] != receipt.MessageID {
+				t.Fatalf("лента не подтвердила квитанцию %q: %+v", receipt.MessageID, item.App)
+			}
+			return
+		}
+	}
+	t.Fatalf("в ответе ленты нет принятой реплики: %s", raw)
 }
 
 func TestAppTaskImportLeavesOtherAddressee(t *testing.T) {

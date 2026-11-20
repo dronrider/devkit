@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/dronrider/devkit/internal/taskhead"
@@ -112,6 +114,73 @@ func TestCodexCheckWorkerDoesNotDuplicate(t *testing.T) {
 	var got codexCheckStart
 	if err := json.Unmarshal(out, &got); err != nil || got.Started || !got.Busy {
 		t.Fatalf("замок: %s %v", out, err)
+	}
+}
+
+func TestCodexCheckWorkerStopsDescendant(t *testing.T) {
+	home, bin := t.TempDir(), t.TempDir()
+	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
+	fifo, child := filepath.Join(home, "pipe"), filepath.Join(home, "child")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(fifo, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(fd)
+	script := `#!/bin/sh
+/bin/sh -c 'trap "" TERM; exec 3>"$CHECK_FIFO"; echo $$ > "$CHECK_CHILD"; exec /bin/sleep 300' &
+while [ ! -s "$CHECK_CHILD" ]; do :; done
+printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}'
+wait
+`
+	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: "XR-1", Harness: "codex"})
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw), "CHECK_FIFO="+fifo, "CHECK_CHILD="+child, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	descendantStopped := false
+	t.Cleanup(func() {
+		if b, e := os.ReadFile(child); !descendantStopped && e == nil {
+			if pid, e := strconv.Atoi(strings.TrimSpace(string(b))); e == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	var start codexCheckStart
+	if err := json.NewDecoder(stdout).Decode(&start); err != nil || !start.Started {
+		t.Fatalf("старт: %+v %v", start, err)
+	}
+	var buf [1]byte
+	if n, err := syscall.Read(fd, buf[:]); n != -1 || err != syscall.EAGAIN {
+		t.Fatalf("потомок не держит канал: %d %v", n, err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("supervisor: %v", err)
+	}
+	if n, err := syscall.Read(fd, buf[:]); n != 0 || err != nil {
+		t.Fatalf("потомок остался жив: %d %v", n, err)
+	}
+	descendantStopped = true
+	if taskhead.Owner(taskhead.LockPath(home, "XR-1")) != 0 {
+		t.Fatal("замок не освобождён")
 	}
 }
 

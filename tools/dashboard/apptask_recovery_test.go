@@ -1071,12 +1071,22 @@ func TestAppTaskRecoveryReportsUnreadableRunState(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	const reason = "Восстановление конвейера Codex ждёт: не прочитано состояние рабочего запуска"
+	e.s.mainChatAssign(before.Task, "as-other-owner", "demo", "работа")
+	if err := e.s.appTaskRecoveryTick(nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Role == "note" && item.Text == reason {
+			t.Fatal("причина появилась в прежнем рабочем разговоре")
+		}
+	}
+	e.s.mainChatAssign(before.Task, sid, "demo", "работа")
 	for range 2 {
 		if err := e.s.appTaskRecoveryTick(nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	const reason = "Восстановление конвейера Codex ждёт: не прочитано состояние рабочего запуска"
 	notes := 0
 	for _, item := range e.s.appFeedRead(sid) {
 		if item.Role == "note" && item.Fail && item.Text == reason {

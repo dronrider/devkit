@@ -195,7 +195,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	const stateUnreadable = "Восстановление конвейера Codex ждёт: не прочитано состояние рабочего запуска"
 	state, err := taskstate.Acquire(home, p.Path, st.Task)
 	if err != nil {
-		if owner && st.TaskRunSession == sid && st.TaskRunID != "" {
+		if st.TaskRunSession == sid && st.TaskRunID != "" && s.appTaskRecoveryOwner(p, sid, st.Task) {
 			s.appTaskRecoveryNote(sid, stateUnreadable, true, "state-"+st.TaskRunID)
 		}
 		return err
@@ -275,7 +275,9 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	defer machine.Close()
 	state, err = taskstate.Acquire(home, p.Path, st.Task)
 	if err != nil {
-		s.appTaskRecoveryNote(sid, stateUnreadable, true, "state-"+run.ID)
+		if s.appTaskRecoveryOwner(p, sid, st.Task) {
+			s.appTaskRecoveryNote(sid, stateUnreadable, true, "state-"+run.ID)
+		}
 		return err
 	}
 	current := state.State.Run

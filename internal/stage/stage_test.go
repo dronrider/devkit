@@ -266,7 +266,7 @@ func TestExecutorFromPickNote(t *testing.T) {
 // что и модель, и последняя запись побеждает, когда заметка несёт их несколько.
 func TestEffortFromStageNote(t *testing.T) {
 	cases := map[string]string{
-		"субагент opus/high по определению exec-high, работа a1b2c3": "high",
+		"субагент opus/high по определению exec-high, работа a1b2c3":  "high",
 		"субагент glm-5.2/low по вердикту pick (квота: week_all 93%)": "low",
 	}
 	for text, want := range cases {
@@ -854,6 +854,23 @@ func TestParseLineWithoutSpanAndOverMidnight(t *testing.T) {
 // Разговор, открывший этап, стоит в записи четвёртым полем (DK-716). Без него
 // от записи нельзя было дойти до чата, который задачу ведёт: экран знал, что
 // идёт разработка, а спросить исполнителя было негде.
+func TestOpenKeepsCodexVerificationSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "codex-checker")
+	if err := Open(home, "/p", "XR-1", Verify, "модель", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Load(Path(home, "/p", "XR-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rec.Live()
+	if !ok || live.Session != "codex-checker" {
+		t.Fatalf("сессия проверки: %+v, ok=%v", live, ok)
+	}
+}
+
 func TestOpenKeepsSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "dff98764-1111-4111-8111-111111111111")

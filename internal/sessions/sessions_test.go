@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+func TestOwnCodexSession(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", " codex-thread ")
+	if got := Own(); got != "codex-thread" {
+		t.Fatalf("сессия Codex: %q", got)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-session")
+	if got := Own(); got != "claude-session" {
+		t.Fatalf("при двух ID приоритет у Claude: %q", got)
+	}
+}
+
 const record = "%s сессия %s задача %s проект devkit дерево /Users/r/projects/devkit-dk-432 " +
 	"транскрипт /Users/r/.claude/projects/devkit/%s.jsonl источник заказ повод startup tmux task-%s\n"
 

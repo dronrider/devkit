@@ -595,7 +595,12 @@ const SessionEnv = "CLAUDE_CODE_SESSION_ID"
 
 // Own называет ID сессии, в которой идёт ход: харнес кладёт его в окружение.
 // Пусто вне сессии харнеса, и это штатное молчание, а не поломка.
-func Own() string { return strings.TrimSpace(os.Getenv(SessionEnv)) }
+func Own() string {
+	if sid := strings.TrimSpace(os.Getenv(SessionEnv)); sid != "" {
+		return sid
+	}
+	return strings.TrimSpace(os.Getenv("CODEX_THREAD_ID"))
+}
 
 // Touch отмечает в журнале, что сессия работала над задачей. Зовут его утилиты
 // доски из своей main: сессии ID известен только из окружения, и вне сессии

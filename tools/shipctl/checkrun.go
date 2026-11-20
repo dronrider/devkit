@@ -53,6 +53,7 @@ type shipCarrier struct {
 	ladders            []checkrun.Ladder
 	note               string
 	asked              bool
+	check              bool
 }
 
 func newShipCarrier(root string) *shipCarrier {
@@ -112,6 +113,9 @@ func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	harness := p.Choice.Harness
 	if harness == "" {
 		harness = c.harness
+	}
+	if c.check && harness == "codex" {
+		return c.raiseCodex(p)
 	}
 	if harness != "" {
 		args = append(args, "--harness", harness)
@@ -207,7 +211,9 @@ func checkRuns(root string, ids []string, moved bool) ([]checkrun.Report, error)
 			rows[id] = r
 		}
 	}
-	return checkrun.Run(newShipCarrier(root), root, rows, ids), nil
+	c := newShipCarrier(root)
+	c.check = true
+	return checkrun.Run(c, root, rows, ids), nil
 }
 
 // checkRunNote поднимает прогон сценария по задачам, ушедшим в Check, и

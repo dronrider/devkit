@@ -193,6 +193,10 @@ func root(dir string) string {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "__check-codex" {
+		codexCheckWorker(os.Args[2])
+		return
+	}
 	if versionRequested() {
 		return
 	}

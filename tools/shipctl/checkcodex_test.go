@@ -28,21 +28,25 @@ func TestCodexCheckWorkerStartsFreshTurn(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
 	bin := t.TempDir()
+	events, err := filepath.Abs(filepath.Join("testdata", "codex-check-start.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	log := filepath.Join(home, "arguments")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" \"${CLAUDE_CODE_SESSION_ID-unset}\" \"${CODEX_THREAD_ID-unset}\" \"${DEVKIT_TASK-unset}\" > \"$CHECK_ARGS\"\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" \"${CLAUDE_CODE_SESSION_ID-unset}\" \"${CODEX_THREAD_ID-unset}\" \"${DEVKIT_TASK-unset}\" > \"$CHECK_ARGS\"\ncat \"$CHECK_EVENTS\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	o := codexCheckOrder{Root: home, Home: home, ID: "XR-1", Model: "model", Effort: "high", Harness: "codex", Order: "проверить"}
 	raw, _ := json.Marshal(o)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCodexCheckWorkerHelper$")
-	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw), "CHECK_ARGS="+log, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CLAUDE_CODE_SESSION_ID=parent", "CODEX_THREAD_ID=parent", "DEVKIT_TASK=OTHER")
+	cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw), "CHECK_ARGS="+log, "CHECK_EVENTS="+events, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CLAUDE_CODE_SESSION_ID=parent", "CODEX_THREAD_ID=parent", "DEVKIT_TASK=OTHER")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("воркер: %v %s", err, out)
 	}
 	var got codexCheckStart
-	if err := json.Unmarshal(out, &got); err != nil || !got.Started || !strings.Contains(got.Message, "fresh") {
+	if err := json.Unmarshal(out, &got); err != nil || !got.Started || !strings.Contains(got.Message, "00000000-0000-4000-8000-000000000001") {
 		t.Fatalf("нет подтверждения хода: %s %v", out, err)
 	}
 	args, err := os.ReadFile(log)

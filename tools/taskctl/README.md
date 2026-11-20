@@ -1658,7 +1658,8 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 `proof.assignment.use.declaration` укажите объявление теста. Поле
 `proof.assignment.use.expression` принимает выражение чтения, например
 `turn`, даже когда тест передаёт переменную в запущенную горутину.
-Вложенный `t.Run` сохраняет привязку к тому же тестовому сценарию.
+Если `synctest.Test` вызван из `t.Run`, запись и чтение должны
+относиться к одному подтесту.
 У `sql` проверяются
 прямой `Exec`/`ExecContext`, точный текст `statement`, изменяемая `table`
 и все `arguments` в порядке вызова. Текст SQL берётся из строкового

@@ -103,12 +103,25 @@ func (s *server) appTaskRecoveryKeeper(stop <-chan struct{}) {
 	path := filepath.Join(realHomeFn(), ".devkit", "app-task-tick")
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	previous := ""
+	previous, lastError := "", ""
 	for {
 		raw, err := os.ReadFile(path)
-		if err == nil && len(raw) != 0 && string(raw) != previous {
-			previous = string(raw)
-			s.appTaskRecoveryTick(stop)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			err = nil
+		case err != nil:
+			err = fmt.Errorf("не прочитан сигнал: %w", err)
+		case len(raw) != 0 && string(raw) != previous:
+			err = s.appTaskRecoveryTick(stop)
+			if err == nil {
+				previous = string(raw)
+			}
+		}
+		if err == nil || errors.Is(err, os.ErrNotExist) {
+			lastError = ""
+		} else if err.Error() != lastError {
+			lastError = err.Error()
+			s.logf("тик восстановления Codex: %s", lastError)
 		}
 		select {
 		case <-stop:
@@ -118,16 +131,16 @@ func (s *server) appTaskRecoveryKeeper(stop <-chan struct{}) {
 	}
 }
 
-func (s *server) appTaskRecoveryTick(stop <-chan struct{}) {
+func (s *server) appTaskRecoveryTick(stop <-chan struct{}) error {
 	dir := chatStoreDir(s.cfg.Home)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return fmt.Errorf("не прочитан каталог чатов: %w", err)
 	}
 	for _, entry := range entries {
 		select {
 		case <-stop:
-			return
+			return nil
 		default:
 		}
 		sid, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -146,6 +159,7 @@ func (s *server) appTaskRecoveryTick(stop <-chan struct{}) {
 			s.logf("восстановление Codex %s: %v", sid, err)
 		}
 	}
+	return nil
 }
 
 func (s *server) appTaskRecoveryWaiting(p *Project, sid string, st chatStore) (bool, error) {
@@ -311,6 +325,9 @@ func (s *server) appTaskBudgetCommand(home string, args ...string) (string, erro
 	raw, err := cmd.CombinedOutput()
 	line := strings.TrimSpace(string(raw))
 	if err != nil {
+		if deadlineErr := ctx.Err(); deadlineErr != nil {
+			return "", fmt.Errorf("истекло время команды бюджета восстановления: %s (%w, %w)", line, deadlineErr, err)
+		}
 		return "", fmt.Errorf("журнал бюджета восстановления: %s (%w)", line, err)
 	}
 	return line, nil

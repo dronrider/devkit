@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -213,6 +215,73 @@ func TestAppTaskRecoveryHonorsStopAndExhaustion(t *testing.T) {
 			}
 			appWaitFeed(t, e, sid, "Восстановление конвейера Codex завершилось отказом")
 		})
+	}
+}
+
+func TestAppTaskRecoveryRetriesUnreadableChatDirectory(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	readFailed := make(chan struct{}, 1)
+	e.s.logf = func(format string, args ...any) {
+		if strings.Contains(fmt.Sprintf(format, args...), "не прочитан каталог чатов") {
+			select {
+			case readFailed <- struct{}{}:
+			default:
+			}
+		}
+	}
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitAppTaskLockGone(t, e)
+	e.s.appWorkers.Wait()
+
+	dir := chatStoreDir(e.s.cfg.Home)
+	saved := dir + "-saved"
+	if err := os.Rename(dir, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir, []byte("каталог заблокирован"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tick := filepath.Join(e.home, ".devkit", "app-task-tick")
+	if err := os.WriteFile(tick, []byte("единственный тик\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		e.s.appTaskRecoveryKeeper(stop)
+	}()
+	defer func() { close(stop); <-done }()
+	select {
+	case <-readFailed:
+	case <-time.After(8 * time.Second):
+		t.Fatal("ошибка чтения каталога чатов не попала в журнал")
+	}
+
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(saved, dir); err != nil {
+		t.Fatal(err)
+	}
+	appWaitFeed(t, e, sid, "Конвейер Codex продолжен в исходном разговоре")
+}
+
+func TestAppTaskBudgetCommandPreservesDeadline(t *testing.T) {
+	e, _ := appTaskEnv(t, "mute")
+	script := filepath.Join(filepath.Dir(e.proj), "devkit", "tools", "devkitctl", "recovery.py")
+	body := []byte("import time\nprint('ожидаю журнал', flush=True)\ntime.sleep(60)\n")
+	if err := os.WriteFile(script, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.s.appTaskBudgetCommand(e.home, "app-reserve", e.proj, "XR-002", "test")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "ожидаю журнал") {
+		t.Fatalf("команда бюджета потеряла срок ожидания или вывод: %v", err)
 	}
 }
 

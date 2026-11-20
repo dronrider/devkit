@@ -3339,7 +3339,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
 		// первой отправки и у всех её повторов.
-		MsgID     string          `json:"msg_id"`
+		MsgID string `json:"msg_id"`
+		// Manual отличает новое нажатие от фонового повтора очереди.
+		Manual    bool            `json:"manual,omitempty"`
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
@@ -3442,7 +3444,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
 	// нет, реплика уходит процессу app-server, а лента живёт файлом.
 	if stored.Protocol != "" {
-		s.appSay(w, found, sid, text, claim, body.Effort)
+		s.appSay(w, found, sid, text, claim, body.Effort, body.Manual)
 		return
 	}
 	if !s.recoveryChatStopped(w, found, sid, "continue") {
@@ -4303,7 +4305,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	// продолжает нить из записи, лента остаётся тем же адресом, и терминальная
 	// механика его не касается.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
-		s.appSay(w, found, sid, text, claim, effort)
+		s.appSay(w, found, sid, text, claim, effort, false)
 		return
 	} else if st.Blank {
 		model, harness := s.chatChoice(sid, "")
@@ -4314,7 +4316,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 			if err := s.chatStoreWrite(sid, st); err != nil {
 				s.logf("настройки разговора %s не записались: %v", sid, err)
 			}
-			s.appSay(w, found, sid, text, claim, effort)
+			s.appSay(w, found, sid, text, claim, effort, false)
 			return
 		}
 	}

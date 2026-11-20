@@ -864,7 +864,7 @@ func (s *server) appSayRecord(sid, text string) {
 // appSay это дорога реплики: живой процесс получает ход, мёртвый или новый
 // разговор поднимается на месте. Отказ подъёма, занятость и пропажа входа
 // называются словами, молчания тут не бывает.
-func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
+func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string, manual bool) {
 	s.appMu.Lock()
 	if s.appSayLocks == nil {
 		s.appSayLocks = map[string]*sync.Mutex{}
@@ -874,7 +874,10 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 	}
 	lock := s.appSayLocks[sid]
 	s.appMu.Unlock()
-	lock.Lock()
+	if !lock.TryLock() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errAppStarting.Error(), "refused": errAppStarting.Error()})
+		return
+	}
 	defer lock.Unlock()
 	st := s.chatStoreRead(sid)
 	if st.SharedSocket != "" && st.Project != found.Name {
@@ -936,7 +939,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 		s.appDrop(sid, "закрытая задача продолжается обычным разговором")
 	}
-	if !wasTaskRun && st.SharedSocket == "" && st.Thread != "" && st.Project == found.Name && !s.appAutomaticReview(sid, st) {
+	if manual && !wasTaskRun && st.SharedSocket == "" && st.Thread != "" && st.Project == found.Name && !s.appAutomaticReview(sid, st) {
 		if err := s.appSharedMigrate(sid, h, &st); err != nil {
 			status := http.StatusBadGateway
 			if errors.Is(err, errAppStarting) || errors.Is(err, errAppTurnBusy) {
@@ -1034,7 +1037,7 @@ func (s *server) appStartRecord(w http.ResponseWriter, found *Project, id, blank
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "ID реплики уже принадлежит другому разговору"})
 				return
 			}
-			s.appSay(w, found, sid, text, st.SharedFirst, effort)
+			s.appSay(w, found, sid, text, st.SharedFirst, effort, false)
 			return
 		}
 	}

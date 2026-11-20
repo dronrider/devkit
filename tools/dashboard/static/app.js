@@ -7777,13 +7777,15 @@ async function wireFeed(project, sid, opts) {
     es.addEventListener("replace", (ev) => {
       const item = JSON.parse(ev.data);
       const at = talk.findIndex((previous) => itemKey(previous) === itemKey(item));
-      if (at < 0) return;
-      talk[at] = item;
-      draw();
+      if (at >= 0) {
+        talk[at] = item;
+        draw();
+      } else if (item.role === "user") {
+        acceptItem(item);
+      }
     });
-    es.onmessage = (ev) => {
+    const acceptItem = (item) => {
       seen = Date.now();
-      const item = JSON.parse(ev.data);
       // Свой хвост поток шлёт заново, и без отсева те же реплики легли бы в
       // ленту вторым разом. Отсев по ключу, а не по номеру: номер записи
       // считается местом в слитой ленте и от заезда к заезду плывёт.
@@ -7799,6 +7801,7 @@ async function wireFeed(project, sid, opts) {
       draw();
       if (opts.onItem) opts.onItem(item);
     };
+    es.onmessage = (ev) => acceptItem(JSON.parse(ev.data));
     es.onerror = () => {
       if (gone()) return;
       // Обрыв это не повод рвать всё: браузер ретраит сам, и второй поток
@@ -15152,6 +15155,7 @@ function chatPanel(project, st) {
       m.flying = true;
       const armEffort = chatEffortOf(project, st.task || st.addr);
       const sayBody = { text: wire, msg_id: m.id };
+      if (!key) sayBody.manual = true;
       if (armEffort) sayBody.effort = armEffort;
       api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
         { method: "POST", body: sayBody })

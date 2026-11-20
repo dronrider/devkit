@@ -109,7 +109,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "этот общий чат уже создан", "session": st.Grown})
 				return
 			}
-			s.appSay(w, found, st.Grown, text, claim, effort)
+			s.appSay(w, found, st.Grown, text, claim, effort, false)
 			return
 		}
 	}
@@ -130,7 +130,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 					return
 				}
 			}
-			s.appSay(w, found, blank, text, claim, effort)
+			s.appSay(w, found, blank, text, claim, effort, false)
 		}
 		return
 	}

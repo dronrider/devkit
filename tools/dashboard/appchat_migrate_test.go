@@ -43,7 +43,7 @@ func TestAppSayMigratesLegacyOnlyOnManualMessage(t *testing.T) {
 		t.Fatalf("GET migrated chat: %q", got)
 	}
 	say := func() (*http.Response, string) {
-		res := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить"}`)
+		res := doReq(t, client, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжить","manual":true}`)
 		return res, body(t, res)
 	}
 	res, data := say()

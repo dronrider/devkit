@@ -978,6 +978,7 @@ type reply struct {
 	Proposal  *proposalAttachment `json:"proposal,omitempty"`
 	Selection *chat.Selection     `json:"selection,omitempty"`
 	Wire      string              `json:"wire,omitempty"`
+	Replaces  string              `json:"replaces,omitempty"`
 	Seq       int                 `json:"seq"`
 	Role      string              `json:"role"` // user | assistant | thinking | tool | toolout
 	Time      string              `json:"time,omitempty"`

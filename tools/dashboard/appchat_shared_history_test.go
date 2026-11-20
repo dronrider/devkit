@@ -17,21 +17,30 @@ func TestAppSharedImageOnlyUserMessage(t *testing.T) {
 }
 
 func TestAppSharedLegacyEchoRemainsUnconfirmed(t *testing.T) {
-	old := reply{Role: "user", Text: "same", Wire: "same", Key: "app:0"}
-	item := reply{
-		Role: "user", Text: old.Text, Wire: old.Wire, Key: "app:1",
-		App: &appFeedEvent{ThreadID: "thread-1", TurnID: "unrecorded", Item: map[string]any{}},
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+	const sid = "as-echo"
+	old := reply{Role: "user", Text: "same", Wire: "same"}
+	if err := s.appFeedAppend(sid, []reply{old}); err != nil {
+		t.Fatal(err)
 	}
-	items := []reply{old, item}
-	index := appLegacyEchoes(items[:1], "thread-1")
-	if index.consume(item) {
-		t.Fatal("попытка отправки поглотила подтверждённую реплику")
+	index := appLegacyEchoes(s.appFeedRead(sid), "thread-1")
+	item := old
+	item.App = &appFeedEvent{ThreadID: "thread-1", TurnID: "unrecorded", Item: map[string]any{"id": "canonical"}}
+	index.reconcile(&item)
+	if item.Replaces != "" {
+		t.Fatal("попытка отправки подменила подтверждённую реплику")
 	}
-	appLegacyEchoView(items, "thread-1")
-	if items[0].Role != "note" || items[0].Note != appLegacyUnconfirmed ||
-		items[0].Text != old.Text || items[0].Key != old.Key ||
-		items[1].Role != "user" || items[1].Key != item.Key {
-		t.Fatalf("пометка старой попытки: %+v", items)
+	items := append([]reply{item}, index.unconfirmed("thread-1")...)
+	for range 2 {
+		if err := s.appFeedAppend(sid, items); err != nil {
+			t.Fatal(err)
+		}
+	}
+	feed := s.appFeedRead(sid)
+	if len(feed) != 2 || feed[0].Role != "note" || feed[0].Note != appLegacyUnconfirmed ||
+		feed[0].Text != old.Text || feed[0].Key != "app:0" ||
+		feed[1].Role != "user" || feed[1].App.Item["id"] != "canonical" {
+		t.Fatalf("пометка старой попытки: %+v", feed)
 	}
 }
 
@@ -110,8 +119,8 @@ func TestAppSharedBackfillPagesAndDedup(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("в ленте %d записей, жду 3: %+v", len(items), items)
 	}
-	if items[0].Role != "user" || items[0].Text != "первая\nстрока" || items[0].Wire != "первая\nстрока" ||
-		items[0].App != nil {
+	if items[0].Role != "user" || items[0].Text != "первая\nстрока\n[изображение]" || items[0].Wire != "первая\nстрока" ||
+		items[0].Key != "app:0" || items[0].App.identity() != appEventIdentity("item/completed", chat.thread, "turn-1", "user-1") {
 		t.Fatalf("первая реплика: %+v", items[0])
 	}
 	if items[1].Role != "assistant" || items[1].Text != "первый ответ" {

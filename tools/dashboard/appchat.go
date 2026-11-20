@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -252,6 +253,7 @@ func (s *server) appFeedRead(sid string) []reply {
 // смещение хвоста из одного снимка.
 func appFeedParse(data []byte) []reply {
 	out := []reply{}
+	positions := map[int]int{}
 	for i, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		if line == "" {
 			continue
@@ -261,11 +263,34 @@ func appFeedParse(data []byte) []reply {
 			continue
 		}
 		it.Seq, it.Key = i, fmt.Sprintf("app:%d", i)
-		if appFeedDisplay(&it) {
-			out = append(out, it)
+		if !appFeedDisplay(&it) {
+			continue
 		}
+		if replaced, ok := appFeedReplacement(it); ok {
+			if pos, found := positions[replaced.Seq]; found {
+				out[pos] = replaced
+				continue
+			}
+		}
+		positions[it.Seq] = len(out)
+		out = append(out, it)
 	}
 	return out
+}
+
+// appFeedReplacement оставляет прежнюю позицию, но отдаёт читателю
+// подтверждённое событие или пометку вместо старого эха.
+func appFeedReplacement(it reply) (reply, bool) {
+	key, ok := strings.CutPrefix(it.Replaces, "app:")
+	if !ok {
+		return it, false
+	}
+	seq, err := strconv.Atoi(key)
+	if err != nil || seq < 0 || seq >= it.Seq {
+		return it, false
+	}
+	it.Key, it.Seq = it.Replaces, seq
+	return it, true
 }
 
 func appFeedDisplay(it *reply) bool {
@@ -1275,13 +1300,10 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 		return
 	}
 	if r.URL.Query().Get("stream") == "1" {
-		s.appFeedStream(w, r, sid, st)
+		s.appFeedStream(w, r, file)
 		return
 	}
 	items := s.appFeedRead(sid)
-	if st.SharedSocket != "" {
-		appLegacyEchoView(items, st.Thread)
-	}
 	head := sessionInfo{ID: sid, Mtime: fi.ModTime().UTC().Format(time.RFC3339),
 		Task: st.Task, Reply: "session", Harness: st.Harness, Protocol: st.Protocol,
 		Live: s.appLive(sid) != nil}
@@ -1305,8 +1327,7 @@ func (s *server) appFeedServe(w http.ResponseWriter, r *http.Request, sid string
 // appFeedStream это лента живым потоком: хвост файла уезжает событиями по
 // мере записи, как у транскриптной ленты. Ключ записи это её номер в файле, и
 // счётчик продолжает нумерацию чтения без разрыва.
-func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid string, st chatStore) {
-	file := s.appFeedFile(sid)
+func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, file string) {
 	f, ok := sseOpen(w)
 	if !ok {
 		return
@@ -1316,9 +1337,6 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid strin
 	// потока, и она уезжала в панель дважды под двумя ключами.
 	data, _ := os.ReadFile(file)
 	items := appFeedParse(data)
-	if st.SharedSocket != "" {
-		appLegacyEchoView(items, st.Thread)
-	}
 	off := int64(len(data))
 	if len(items) > repliesDefault {
 		items = items[len(items)-repliesDefault:]
@@ -1348,18 +1366,6 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid strin
 		case <-t.C:
 			lines, end := newLines(file, off)
 			off = end
-			if len(lines) > 0 && st.SharedSocket == "" && st.Thread != "" {
-				if current := s.chatStoreRead(sid); current.SharedSocket != "" {
-					st = current
-					items := s.appFeedRead(sid)
-					appLegacyEchoView(items, st.Thread)
-					for _, it := range items {
-						if it.Role == "note" && it.Note == appLegacyUnconfirmed {
-							sseEvent(w, f, "replace", marshalReply(it))
-						}
-					}
-				}
-			}
 			for _, ln := range lines {
 				var it reply
 				if json.Unmarshal([]byte(ln), &it) != nil {
@@ -1368,7 +1374,12 @@ func (s *server) appFeedStream(w http.ResponseWriter, r *http.Request, sid strin
 				}
 				it.Seq, it.Key = line, fmt.Sprintf("app:%d", line)
 				line++
-				if appFeedDisplay(&it) {
+				if !appFeedDisplay(&it) {
+					continue
+				}
+				if replaced, ok := appFeedReplacement(it); ok {
+					sseEvent(w, f, "replace", marshalReply(replaced))
+				} else {
 					sseEvent(w, f, "", marshalReply(it))
 				}
 			}

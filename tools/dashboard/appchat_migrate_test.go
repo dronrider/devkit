@@ -100,8 +100,8 @@ func TestAppSharedStreamReplacesUnconfirmedEcho(t *testing.T) {
 		return "", reply{}
 	}
 	_, old := next()
-	st.SharedSocket = filepath.Join(t.TempDir(), "unused.sock")
-	if err := e.s.chatStoreWrite(sid, st); err != nil {
+	index := appLegacyEchoes(e.s.appFeedRead(sid), st.Thread)
+	if err := e.s.appFeedAppend(sid, index.unconfirmed(st.Thread)); err != nil {
 		t.Fatal(err)
 	}
 	event := &appFeedEvent{Method: "item/completed", ThreadID: st.Thread, TurnID: "th-turn",

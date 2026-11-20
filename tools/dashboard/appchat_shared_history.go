@@ -36,14 +36,14 @@ func appSharedUserReplies(item map[string]any, now string) []reply {
 }
 
 type appLegacyEchoIndex struct {
-	turns       map[string]string
-	unconfirmed map[string]bool
+	turns   map[string]reply
+	pending map[string]reply
 }
 
-// appLegacyEchoes связывает прежнее эхо с первым записанным событием хода.
-// Эхо без такого события остаётся попыткой отправки без подтверждения.
+// appLegacyEchoes учитывает старые записи перед общим подключением.
+// Даже если старый ход можно опознать, в ленту пишется событие Codex.
 func appLegacyEchoes(items []reply, thread string) appLegacyEchoIndex {
-	index := appLegacyEchoIndex{turns: map[string]string{}, unconfirmed: map[string]bool{}}
+	index := appLegacyEchoIndex{turns: map[string]reply{}, pending: map[string]reply{}}
 	seen := map[string]bool{}
 	var echo reply
 	for _, r := range items {
@@ -51,15 +51,14 @@ func appLegacyEchoes(items []reply, thread string) appLegacyEchoIndex {
 			echo = reply{}
 			if r.App == nil && r.Wire != "" {
 				echo = r
-				index.unconfirmed[r.Key] = true
+				index.pending[r.Key] = r
 			}
 			continue
 		}
 		if r.App != nil && r.App.ThreadID == thread && r.App.TurnID != "" && !seen[r.App.TurnID] {
 			seen[r.App.TurnID] = true
-			if echo.Wire != "" {
-				index.turns[r.App.TurnID] = echo.Wire
-				delete(index.unconfirmed, echo.Key)
+			if echo.Key != "" {
+				index.turns[r.App.TurnID] = echo
 				echo = reply{}
 			}
 		}
@@ -67,30 +66,32 @@ func appLegacyEchoes(items []reply, thread string) appLegacyEchoIndex {
 	return index
 }
 
-func (index appLegacyEchoIndex) consume(r reply) bool {
+func (index appLegacyEchoIndex) reconcile(r *reply) {
 	if r.Role != "user" || r.Wire == "" || r.App == nil {
-		return false
+		return
 	}
-	if clientID, _ := r.App.Item["clientId"].(string); clientID != "" || index.turns[r.App.TurnID] != r.Wire {
-		return false
+	echo := index.turns[r.App.TurnID]
+	clientID, _ := r.App.Item["clientId"].(string)
+	if echo.Key == "" || echo.Wire != r.Wire || clientID != "" {
+		return
 	}
+	r.Replaces = echo.Key
 	delete(index.turns, r.App.TurnID)
-	return true
+	delete(index.pending, echo.Key)
 }
 
 const appLegacyUnconfirmed = "Прежняя отправка без подтверждения"
 
-func appLegacyEchoView(items []reply, thread string) {
-	if thread == "" {
-		return
+func (index appLegacyEchoIndex) unconfirmed(thread string) []reply {
+	var notes []reply
+	for key, old := range index.pending {
+		notes = append(notes, reply{
+			Role: "note", Note: appLegacyUnconfirmed, Text: old.Text,
+			Time: old.Time, Replaces: key,
+			App: &appFeedEvent{Method: "legacy/unconfirmed", ThreadID: thread, Item: map[string]any{"id": key}},
+		})
 	}
-	unconfirmed := appLegacyEchoes(items, thread).unconfirmed
-	for i := range items {
-		if unconfirmed[items[i].Key] {
-			items[i].Role = "note"
-			items[i].Note = appLegacyUnconfirmed
-		}
-	}
+	return notes
 }
 
 type appSharedHistoryPage struct {
@@ -121,19 +122,20 @@ func (s *server) appSharedBackfill(c *appChat) error {
 			return fmt.Errorf("разобрать историю Codex: %w", err)
 		}
 		if items := page.replies(c.thread); len(items) > 0 {
-			kept := items[:0]
-			for _, r := range items {
-				if legacy.consume(r) {
-					continue
-				}
-				kept = append(kept, r)
+			for i := range items {
+				legacy.reconcile(&items[i])
 			}
-			if err := s.appFeedAppend(c.sid, kept); err != nil {
+			if err := s.appFeedAppend(c.sid, items); err != nil {
 				return fmt.Errorf("записать историю Codex: %w", err)
 			}
 		}
 		cursor := page.NextCursor
 		if cursor == "" {
+			if notes := legacy.unconfirmed(c.thread); len(notes) > 0 {
+				if err := s.appFeedAppend(c.sid, notes); err != nil {
+					return fmt.Errorf("записать статус прежних реплик: %w", err)
+				}
+			}
 			return nil
 		}
 		if cursors[cursor] {

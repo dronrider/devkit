@@ -79,7 +79,11 @@ func (g *queryGoSource) nameSynctestNode(fn queryFunc, at, expression string, as
 			if sel.Sel.Name == "Run" && recv.Obj == t && len(call.Args) == 2 {
 				if lit, ok := call.Args[1].(*ast.FuncLit); ok {
 					if param := testParam(lit.Type.Params); param != nil {
-						walk(lit.Body, param, scenario)
+						nextScenario := scenario
+						if scenario != nil {
+							nextScenario = lit
+						}
+						walk(lit.Body, param, nextScenario)
 					}
 				}
 			}
@@ -102,22 +106,20 @@ func (g *queryGoSource) nameSynctestNode(fn queryFunc, at, expression string, as
 	return matches[0]
 }
 
-func nameSynctestUsesBinding(n ast.Node, binding *ast.Object, actual string) bool {
+func nameSynctestUsesBinding(n ast.Node, binding *ast.Object, target string) bool {
 	if binding == nil {
 		return false
 	}
-	for node := range ast.Preorder(n) {
-		switch x := node.(type) {
-		case *ast.Ident:
-			if x.Name == actual && x.Obj == binding {
-				return true
-			}
-		case *ast.SelectorExpr:
-			root := nameWriteRoot(x)
-			if x.Sel.Name == actual && root != nil && root.Obj == binding {
-				return true
-			}
+	found := false
+	ast.Inspect(n, func(node ast.Node) bool {
+		if _, ok := node.(*ast.FuncLit); ok {
+			return false
 		}
-	}
-	return false
+		if expr, ok := node.(ast.Expr); ok && sameNameExpression(expr, target) {
+			root := nameWriteRoot(expr)
+			found = root != nil && root.Obj == binding
+		}
+		return !found
+	})
+	return found
 }

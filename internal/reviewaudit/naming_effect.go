@@ -127,6 +127,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	var assigned ast.Expr
 	var scenario *ast.FuncLit
 	var binding *ast.Object
+	var assignedTarget string
 	ordinaryWrite := false
 	commaOK := false
 	for _, site := range a.Writes {
@@ -178,6 +179,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 		}
 		if site.At == e.WriteEvidence.WriteAt && site.At == pair.ActualAt && sameNameExpression(stmt.Lhs[slot], p.Expression) {
 			assigned, commaOK = stmt.Rhs[exprSlot], isMapOK
+			assignedTarget = site.Target
 		}
 		proofLines[site.At] = true
 	}
@@ -229,7 +231,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, fn queryFunc) error {
 	})
 	if scenario != nil {
 		match := g.nameSynctestNode(consumer, a.Use.At, a.Use.Expression, false)
-		if consumer.node.Body != fn.node.Body || match == nil || match.scenario != scenario || !nameSynctestUsesBinding(match.node, binding, pair.Actual) || nameIsAssignmentTarget(consumer, match.node.(ast.Expr)) {
+		if consumer.node.Body != fn.node.Body || match == nil || match.scenario != scenario || !nameSynctestUsesBinding(match.node, binding, assignedTarget) || nameIsAssignmentTarget(consumer, match.node.(ast.Expr)) {
 			return &nameConsumerIssue{field: pair.Actual, err: fmt.Errorf("proof.assignment.use: покажите чтение того же значения в сценарии synctest")}
 		}
 		err = nil

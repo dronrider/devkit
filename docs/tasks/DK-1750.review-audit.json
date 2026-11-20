@@ -1,10 +1,2359 @@
 {
-  "version": 1,
-  "id": "DK-1750",
+  "architecture": {
+    "goal": "Запустить независимую проверку Codex без [head] и сохранить собственный ID сессии.",
+    "decision": "shipctl запускает worker с замком, состоянием и журналом; worker поднимает Codex через agentctl exec и подтверждает начало по событиям JSON.",
+    "boundaries": "Worker владеет блокировкой и группой дочернего процесса; dashboard запрашивает остановку и ждёт освобождения замка. sessions.Own и agentctl plan выбирают ID из окружения.",
+    "alternative": "Переиспользовать taskctl run с добавлением [head] в профиль; задача требует запуска без этой секции.",
+    "justification": "Отдельный worker необходим для подтверждения начала и удержания замка после возврата команды без зависимости от [head].",
+    "result": "pending",
+    "evidence": [
+      "tools/shipctl/checkrun.go:115: для Codex выбран отдельный путь, остальные харнесы идут через taskctl run.",
+      "tools/agentctl/plan.go:104: CODEX_THREAD_ID участвует в выборе ID плана.",
+      "tools/dashboard/checkstop.go:32: dashboard сигнализирует worker и ожидает освобождения замка.",
+      "tools/shipctl/checkcodex.go:155: worker завершает отдельную группу дочерней команды при отмене."
+    ],
+    "reason": "Открыта проверка наблюдаемости отказа записи журнала после подтверждения старта; полный аудит правил и проверок не завершён.",
+    "heading": "### Остановка и очистка проверки"
+  },
   "base_sha": "1341ae88b390f592b5fd0a6f11351ae957bd71bb",
-  "head_sha": "002cbf256450ff7f3b46ea19d452dc3ee5d1af4c",
-  "code_hash": "347cdbfb43c99480dc68ad7024378a13c65280cf57bf9ed3aeec4edae607f4bc",
-  "task_hash": "8536e1c984846c9b05fd1b4eec182f4e521eef2f14190f8c58dd1ceaef1df380",
+  "code_hash": "82ca13ce7b38a8f3e98aabb55205307ff47af6e1809c1913285e9a6422d21a2d",
+  "head_sha": "d3fa91611ec97b814be0ecf5fdac2202b385726b",
+  "id": "DK-1750",
+  "rules": [
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:39",
+          "observation": "raiseCodex запускает worker проверки.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "internal/sessions/sessions.go:598",
+          "observation": "Own возвращает ID текущей сессии.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/agentctl/plan.go:95",
+          "observation": "planResolve выбирает адрес файла плана.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-001",
+      "reason": "Новый worker и клиент входят в shipctl и выполняют одну предметную операцию запуска проверки; Own и planResolve остаются в модулях идентификации сессии и адреса плана.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:114",
+          "observation": "worker обращается к экспортированным операциям блокировки и состояния.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "internal/stage/stage.go:659",
+          "observation": "Open получает ID через sessions.Own.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-002",
+      "reason": "Потребители используют существующие интерфейсы taskstate, taskhead и sessions; изменение Own сохраняет прежний строковый результат.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:31",
+          "observation": "worker повторно запускает исполняемый файл.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:89",
+          "observation": "родитель возвращает результат, пока worker ждёт окончания проверки.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-004",
+      "reason": "Внешний worker нужен, чтобы вернуть подтверждение начала, сохранив процесс и замок после выхода shipctl; добавления сторонней зависимости нет.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "schema",
+        "output",
+        "consumer"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkrun.go:115",
+          "observation": "развилка Codex предшествует существующему taskctl run.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "internal/sessions/sessions.go:598",
+          "observation": "CLAUDE_CODE_SESSION_ID читается первым, CODEX_THREAD_ID только при пустом первом значении.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-007",
+      "reason": "Существующий запуск не-Codex остаётся на taskctl run; Own сохраняет приоритет прежней переменной и формат строки.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-010",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-011",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-012",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-013",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-014",
+      "reason": "При отказе записи журнала до Started возвращается предупреждение. После Started запись может отказать без нового ответа вызывающему; отдельный канал сообщения не установлен.",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "usage",
+        "order"
+      ],
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Нет запросов к базе данных: путь вызывает процессы, читает JSON-события и пишет файлы журнала и состояния.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-015",
+      "reason": "Нет запросов к базе данных: путь вызывает процессы, читает JSON-события и пишет файлы журнала и состояния.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "with_consumer",
+        "without_consumer"
+      ],
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Изменённые сценарии не обращаются к базе данных и не выполняют запросы ORM.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-016",
+      "reason": "Изменённые сценарии не обращаются к базе данных и не выполняют запросы ORM.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Транзакций базы данных на изменённом пути нет; файловая блокировка рассматривается отдельно в ARCH-010.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-017",
+      "reason": "Транзакций базы данных на изменённом пути нет; файловая блокировка рассматривается отдельно в ARCH-010.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "calls",
+        "inputs",
+        "batch"
+      ],
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "В диффе нет операций SQL и коллекций, передаваемых драйверу базы данных.",
+          "result": "not_applicable"
+        }
+      ],
+      "files": [
+        {
+          "path": "internal/checkrun/checkrun.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "internal/sessions/sessions.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "internal/sessions/sessions_test.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "internal/stage/stage_test.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "kit/skills/work-plan/SKILL.md",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/agentctl/README.md",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/agentctl/plan.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/agentctl/plan_test.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/dashboard/checkstop.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/dashboard/checkstop_test.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/dashboard/runs.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/shipctl/checkcodex.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/shipctl/checkcodex_test.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/shipctl/checkrun.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        },
+        {
+          "path": "tools/shipctl/main.go",
+          "reason": "В файле нет вызовов драйвера БД или SQL по элементам коллекции; изменены запуск процесса, тесты и документация."
+        }
+      ],
+      "id": "common-architecture:ARCH-018",
+      "reason": "В диффе нет операций SQL и коллекций, передаваемых драйверу базы данных.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "boundaries",
+        "parameters",
+        "binding",
+        "proposed_binding"
+      ],
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Слой SQL и бизнес-решения по запросам не затронуты: изменён запуск subprocess и учёт сессии.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-019",
+      "reason": "Слой SQL и бизнес-решения по запросам не затронуты: изменён запуск subprocess и учёт сессии.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Проверенный taskctl run не объявлен legacy или deprecated; продолжает поддерживаться для остальных харнесов.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-020",
+      "reason": "Проверенный taskctl run не объявлен legacy или deprecated; продолжает поддерживаться для остальных харнесов.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "shipCarrier.Raise и codexCheckWorker",
+          "location": "tools/shipctl/checkrun.go:100; tools/shipctl/checkcodex.go:97",
+          "observation": "Не изменяется механизм, объявленный legacy или deprecated; существующий taskctl run сохранён как действующий путь.",
+          "result": "not_applicable"
+        }
+      ],
+      "id": "common-architecture:ARCH-021",
+      "reason": "Не изменяется механизм, объявленный legacy или deprecated; существующий taskctl run сохранён как действующий путь.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-022",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "behavior",
+        "basis"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-023",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-024",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-025",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-026",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-027",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-architecture:ARCH-028",
+      "reason": "",
+      "result": "pending",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность."
+    },
+    {
+      "applicability": "applicable",
+      "checks": [
+        "meaning",
+        "result",
+        "writes"
+      ],
+      "evidence": [
+        {
+          "object": "internal/sessions/sessions.go:598#Own",
+          "check": "meaning",
+          "location": "internal/sessions/sessions.go:598",
+          "symbol": "Own",
+          "observation": "Имя описывает собственный ID сессии; это соответствует проверенному действию в коде.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Own",
+              "meaning": "собственный ID сессии",
+              "fact": "ID читается из окружения текущего процесса",
+              "location": "internal/sessions/sessions.go:599",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/sessions/sessions.go:598#Own",
+          "check": "writes",
+          "location": "internal/sessions/sessions.go:598",
+          "observation": "Own только читает окружение и возвращает строку; изменяемых данных нет.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/sessions/sessions.go:598#Own",
+          "check": "result",
+          "location": "internal/sessions/sessions.go:598",
+          "observation": "Own возвращает строковый ID текущей сессии из окружения; Put сохраняет его в Session этапа.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Own"
+            ],
+            "actual": "sid",
+            "actual_at": "internal/sessions/sessions.go:599",
+            "proof": {
+              "expression": "sid",
+              "type": "string",
+              "words": [
+                {
+                  "word": "Own",
+                  "role": "object",
+                  "fact": {
+                    "location": "internal/sessions/sessions.go:599",
+                    "text": "Читает ID текущей сессии по ключу харнеса.",
+                    "value": "os.Getenv(SessionEnv)",
+                    "quote": "os.Getenv(SessionEnv)"
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "Own",
+            "returned": "sid: string, обрезанное значение CLAUDE_CODE_SESSION_ID; иначе strings.TrimSpace(os.Getenv(\"CODEX_THREAD_ID\"))",
+            "return_at": "internal/sessions/sessions.go:600",
+            "consumer": "Сравнивает с держателем записи.",
+            "consumer_at": "tools/agentctl/watch.go:100",
+            "flow": {
+              "caller": "tools/agentctl/watch.go:69",
+              "call_at": "tools/agentctl/watch.go:98",
+              "value": "own",
+              "use_expression": "data[\"session\"] != own"
+            }
+          }
+        },
+        {
+          "object": "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
+          "check": "meaning",
+          "location": "internal/sessions/sessions_test.go:13",
+          "symbol": "TestOwnCodexSession",
+          "observation": "Имя описывает тест, собственный ID, харнес Codex, сессия; это соответствует проверенному действию в коде.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "функция принимает *testing.T",
+              "location": "internal/sessions/sessions_test.go:13",
+              "result": "checked"
+            },
+            {
+              "word": "Own",
+              "meaning": "собственный ID",
+              "fact": "тест вызывает Own",
+              "location": "internal/sessions/sessions_test.go:16",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "харнес Codex",
+              "fact": "задан CODEX_THREAD_ID",
+              "location": "internal/sessions/sessions_test.go:15",
+              "result": "checked"
+            },
+            {
+              "word": "Session",
+              "meaning": "сессия",
+              "fact": "сравнивается ID потока",
+              "location": "internal/sessions/sessions_test.go:16",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
+          "check": "result",
+          "location": "internal/sessions/sessions_test.go:13",
+          "observation": "Тест не возвращает прикладного значения, имя описывает проверяемый сценарий.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
+          "check": "meaning",
+          "location": "internal/stage/stage_test.go:857",
+          "symbol": "TestOpenKeepsCodexVerificationSession",
+          "observation": "Имя описывает тест, открытие этапа, сохраняет, харнес Codex, проверка, сессия; это соответствует проверенному действию в коде.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "функция принимает *testing.T",
+              "location": "internal/stage/stage_test.go:857",
+              "result": "checked"
+            },
+            {
+              "word": "Open",
+              "meaning": "открытие этапа",
+              "fact": "вызывает Open",
+              "location": "internal/stage/stage_test.go:861",
+              "result": "checked"
+            },
+            {
+              "word": "Keeps",
+              "meaning": "сохраняет",
+              "fact": "читает записанный этап",
+              "location": "internal/stage/stage_test.go:864",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "харнес Codex",
+              "fact": "задаёт CODEX_THREAD_ID",
+              "location": "internal/stage/stage_test.go:860",
+              "result": "checked"
+            },
+            {
+              "word": "Verification",
+              "meaning": "проверка",
+              "fact": "передаёт Verify",
+              "location": "internal/stage/stage_test.go:861",
+              "result": "checked"
+            },
+            {
+              "word": "Session",
+              "meaning": "сессия",
+              "fact": "проверяет live.Session",
+              "location": "internal/stage/stage_test.go:869",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
+          "check": "result",
+          "location": "internal/stage/stage_test.go:857",
+          "observation": "Тест не возвращает прикладного значения, имя описывает проверяемый сценарий.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/agentctl/plan.go:95#planResolve",
+          "check": "meaning",
+          "location": "tools/agentctl/plan.go:95",
+          "symbol": "planResolve",
+          "observation": "Имя описывает план, определяет адрес; это соответствует проверенному действию в коде.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "plan",
+              "meaning": "план",
+              "fact": "адрес содержит путь к файлу плана",
+              "location": "tools/agentctl/plan.go:126",
+              "result": "checked"
+            },
+            {
+              "word": "Resolve",
+              "meaning": "определяет адрес",
+              "fact": "по аргументам и окружению выбирает адрес",
+              "location": "tools/agentctl/plan.go:97",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/agentctl/plan.go:95#planResolve",
+          "check": "result",
+          "location": "tools/agentctl/plan.go:95",
+          "observation": "По аргументам и окружению определяет адрес плана; planRun читает его файл.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "plan",
+              "Resolve"
+            ],
+            "actual": "a",
+            "actual_at": "tools/agentctl/plan.go:96",
+            "proof": {
+              "expression": "a",
+              "type": "planAddr",
+              "words": [
+                {
+                  "word": "plan",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/agentctl/plan.go:126",
+                    "quote": "a.file = filepath.Join(planDir(home), name+\".json\")",
+                    "value": "a.file",
+                    "text": "Путь файла плана входит в результат."
+                  }
+                },
+                {
+                  "word": "Resolve",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/agentctl/plan.go:105",
+                    "quote": "a.sid = strings.TrimSpace(env(\"CODEX_THREAD_ID\"))",
+                    "value": "a.sid",
+                    "text": "Определяет адрес по окружению."
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "plan",
+            "returned": "a: planAddr с sid, label, tmux, file; nil error",
+            "return_at": "tools/agentctl/plan.go:127",
+            "consumer": "Читает план по возвращённому пути.",
+            "consumer_at": "tools/agentctl/plan.go:384",
+            "flow": {
+              "caller": "tools/agentctl/plan.go:379",
+              "call_at": "tools/agentctl/plan.go:380",
+              "value": "a",
+              "use_expression": "a.file"
+            }
+          }
+        },
+        {
+          "object": "tools/agentctl/plan_test.go:484#TestPlanCodexSession",
+          "check": "meaning",
+          "location": "tools/agentctl/plan_test.go:484",
+          "symbol": "TestPlanCodexSession",
+          "observation": "Имя описывает тест, план, харнес Codex, сессия; это соответствует проверенному действию в коде.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "функция принимает *testing.T",
+              "location": "tools/agentctl/plan_test.go:484",
+              "result": "checked"
+            },
+            {
+              "word": "Plan",
+              "meaning": "план",
+              "fact": "вызывает planResolve",
+              "location": "tools/agentctl/plan_test.go:487",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "харнес Codex",
+              "fact": "передаёт CODEX_THREAD_ID",
+              "location": "tools/agentctl/plan_test.go:486",
+              "result": "checked"
+            },
+            {
+              "word": "Session",
+              "meaning": "сессия",
+              "fact": "проверяет адрес с ID потока",
+              "location": "tools/agentctl/plan_test.go:488",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/agentctl/plan_test.go:484#TestPlanCodexSession",
+          "check": "result",
+          "location": "tools/agentctl/plan_test.go:484",
+          "observation": "Тест не возвращает прикладного значения, имя описывает проверяемый сценарий.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop.go:15",
+          "symbol": "stopCodexChecker",
+          "observation": "Останавливает подходящий процесс проверяющего Codex, возвращает признак остановки и ошибку; отправляет SIGTERM и ожидает освобождения замка. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "stop",
+              "meaning": "остановка",
+              "fact": "syscall.Kill(run.PID, syscall.SIGTERM)",
+              "location": "tools/dashboard/checkstop.go:34",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "среда Codex",
+              "fact": "run.Harness != \"codex\"",
+              "location": "tools/dashboard/checkstop.go:23",
+              "result": "checked"
+            },
+            {
+              "word": "Checker",
+              "meaning": "проверяющий",
+              "fact": "strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID))",
+              "location": "tools/dashboard/checkstop.go:23",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop_test.go:101",
+          "symbol": "TestRunStopCodexCheckerReportsUnreleasedLock",
+          "observation": "Проверяет сообщение об оставшемся замке при остановке проверяющего; результата не возвращает, меняет настройки теста и выполняет запрос. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "func TestRunStopCodexCheckerReportsUnreleasedLock(t *testing.T)",
+              "location": "tools/dashboard/checkstop_test.go:101",
+              "result": "checked"
+            },
+            {
+              "word": "Run",
+              "meaning": "запуск задачи",
+              "fact": "\"/api/projects/demo/runs/XR-003\"",
+              "location": "tools/dashboard/checkstop_test.go:107",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "\"DELETE\"",
+              "location": "tools/dashboard/checkstop_test.go:107",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "Codex",
+              "fact": "checkStopStand(t, false)",
+              "location": "tools/dashboard/checkstop_test.go:106",
+              "result": "checked"
+            },
+            {
+              "word": "Checker",
+              "meaning": "проверяющий",
+              "fact": "checkStopStand(t, false)",
+              "location": "tools/dashboard/checkstop_test.go:106",
+              "result": "checked"
+            },
+            {
+              "word": "Reports",
+              "meaning": "сообщает",
+              "fact": "strings.Contains(text, \"не освободил замок\")",
+              "location": "tools/dashboard/checkstop_test.go:109",
+              "result": "checked"
+            },
+            {
+              "word": "Unreleased",
+              "meaning": "не освобождён",
+              "fact": "CHECK_STOP_IGNORE",
+              "location": "tools/dashboard/checkstop_test.go:102",
+              "result": "checked"
+            },
+            {
+              "word": "Lock",
+              "meaning": "замок",
+              "fact": "не освободил замок",
+              "location": "tools/dashboard/checkstop_test.go:109",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+          "check": "result",
+          "location": "tools/dashboard/checkstop_test.go:101",
+          "observation": "Функция не возвращает прикладного результата; имя описывает сценарий или обработку запроса.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop_test.go:17",
+          "symbol": "TestCheckStopSupervisorHelper",
+          "observation": "Тестовая точка входа служит вспомогательным процессом надзора: ожидает SIGTERM и освобождает замок; результата не возвращает. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "точка входа теста",
+              "fact": "func TestCheckStopSupervisorHelper(t *testing.T)",
+              "location": "tools/dashboard/checkstop_test.go:17",
+              "result": "checked"
+            },
+            {
+              "word": "Check",
+              "meaning": "проверка",
+              "fact": "CHECK_STOP_HELPER",
+              "location": "tools/dashboard/checkstop_test.go:18",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "signal.Notify(signals, syscall.SIGTERM)",
+              "location": "tools/dashboard/checkstop_test.go:22",
+              "result": "checked"
+            },
+            {
+              "word": "Supervisor",
+              "meaning": "надзорный процесс",
+              "fact": "taskhead.Release(taskhead.LockPath(os.Getenv(\"CHECK_STOP_HOME\"), \"XR-003\"), os.Getpid())",
+              "location": "tools/dashboard/checkstop_test.go:28",
+              "result": "checked"
+            },
+            {
+              "word": "Helper",
+              "meaning": "помощник",
+              "fact": "exec.Command(os.Args[0], \"-test.run=^TestCheckStopSupervisorHelper$\")",
+              "location": "tools/dashboard/checkstop_test.go:35",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+          "check": "result",
+          "location": "tools/dashboard/checkstop_test.go:17",
+          "observation": "Функция не возвращает прикладного результата; имя описывает сценарий или обработку запроса.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:32#checkStopStand",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop_test.go:32",
+          "symbol": "checkStopStand",
+          "observation": "Создаёт стенд остановки проверки, возвращает окружение, HTTP-клиент и команду процесса; запускает процесс и сохраняет состояние и замок. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "check",
+              "meaning": "проверка",
+              "fact": "g.Start(fmt.Sprintf(\"check-%d-1\", pid), \"codex\", \"model\", \"\")",
+              "location": "tools/dashboard/checkstop_test.go:63",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "checkStopStand(t, false)",
+              "location": "tools/dashboard/checkstop_test.go:78",
+              "result": "checked"
+            },
+            {
+              "word": "Stand",
+              "meaning": "стенд",
+              "fact": "cmd := exec.Command(os.Args[0], \"-test.run=^TestCheckStopSupervisorHelper$\")",
+              "location": "tools/dashboard/checkstop_test.go:35",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop_test.go:77",
+          "symbol": "TestRunStopCodexChecker",
+          "observation": "Проверяет остановку процесса проверяющего через DELETE запуска; результата не возвращает, создаёт стенд и выполняет запрос. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "func TestRunStopCodexChecker(t *testing.T)",
+              "location": "tools/dashboard/checkstop_test.go:77",
+              "result": "checked"
+            },
+            {
+              "word": "Run",
+              "meaning": "запуск задачи",
+              "fact": "\"/api/projects/demo/runs/XR-003\"",
+              "location": "tools/dashboard/checkstop_test.go:79",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "\"DELETE\"",
+              "location": "tools/dashboard/checkstop_test.go:79",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "Codex",
+              "fact": "checkStopStand(t, false)",
+              "location": "tools/dashboard/checkstop_test.go:78",
+              "result": "checked"
+            },
+            {
+              "word": "Checker",
+              "meaning": "проверяющий",
+              "fact": "cmd.Wait()",
+              "location": "tools/dashboard/checkstop_test.go:84",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
+          "check": "result",
+          "location": "tools/dashboard/checkstop_test.go:77",
+          "observation": "Функция не возвращает прикладного результата; имя описывает сценарий или обработку запроса.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
+          "check": "meaning",
+          "location": "tools/dashboard/checkstop_test.go:89",
+          "symbol": "TestRunStopCodexCheckerRejectsForeignGroup",
+          "observation": "Проверяет отказ остановки при чужой группе и сохранение процесса; результата не возвращает, создаёт стенд и выполняет запрос. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "func TestRunStopCodexCheckerRejectsForeignGroup(t *testing.T)",
+              "location": "tools/dashboard/checkstop_test.go:89",
+              "result": "checked"
+            },
+            {
+              "word": "Run",
+              "meaning": "запуск задачи",
+              "fact": "\"/api/projects/demo/runs/XR-003\"",
+              "location": "tools/dashboard/checkstop_test.go:91",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "\"DELETE\"",
+              "location": "tools/dashboard/checkstop_test.go:91",
+              "result": "checked"
+            },
+            {
+              "word": "Codex",
+              "meaning": "Codex",
+              "fact": "checkStopStand(t, true)",
+              "location": "tools/dashboard/checkstop_test.go:90",
+              "result": "checked"
+            },
+            {
+              "word": "Checker",
+              "meaning": "проверяющий",
+              "fact": "чужая группа принята за проверяющего",
+              "location": "tools/dashboard/checkstop_test.go:94",
+              "result": "checked"
+            },
+            {
+              "word": "Rejects",
+              "meaning": "отклоняет",
+              "fact": "resp.StatusCode == http.StatusOK",
+              "location": "tools/dashboard/checkstop_test.go:93",
+              "result": "checked"
+            },
+            {
+              "word": "Foreign",
+              "meaning": "чужая",
+              "fact": "checkStopStand(t, true)",
+              "location": "tools/dashboard/checkstop_test.go:90",
+              "result": "checked"
+            },
+            {
+              "word": "Group",
+              "meaning": "группа",
+              "fact": "g.State.Run.Group = pid + 1",
+              "location": "tools/dashboard/checkstop_test.go:68",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
+          "check": "result",
+          "location": "tools/dashboard/checkstop_test.go:89",
+          "observation": "Функция не возвращает прикладного результата; имя описывает сценарий или обработку запроса.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/dashboard/runs.go:1048#server.handleRunStop",
+          "check": "meaning",
+          "location": "tools/dashboard/runs.go:1048",
+          "symbol": "handleRunStop",
+          "observation": "Обрабатывает запрос остановки запуска, отправляет HTTP-ответ и останавливает соответствующую сессию или проверяющего; явного результата не возвращает. Слова имени описывают это назначение.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "handle",
+              "meaning": "обработать",
+              "fact": "func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request)",
+              "location": "tools/dashboard/runs.go:1048",
+              "result": "checked"
+            },
+            {
+              "word": "Run",
+              "meaning": "запуск задачи",
+              "fact": "id := r.PathValue(\"id\")",
+              "location": "tools/dashboard/runs.go:1058",
+              "result": "checked"
+            },
+            {
+              "word": "Stop",
+              "meaning": "остановка",
+              "fact": "stopped, err := stopCodexChecker(s.cfg.Home, found.Path, id)",
+              "location": "tools/dashboard/runs.go:1067",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1048#server.handleRunStop",
+          "check": "result",
+          "location": "tools/dashboard/runs.go:1048",
+          "observation": "Функция не возвращает прикладного результата; имя описывает сценарий или обработку запроса.",
+          "result": "not_applicable"
+        }
+      ],
+      "files": [
+        {
+          "path": "internal/checkrun/checkrun.go",
+          "reason": "Изменены только комментарии; объявления и имена не менялись."
+        },
+        {
+          "path": "internal/sessions/sessions.go",
+          "objects": [
+            "internal/sessions/sessions.go:598#Own"
+          ]
+        },
+        {
+          "path": "internal/sessions/sessions_test.go",
+          "objects": [
+            "internal/sessions/sessions_test.go:13#TestOwnCodexSession"
+          ]
+        },
+        {
+          "path": "internal/stage/stage_test.go",
+          "objects": [
+            "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession"
+          ]
+        },
+        {
+          "path": "kit/skills/work-plan/SKILL.md",
+          "reason": "Изменён текст о запуске и выборе адреса, новых или переименованных имён объявлений в этом файле нет."
+        },
+        {
+          "path": "tools/agentctl/README.md",
+          "reason": "Изменён текст о запуске и выборе адреса, новых или переименованных имён объявлений в этом файле нет."
+        },
+        {
+          "path": "tools/agentctl/plan.go",
+          "objects": [
+            "tools/agentctl/plan.go:95#planResolve"
+          ]
+        },
+        {
+          "path": "tools/agentctl/plan_test.go",
+          "objects": [
+            "tools/agentctl/plan_test.go:484#TestPlanCodexSession"
+          ]
+        },
+        {
+          "path": "tools/dashboard/checkstop.go",
+          "objects": [
+            "tools/dashboard/checkstop.go:15#stopCodexChecker"
+          ]
+        },
+        {
+          "path": "tools/dashboard/checkstop_test.go",
+          "objects": [
+            "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+            "tools/dashboard/checkstop_test.go:32#checkStopStand",
+            "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
+            "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
+            "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock"
+          ]
+        },
+        {
+          "path": "tools/dashboard/runs.go",
+          "objects": [
+            "tools/dashboard/runs.go:1048#server.handleRunStop"
+          ]
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "Изменён текст о запуске и выборе адреса, новых или переименованных имён объявлений в этом файле нет."
+        },
+        {
+          "path": "tools/shipctl/checkcodex.go",
+          "objects": [
+            "tools/shipctl/checkcodex.go:40#shipCarrier.raiseCodex",
+            "tools/shipctl/checkcodex.go:98#codexCheckWorker"
+          ]
+        },
+        {
+          "path": "tools/shipctl/checkcodex_test.go",
+          "objects": [
+            "tools/shipctl/checkcodex_test.go:17#TestCodexCheckWorkerHelper",
+            "tools/shipctl/checkcodex_test.go:25#TestCodexCheckWorkerStartsFreshTurn",
+            "tools/shipctl/checkcodex_test.go:60#TestCodexCheckWorkerFailsBeforeTurn",
+            "tools/shipctl/checkcodex_test.go:96#TestCodexCheckWorkerRespectsStop",
+            "tools/shipctl/checkcodex_test.go:115#TestCodexCheckWorkerDoesNotDuplicate",
+            "tools/shipctl/checkcodex_test.go:136#TestCodexCheckWorkerStopsDescendant",
+            "tools/shipctl/checkcodex_test.go:203#TestCheckRunCodexEntry"
+          ]
+        },
+        {
+          "path": "tools/shipctl/checkrun.go",
+          "objects": [
+            "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
+            "tools/shipctl/checkrun.go:199#checkRuns"
+          ]
+        },
+        {
+          "path": "tools/shipctl/main.go",
+          "objects": [
+            "tools/shipctl/main.go:195#main"
+          ]
+        }
+      ],
+      "id": "common-style:STYLE-001",
+      "objects": [
+        "internal/sessions/sessions.go:598#Own",
+        "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
+        "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
+        "tools/agentctl/plan.go:95#planResolve",
+        "tools/agentctl/plan_test.go:484#TestPlanCodexSession",
+        "tools/dashboard/checkstop.go:15#stopCodexChecker",
+        "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+        "tools/dashboard/checkstop_test.go:32#checkStopStand",
+        "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
+        "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
+        "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+        "tools/dashboard/runs.go:1048#server.handleRunStop",
+        "tools/shipctl/checkcodex.go:40#shipCarrier.raiseCodex",
+        "tools/shipctl/checkcodex.go:98#codexCheckWorker",
+        "tools/shipctl/checkcodex_test.go:17#TestCodexCheckWorkerHelper",
+        "tools/shipctl/checkcodex_test.go:25#TestCodexCheckWorkerStartsFreshTurn",
+        "tools/shipctl/checkcodex_test.go:60#TestCodexCheckWorkerFailsBeforeTurn",
+        "tools/shipctl/checkcodex_test.go:96#TestCodexCheckWorkerRespectsStop",
+        "tools/shipctl/checkcodex_test.go:115#TestCodexCheckWorkerDoesNotDuplicate",
+        "tools/shipctl/checkcodex_test.go:136#TestCodexCheckWorkerStopsDescendant",
+        "tools/shipctl/checkcodex_test.go:203#TestCheckRunCodexEntry",
+        "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
+        "tools/shipctl/checkrun.go:199#checkRuns",
+        "tools/shipctl/main.go:195#main"
+      ],
+      "reason": "Partial: закрыта 1 из 24 целей; для других есть частичные записи. audit-record требует t.Run для t.Setenv без подтеста и отклонил подтверждённые записи поля a.file и чтение checkStopTimeout. Оставшиеся цели не разбирались полностью.",
+      "result": "pending",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "internal/sessions/sessions.go:598#Own",
+          "symbol": "Own",
+          "location": "internal/sessions/sessions.go:598"
+        },
+        {
+          "object": "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
+          "symbol": "TestOwnCodexSession",
+          "location": "internal/sessions/sessions_test.go:13"
+        },
+        {
+          "object": "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
+          "symbol": "TestOpenKeepsCodexVerificationSession",
+          "location": "internal/stage/stage_test.go:857"
+        },
+        {
+          "object": "tools/agentctl/plan.go:95#planResolve",
+          "symbol": "planResolve",
+          "location": "tools/agentctl/plan.go:95"
+        },
+        {
+          "object": "tools/agentctl/plan_test.go:484#TestPlanCodexSession",
+          "symbol": "TestPlanCodexSession",
+          "location": "tools/agentctl/plan_test.go:484"
+        },
+        {
+          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "symbol": "stopCodexChecker",
+          "location": "tools/dashboard/checkstop.go:15"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+          "symbol": "TestCheckStopSupervisorHelper",
+          "location": "tools/dashboard/checkstop_test.go:17"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:32#checkStopStand",
+          "symbol": "checkStopStand",
+          "location": "tools/dashboard/checkstop_test.go:32"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
+          "symbol": "TestRunStopCodexChecker",
+          "location": "tools/dashboard/checkstop_test.go:77"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
+          "symbol": "TestRunStopCodexCheckerRejectsForeignGroup",
+          "location": "tools/dashboard/checkstop_test.go:89"
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+          "symbol": "TestRunStopCodexCheckerReportsUnreleasedLock",
+          "location": "tools/dashboard/checkstop_test.go:101"
+        },
+        {
+          "object": "tools/dashboard/runs.go:1048#server.handleRunStop",
+          "symbol": "handleRunStop",
+          "location": "tools/dashboard/runs.go:1048"
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:40#shipCarrier.raiseCodex",
+          "symbol": "raiseCodex",
+          "location": "tools/shipctl/checkcodex.go:40"
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:98#codexCheckWorker",
+          "symbol": "codexCheckWorker",
+          "location": "tools/shipctl/checkcodex.go:98"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:17#TestCodexCheckWorkerHelper",
+          "symbol": "TestCodexCheckWorkerHelper",
+          "location": "tools/shipctl/checkcodex_test.go:17"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:25#TestCodexCheckWorkerStartsFreshTurn",
+          "symbol": "TestCodexCheckWorkerStartsFreshTurn",
+          "location": "tools/shipctl/checkcodex_test.go:25"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:60#TestCodexCheckWorkerFailsBeforeTurn",
+          "symbol": "TestCodexCheckWorkerFailsBeforeTurn",
+          "location": "tools/shipctl/checkcodex_test.go:60"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:96#TestCodexCheckWorkerRespectsStop",
+          "symbol": "TestCodexCheckWorkerRespectsStop",
+          "location": "tools/shipctl/checkcodex_test.go:96"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:115#TestCodexCheckWorkerDoesNotDuplicate",
+          "symbol": "TestCodexCheckWorkerDoesNotDuplicate",
+          "location": "tools/shipctl/checkcodex_test.go:115"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:136#TestCodexCheckWorkerStopsDescendant",
+          "symbol": "TestCodexCheckWorkerStopsDescendant",
+          "location": "tools/shipctl/checkcodex_test.go:136"
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:203#TestCheckRunCodexEntry",
+          "symbol": "TestCheckRunCodexEntry",
+          "location": "tools/shipctl/checkcodex_test.go:203"
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
+          "symbol": "Raise",
+          "location": "tools/shipctl/checkrun.go:98"
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:199#checkRuns",
+          "symbol": "checkRuns",
+          "location": "tools/shipctl/checkrun.go:199"
+        },
+        {
+          "object": "tools/shipctl/main.go:195#main",
+          "symbol": "main",
+          "location": "tools/shipctl/main.go:195"
+        }
+      ],
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-002",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-004",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-007",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-010",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-011",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-012",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-013",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-014",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [],
+      "files": [
+        {
+          "path": "internal/checkrun/checkrun.go",
+          "objects": [
+            "internal/checkrun/checkrun.go:1",
+            "internal/checkrun/checkrun.go:349"
+          ]
+        },
+        {
+          "path": "internal/sessions/sessions.go",
+          "objects": [
+            "internal/sessions/sessions.go:596"
+          ]
+        },
+        {
+          "path": "internal/sessions/sessions_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "internal/stage/stage_test.go",
+          "objects": [
+            "internal/stage/stage_test.go:854"
+          ]
+        },
+        {
+          "path": "kit/skills/work-plan/SKILL.md",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/agentctl/README.md",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/agentctl/plan.go",
+          "objects": [
+            "tools/agentctl/plan.go:90"
+          ]
+        },
+        {
+          "path": "tools/agentctl/plan_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/dashboard/checkstop.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/dashboard/checkstop_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/dashboard/runs.go",
+          "objects": [
+            "tools/dashboard/runs.go:1093",
+            "tools/dashboard/runs.go:1099",
+            "tools/dashboard/runs.go:1117",
+            "tools/dashboard/runs.go:1128",
+            "tools/dashboard/runs.go:1137"
+          ]
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/shipctl/checkcodex.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/shipctl/checkcodex_test.go",
+          "reason": "В изменённых строках файла нет комментариев к коду, требующих проверки STYLE-015."
+        },
+        {
+          "path": "tools/shipctl/checkrun.go",
+          "objects": [
+            "tools/shipctl/checkrun.go:20",
+            "tools/shipctl/checkrun.go:47",
+            "tools/shipctl/checkrun.go:96",
+            "tools/shipctl/checkrun.go:145",
+            "tools/shipctl/checkrun.go:195"
+          ]
+        },
+        {
+          "path": "tools/shipctl/main.go",
+          "objects": [
+            "tools/shipctl/main.go:321",
+            "tools/shipctl/main.go:367"
+          ]
+        }
+      ],
+      "id": "common-style:STYLE-015",
+      "objects": [
+        "internal/checkrun/checkrun.go:1",
+        "internal/checkrun/checkrun.go:349",
+        "internal/sessions/sessions.go:596",
+        "internal/stage/stage_test.go:854",
+        "tools/agentctl/plan.go:90",
+        "tools/dashboard/runs.go:1093",
+        "tools/dashboard/runs.go:1099",
+        "tools/dashboard/runs.go:1117",
+        "tools/dashboard/runs.go:1128",
+        "tools/dashboard/runs.go:1137",
+        "tools/shipctl/checkrun.go:20",
+        "tools/shipctl/checkrun.go:47",
+        "tools/shipctl/checkrun.go:96",
+        "tools/shipctl/checkrun.go:145",
+        "tools/shipctl/checkrun.go:195",
+        "tools/shipctl/main.go:321",
+        "tools/shipctl/main.go:367"
+      ],
+      "reason": "Содержательная проверка изменённых комментариев ещё открыта.",
+      "result": "pending",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "internal/checkrun/checkrun.go:1",
+          "symbol": "",
+          "location": "internal/checkrun/checkrun.go:1",
+          "comment_fragments": [
+            "Package checkrun это отбор подъёма проверяющего после выката (DK-718, DK-947): нужен ли строке Check прогон агентской части сценария, кто вёл разработку и какой моделью поднимать того, кто сценарий прогонит.",
+            "Зовущих у отбора трое, и правила у них одни.",
+            "Выкат без человека в окне (shipctl merge и ship при autonomous = true) поднимает проверяющего сразу, тик devkitctl watch страхует то, что мимо выката проехало, командой `shipctl check-run`, а `dashboard check` остаётся обёрткой для экрана.",
+            "Сам подъём у каждого свой носитель.",
+            "Shipctl запускает Codex через `codex exec`, остальные харнесы через `taskctl run`.",
+            "До DK-947 правила жили в дашборде, и без его бинаря подъёма не было вовсе.",
+            "Независимость проверяющего несёт отдельная сессия (DK-1360): прогон идёт в свежем разговоре, не участвовавшем в круге разработки, и совпадение модели с моделью разработки помехой не служит.",
+            "Ярус даёт вердикт `agentctl pick --role review`, у роли ревью пол base, а разработку задач ценой M ведёт тот же base.",
+            "Ступень вверх по лестнице подписки отбор берёт только когда модель яруса недоступна: раскладка её не назвала либо подписку снял отбор допущенных.",
+            "Сессии участников круга и прогона хранит запись этапов, а сверяет их ворота taskctl close.",
+            "Если первая лестница не дала модели, отбор пробует другие включённые лестницы с того же яруса.",
+            "Отказ остаётся, когда ни одна из них модели яруса не дала."
+          ]
+        },
+        {
+          "object": "internal/checkrun/checkrun.go:349",
+          "symbol": "",
+          "location": "internal/checkrun/checkrun.go:349",
+          "comment_fragments": [
+            "Carrier поднимает проверяющего через выбранный харнес.",
+            "Дашборд и shipctl передают носителю модель и заказ прогона."
+          ]
+        },
+        {
+          "object": "internal/sessions/sessions.go:596",
+          "symbol": "Own",
+          "location": "internal/sessions/sessions.go:596",
+          "comment_fragments": [
+            "Own называет ID сессии, в которой идёт ход: харнес кладёт его в окружение.",
+            "Пусто вне сессии харнеса, и это штатное молчание, а не поломка."
+          ]
+        },
+        {
+          "object": "internal/stage/stage_test.go:854",
+          "symbol": "TestOpenKeepsCodexVerificationSession",
+          "location": "internal/stage/stage_test.go:854",
+          "comment_fragments": [
+            "Разговор, открывший этап, стоит в записи четвёртым полем (DK-716).",
+            "Без него от записи нельзя было дойти до чата, который задачу ведёт: экран знал, что идёт разработка, а спросить исполнителя было негде."
+          ]
+        },
+        {
+          "object": "tools/agentctl/plan.go:90",
+          "symbol": "planResolve",
+          "location": "tools/agentctl/plan.go:90",
+          "comment_fragments": [
+            "planResolve считает адрес плана по окружению и флагам.",
+            "Субагент пишет свой файл с меткой: CLAUDE_CODE_SESSION_ID у субагентов одной пачки общий, своего признака окружение им не даёт, и без метки они писали план поверх соседского (DK-527).",
+            "Метка приезжает флагом либо парой окружения, а безымянный план это план самой сессии."
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1093",
+          "symbol": "server.handleRunStop",
+          "location": "tools/dashboard/runs.go:1093",
+          "comment_fragments": [
+            "Стоп симметричен запуску: работа ищется среди живых работ этого проекта, где tmux-сессии привязаны префиксом его доски (liveWorks, правило DK-217), а не в общем списке сессий машины.",
+            "Иначе стоп на доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал в чужом корне."
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1099",
+          "symbol": "server.handleRunStop",
+          "location": "tools/dashboard/runs.go:1099",
+          "comment_fragments": [
+            "Работы строки ищутся по её признаку, а не по одному полю ID: рабочих сессий у задачи бывает несколько, и стоп обязан видеть их все (DK-716)."
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1117",
+          "symbol": "server.handleRunStop",
+          "location": "tools/dashboard/runs.go:1117",
+          "comment_fragments": [
+            "Строка про стоп идёт в журнал цикла до убийства сессии: стоп виден там же, где виден ход.",
+            "Провал записи стоп не отменяет, но называется."
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1128",
+          "symbol": "server.handleRunStop",
+          "location": "tools/dashboard/runs.go:1128",
+          "comment_fragments": [
+            "Имя сессии задачи одно на конвейер и на разбор черновика, и разбор ходит под присмотром: снятое кнопкой стопа смертью не считается."
+          ]
+        },
+        {
+          "object": "tools/dashboard/runs.go:1137",
+          "symbol": "server.handleRunStop",
+          "location": "tools/dashboard/runs.go:1137",
+          "comment_fragments": [
+            "Стоп говорит о себе тем же уведомителем, что виток и taskctl move: снятая сессия иначе видна только тому, кто нажал кнопку, а лента для того и заведена, чтобы стоп доехал до второго устройства."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:20",
+          "symbol": "",
+          "location": "tools/shipctl/checkrun.go:20",
+          "comment_fragments": [
+            "Подъём прогона сценария после выката (DK-718, DK-947).",
+            "Выкат при autonomous = true доводит задачу до прода сам, а дальше конвейер упирался в правило независимости: сценарий прогоняет отдельная сессия со свежим контекстом, и поднять её было некому.",
+            "Строка стояла в Check, держала очередь непроверенного выката и ждала, пока человек поднимет сессию руками.",
+            "Зовёт подъём тот, кто увёл строку в Check без человека в окне, то есть сам выкат: merge и ship при autonomous = true.",
+            "Признак тут не флаг вызова, а доверенный агенту конвейер: команду выката катит агент, и адресата у события «строка в Check» нет ни одного.",
+            "Явный `--deploy` в это число не входит, он указание человека прямо сейчас, и человек в окне у него есть.",
+            "Тем же кодом закрыт разлив поезда тиком сторожка: тик зовёт `ship --drain`, и подъём едет внутри той же команды, а строки, мимо которых выкат проехал, тик добирает командой `shipctl check-run`.",
+            "Кого поднимать и какой моделью, решает общий отбор internal/checkrun, тот же у дашборда.",
+            "Для Codex проверка идёт отдельным процессом с замком задачи; остальные харнесы поднимаются через `taskctl run <ID> --model <модель>`."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:47",
+          "symbol": "",
+          "location": "tools/shipctl/checkrun.go:47",
+          "comment_fragments": [
+            "shipCarrier поднимает проверку без дашборда через Codex или taskctl run."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:96",
+          "symbol": "shipCarrier.Raise",
+          "location": "tools/shipctl/checkrun.go:96",
+          "comment_fragments": [
+            "Raise поднимает проверяющего в Codex либо командой taskctl run.",
+            "Для taskctl модель называется всегда: без --model записался бы этап исполнителя."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:145",
+          "symbol": "shipCarrier.Raise",
+          "location": "tools/shipctl/checkrun.go:145",
+          "comment_fragments": [
+            "Замок держит живая голова задачи, чаще всего та, что сама и катила выкат.",
+            "Поломкой это не считается: посторонняя сессия прогонит сценарий сама, а строку, которую голова сдала, поднимет тик после её выхода."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:195",
+          "symbol": "checkRuns",
+          "location": "tools/shipctl/checkrun.go:195",
+          "comment_fragments": [
+            "checkRuns поднимает прогон по названным строкам, а без имён по всей секции Check.",
+            "moved значит, что названные строки только что увёл в Check сам выкат: перевод сделала эта же команда, и секция берётся с её слов, а не перечиткой доски."
+          ]
+        },
+        {
+          "object": "tools/shipctl/main.go:321",
+          "symbol": "main",
+          "location": "tools/shipctl/main.go:321",
+          "comment_fragments": [
+            "Отказ нужного подъёма это ненулевой выход, но слова уже напечатаны построчно, и повторять их ошибкой незачем."
+          ]
+        },
+        {
+          "object": "tools/shipctl/main.go:367",
+          "symbol": "main",
+          "location": "tools/shipctl/main.go:367",
+          "comment_fragments": [
+            "Проверка диапазона стоит и в репозитории без доски: ворот следа ревью там единственный, и отказ поиска доски запирал бы пуш вместо разбора."
+          ]
+        }
+      ],
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-style:STYLE-016",
+      "reason": "",
+      "result": "pending",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex_test.go:23",
+          "observation": "worker и вход имеют тесты.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "internal/sessions/sessions_test.go:13",
+          "observation": "Own проверяется с обеими переменными.",
+          "result": "checked"
+        },
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/agentctl/plan_test.go:484",
+          "observation": "planResolve проверяется с ID Codex и приоритетом панели.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-tests:TEST-001",
+      "reason": "Изменённые модули покрыты тестами; достаточность и отбор тестов рассматриваются по TEST-003, TEST-004 и TEST-005.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [],
+      "id": "common-tests:TEST-002",
+      "reason": "Есть живое воспроизведение старого отказа и исправленного запуска; штатный regcheck исходного бага на базе не подтверждён. Отдельный regcheck потомка проверен между 7df2dd2 и 45a5da2.",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-003",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-004",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск."
+    },
+    {
+      "applicability": "pending",
+      "checks": [
+        "strength",
+        "overlap"
+      ],
+      "evidence": [],
+      "id": "common-tests:TEST-005",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-006",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-007",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-008",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "common-tests:TEST-009",
+      "reason": "",
+      "result": "pending",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-927d754447cbe51a",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Границы"
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "README.md:323; tools/shipctl/checkcodex.go:1; internal/sessions/sessions.go:598",
+          "observation": "Новые Go-файлы лежат в каталоге shipctl; общий пакет sessions уже находится в internal.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "reason": "Новые Go-файлы лежат в каталоге shipctl; общий пакет sessions уже находится в internal.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-3795ec1243732caa",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-feefa59680bc01df",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Инварианты"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-746f66466c253955",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484)."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-c8be7a833c89c0e8",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-26e0e04a23f2e549",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Ход помечается занятым до отправки реплики. Уведомление о его\n  завершении снимает занятость. Смерть процесса записывается в ленту."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-3380b0e14dbf5e5c",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. После 30 минут без\n  событий текущего хода дашборд запрашивает состояние нити через\n  `thread/read`. Если Codex подтвердил завершение этого хода, дашборд\n  снимает занятость и принимает исход из ответа. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:150",
+          "observation": "Изменённый сценарий не добавляет сетевых вызовов в dashboard.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "reason": "Изменённый сценарий не добавляет сетевых вызовов в dashboard.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-9c814a6998496b37",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое"
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "README.md:323; tools/shipctl/checkcodex.go:1; tools/shipctl/checkcodex_test.go:1",
+          "observation": "Новые файлы Go относятся к существующему инструменту shipctl и расположены в его каталоге по раскладке.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "reason": "Новые файлы Go относятся к существующему инструменту shipctl и расположены в его каталоге по раскладке.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex.go:1",
+          "observation": "Новый домен dashboard на проверяемом SHA не создаётся.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "reason": "Новый домен dashboard на проверяемом SHA не создаётся.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-414cfee6ece27659",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-2896dde8774e1968",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "reason": "",
+      "result": "pending",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-8bfebc193cc45790",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "# Стиль devkit"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-2f21840e1463a01e",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-9c4dd47968139c01",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Ошибки и отказы"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkrun.go:239",
+          "observation": "shipctl запускает проверяющего и возвращает исход запуска; это не проверочная утилита, печатающая построчно находки.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-88e50c4f780c246c",
+      "reason": "shipctl запускает проверяющего и возвращает исход запуска; это не проверочная утилита, печатающая построчно находки.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/main.go:195; internal/sessions/sessions.go:598",
+          "observation": "В изменённых файлах нет рубежа hook-а; это команда shipctl и библиотека сессий.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-2212761035e243fb",
+      "reason": "В изменённых файлах нет рубежа hook-а; это команда shipctl и библиотека сессий.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-41b95475184c2aef",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Раскладка тестов"
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "checkcodex",
+          "location": "tools/shipctl/checkcodex_test.go:1",
+          "observation": "Тест находится рядом с checkcodex.go.",
+          "result": "checked"
+        },
+        {
+          "object": "checkstop",
+          "location": "tools/dashboard/checkstop_test.go:1",
+          "observation": "Тест находится рядом с checkstop.go.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-519646d7d9f951be",
+      "reason": "Новые файлы тестов checkcodex_test.go и checkstop_test.go лежат рядом с одноимёнными модулями.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex_test.go:23",
+          "observation": "Фикстуры worker создаются через t.TempDir, файловый корень и дом теста передаются в worker.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-9573ef33db114342",
+      "reason": "Фикстуры worker создаются через t.TempDir, файловый корень и дом теста передаются в worker.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [
+        {
+          "object": "изменённый сценарий",
+          "location": "tools/shipctl/checkcodex_test.go:23",
+          "observation": "На проверяемом SHA изменения dashboard и живого браузера отсутствуют.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-b03ef741121d44a0",
+      "reason": "На проверяемом SHA изменения dashboard и живого браузера отсутствуют.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-a969903cd6ddc137",
+      "reason": "Заголовок или описание состава источников не задаёт отдельного требования к изменённому сценарию.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Имена"
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-c785ad31965daade",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`."
+    },
+    {
+      "applicability": "pending",
+      "evidence": [],
+      "id": "project-style:block-b3298c360a523f07",
+      "reason": "",
+      "result": "pending",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется."
+    }
+  ],
   "sources": [
     {
       "name": "common-architecture",
@@ -37,1231 +2386,6 @@
       "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
     }
   ],
-  "architecture": {
-    "goal": "Поднять независимого проверяющего Codex без [head], передать заказ и сохранить собственный ID сессии.",
-    "decision": "shipctl запускает отдельный worker, тот занимает замок и запускает agentctl exec с codex exec --json; события подтверждают начало хода.",
-    "boundaries": "shipctl выбирает переносчик; worker удерживает замок, пишет состояние и журнал до завершения дочернего процесса; sessions.Own получает ID из окружения.",
-    "alternative": "Добавить [head] профилю и переиспользовать taskctl run; задача явно требует запуска без этой секции, и этот путь зависит от task-run.",
-    "justification": "Отдельный worker позволяет сообщить результат начала хода, сохранив блокировку на время работы и не требуя [head]. Жизненный цикл остановки и очистки пока нарушен.",
-    "result": "violated",
-    "evidence": [
-      {
-        "location": "tools/shipctl/checkrun.go:117",
-        "observation": "Выбор Codex направляет на новый путь; для остальных остаётся taskctl run, как на базе."
-      },
-      {
-        "location": "tools/shipctl/checkcodex.go:133",
-        "observation": "Worker держит замок до выхода и запускает через agentctl exec отдельный Codex."
-      },
-      {
-        "location": "tools/dashboard/runs.go:1059",
-        "observation": "Стоп обрабатывает appTask и tmux, но новый worker к ним не относится."
-      },
-      {
-        "location": "tools/shipctl/checkcodex.go:170",
-        "observation": "При отказах завершается только прямой дочерний процесс agentctl exec, не его потомок Codex."
-      }
-    ],
-    "reason": "Остановка dashboard не завершает новый worker; ошибки сохранения состояния и сканера убивают только agentctl, оставляя потомка Codex.",
-    "heading": "### Остановка и очистка проверки"
-  },
-  "rules": [
-    {
-      "id": "common-architecture:ARCH-001",
-      "source": "common-architecture",
-      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-002",
-      "source": "common-architecture",
-      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-003",
-      "source": "common-architecture",
-      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-004",
-      "source": "common-architecture",
-      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-005",
-      "source": "common-architecture",
-      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "schema",
-        "output",
-        "consumer"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-006",
-      "source": "common-architecture",
-      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-007",
-      "source": "common-architecture",
-      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-008",
-      "source": "common-architecture",
-      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-009",
-      "source": "common-architecture",
-      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
-      "applicability": "applicable",
-      "result": "violated",
-      "reason": "Worker не завершает потомка на ошибке, а штатный стоп не завершает worker.",
-      "evidence": [
-        {
-          "object": "codexCheckWorker",
-          "location": "tools/shipctl/checkcodex.go:168",
-          "observation": "Process.Kill завершает agentctl exec, а его дочерний Codex может продолжить работу; замок затем отпускается.",
-          "result": "violated",
-          "heading": "### Остановка и очистка проверки"
-        },
-        {
-          "object": "handleRunStop",
-          "location": "tools/dashboard/runs.go:1059",
-          "observation": "Стоп сохраняет флаг, но проверка, не зарегистрированная как appTask или tmux, не завершается.",
-          "result": "violated",
-          "heading": "### Остановка и очистка проверки"
-        }
-      ]
-    },
-    {
-      "id": "common-architecture:ARCH-010",
-      "source": "common-architecture",
-      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-011",
-      "source": "common-architecture",
-      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-012",
-      "source": "common-architecture",
-      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-013",
-      "source": "common-architecture",
-      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-014",
-      "source": "common-architecture",
-      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-015",
-      "source": "common-architecture",
-      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "usage",
-        "order"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-016",
-      "source": "common-architecture",
-      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "with_consumer",
-        "without_consumer"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-017",
-      "source": "common-architecture",
-      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-018",
-      "source": "common-architecture",
-      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "calls",
-        "inputs",
-        "batch"
-      ],
-      "files": [
-        {
-          "path": "internal/sessions/sessions.go"
-        },
-        {
-          "path": "internal/sessions/sessions_test.go"
-        },
-        {
-          "path": "internal/stage/stage_test.go"
-        },
-        {
-          "path": "tools/shipctl/README.md"
-        },
-        {
-          "path": "tools/shipctl/checkcodex.go"
-        },
-        {
-          "path": "tools/shipctl/checkcodex_test.go"
-        },
-        {
-          "path": "tools/shipctl/checkrun.go"
-        },
-        {
-          "path": "tools/shipctl/main.go"
-        }
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-019",
-      "source": "common-architecture",
-      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "boundaries",
-        "parameters",
-        "binding",
-        "proposed_binding"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-020",
-      "source": "common-architecture",
-      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-021",
-      "source": "common-architecture",
-      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-022",
-      "source": "common-architecture",
-      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-023",
-      "source": "common-architecture",
-      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "behavior",
-        "basis"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-024",
-      "source": "common-architecture",
-      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-025",
-      "source": "common-architecture",
-      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-026",
-      "source": "common-architecture",
-      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-027",
-      "source": "common-architecture",
-      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-architecture:ARCH-028",
-      "source": "common-architecture",
-      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-001",
-      "source": "common-style",
-      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "meaning",
-        "result",
-        "writes"
-      ],
-      "files": [
-        {
-          "path": "internal/sessions/sessions.go",
-          "objects": [
-            "internal/sessions/sessions.go:598#Own"
-          ]
-        },
-        {
-          "path": "internal/sessions/sessions_test.go",
-          "objects": [
-            "internal/sessions/sessions_test.go:13#TestOwnCodexSession"
-          ]
-        },
-        {
-          "path": "internal/stage/stage_test.go",
-          "objects": [
-            "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession"
-          ]
-        },
-        {
-          "path": "tools/shipctl/README.md"
-        },
-        {
-          "path": "tools/shipctl/checkcodex.go",
-          "objects": [
-            "tools/shipctl/checkcodex.go:39#shipCarrier.raiseCodex",
-            "tools/shipctl/checkcodex.go:97#codexCheckWorker"
-          ]
-        },
-        {
-          "path": "tools/shipctl/checkcodex_test.go",
-          "objects": [
-            "tools/shipctl/checkcodex_test.go:15#TestCodexCheckWorkerHelper",
-            "tools/shipctl/checkcodex_test.go:23#TestCodexCheckWorkerStartsFreshTurn",
-            "tools/shipctl/checkcodex_test.go:58#TestCodexCheckWorkerFailsBeforeTurn",
-            "tools/shipctl/checkcodex_test.go:78#TestCodexCheckWorkerRespectsStop",
-            "tools/shipctl/checkcodex_test.go:97#TestCodexCheckWorkerDoesNotDuplicate",
-            "tools/shipctl/checkcodex_test.go:118#TestCheckRunCodexEntry"
-          ]
-        },
-        {
-          "path": "tools/shipctl/checkrun.go",
-          "objects": [
-            "tools/shipctl/checkrun.go:100#shipCarrier.Raise",
-            "tools/shipctl/checkrun.go:201#checkRuns"
-          ]
-        },
-        {
-          "path": "tools/shipctl/main.go",
-          "objects": [
-            "tools/shipctl/main.go:195#main"
-          ]
-        }
-      ],
-      "targets": [
-        {
-          "object": "internal/sessions/sessions.go:598#Own",
-          "symbol": "Own",
-          "location": "internal/sessions/sessions.go:598"
-        },
-        {
-          "object": "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
-          "symbol": "TestOwnCodexSession",
-          "location": "internal/sessions/sessions_test.go:13"
-        },
-        {
-          "object": "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
-          "symbol": "TestOpenKeepsCodexVerificationSession",
-          "location": "internal/stage/stage_test.go:857"
-        },
-        {
-          "object": "tools/shipctl/checkcodex.go:39#shipCarrier.raiseCodex",
-          "symbol": "raiseCodex",
-          "location": "tools/shipctl/checkcodex.go:39"
-        },
-        {
-          "object": "tools/shipctl/checkcodex.go:97#codexCheckWorker",
-          "symbol": "codexCheckWorker",
-          "location": "tools/shipctl/checkcodex.go:97"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:15#TestCodexCheckWorkerHelper",
-          "symbol": "TestCodexCheckWorkerHelper",
-          "location": "tools/shipctl/checkcodex_test.go:15"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:23#TestCodexCheckWorkerStartsFreshTurn",
-          "symbol": "TestCodexCheckWorkerStartsFreshTurn",
-          "location": "tools/shipctl/checkcodex_test.go:23"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:58#TestCodexCheckWorkerFailsBeforeTurn",
-          "symbol": "TestCodexCheckWorkerFailsBeforeTurn",
-          "location": "tools/shipctl/checkcodex_test.go:58"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:78#TestCodexCheckWorkerRespectsStop",
-          "symbol": "TestCodexCheckWorkerRespectsStop",
-          "location": "tools/shipctl/checkcodex_test.go:78"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:97#TestCodexCheckWorkerDoesNotDuplicate",
-          "symbol": "TestCodexCheckWorkerDoesNotDuplicate",
-          "location": "tools/shipctl/checkcodex_test.go:97"
-        },
-        {
-          "object": "tools/shipctl/checkcodex_test.go:118#TestCheckRunCodexEntry",
-          "symbol": "TestCheckRunCodexEntry",
-          "location": "tools/shipctl/checkcodex_test.go:118"
-        },
-        {
-          "object": "tools/shipctl/checkrun.go:100#shipCarrier.Raise",
-          "symbol": "Raise",
-          "location": "tools/shipctl/checkrun.go:100"
-        },
-        {
-          "object": "tools/shipctl/checkrun.go:201#checkRuns",
-          "symbol": "checkRuns",
-          "location": "tools/shipctl/checkrun.go:201"
-        },
-        {
-          "object": "tools/shipctl/main.go:195#main",
-          "symbol": "main",
-          "location": "tools/shipctl/main.go:195"
-        }
-      ],
-      "objects": [
-        "internal/sessions/sessions.go:598#Own",
-        "internal/sessions/sessions_test.go:13#TestOwnCodexSession",
-        "internal/stage/stage_test.go:857#TestOpenKeepsCodexVerificationSession",
-        "tools/shipctl/checkcodex.go:39#shipCarrier.raiseCodex",
-        "tools/shipctl/checkcodex.go:97#codexCheckWorker",
-        "tools/shipctl/checkcodex_test.go:15#TestCodexCheckWorkerHelper",
-        "tools/shipctl/checkcodex_test.go:23#TestCodexCheckWorkerStartsFreshTurn",
-        "tools/shipctl/checkcodex_test.go:58#TestCodexCheckWorkerFailsBeforeTurn",
-        "tools/shipctl/checkcodex_test.go:78#TestCodexCheckWorkerRespectsStop",
-        "tools/shipctl/checkcodex_test.go:97#TestCodexCheckWorkerDoesNotDuplicate",
-        "tools/shipctl/checkcodex_test.go:118#TestCheckRunCodexEntry",
-        "tools/shipctl/checkrun.go:100#shipCarrier.Raise",
-        "tools/shipctl/checkrun.go:201#checkRuns",
-        "tools/shipctl/main.go:195#main"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-002",
-      "source": "common-style",
-      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-003",
-      "source": "common-style",
-      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-004",
-      "source": "common-style",
-      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-005",
-      "source": "common-style",
-      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-006",
-      "source": "common-style",
-      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-007",
-      "source": "common-style",
-      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-008",
-      "source": "common-style",
-      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-009",
-      "source": "common-style",
-      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-010",
-      "source": "common-style",
-      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-011",
-      "source": "common-style",
-      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-012",
-      "source": "common-style",
-      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-013",
-      "source": "common-style",
-      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-014",
-      "source": "common-style",
-      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-015",
-      "source": "common-style",
-      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "files": [
-        {
-          "path": "internal/sessions/sessions.go",
-          "objects": [
-            "internal/sessions/sessions.go:596"
-          ]
-        },
-        {
-          "path": "internal/sessions/sessions_test.go"
-        },
-        {
-          "path": "internal/stage/stage_test.go",
-          "objects": [
-            "internal/stage/stage_test.go:854"
-          ]
-        },
-        {
-          "path": "tools/shipctl/README.md"
-        },
-        {
-          "path": "tools/shipctl/checkcodex.go"
-        },
-        {
-          "path": "tools/shipctl/checkcodex_test.go"
-        },
-        {
-          "path": "tools/shipctl/checkrun.go",
-          "objects": [
-            "tools/shipctl/checkrun.go:97",
-            "tools/shipctl/checkrun.go:147",
-            "tools/shipctl/checkrun.go:197"
-          ]
-        },
-        {
-          "path": "tools/shipctl/main.go",
-          "objects": [
-            "tools/shipctl/main.go:321",
-            "tools/shipctl/main.go:367"
-          ]
-        }
-      ],
-      "targets": [
-        {
-          "object": "internal/sessions/sessions.go:596",
-          "symbol": "Own",
-          "location": "internal/sessions/sessions.go:596",
-          "comment_fragments": [
-            "Own называет ID сессии, в которой идёт ход: харнес кладёт его в окружение.",
-            "Пусто вне сессии харнеса, и это штатное молчание, а не поломка."
-          ]
-        },
-        {
-          "object": "internal/stage/stage_test.go:854",
-          "symbol": "TestOpenKeepsCodexVerificationSession",
-          "location": "internal/stage/stage_test.go:854",
-          "comment_fragments": [
-            "Разговор, открывший этап, стоит в записи четвёртым полем (DK-716).",
-            "Без него от записи нельзя было дойти до чата, который задачу ведёт: экран знал, что идёт разработка, а спросить исполнителя было негде."
-          ]
-        },
-        {
-          "object": "tools/shipctl/checkrun.go:97",
-          "symbol": "shipCarrier.Raise",
-          "location": "tools/shipctl/checkrun.go:97",
-          "comment_fragments": [
-            "Raise поднимает голову проверки командой taskctl run.",
-            "Модель называется всегда: без --model команда спросила бы вердикт исполнителя с записью этапа, и проверяющий лёг бы в «Ход работы» разработчиком."
-          ]
-        },
-        {
-          "object": "tools/shipctl/checkrun.go:147",
-          "symbol": "shipCarrier.Raise",
-          "location": "tools/shipctl/checkrun.go:147",
-          "comment_fragments": [
-            "Замок держит живая голова задачи, чаще всего та, что сама и катила выкат.",
-            "Поломкой это не считается: посторонняя сессия прогонит сценарий сама, а строку, которую голова сдала, поднимет тик после её выхода."
-          ]
-        },
-        {
-          "object": "tools/shipctl/checkrun.go:197",
-          "symbol": "checkRuns",
-          "location": "tools/shipctl/checkrun.go:197",
-          "comment_fragments": [
-            "checkRuns поднимает прогон по названным строкам, а без имён по всей секции Check.",
-            "moved значит, что названные строки только что увёл в Check сам выкат: перевод сделала эта же команда, и секция берётся с её слов, а не перечиткой доски."
-          ]
-        },
-        {
-          "object": "tools/shipctl/main.go:321",
-          "symbol": "main",
-          "location": "tools/shipctl/main.go:321",
-          "comment_fragments": [
-            "Отказ нужного подъёма это ненулевой выход, но слова уже напечатаны построчно, и повторять их ошибкой незачем."
-          ]
-        },
-        {
-          "object": "tools/shipctl/main.go:367",
-          "symbol": "main",
-          "location": "tools/shipctl/main.go:367",
-          "comment_fragments": [
-            "Проверка диапазона стоит и в репозитории без доски: ворот следа ревью там единственный, и отказ поиска доски запирал бы пуш вместо разбора."
-          ]
-        }
-      ],
-      "objects": [
-        "internal/sessions/sessions.go:596",
-        "internal/stage/stage_test.go:854",
-        "tools/shipctl/checkrun.go:97",
-        "tools/shipctl/checkrun.go:147",
-        "tools/shipctl/checkrun.go:197",
-        "tools/shipctl/main.go:321",
-        "tools/shipctl/main.go:367"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-style:STYLE-016",
-      "source": "common-style",
-      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-001",
-      "source": "common-tests",
-      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-002",
-      "source": "common-tests",
-      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-003",
-      "source": "common-tests",
-      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-004",
-      "source": "common-tests",
-      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-005",
-      "source": "common-tests",
-      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "checks": [
-        "strength",
-        "overlap"
-      ],
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-006",
-      "source": "common-tests",
-      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-007",
-      "source": "common-tests",
-      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-008",
-      "source": "common-tests",
-      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "common-tests:TEST-009",
-      "source": "common-tests",
-      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-0fc945667d2dd2f2",
-      "source": "project-architecture",
-      "text": "# Архитектура devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-0a6d5f937b6744cf",
-      "source": "project-architecture",
-      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-927d754447cbe51a",
-      "source": "project-architecture",
-      "text": "## Границы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-bd4bce11068e7b08",
-      "source": "project-architecture",
-      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-76ff3ff8f504faa3",
-      "source": "project-architecture",
-      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-1086535d7c6e2d47",
-      "source": "project-architecture",
-      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-3795ec1243732caa",
-      "source": "project-architecture",
-      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-21a8892967ce47cf",
-      "source": "project-architecture",
-      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-7257b758a71b0e0f",
-      "source": "project-architecture",
-      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-feefa59680bc01df",
-      "source": "project-architecture",
-      "text": "## Инварианты",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-df103c9ebbc1dbc2",
-      "source": "project-architecture",
-      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-b9d12cba420d16a2",
-      "source": "project-architecture",
-      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-746f66466c253955",
-      "source": "project-architecture",
-      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-0dbd06239e17144d",
-      "source": "project-architecture",
-      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-5de64d5a648b5902",
-      "source": "project-architecture",
-      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-0bf4f9875e4b3d7e",
-      "source": "project-architecture",
-      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-476dd1b8dd952be1",
-      "source": "project-architecture",
-      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-c8be7a833c89c0e8",
-      "source": "project-architecture",
-      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-26e0e04a23f2e549",
-      "source": "project-architecture",
-      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Ход помечается занятым до отправки реплики. Уведомление о его\n  завершении снимает занятость. Смерть процесса записывается в ленту.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-3380b0e14dbf5e5c",
-      "source": "project-architecture",
-      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. После 30 минут без\n  событий текущего хода дашборд запрашивает состояние нити через\n  `thread/read`. Если Codex подтвердил завершение этого хода, дашборд\n  снимает занятость и принимает исход из ответа. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-71784a34afa7d0ad",
-      "source": "project-architecture",
-      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-9c814a6998496b37",
-      "source": "project-architecture",
-      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-3fe8e64fa2671774",
-      "source": "project-architecture",
-      "text": "## Куда кладётся новое",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-e81a11204b6858d1",
-      "source": "project-architecture",
-      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-20ac10a7a0b37556",
-      "source": "project-architecture",
-      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-ff0f6ffb10430dcc",
-      "source": "project-architecture",
-      "text": "## Восстановление исчезнувшего конвейера",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-414cfee6ece27659",
-      "source": "project-architecture",
-      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-2896dde8774e1968",
-      "source": "project-architecture",
-      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-architecture:block-2ec33a7fa97caf04",
-      "source": "project-architecture",
-      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-8bfebc193cc45790",
-      "source": "project-style",
-      "text": "# Стиль devkit",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-2f21840e1463a01e",
-      "source": "project-style",
-      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-9c4dd47968139c01",
-      "source": "project-style",
-      "text": "## Ошибки и отказы",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-88e50c4f780c246c",
-      "source": "project-style",
-      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-2212761035e243fb",
-      "source": "project-style",
-      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-41b95475184c2aef",
-      "source": "project-style",
-      "text": "## Раскладка тестов",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-519646d7d9f951be",
-      "source": "project-style",
-      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-9573ef33db114342",
-      "source": "project-style",
-      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-f4f0c16e8ec594dc",
-      "source": "project-style",
-      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-7af95a66ad4ad21b",
-      "source": "project-style",
-      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-b03ef741121d44a0",
-      "source": "project-style",
-      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-a969903cd6ddc137",
-      "source": "project-style",
-      "text": "## Имена",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-c785ad31965daade",
-      "source": "project-style",
-      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    },
-    {
-      "id": "project-style:block-b3298c360a523f07",
-      "source": "project-style",
-      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
-      "applicability": "pending",
-      "result": "pending",
-      "reason": "",
-      "evidence": []
-    }
-  ]
+  "task_hash": "6bd84595976de65700f3c3b2bcce4869db4e3c5affeff93f95c790702b0e2586",
+  "version": 1
 }

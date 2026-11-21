@@ -28,10 +28,18 @@ func TestCodexCheckWorkerStartsFreshTurn(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, "docs/tasks/XR-1.md", "# XR-1\n")
 	bin := t.TempDir()
-	events, err := filepath.Abs(filepath.Join("testdata", "codex-check-start.jsonl"))
+	captured, err := os.ReadFile(filepath.Join("testdata", "codex-check-start.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	const startEvent = `{"type":"turn.started"}`
+	if !strings.Contains(string(captured), startEvent) {
+		t.Fatal("в фикстуре нет начала хода")
+	}
+	// A valid event above 4 MiB catches an accidental reduction of the limit.
+	largeEvent := `{"type":"turn.started","padding":"` + strings.Repeat("x", 6*1024*1024) + `"}`
+	events := filepath.Join(home, "events.jsonl")
+	write(t, home, "events.jsonl", strings.Replace(string(captured), startEvent, largeEvent, 1))
 	log := filepath.Join(home, "arguments")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" \"${CLAUDE_CODE_SESSION_ID-unset}\" \"${CODEX_THREAD_ID-unset}\" \"${DEVKIT_TASK-unset}\" \"${DEVKIT_RUN_DEPTH-unset}\" \"${DEVKIT_PARENT_SESSION-unset}\" \"${DEVKIT_TASK_HEAD_SESSION-unset}\" \"${DEVKIT_GOAL_SHELL-unset}\" > \"$CHECK_ARGS\"\ncat \"$CHECK_EVENTS\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0755); err != nil {

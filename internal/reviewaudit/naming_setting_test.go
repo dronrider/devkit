@@ -1,6 +1,9 @@
 package reviewaudit
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNameSettingFlatEnvironment(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
@@ -29,6 +32,12 @@ func Own() string {
 	if err := g.checkNameSettingWrite(e, fn); err == nil {
 		t.Fatal("подменённый ключ принят")
 	}
+	e.WriteEvidence.Target = "TOKEN"
+	p.Setting.Use.Declaration = "missing.go:1"
+	if err := g.checkNameSettingWrite(e, fn); err == nil || !strings.Contains(err.Error(), "proof.setting.use.declaration") ||
+		!strings.Contains(err.Error(), "missing.go") || !strings.Contains(err.Error(), "файл отсутствует в снимке кода") {
+		t.Fatalf("причина отказа потеряна: %v", err)
+	}
 }
 
 func TestNameSettingRequiresEffectiveAssertion(t *testing.T) {
@@ -51,7 +60,7 @@ func TestNameSettingRequiresEffectiveAssertion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			source, at := nameProofFixture(t, `package sample
+			source, at := nameCurrentProofFixture(t, `package sample
 import "testing"
 import "os"
 func TestOwn(t *testing.T) {
@@ -181,7 +190,7 @@ func TestNameSettingEnvironmentGuard(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			source, at := nameProofFixture(t, `package sample
+			source, at := nameCurrentProofFixture(t, `package sample
 import "testing"
 import "os"
 import "strings"

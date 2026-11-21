@@ -233,7 +233,7 @@ func codexCheckWorker(raw string) {
 			continue
 		}
 		if event.Type == "thread.started" {
-			thread = event.ThreadID
+			thread = strings.TrimSpace(event.ThreadID)
 		}
 		if !started && event.Type == "turn.started" && thread != "" {
 			started = true

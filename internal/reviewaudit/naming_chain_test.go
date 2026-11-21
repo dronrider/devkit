@@ -167,7 +167,9 @@ var handlers = map[string]func(*Item) int{
 	e.ObjectComparison.Proof.Assignment.Use = use
 	check("")
 	otherSource, otherAt := nameProofFixture(t, strings.Replace(fixture, "consume(item)", "consume(other)", 1))
-	assertTargetCheck(t, checkNameEntry(e, otherAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), otherSource), "читает Objects")
+	wrongInstance := checkNameEntry(e, otherAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), otherSource)
+	assertTargetCheck(t, wrongInstance, "читает Objects")
+	assertNameRepairStage(t, wrongInstance, "writes", "evidence", "missing_consumer", "того же экземпляра", "proof.assignment.use", "write_evidence.calls")
 	changedSource, changedAt := nameProofFixture(t, strings.Replace(fixture, "marker := 1\n _ = marker", "item.Objects = 2\n _ = item", 1))
 	assertTargetCheck(t, checkNameEntry(e, changedAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), changedSource), "читает Objects")
 	alias := strings.NewReplacer("consume(item)", "consume(item, item)",

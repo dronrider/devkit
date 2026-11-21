@@ -76,6 +76,7 @@ func TestCodexCheckWorkerFailsBeforeTurn(t *testing.T) {
 		name, command, diagnostic string
 	}{
 		{"client_exit", "exit 1\n", "exit status 1"},
+		{"blank_thread", `printf '%s\n' '{"type":"thread.started","thread_id":" "}' '{"type":"turn.started"}'`, `"thread_id":" "`},
 		{"long_event", "head -c 8388608 /dev/zero | tr '\\000' x\nprintf '\\n'\n", "token too long"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

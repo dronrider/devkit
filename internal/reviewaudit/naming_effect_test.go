@@ -304,7 +304,7 @@ func TestNameAssignmentFieldCondition(t *testing.T) {
 			if tc.name != "dead_body" {
 				branch += ` { return "empty" }`
 			}
-			source, at := nameProofFixture(t, `package sample
+			source, at := nameCurrentProofFixture(t, `package sample
 type Address struct{ file string }
 func resolve() string {
  var a Address

@@ -35,7 +35,7 @@ func TestNameFormattedFileDestination(t *testing.T) {
 		{"shadowed_formatter", "fmt := localFormatter{}", `fmt.Fprintf(out, "%s", text)`, "дескрипторе"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			source, at := nameProofFixture(t, `package sample
+			source, at := nameCurrentProofFixture(t, `package sample
 import "fmt"
 import "os"
 func WriteFile(path, text string, other *os.File) {

@@ -11,6 +11,18 @@ import (
 func nameProofFixture(t *testing.T, code string) (*evidenceSource, func(string) string) {
 	t.Helper()
 	root, report := fixture(t)
+	return nameProofSource(t, root, report, code)
+}
+
+func nameCurrentProofFixture(t *testing.T, code string) (*evidenceSource, func(string) string) {
+	t.Helper()
+	source, at := nameProofSource(t, t.TempDir(), "", code)
+	source.names = map[string]bool{"sample.go": true}
+	return source, at
+}
+
+func nameProofSource(t *testing.T, root, report, code string) (*evidenceSource, func(string) string) {
+	t.Helper()
 	write(t, filepath.Join(root, "sample.go"), code)
 	files, err := os.OpenRoot(root)
 	if err != nil {

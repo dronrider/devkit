@@ -92,7 +92,7 @@ func nameProgressBlocker(check string, err error) NameProgressBlocker {
 	var consumer *nameConsumerIssue
 	if errors.As(err, &consumer) {
 		blocker.Code = "missing_consumer"
-		blocker.Next = fmt.Sprintf("Продолжите поиск чтений поля %q в доступном коде. В proof.assignment.use укажите объявление потребителя, строку чтения и выражение. Сохраните исправление и повторите audit-progress внутри текущего поручения.", consumer.field)
+		blocker.Next = fmt.Sprintf("Продолжите поиск чтений поля %q в доступном коде. В proof.assignment.use укажите объявление потребителя, строку и выражение чтения того же экземпляра. Если запись вынесена в помощник, свяжите вызовы и аргументы в write_evidence.calls. Если связь установить не удалось, оставьте проверку pending. Сохраните исправление и повторите audit-progress внутри текущего поручения.", consumer.field)
 	}
 	return blocker
 }

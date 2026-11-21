@@ -88,7 +88,10 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting: требуется тестовая функция")
 	}
 	set, err := g.nameCallExpression(fn, w.WriteAt, p.Proof.Expression)
-	if err != nil || len(set.Args) != 2 || nameSettingKey(set.Args[0]) != w.Target || w.Target != p.Actual || p.ActualAt != w.WriteAt || !sameNameExpression(set.Args[1], w.Value) || !nameSettingStatement(fn, set) {
+	if err != nil {
+		return fmt.Errorf("proof.setting: вызов t.Setenv: %w", err)
+	}
+	if len(set.Args) != 2 || nameSettingKey(set.Args[0]) != w.Target || w.Target != p.Actual || p.ActualAt != w.WriteAt || !sameNameExpression(set.Args[1], w.Value) || !nameSettingStatement(fn, set) {
 		return fmt.Errorf("proof.setting: укажите прямой вызов t.Setenv с точными ключом и значением")
 	}
 	sel, ok := set.Fun.(*ast.SelectorExpr)
@@ -116,15 +119,24 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting: записанный ключ не подтверждает объект в имени")
 	}
 	use, err := g.nameCallExpression(fn, proof.Use.At, proof.Use.Expression)
-	if err != nil || !nameEnvironmentUse(fn, set, use, receiver.Obj, w.Target) {
+	if err != nil {
+		return fmt.Errorf("proof.setting.use: вызов после записи: %w", err)
+	}
+	if !nameEnvironmentUse(fn, set, use, receiver.Obj, w.Target) {
 		return fmt.Errorf("proof.setting.use: укажите проверку результата после записи без неподтверждённых действий между ними")
 	}
 	reader, err := g.declaration(proof.Use.Declaration)
-	if err != nil || reader.base != fn.base || !g.nameSettingConsumer(fn, reader, use) {
+	if err != nil {
+		return fmt.Errorf("proof.setting.use.declaration: реализация вызванной функции: %w", err)
+	}
+	if reader.base != fn.base || !g.nameSettingConsumer(fn, reader, use) {
 		return fmt.Errorf("proof.setting.use.declaration: укажите реализацию вызванной функции")
 	}
 	get, _, err := g.call(reader, proof.ReadAt, func(x ast.Expr) bool { return g.namePackageSelector(reader, x, "os", "Getenv") })
-	if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get, fn, set, use) {
+	if err != nil {
+		return fmt.Errorf("proof.setting.read_at: чтение окружения: %w", err)
+	}
+	if len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get, fn, set, use) {
 		return fmt.Errorf("proof.setting.read_at: укажите возвращаемое чтение того же ключа")
 	}
 	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true}))

@@ -158,24 +158,1455 @@
       "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Проверены 33 операции запуска, остановки и валидатора. Открыта сверка тестовых границ, локальных замыканий worker и всех мест повторного использования.",
       "evidence": [
         {
-          "object": "stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15",
-          "observation": "Доменная операция зависит от taskstate, taskhead и условия остановки Codex.",
-          "result": "checked"
+          "object": "internal/reviewaudit/naming_effect.go:123#checkNameAssignment",
+          "symbol": "checkNameAssignment",
+          "location": "internal/reviewaudit/naming_effect.go:123",
+          "observation": "Проверяет доказательство присваивания из Evidence и связывает запись с потребителем в ревью имён. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:123",
+                "text": "Проверяет доказательство присваивания из Evidence и связывает запись с потребителем в ревью имён.",
+                "quote": "func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:62",
+                "text": "Вызов: err = g.checkNameAssignment(e, original, fn)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:123",
+                "text": "Проверяет доказательство присваивания из Evidence и связывает запись с потребителем в ревью имён. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:123",
+                "text": "Изменение формата assignment доказательства затрагивает эту операцию и вызывающий диспетчер checkNameWriteProof."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:123",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
         },
         {
-          "object": "codexCheckWorker",
+          "object": "internal/reviewaudit/naming_effect.go:259#nameBoundFieldUse",
+          "symbol": "nameBoundFieldUse",
+          "location": "internal/reviewaudit/naming_effect.go:259",
+          "observation": "Связывает чтение поля с записанным экземпляром по AST и queryFunc при проверке имени. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:259",
+                "text": "Связывает чтение поля с записанным экземпляром по AST и queryFunc при проверке имени.",
+                "quote": "func nameBoundFieldUse(writer, reader queryFunc, field, read *ast.SelectorExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:233",
+                "text": "Вызов: return nameBoundFieldUse(fn, consumer, written, field) ||"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:259",
+                "text": "Связывает чтение поля с записанным экземпляром по AST и queryFunc при проверке имени. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming.go:802",
+                "text": "Переиспользуется nameValueUnchanged; он проверяет сохранность значения, тогда как nameFieldUnchanged дополнительно рассматривает конкретное поле и его адрес.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:259",
+                "text": "Изменение правил допустимого продвижения поля затрагивает эту проверку и checkNameAssignment."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:259",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:325#nameFieldCallUse",
+          "symbol": "nameFieldCallUse",
+          "location": "internal/reviewaudit/naming_effect.go:325",
+          "observation": "Проверяет передачу одного связывания между записью и чтением поля по цепочке NameWriteCall. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:325",
+                "text": "Проверяет передачу одного связывания между записью и чтением поля по цепочке NameWriteCall.",
+                "quote": "func (g *queryGoSource) nameFieldCallUse(entry, writer, reader queryFunc, field, read *ast.SelectorExpr, calls []NameWriteCall) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:234",
+                "text": "Вызов: g.nameFieldCallUse(entry, fn, consumer, written, field, e.WriteEvidence.Calls)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:325",
+                "text": "Проверяет передачу одного связывания между записью и чтением поля по цепочке NameWriteCall. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming_effect.go:354",
+                "text": "Существующая nameWriteFunction строит начало цепочки вызовов; новая операция дополняет её связью одной записи и последующего чтения одного поля.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:325",
+                "text": "Изменение допустимой цепочки доказательства поля затрагивает эту функцию и проверку присваивания."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:325",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:407#nameIndependentAssignment",
+          "symbol": "nameIndependentAssignment",
+          "location": "internal/reviewaudit/naming_effect.go:407",
+          "observation": "В проверке связи поля допускает только независимое от данного AST binding простое присваивание. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:407",
+                "text": "В проверке связи поля допускает только независимое от данного AST binding простое присваивание.",
+                "quote": "func nameIndependentAssignment(stmt *ast.AssignStmt, binding *ast.Object) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:350",
+                "text": "Вызов: if !ok || !nameIndependentAssignment(assignment, destination.Obj) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:407",
+                "text": "В проверке связи поля допускает только независимое от данного AST binding простое присваивание. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:407",
+                "text": "Изменение допустимых промежуточных присваиваний меняет результат nameFieldCallUse."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:407",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:427#nameSameFieldParameter",
+          "symbol": "nameSameFieldParameter",
+          "location": "internal/reviewaudit/naming_effect.go:427",
+          "observation": "Проверяет указатели параметров на один AST-объект типа для связи поля. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:427",
+                "text": "Проверяет указатели параметров на один AST-объект типа для связи поля.",
+                "quote": "func nameSameFieldParameter(source, destination *ast.Ident) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:329",
+                "text": "Вызов: source.Obj == nil || destination.Obj == nil || !nameSameFieldParameter(source, destination) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:427",
+                "text": "Проверяет указатели параметров на один AST-объект типа для связи поля. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:427",
+                "text": "Изменение допустимых типов параметров влияет на nameFieldCallUse."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:427",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:443#nameFieldClosureCalled",
+          "symbol": "nameFieldClosureCalled",
+          "location": "internal/reviewaudit/naming_effect.go:443",
+          "observation": "Проверяет вызов замыкания между записью и чтением того же поля в доказательстве. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:443",
+                "text": "Проверяет вызов замыкания между записью и чтением того же поля в доказательстве.",
+                "quote": "func nameFieldClosureCalled(readerBody, writerBody *ast.BlockStmt, use ast.Stmt, field *ast.SelectorExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:290",
+                "text": "Вызов: return nameFieldClosureCalled(readerBody, writerBody, readStmt, read)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:443",
+                "text": "Проверяет вызов замыкания между записью и чтением того же поля в доказательстве. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming.go:802",
+                "text": "Переиспользуется nameValueUnchanged; он проверяет сохранность значения, тогда как nameFieldUnchanged дополнительно рассматривает конкретное поле и его адрес.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:443",
+                "text": "Изменение допустимости замыкания меняет проверку nameBoundFieldUse."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:443",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:472#nameFieldStatement",
+          "symbol": "nameFieldStatement",
+          "location": "internal/reviewaudit/naming_effect.go:472",
+          "observation": "Ищет верхнеуровневый оператор, содержащий AST-узел, для правил отслеживания записи и чтения поля. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:472",
+                "text": "Ищет верхнеуровневый оператор, содержащий AST-узел, для правил отслеживания записи и чтения поля.",
+                "quote": "func nameFieldStatement(body *ast.BlockStmt, node ast.Node) ast.Stmt {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:269",
+                "text": "Вызов: writeStmt, direct := nameFieldStatement(writerBody, field).(*ast.AssignStmt)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:472",
+                "text": "Ищет верхнеуровневый оператор, содержащий AST-узел, для правил отслеживания записи и чтения поля. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming_effect.go:269",
+                "text": "Поиск по internal/reviewaudit и internal на имена FieldStatement, BoundField, Assignment и Unchanged нашёл существующие проверки потока значений, но не такую операцию поиска непосредственного оператора для доказательства поля; два потребителя в этом же модуле: строки 269-270 и 332-333.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:472",
+                "text": "Изменение поддерживаемой вложенности операторов потребует синхронизации с nameBoundFieldUse и nameFieldCallUse."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:472",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:481#nameFieldUnchanged",
+          "symbol": "nameFieldUnchanged",
+          "location": "internal/reviewaudit/naming_effect.go:481",
+          "observation": "Проверяет сохранность поля и его основания между двумя узлами, включая переопределение и адрес поля. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:481",
+                "text": "Проверяет сохранность поля и его основания между двумя узлами, включая переопределение и адрес поля.",
+                "quote": "func nameFieldUnchanged(body *ast.BlockStmt, from, to ast.Node, field *ast.SelectorExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:282",
+                "text": "Вызов: if !ok || !nameFieldUnchanged(writerBody, decl, writeStmt, field) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:481",
+                "text": "Проверяет сохранность поля и его основания между двумя узлами, включая переопределение и адрес поля. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming.go:802",
+                "text": "Переиспользуется nameValueUnchanged; он проверяет сохранность значения, тогда как nameFieldUnchanged дополнительно рассматривает конкретное поле и его адрес.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:481",
+                "text": "Изменение разрешённых промежуточных операций меняет все проверки потока поля."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:481",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:525#sameNameAssignment",
+          "symbol": "sameNameAssignment",
+          "location": "internal/reviewaudit/naming_effect.go:525",
+          "observation": "Разбирает текст доказательства как присваивание Go и сравнивает его AST с фактическим. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:525",
+                "text": "Разбирает текст доказательства как присваивание Go и сравнивает его AST с фактическим.",
+                "quote": "func sameNameAssignment(stmt *ast.AssignStmt, text string) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:187",
+                "text": "Вызов: if site.At == e.WriteEvidence.WriteAt && (site.At == pair.ActualAt || g.nameAssignmentFieldDeclaration(fn, stmt.Lhs[slot], pair.ActualAt)) && (sameNameExpression(stmt.Lhs[slot], p.Expression) || sameNameAssignment(stmt, p.Expression)) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:525",
+                "text": "Разбирает текст доказательства как присваивание Go и сравнивает его AST с фактическим. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:525",
+                "text": "Изменение синтаксиса доказательства присваивания меняет checkNameAssignment."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:525",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:551#nameAssignmentFieldDeclaration",
+          "symbol": "nameAssignmentFieldDeclaration",
+          "location": "internal/reviewaudit/naming_effect.go:551",
+          "observation": "Связывает присваиваемый селектор с объявлением поля конкретного локального типа в проверяемом Go-файле. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:551",
+                "text": "Связывает присваиваемый селектор с объявлением поля конкретного локального типа в проверяемом Go-файле.",
+                "quote": "func (g *queryGoSource) nameAssignmentFieldDeclaration(fn queryFunc, target ast.Expr, at string) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:187",
+                "text": "Вызов: if site.At == e.WriteEvidence.WriteAt && (site.At == pair.ActualAt || g.nameAssignmentFieldDeclaration(fn, stmt.Lhs[slot], pair.ActualAt)) && (sameNameExpression(stmt.Lhs[slot], p.Expression) || sameNameAssignment(stmt, p.Expression)) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:551",
+                "text": "Связывает присваиваемый селектор с объявлением поля конкретного локального типа в проверяемом Go-файле. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:551",
+                "text": "Изменение допустимых объявлений поля меняет проверку actual_at в checkNameAssignment."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:551",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:602#nameAssignmentGlobal",
+          "symbol": "nameAssignmentGlobal",
+          "location": "internal/reviewaudit/naming_effect.go:602",
+          "observation": "Сверяет запись и чтение package-level переменной в том же пакете и версии доказательства. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:602",
+                "text": "Сверяет запись и чтение package-level переменной в том же пакете и версии доказательства.",
+                "quote": "func (g *queryGoSource) nameAssignmentGlobal(writer, reader queryFunc, read *ast.Ident, target ast.Expr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:238",
+                "text": "Вызов: if id, ok := node.(*ast.Ident); ok && id.Name == pair.Actual && (consumer.node.Body == fn.node.Body || g.nameAssignmentGlobal(fn, consumer, id, assignedNode)) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:602",
+                "text": "Сверяет запись и чтение package-level переменной в том же пакете и версии доказательства. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:602",
+                "text": "Изменение правил разрешения глобальных имён меняет допустимого потребителя присваивания."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:602",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:19#checkNameSettingWrite",
+          "symbol": "checkNameSettingWrite",
+          "location": "internal/reviewaudit/naming_setting.go:19",
+          "observation": "Выбирает тип проверки доказательства установки настройки, в том числе окружения теста. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:19",
+                "text": "Выбирает тип проверки доказательства установки настройки, в том числе окружения теста.",
+                "quote": "func (g *queryGoSource) checkNameSettingWrite(e Evidence, fn queryFunc) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:64",
+                "text": "Вызов: err = g.checkNameSettingWrite(e, fn)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:19",
+                "text": "Выбирает тип проверки доказательства установки настройки, в том числе окружения теста. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:19",
+                "text": "Изменение формата setting требует согласования с диспетчером checkNameWriteProof."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:19",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:84#checkNameEnvironmentSetting",
+          "symbol": "checkNameEnvironmentSetting",
+          "location": "internal/reviewaudit/naming_setting.go:84",
+          "observation": "Проверяет setting-доказательство через t.Setenv, реальный вызов и чтение окружения. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:84",
+                "text": "Проверяет setting-доказательство через t.Setenv, реальный вызов и чтение окружения.",
+                "quote": "func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:23",
+                "text": "Вызов: return g.checkNameEnvironmentSetting(e, fn)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:84",
+                "text": "Проверяет setting-доказательство через t.Setenv, реальный вызов и чтение окружения. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:84",
+                "text": "Изменение поддерживаемых настройкой тестов Go отражается в проверке setting и её подсказках."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:84",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:152#nameEnvironmentUse",
+          "symbol": "nameEnvironmentUse",
+          "location": "internal/reviewaudit/naming_setting.go:152",
+          "observation": "Проверяет форму использования результата вызова читателя настройки в тесте. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:152",
+                "text": "Проверяет форму использования результата вызова читателя настройки в тесте.",
+                "quote": "func nameEnvironmentUse(fn queryFunc, call *ast.CallExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:119",
+                "text": "Вызов: if err != nil || use.Pos() <= set.End() || !nameEnvironmentUse(fn, use) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:152",
+                "text": "Проверяет форму использования результата вызова читателя настройки в тесте. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:152",
+                "text": "Изменение поддерживаемого условия сравнения влияет на checkNameEnvironmentSetting."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:152",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:181#nameEnvironmentReturn",
+          "symbol": "nameEnvironmentReturn",
+          "location": "internal/reviewaudit/naming_setting.go:181",
+          "observation": "Проверяет возвращаемое значение Getenv и предшествующие ранние выходы в проверке доказательства. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:181",
+                "text": "Проверяет возвращаемое значение Getenv и предшествующие ранние выходы в проверке доказательства.",
+                "quote": "func (g *queryGoSource) nameEnvironmentReturn(fn queryFunc, get *ast.CallExpr, test queryFunc, set, use *ast.CallExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:144",
+                "text": "Вызов: if err != nil || len(get.Args) != 1 || nameSettingKey(get.Args[0]) != w.Target || !g.nameEnvironmentReturn(reader, get, fn, set, use) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:181",
+                "text": "Проверяет возвращаемое значение Getenv и предшествующие ранние выходы в проверке доказательства. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:181",
+                "text": "Добавление допустимого преобразования значения влияет на доказательство setting."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:181",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:211#nameEnvironmentEmptyGuard",
+          "symbol": "nameEnvironmentEmptyGuard",
+          "location": "internal/reviewaudit/naming_setting.go:211",
+          "observation": "Сверяет guard другого ключа Getenv с установкой пустого значения тестом и отсутствием вмешательства. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:211",
+                "text": "Сверяет guard другого ключа Getenv с установкой пустого значения тестом и отсутствием вмешательства.",
+                "quote": "func (g *queryGoSource) nameEnvironmentEmptyGuard(fn queryFunc, guard *ast.IfStmt, test queryFunc, set, use *ast.CallExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:191",
+                "text": "Вызов: if !ok || !g.nameEnvironmentEmptyGuard(fn, guard, test, set, use) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:211",
+                "text": "Сверяет guard другого ключа Getenv с установкой пустого значения тестом и отсутствием вмешательства. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:211",
+                "text": "Изменение допустимого guard меняет достижимость чтения в nameEnvironmentReturn."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:211",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_write.go:13#checkNameFileWrite",
+          "symbol": "checkNameFileWrite",
+          "location": "internal/reviewaudit/naming_write.go:13",
+          "observation": "Проверяет файл, место и payload записи в объекте evidence, переходя по NameWriteCall. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:13",
+                "text": "Проверяет файл, место и payload записи в объекте evidence, переходя по NameWriteCall.",
+                "quote": "func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming.go:520",
+                "text": "Вызов: return checkNameFileWrite(e, declaration, source)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:13",
+                "text": "Проверяет файл, место и payload записи в объекте evidence, переходя по NameWriteCall. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:13",
+                "text": "Изменение представления destination или content в аудите меняет обработку file proof."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:13",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming.go:459#checkNameObject",
+          "symbol": "checkNameObject",
+          "location": "internal/reviewaudit/naming.go:459",
+          "observation": "Выбирает проверку результата и записи по структуре evidence и источнику на версии ревью. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming.go:459",
+                "text": "Выбирает проверку результата и записи по структуре evidence и источнику на версии ревью.",
+                "quote": "func checkNameObject(e Evidence, word *string, words []string, observed, declaration string, source *evidenceSource) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming.go:218",
+                "text": "Вызов: return errors.Join(checkNameObject(e, d.Word, words, d.Returned, declaration, source), returnErr, consumerErr)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming.go:459",
+                "text": "Выбирает проверку результата и записи по структуре evidence и источнику на версии ревью. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming.go:459",
+                "text": "Изменение формата object comparison требует изменения центральной проверки и конкретного типа evidence."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming.go:459",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/sessions/sessions.go:598#Own",
+          "symbol": "Own",
+          "location": "internal/sessions/sessions.go:598",
+          "observation": "Возвращает ID текущей сессии из переменных харнесов; stage и иные инструменты вызывают единый контракт. Размещение internal/sessions соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/sessions/sessions.go:598",
+                "text": "Возвращает ID текущей сессии из переменных харнесов; stage и иные инструменты вызывают единый контракт.",
+                "quote": "func Own() string {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/stage/stage.go:659",
+                "text": "Вызов: s.Session = sessions.Own()"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/sessions/sessions.go:598",
+                "text": "Возвращает ID текущей сессии из переменных харнесов; stage и иные инструменты вызывают единый контракт. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/sessions/sessions.go:598",
+                "text": "Добавление харнеса затрагивает общий источник ID, а не каждого потребителя отдельно."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/sessions/sessions.go:598",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/sessions"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/agentctl/plan.go:95#planResolve",
+          "symbol": "planResolve",
+          "location": "tools/agentctl/plan.go:95",
+          "observation": "Строит адрес файла плана из флага и переменных среды, выбирая приоритеты только команды agentctl plan. Размещение tools/agentctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/agentctl/plan.go:95",
+                "text": "Строит адрес файла плана из флага и переменных среды, выбирая приоритеты только команды agentctl plan.",
+                "quote": "func planResolve(home, sid, label string, env func(string) string) (planAddr, error) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/agentctl/plan.go:380",
+                "text": "Вызов: a, err := planResolve(home, sid, label, env)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/agentctl/plan.go:95",
+                "text": "Строит адрес файла плана из флага и переменных среды, выбирая приоритеты только команды agentctl plan. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/agentctl/plan.go:95",
+                "text": "Добавление источника адреса плана меняет planResolve и его документацию, не общую идентификацию сессии."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/agentctl/plan.go:95",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/agentctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:33#raiseCodex",
+          "symbol": "raiseCodex",
+          "location": "tools/shipctl/checkcodex.go:33",
+          "observation": "Поднимает worker приёмки Codex и преобразует его подтверждение в checkrun.Report. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/checkcodex.go:33",
+                "text": "Поднимает worker приёмки Codex и преобразует его подтверждение в checkrun.Report.",
+                "quote": "func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/checkrun.go:119",
+                "text": "Вызов: return c.raiseCodex(p)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/checkcodex.go:33",
+                "text": "Поднимает worker приёмки Codex и преобразует его подтверждение в checkrun.Report. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/checkcodex.go:33",
+                "text": "Замена протокола Codex меняет этот носитель, но не отбор checkrun и путь taskctl run."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/checkcodex.go:33",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex.go:99#codexCheckWorker",
+          "symbol": "codexCheckWorker",
           "location": "tools/shipctl/checkcodex.go:99",
-          "observation": "Знает протокол запуска и события Codex, журнал и защиту задачи.",
-          "result": "checked"
+          "observation": "Держит замок, состояние и лог процесса приёмки Codex, извлекает события начала. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/checkcodex.go:99",
+                "text": "Держит замок, состояние и лог процесса приёмки Codex, извлекает события начала.",
+                "quote": "func codexCheckWorker(raw string) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/main.go:197",
+                "text": "Вызов: codexCheckWorker(os.Args[2])"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/checkcodex.go:99",
+                "text": "Держит замок, состояние и лог процесса приёмки Codex, извлекает события начала. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/checkcodex.go:99",
+                "text": "Изменение протокола событий или жизненного цикла носителя меняет worker shipctl."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/checkcodex.go:99",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "symbol": "stopCodexChecker",
+          "location": "tools/dashboard/checkstop.go:15",
+          "observation": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint. Размещение tools/dashboard соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/checkstop.go:15",
+                "text": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint.",
+                "quote": "func stopCodexChecker(home, root, id string) (bool, error) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/runs.go:1066",
+                "text": "Вызов: stopped, err := stopCodexChecker(s.cfg.Home, found.Path, id)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/checkstop.go:15",
+                "text": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/checkstop.go:15",
+                "text": "Изменение договора записи PID и замка требует синхронизации с worker shipctl и dashboard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/checkstop.go:15",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/dashboard"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/runlog.go:30#appendRunLog",
+          "symbol": "appendRunLog",
+          "location": "tools/shipctl/runlog.go:30",
+          "observation": "Записывает строку журнала запусков shipctl, используется и обычным logRun в том же модуле. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/runlog.go:30",
+                "text": "Записывает строку журнала запусков shipctl, используется и обычным logRun в том же модуле.",
+                "quote": "func appendRunLog(root, command string, code int) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/checkcodex.go:209",
+                "text": "Вызов: _ = appendRunLog(o.Root, diagnostic, 1)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/runlog.go:30",
+                "text": "Записывает строку журнала запусков shipctl, используется и обычным logRun в том же модуле. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/runlog.go:30",
+                "text": "Изменение формата журнала остаётся в одном владельце и распространяется на оба вызывающих пути."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/runlog.go:30",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_effect.go:39#checkNameWriteProof",
+          "symbol": "checkNameWriteProof",
+          "location": "internal/reviewaudit/naming_effect.go:39",
+          "observation": "Распределяет доказательства записи по конкретным валидаторам reviewaudit. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:39",
+                "text": "Распределяет доказательства записи по конкретным валидаторам reviewaudit.",
+                "quote": "func (g *queryGoSource) checkNameWriteProof(e Evidence, fn queryFunc) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_proof.go:58",
+                "text": "Вызов: return g.checkNameWriteProof(e, fn)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:39",
+                "text": "Распределяет доказательства записи по конкретным валидаторам reviewaudit. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:39",
+                "text": "Изменение типа proof требует согласования диспетчера и проверки конкретного вида."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_effect.go:39",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_setting.go:321#namePackageSelector",
+          "symbol": "namePackageSelector",
+          "location": "internal/reviewaudit/naming_setting.go:321",
+          "observation": "Сверяет AST-селектор и путь импортированного Go-пакета при проверке доказательств. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:321",
+                "text": "Сверяет AST-селектор и путь импортированного Go-пакета при проверке доказательств.",
+                "quote": "func (g *queryGoSource) namePackageSelector(fn queryFunc, expr ast.Expr, pkg, method string) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:143",
+                "text": "Вызов: get, _, err := g.call(reader, proof.ReadAt, func(x ast.Expr) bool { return g.namePackageSelector(reader, x, \"os\", \"Getenv\") })"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:321",
+                "text": "Сверяет AST-селектор и путь импортированного Go-пакета при проверке доказательств. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:321",
+                "text": "Изменение определения допустимого вызова пакета затрагивает валидаторы файлов и окружения."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_setting.go:321",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_write.go:122#nameFileDestinationMatches",
+          "symbol": "nameFileDestinationMatches",
+          "location": "internal/reviewaudit/naming_write.go:122",
+          "observation": "Сверяет объект имени и назначение файла доказательства записи. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:122",
+                "text": "Сверяет объект имени и назначение файла доказательства записи.",
+                "quote": "func (g *queryGoSource) nameFileDestinationMatches(fn queryFunc, pair *NameObjectComparison, open *ast.CallExpr) bool {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:93",
+                "text": "Вызов: if e.Result == \"checked\" && !g.nameFileDestinationMatches(fn, pair, open) {"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:122",
+                "text": "Сверяет объект имени и назначение файла доказательства записи. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:122",
+                "text": "Изменение поддерживаемого имени пути меняет проверку file proof."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:122",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/reviewaudit/naming_write.go:157#nameOpenFileForWrite",
+          "symbol": "nameOpenFileForWrite",
+          "location": "internal/reviewaudit/naming_write.go:157",
+          "observation": "Связывает открытие файла с записью в него в AST доказательства. Размещение internal/reviewaudit соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:157",
+                "text": "Связывает открытие файла с записью в него в AST доказательства.",
+                "quote": "func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) *ast.CallExpr {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:55",
+                "text": "Вызов: open = g.nameOpenFileForWrite(fn, write)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:157",
+                "text": "Связывает открытие файла с записью в него в AST доказательства. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:157",
+                "text": "Новый допустимый вид записи меняет связывание дескриптора у валидатора файла."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/reviewaudit/naming_write.go:157",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "internal/reviewaudit"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/runs.go:1047#handleRunStop",
+          "symbol": "handleRunStop",
+          "location": "tools/dashboard/runs.go:1047",
+          "observation": "Обрабатывает HTTP DELETE для остановки работы проекта, обращаясь к dashboard и остановке Codex. Размещение tools/dashboard соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/runs.go:1047",
+                "text": "Обрабатывает HTTP DELETE для остановки работы проекта, обращаясь к dashboard и остановке Codex.",
+                "quote": "func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/server.go:388",
+                "text": "Вызов: mux.HandleFunc(\"DELETE /api/projects/{p}/runs/{id}\", s.auth(s.handleRunStop))"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/runs.go:1047",
+                "text": "Обрабатывает HTTP DELETE для остановки работы проекта, обращаясь к dashboard и остановке Codex. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/runs.go:1047",
+                "text": "Изменение контракта HTTP отказа затрагивает этот обработчик, worker знает только состояние и сигналы."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/runs.go:1047",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/dashboard"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:98#Raise",
+          "symbol": "Raise",
+          "location": "tools/shipctl/checkrun.go:98",
+          "observation": "Реализует носитель checkrun: выбирает запуск Codex или taskctl и возвращает отчёт отбора. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/checkrun.go:98",
+                "text": "Реализует носитель checkrun: выбирает запуск Codex или taskctl и возвращает отчёт отбора.",
+                "quote": "func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/checkrun/checkrun.go:407",
+                "text": "Вызов: rep := c.Raise(p)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/checkrun.go:98",
+                "text": "Реализует носитель checkrun: выбирает запуск Codex или taskctl и возвращает отчёт отбора. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/checkrun.go:98",
+                "text": "Новый носитель меняет диспетчер shipctl, общий отбор остаётся в checkrun."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/checkrun.go:98",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:201#checkRuns",
+          "symbol": "checkRuns",
+          "location": "tools/shipctl/checkrun.go:201",
+          "observation": "Читает строки доски и запускает общий отбор с носителем shipctl. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/checkrun.go:201",
+                "text": "Читает строки доски и запускает общий отбор с носителем shipctl.",
+                "quote": "func checkRuns(root string, ids []string, moved bool) ([]checkrun.Report, error) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/checkrun.go:245",
+                "text": "Вызов: reps, err := checkRuns(root, ids, false)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/checkrun.go:201",
+                "text": "Читает строки доски и запускает общий отбор с носителем shipctl. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/checkrun.go:201",
+                "text": "Изменение входа доски отражается на преобразовании в shipctl и контракте checkrun."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/checkrun.go:201",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/runlog.go:19#logRun",
+          "symbol": "logRun",
+          "location": "tools/shipctl/runlog.go:19",
+          "observation": "Записывает исход основной команды shipctl через единый appendRunLog. Размещение tools/shipctl соответствует проверенной границе.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/runlog.go:19",
+                "text": "Записывает исход основной команды shipctl через единый appendRunLog.",
+                "quote": "func logRun(code int) {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/main.go:306",
+                "text": "Вызов: logRun(1)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/runlog.go:19",
+                "text": "Записывает исход основной команды shipctl через единый appendRunLog. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/runlog.go:19",
+                "text": "Изменение формата журнала проводится в appendRunLog и применяется к logRun и worker."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/runlog.go:19",
+                "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/main.go:195#main",
+          "symbol": "main",
+          "location": "tools/shipctl/main.go:195",
+          "observation": "Вход Go-программы shipctl выбирает внутренний запуск codexCheckWorker на аргументе __check-codex; доменная диспетчеризация остаётся у программы.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/main.go:195",
+                "quote": "func main() {",
+                "text": "Точка входа shipctl; ветка внутреннего worker на строках 196-198."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/main.go:195",
+                "text": "Вызов функции main в исходниках tools/shipctl не найден; точка входа программы package main вызывается средой Go.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/main.go:196",
+                "text": "Распознаёт внутреннюю подкоманду и передаёт аргументы codexCheckWorker, часть протокола носителя shipctl.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/main.go:196",
+                "text": "При изменении внутреннего аргумента worker требуется синхронизировать формирование exec.Command в checkcodex.go:55."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/main.go:195",
+                "text": "Точка входа программы остаётся в main пакета инструмента, worker реализации находится в checkcodex.go.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
         }
       ],
       "objects": [
-        "stopCodexChecker",
-        "codexCheckWorker"
+        "internal/reviewaudit/naming_effect.go:123#checkNameAssignment",
+        "internal/reviewaudit/naming_effect.go:259#nameBoundFieldUse",
+        "internal/reviewaudit/naming_effect.go:325#nameFieldCallUse",
+        "internal/reviewaudit/naming_effect.go:407#nameIndependentAssignment",
+        "internal/reviewaudit/naming_effect.go:427#nameSameFieldParameter",
+        "internal/reviewaudit/naming_effect.go:443#nameFieldClosureCalled",
+        "internal/reviewaudit/naming_effect.go:472#nameFieldStatement",
+        "internal/reviewaudit/naming_effect.go:481#nameFieldUnchanged",
+        "internal/reviewaudit/naming_effect.go:525#sameNameAssignment",
+        "internal/reviewaudit/naming_effect.go:551#nameAssignmentFieldDeclaration",
+        "internal/reviewaudit/naming_effect.go:602#nameAssignmentGlobal",
+        "internal/reviewaudit/naming_setting.go:19#checkNameSettingWrite",
+        "internal/reviewaudit/naming_setting.go:84#checkNameEnvironmentSetting",
+        "internal/reviewaudit/naming_setting.go:152#nameEnvironmentUse",
+        "internal/reviewaudit/naming_setting.go:181#nameEnvironmentReturn",
+        "internal/reviewaudit/naming_setting.go:211#nameEnvironmentEmptyGuard",
+        "internal/reviewaudit/naming_write.go:13#checkNameFileWrite",
+        "internal/reviewaudit/naming.go:459#checkNameObject",
+        "internal/sessions/sessions.go:598#Own",
+        "tools/agentctl/plan.go:95#planResolve",
+        "tools/shipctl/checkcodex.go:33#raiseCodex",
+        "tools/shipctl/checkcodex.go:99#codexCheckWorker",
+        "tools/dashboard/checkstop.go:15#stopCodexChecker",
+        "tools/shipctl/runlog.go:30#appendRunLog",
+        "internal/reviewaudit/naming_effect.go:39#checkNameWriteProof",
+        "internal/reviewaudit/naming_setting.go:321#namePackageSelector",
+        "internal/reviewaudit/naming_write.go:122#nameFileDestinationMatches",
+        "internal/reviewaudit/naming_write.go:157#nameOpenFileForWrite",
+        "tools/dashboard/runs.go:1047#handleRunStop",
+        "tools/shipctl/checkrun.go:98#Raise",
+        "tools/shipctl/checkrun.go:201#checkRuns",
+        "tools/shipctl/runlog.go:19#logRun",
+        "tools/shipctl/main.go:195#main"
       ]
     },
     {

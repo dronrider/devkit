@@ -41,21 +41,21 @@ def read(home, root, task):
 
 def legacy_app_pass(home, task, started):
     """Читает незавершённый проход прежнего дашборда по журналу оболочки."""
+    since_ns = None
     try:
-        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})", started)
-        if match is None:
-            return False
-        since = datetime.fromisoformat(match[1] + match[3]).astimezone(timezone.utc)
-        delta = since - datetime(1970, 1, 1, tzinfo=timezone.utc)
-        after = delta.days * 86400 + delta.seconds
-        fraction = int(((match[2] or "") + "000000000")[:9])
-        since_ns = after * 1_000_000_000 + fraction
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})", started or "")
+        if match:
+            since = datetime.fromisoformat(match[1] + match[3]).astimezone(timezone.utc)
+            delta = since - datetime(1970, 1, 1, tzinfo=timezone.utc)
+            after = delta.days * 86400 + delta.seconds
+            fraction = int(((match[2] or "") + "000000000")[:9])
+            since_ns = after * 1_000_000_000 + fraction
     except (TypeError, ValueError, OverflowError):
-        return False
+        pass
     try:
         with (home / ".devkit" / "heads" / (task + ".log")).open("rb") as log:
             stat = os.fstat(log.fileno())
-            if stat.st_mtime_ns < since_ns:
+            if since_ns is not None and stat.st_mtime_ns < since_ns:
                 return False
             log.seek(max(0, stat.st_size - 64 * 1024))
             lines = log.read(64 * 1024).decode("utf-8", errors="replace").splitlines()
@@ -67,11 +67,15 @@ def legacy_app_pass(home, task, started):
         stamp, sep, event = line.partition(" task-run %s: " % task)
         if not sep:
             continue
+        launch = event.startswith("проход поднят:") and "--app-turn-client" in event
+        if since_ns is None:
+            if launch:
+                raise ValueError("неверное время старта записанного запуска")
+            continue
         try:
             at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
         except (ValueError, OverflowError, OSError):
             continue
-        launch = event.startswith("проход поднят:") and "--app-turn-client" in event
         if at == after and launch:
             # Совпадающая секунда не доказывает поколение, но запрещает
             # параллельный общий подъём до выяснения состояния.
@@ -107,7 +111,7 @@ def app_runs(home, root, tasks):
     def journal(task, run):
         try:
             return legacy_app_pass(home, task, run.get("started")), ""
-        except OSError as error:
+        except (OSError, ValueError) as error:
             return "", str(error)
 
     # После обновления дашборд перенесёт адрес чата в Run. До этого тик

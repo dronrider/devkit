@@ -517,6 +517,9 @@ func TestAppTaskInterruptedLegacy(t *testing.T) {
 	if read(started.Format(time.RFC3339Nano)) != appTaskLegacyNone {
 		t.Fatal("normal legacy completion was mistaken for interruption")
 	}
+	if _, err := e.s.appTaskInterruptedLegacy(home, "XR-002", "bad"); err == nil || !strings.Contains(err.Error(), "неверное время старта") {
+		t.Fatalf("повреждённое время старта ошибочно сняло удержание: %v", err)
+	}
 	script := filepath.Join(filepath.Dir(e.proj), "devkit", "tools", "devkitctl", "recovery.py")
 	if err := os.WriteFile(script, []byte("raise RuntimeError('bridge failure')\n"), 0600); err != nil {
 		t.Fatal(err)

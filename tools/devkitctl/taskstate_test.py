@@ -133,6 +133,20 @@ class TaskStateTest(unittest.TestCase):
         self.assertEqual(runs["DK-2"]["appChat"], "as-other")
         self.assertTrue(taskstate.app_handles_recovery(runs["DK-2"]))
 
+    def test_invalid_legacy_start_requires_evidence_of_a_codex_pass(self):
+        self.data["run"].update(pid=999999, started="bad")
+        self.name.write_text(json.dumps(self.data))
+        tasks = ["DK-1"]
+        self.assertEqual(taskstate.app_runs(self.home, self.root, tasks), {})
+        log = self.home / ".devkit" / "heads" / "DK-1.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("2026-11-20T10:00:00 task-run DK-1: проход поднят: claude\n")
+        self.assertEqual(taskstate.app_runs(self.home, self.root, tasks), {})
+        log.write_text("2026-11-20T10:00:00 task-run DK-1: проход поднят: task-run.py --app-turn-client\n")
+        run = taskstate.app_runs(self.home, self.root, tasks)["DK-1"]
+        self.assertIn("неверное время старта", run["appRecoveryError"])
+        self.assertTrue(taskstate.app_handles_recovery(run))
+
     def test_owner_acknowledgment_preserves_identity(self):
         taskstate.acknowledge(self.home, self.root, "DK-1", "run-one", os.getpid())
         got = taskstate.identity(self.home, self.root, "DK-1", os.getpid())

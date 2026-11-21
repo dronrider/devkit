@@ -28,7 +28,13 @@ func stopCodexChecker(home, root, id string) (bool, error) {
 		return false, nil
 	}
 	group, err := syscall.Getpgid(run.PID)
-	if err != nil || group != run.Group {
+	if err == syscall.ESRCH {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("группа процесса проверяющего %d: %w", run.PID, err)
+	}
+	if group != run.Group {
 		return false, nil
 	}
 	if err := syscall.Kill(run.PID, syscall.SIGTERM); err != nil {

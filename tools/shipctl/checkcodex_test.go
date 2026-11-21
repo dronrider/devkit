@@ -216,12 +216,14 @@ wait
 
 func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		loggerFail int
-		diagnostic string
+		name           string
+		loggerFail     bool
+		projectLogFail bool
+		diagnostic     string
 	}{
-		{"system_log", 0, "-t shipctl XR-1: запись журнала Codex"},
-		{"project_log", 1, "check-run XR-1: запись журнала Codex"},
+		{"system_log", false, false, "-t shipctl XR-1: запись журнала Codex"},
+		{"project_log", true, false, "check-run XR-1: запись журнала Codex"},
+		{"stderr", true, true, "журнал проекта:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -249,9 +251,15 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			bin := t.TempDir()
 			for name, script := range map[string]string{
 				"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\n",
-				"logger":   "#!/bin/sh\nif [ \"$CHECK_LOGGER_FAIL\" = 1 ]; then exit 1; fi\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
+				"logger":   "#!/bin/sh\nif [ \"$CHECK_LOGGER_FAIL\" = true ]; then exit 1; fi\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
 			} {
 				if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			projectLogPath := filepath.Join(home, ".devkit", "log")
+			if tc.projectLogFail {
+				if err := os.Mkdir(projectLogPath, 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -264,7 +272,9 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath,
-				"CHECK_LOGGER_FAIL="+strconv.Itoa(tc.loggerFail))
+				"CHECK_LOGGER_FAIL="+strconv.FormatBool(tc.loggerFail))
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
 			out, err := cmd.StdoutPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -294,8 +304,17 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			if _, err := os.Stat(finishedPath); err != nil {
 				t.Fatalf("проверяющий не закончил ход: %v", err)
 			}
-			if tc.loggerFail != 0 {
-				alertPath = filepath.Join(home, ".devkit", "log")
+			if tc.projectLogFail {
+				diagnostic := stderr.String()
+				for _, part := range []string{tc.diagnostic, "check-run XR-1: запись журнала Codex", "logger:"} {
+					if !strings.Contains(diagnostic, part) {
+						t.Fatalf("в stderr отсутствует %q: %q", part, diagnostic)
+					}
+				}
+				return
+			}
+			if tc.loggerFail {
+				alertPath = projectLogPath
 			}
 			alert, err := os.ReadFile(alertPath)
 			if err != nil || !strings.Contains(string(alert), tc.diagnostic) {

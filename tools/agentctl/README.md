@@ -2419,8 +2419,8 @@ agentctl plan set --label DK-613 "правка сборки
 
 - ID разговора из `DEVKIT_CHAT_SESSION_ID`, если дашборд передал его;
 - ID сессии из `CLAUDE_CODE_SESSION_ID`;
-- ID потока Codex из `CODEX_THREAD_ID`;
-- имя tmux-сессии из `DEVKIT_TMUX`.
+- имя tmux-сессии из `DEVKIT_TMUX`;
+- ID потока Codex из `CODEX_THREAD_ID`.
 
 Если ни одна переменная не задана, команда просит `--sid`.
 

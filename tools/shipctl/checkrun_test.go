@@ -513,7 +513,8 @@ func TestCheckRunCodexEntry(t *testing.T) {
 case "$1" in
 pick) printf 'tier: base\n' ;;
 harness) printf '%s\n' '{"harnesses":[{"name":"codex","enabled":true,"default":true,"models":[{"tier":"base","model":"model"}]}]}' ;;
--C) printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
+-C) if [ "$CHECK_VERDICT_ERROR" = 1 ]; then printf '%s\n' 'сбой расчёта модели' >&2; exit 1; fi
+    printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
 exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}' ;;
 *) exit 1 ;;
 esac
@@ -524,6 +525,12 @@ esac
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHECK_ARGS", args)
 	t.Setenv("TASKCTL_RUN_CODE", "2")
+	t.Setenv("CHECK_VERDICT_ERROR", "1")
+	failed, err := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json").CombinedOutput()
+	if err == nil || !strings.Contains(string(failed), "сбой расчёта модели") {
+		t.Fatalf("причина отказа agentctl check потеряна: %s %v", failed, err)
+	}
+	t.Setenv("CHECK_VERDICT_ERROR", "")
 	cmd := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -550,5 +557,10 @@ func TestRaiseWithoutModelReportsRefusal(t *testing.T) {
 	report := carrier.Raise(checkrun.Plan{})
 	if !report.Failed || report.Raised || !strings.Contains(report.Line, "модель проверяющего не названа") {
 		t.Fatalf("ожидался отказ без модели: %+v", report)
+	}
+	carrier.check = true
+	report = carrier.Raise(checkrun.Plan{Choice: checkrun.Choice{Harness: "codex"}})
+	if !report.Failed || report.Raised || !strings.Contains(report.Line, "модель проверяющего не названа") || strings.Contains(report.Line, "taskctl run") {
+		t.Fatalf("ожидался отказ Codex без модели: %+v", report)
 	}
 }

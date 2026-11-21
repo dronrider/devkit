@@ -320,7 +320,11 @@ func nameHasParameter(field *ast.Field, name string) bool {
 
 func (g *queryGoSource) namePackageSelector(fn queryFunc, expr ast.Expr, pkg, method string) bool {
 	sel, ok := expr.(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == method && g.importPath(fn, nameIdentifier(sel.X)) == pkg
+	if !ok || sel.Sel.Name != method {
+		return false
+	}
+	qualifier, ok := sel.X.(*ast.Ident)
+	return ok && qualifier.Obj == nil && g.importPath(fn, qualifier.Name) == pkg
 }
 
 func nameSettingKey(expr ast.Expr) string {

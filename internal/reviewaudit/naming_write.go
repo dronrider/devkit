@@ -48,7 +48,7 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	var open *ast.CallExpr
 	switch write.Fun.(*ast.SelectorExpr).Sel.Name {
 	case "WriteFile":
-		if len(write.Args) == 3 {
+		if len(write.Args) == 3 && g.namePackageSelector(fn, write.Fun, "os", "WriteFile") {
 			path, payload = write.Args[0], write.Args[1]
 		}
 	case "Fprintf":
@@ -164,7 +164,7 @@ func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) 
 	switch {
 	case sel.Sel.Name == "Write" && len(write.Args) == 1:
 		receiver = nameIdentifier(sel.X)
-	case formatted && len(write.Args) >= 2 && g.importPath(fn, nameIdentifier(sel.X)) == "fmt":
+	case formatted && len(write.Args) >= 2 && g.namePackageSelector(fn, write.Fun, "fmt", "Fprintf"):
 		receiver = nameIdentifier(write.Args[0])
 	}
 	if receiver == "" {
@@ -180,32 +180,7 @@ func (g *queryGoSource) nameOpenFileForWrite(fn queryFunc, write *ast.CallExpr) 
 		if !ok || len(open.Args) != 3 {
 			continue
 		}
-		opener, ok := open.Fun.(*ast.SelectorExpr)
-		if !ok || opener.Sel.Name != "OpenFile" || g.importPath(fn, nameIdentifier(opener.X)) != "os" {
-			continue
-		}
-		// The regular parse skips object resolution. Resolve the package
-		// qualifier here so a local value with its own OpenFile cannot pass.
-		body, err := g.source.read(fn.file, fn.base)
-		if err != nil {
-			return nil
-		}
-		fset := token.NewFileSet()
-		tree, err := parser.ParseFile(fset, fn.file, body, 0)
-		if err != nil {
-			return nil
-		}
-		openOffset := g.fset.Position(opener.X.Pos()).Offset
-		formatOffset := g.fset.Position(sel.X.Pos()).Offset
-		openImport, formatImport := false, !formatted
-		for node := range ast.Preorder(tree) {
-			if id, ok := node.(*ast.Ident); ok && id.Obj == nil {
-				offset := fset.Position(id.Pos()).Offset
-				openImport = openImport || offset == openOffset
-				formatImport = formatImport || offset == formatOffset
-			}
-		}
-		if openImport && formatImport {
+		if g.namePackageSelector(fn, open.Fun, "os", "OpenFile") {
 			return open
 		}
 	}

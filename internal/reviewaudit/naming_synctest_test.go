@@ -196,7 +196,7 @@ func TestTurn(t *testing.T) {
 	}
 	write, read := at("x[i].turn = 1"), at("i := 1; use(x[i].turn)")
 	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "turn", ActualAt: write, Proof: &NameObjectProof{Expression: "x[i].turn", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: write, Target: "x[i].turn", Value: "1"}}, Use: NameCodeUse{Declaration: at("func TestTurn"), At: read, Expression: "x[i].turn"}}}}, WriteEvidence: &WriteEvidence{WriteAt: write}}
-	if err := g.checkNameAssignment(e, fn); err == nil {
+	if err := g.checkNameAssignment(e, fn, fn); err == nil {
 		t.Fatal("accepted shadowed index i")
 	}
 }

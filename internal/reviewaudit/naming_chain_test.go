@@ -128,9 +128,12 @@ func unrelated(t T, content string) {
 }
 
 func TestNameChainPreservesPromisedWrite(t *testing.T) {
-	source, at := nameProofFixture(t, `package sample
+	const fixture = `package sample
 type Item struct { Objects, Attributes int }
-func addInvoiceAttributes(item *Item, value int) { fill(item, value) }
+func addInvoiceAttributes(item *Item, other *Item, value int) {
+ fill(item, value)
+ consume(item)
+}
 func fill(item *Item, value int) {
  item.Objects = value
 }
@@ -140,8 +143,9 @@ var handlers = map[string]func(*Item) int{
   return item.Objects
  },
 }
-`)
-	e := namingWire(t, `{"check":"writes","result":"violated","object_comparison":{"expected":["Invoice","Attributes"],"actual":"Objects","actual_at":"@item.Objects =","proof":{"expression":"item.Objects","words":[{"word":"Invoice","role":"context","fact":{"location":"@item.Objects =","quote":"item.Objects = value","value":"value","text":"Запись при обработке счёта."}},{"word":"Attributes","role":"context","fact":{"location":"@item.Objects =","quote":"item.Objects = value","value":"value","text":"Фактически меняются Objects."}}],"assignment":{"writes":[{"at":"@item.Objects =","target":"item.Objects","value":"value"}],"use":{"declaration":"@func consume","at":"@func consume","expression":"item.Objects"}}}},"write_evidence":{"word":"Attributes","target":"item.Objects","value":"value","write_at":"@item.Objects =","calls":[{"at":"@func addInvoiceAttributes","declaration":"@func fill","bindings":[{"parameter":"item","argument":"item"},{"parameter":"value","argument":"value"}]}]}}`, at)
+`
+	source, at := nameProofFixture(t, fixture)
+	e := namingWire(t, `{"check":"writes","result":"violated","object_comparison":{"expected":["Invoice","Attributes"],"actual":"Objects","actual_at":"@item.Objects =","proof":{"expression":"item.Objects","words":[{"word":"Invoice","role":"context","fact":{"location":"@item.Objects =","quote":"item.Objects = value","value":"value","text":"Запись при обработке счёта."}},{"word":"Attributes","role":"context","fact":{"location":"@item.Objects =","quote":"item.Objects = value","value":"value","text":"Фактически меняются Objects."}}],"assignment":{"writes":[{"at":"@item.Objects =","target":"item.Objects","value":"value"}],"use":{"declaration":"@func consume","at":"@func consume","expression":"item.Objects"}}}},"write_evidence":{"word":"Attributes","target":"item.Objects","value":"value","write_at":"@item.Objects =","calls":[{"at":"@fill(item, value)","declaration":"@func fill","bindings":[{"parameter":"item","argument":"item"},{"parameter":"value","argument":"value"}]}]}}`, at)
 	check := func(want string) {
 		t.Helper()
 		assertTargetCheck(t, checkNameEntry(e, at("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), source), want)
@@ -149,7 +153,7 @@ var handlers = map[string]func(*Item) int{
 	check("")
 	use := e.ObjectComparison.Proof.Assignment.Use
 	e.ObjectComparison.Proof.Assignment.Use = NameCodeUse{Declaration: at("\"objects\": func"), At: at("  return item.Objects"), Expression: "item.Objects"}
-	check("")
+	check("читает Objects")
 	e.ObjectComparison.Proof.Assignment.Use.Declaration = e.ObjectComparison.Proof.Assignment.Use.At
 	check("строку объявления")
 	assertNameRepairStage(t, checkNameEntry(e, at("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), source), "writes", "evidence", "missing_consumer", "Objects", "Продолжите поиск", "текущего поручения")
@@ -160,6 +164,8 @@ var handlers = map[string]func(*Item) int{
 	assertNameRepairStage(t, consumerErr, "writes", "evidence", "missing_consumer", "Objects", "proof.assignment.use", "повторите audit-progress")
 	e.ObjectComparison.Proof.Assignment.Use = use
 	check("")
+	otherSource, otherAt := nameProofFixture(t, strings.Replace(fixture, "consume(item)", "consume(other)", 1))
+	assertTargetCheck(t, checkNameEntry(e, otherAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), otherSource), "читает Objects")
 	e.Result = "checked"
 	check("не подтверждает объект")
 	assertNameRepairStage(t, checkNameEntry(e, at("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), source), "writes", "conclusion", "write_object")

@@ -35,26 +35,26 @@ func add(n int) int { return n }
 	writeAt := at("a.file =")
 	proof := &NameObjectProof{Expression: "a.file", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "a.file", Value: `"path"`}}, Use: NameCodeUse{Declaration: at("func consume"), At: at("return a.file"), Expression: "a.file"}}}
 	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "file", ActualAt: at(" file string"), Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
-	if err := g.checkNameAssignment(e, fn); err != nil {
+	if err := g.checkNameAssignment(e, fn, fn); err != nil {
 		t.Fatal(err)
 	}
 	proof.Expression = `a.file = "other"`
-	if err := g.checkNameAssignment(e, fn); err == nil {
+	if err := g.checkNameAssignment(e, fn, fn); err == nil {
 		t.Fatal("подменённая правая часть принята")
 	}
 	proof.Expression = `a.file = "path"`
-	if err := g.checkNameAssignment(e, fn); err != nil {
+	if err := g.checkNameAssignment(e, fn, fn); err != nil {
 		t.Fatal(err)
 	}
 	e.ObjectComparison.ActualAt = at("var timeout")
-	if err := g.checkNameAssignment(e, fn); err == nil {
+	if err := g.checkNameAssignment(e, fn, fn); err == nil {
 		t.Fatal("чужое объявление принято")
 	}
 	fn, _ = g.declaration(at("func TestTimeout"))
 	writeAt = at("timeout = 0")
 	proof = &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return add"), Expression: "timeout"}}}
 	e = Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
-	if err := g.checkNameAssignment(e, fn); err != nil {
+	if err := g.checkNameAssignment(e, fn, fn); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -76,7 +76,7 @@ func use() int {
 	writeAt := at("timeout := 0")
 	proof := &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return timeout"), Expression: "timeout"}}}
 	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
-	if err := g.checkNameAssignment(e, fn); err == nil {
+	if err := g.checkNameAssignment(e, fn, fn); err == nil {
 		t.Fatal("локальное значение принято за глобальное")
 	}
 }
@@ -97,7 +97,7 @@ func add(n int) int { return n }
 	writeAt := at("timeout = 0")
 	proof := &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return add"), Expression: "timeout"}}}
 	e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
-	if err := g.checkNameAssignment(e, fn); err != nil {
+	if err := g.checkNameAssignment(e, fn, fn); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -243,7 +243,7 @@ func consume() string {
 			}
 			for _, actualAt := range []string{at("file string"), writeAt} {
 				e.ObjectComparison.ActualAt = actualAt
-				if err := g.checkNameAssignment(e, fn); err == nil {
+				if err := g.checkNameAssignment(e, fn, fn); err == nil {
 					t.Fatalf("принято чтение поля другого значения при actual_at=%s", actualAt)
 				}
 			}
@@ -279,7 +279,7 @@ func consume() string {
 			writer, reader := tree.Decls[1].(*ast.FuncDecl), tree.Decls[2].(*ast.FuncDecl)
 			field := writer.Body.List[1].(*ast.AssignStmt).Lhs[0].(*ast.SelectorExpr)
 			read := reader.Body.List[1].(*ast.ReturnStmt).Results[0].(*ast.SelectorExpr)
-			if got := nameBoundFieldUse(queryFunc{file: file, node: writer}, queryFunc{file: file, node: reader}, field, read, false); got != tc.valid {
+			if got := nameBoundFieldUse(queryFunc{file: file, node: writer}, queryFunc{file: file, node: reader}, field, read); got != tc.valid {
 				t.Fatalf("связь экземпляра: %v, ожидалось %v", got, tc.valid)
 			}
 		})

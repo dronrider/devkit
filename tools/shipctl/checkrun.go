@@ -97,10 +97,17 @@ func (c *shipCarrier) Ladders() []checkrun.Ladder {
 // модель называется всегда: без --model записался бы этап исполнителя.
 func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	id := p.Row.ID
+	harness := p.Choice.Harness
+	if harness == "" {
+		harness = c.harness
+	}
 	if p.Choice.Model == "" {
 		why := c.note
 		if why == "" {
 			why = "яруса " + p.Choice.Tier + " в лестнице подписки нет"
+		}
+		if c.check && harness == "codex" {
+			return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, модель проверяющего не названа (%s)", id, checkrun.NotRaised, why)}
 		}
 		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, модель проверяющего не названа (%s):"+
 			" без неё taskctl run спросил бы вердикт исполнителя и записал бы проверяющего разработчиком",
@@ -108,10 +115,6 @@ func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	}
 	args := []string{"run", id, "-C", c.root, "--model", p.Choice.Model,
 		"--order", p.Order, "--again", p.Again, "--hidden"}
-	harness := p.Choice.Harness
-	if harness == "" {
-		harness = c.harness
-	}
 	if c.check && harness == "codex" {
 		return c.raiseCodex(p)
 	}

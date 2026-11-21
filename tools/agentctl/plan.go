@@ -102,11 +102,11 @@ func planResolve(home, sid, label string, env func(string) string) (planAddr, er
 		a.sid = strings.TrimSpace(env(planEnvSession))
 	}
 	if a.sid == "" {
-		a.sid = strings.TrimSpace(env("CODEX_THREAD_ID"))
-	}
-	if a.sid == "" {
 		a.sid = strings.TrimSpace(env(planEnvTmux))
 		a.tmux = a.sid != ""
+	}
+	if a.sid == "" {
+		a.sid = strings.TrimSpace(env("CODEX_THREAD_ID"))
 	}
 	if a.sid == "" {
 		return a, fmt.Errorf("не видно, чей это план: пусты DEVKIT_CHAT_SESSION_ID, %s, CODEX_THREAD_ID и %s, назови сессию флагом --sid",

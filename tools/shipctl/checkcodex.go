@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,7 +36,14 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 	defer cancel()
 	verdict, err := exec.CommandContext(ctx, "agentctl", "-C", c.root, "check", id).Output()
 	if err != nil {
-		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, agentctl check: %v", id, checkrun.NotRaised, err)}
+		why := err.Error()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if stderr := strings.Join(strings.Fields(string(exit.Stderr)), " "); stderr != "" {
+				why = stderr
+			}
+		}
+		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, agentctl check: %s", id, checkrun.NotRaised, why)}
 	}
 	fields := map[string]string{}
 	for _, line := range strings.Split(string(verdict), "\n") {

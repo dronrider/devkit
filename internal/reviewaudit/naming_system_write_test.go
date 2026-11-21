@@ -28,7 +28,7 @@ func TestNameSystemWrite(t *testing.T) {
 			e := namingWire(t, `{"check":"writes","result":"checked","object_comparison":{
 				"expected":["Checker"],"actual":`+strconvQuote(tc.actual)+`,"actual_at":`+strconvQuote("@"+tc.call)+`,
 				"proof":{"expression":`+strconvQuote(tc.call)+`,"effect":{"kind":`+strconvQuote(tc.kind)+`},
-				"words":[{"word":"Checker","role":"object","fact":{"location":`+strconvQuote("@"+tc.call)+`,"quote":`+strconvQuote(tc.call)+`,"value":`+strconvQuote(tc.actual)+`,"text":"Изменяется состояние проверяющего."}}]}},
+				"words":[{"word":"Checker","role":"context","fact":{"location":`+strconvQuote("@"+tc.call)+`,"quote":`+strconvQuote(tc.call)+`,"value":`+strconvQuote(tc.actual)+`,"text":"Приведён фактический системный вызов."}}]}},
 				"write_evidence":{"word":"Checker","target":`+strconvQuote(tc.target)+`,"value":`+strconvQuote(tc.value)+`,"write_at":`+strconvQuote("@"+tc.call)+`}}`, at)
 			check := func(want string) {
 				t.Helper()
@@ -38,6 +38,9 @@ func TestNameSystemWrite(t *testing.T) {
 			if tc.want != "" {
 				return
 			}
+			e.ObjectComparison.Proof.Words[0].Role = "object"
+			check("не соответствует объекту в имени")
+			e.ObjectComparison.Proof.Words[0].Role = "context"
 			e.ObjectComparison.ActualAt = at("func stopChecker")
 			assertTargetCheck(t, checkNameEntry(e, at("func stopChecker"), identifierWords("stopChecker"), source), "actual_at")
 			e.ObjectComparison.ActualAt = e.WriteEvidence.WriteAt

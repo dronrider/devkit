@@ -37,5 +37,8 @@ func (g *queryGoSource) checkNameSystemWrite(e Evidence, fn queryFunc) error {
 	default:
 		return fmt.Errorf("proof.effect.kind: укажите unsetenv или signal")
 	}
+	if objects := nameProofObjects(pair); e.Result == "checked" && len(objects) != 0 && !sameObjectName(objects, identifierWords(pair.Actual)) {
+		return fmt.Errorf("proof.effect: цель системного вызова не соответствует объекту в имени")
+	}
 	return checkNameWriteWordLinks(p.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true}))
 }

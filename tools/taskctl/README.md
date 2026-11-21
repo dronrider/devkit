@@ -1675,6 +1675,7 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 Для `os.Remove` и `os.RemoveAll` укажите путь из первого аргумента,
 а для `os.Rename` путь назначения из второго аргумента. Во всех трёх
 случаях укажите полный вызов в `value` и роль `destination`.
+В этой форме укажите вызов вне литерала функции.
 
 Для `os.Unsetenv` и `syscall.Kill` используйте
 `audit-template STYLE-001 --check writes --kind effect`. В
@@ -1683,6 +1684,9 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 в `actual` и `target` и значение `unset` в `value`.
 Для `effect.kind: signal` укажите в `actual` последнее поле выражения PID,
 в `target` выражение PID целиком, а в `value` выражение сигнала.
+Форма сверяет вызов и его аргументы по исходнику. Условия, по которым
+процесс выбран для сигнала, обоснуйте отдельно в проверке назначения
+имени. Слова роли `object` должны называть сам ключ или поле PID.
 
 У `sql` проверяются
 прямой `Exec`/`ExecContext`, точный текст `statement`, изменяемая `table`

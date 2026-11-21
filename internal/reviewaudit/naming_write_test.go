@@ -93,10 +93,11 @@ func appendLog(dir, text string) {
 
 func TestNameFileMutationDestination(t *testing.T) {
 	for _, tc := range []struct {
-		name, pkg, binding, call, path, value, role, want string
+		name, pkg, binding, call, body, path, value, role, want string
 	}{
 		{name: "remove", pkg: "os", call: "files.Remove(path)", path: "path", role: "destination"},
 		{name: "remove_all", pkg: "os", call: "files.RemoveAll(path)", path: "path", role: "destination"},
+		{name: "uncalled_closure", pkg: "os", call: "files.Remove(path)", body: "_ = func() { files.Remove(path) }", path: "path", role: "destination", want: "неподтверждённого замыкания"},
 		{name: "literal", pkg: "os", call: `files.RemoveAll("lock")`, path: `"lock"`, role: "destination"},
 		{name: "rename", pkg: "os", call: "files.Rename(old, path)", path: "path", role: "destination"},
 		{name: "rename_source", pkg: "os", call: "files.Rename(old, path)", path: "old", role: "destination", want: "фактический путь"},
@@ -108,6 +109,10 @@ func TestNameFileMutationDestination(t *testing.T) {
 		{name: "shadowed", pkg: "os", binding: "files := localFiles{}", call: "files.RemoveAll(path)", path: "path", role: "destination", want: "найдено 0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			body := tc.call
+			if tc.body != "" {
+				body = tc.body
+			}
 			source, at := nameCurrentProofFixture(t, `package sample
 import files "`+tc.pkg+`"
 var _ = files.Remove
@@ -115,7 +120,7 @@ type localFiles struct{}
 func (localFiles) RemoveAll(path string) error { return nil }
 func File(old, path string) {
  `+tc.binding+`
- `+tc.call+`
+ `+body+`
 }
 `)
 			writeAt := at(tc.call)

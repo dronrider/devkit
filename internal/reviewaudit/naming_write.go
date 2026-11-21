@@ -35,7 +35,7 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	if err != nil {
 		return err
 	}
-	write, _, err := g.call(fn, w.WriteAt, func(expr ast.Expr) bool {
+	write, parents, err := g.call(fn, w.WriteAt, func(expr ast.Expr) bool {
 		call, ok := expr.(*ast.SelectorExpr)
 		if !ok {
 			return false
@@ -59,6 +59,11 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	var open *ast.CallExpr
 	switch operation := calledName(write.Fun); operation {
 	case "Remove", "RemoveAll", "Rename":
+		for _, parent := range parents {
+			if _, closure := parent.(*ast.FuncLit); closure {
+				return fmt.Errorf("write_evidence.file: вызов внутри неподтверждённого замыкания")
+			}
+		}
 		if !sameNameExpression(write, w.Value) || f.Role != "destination" {
 			return fmt.Errorf("write_evidence.file: укажите полный вызов как value и роль destination")
 		}

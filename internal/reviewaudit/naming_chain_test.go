@@ -132,6 +132,8 @@ func TestNameChainPreservesPromisedWrite(t *testing.T) {
 type Item struct { Objects, Attributes int }
 func addInvoiceAttributes(item *Item, other *Item, value int) {
  fill(item, value)
+ marker := 1
+ _ = marker
  consume(item)
 }
 func fill(item *Item, value int) {
@@ -166,6 +168,8 @@ var handlers = map[string]func(*Item) int{
 	check("")
 	otherSource, otherAt := nameProofFixture(t, strings.Replace(fixture, "consume(item)", "consume(other)", 1))
 	assertTargetCheck(t, checkNameEntry(e, otherAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), otherSource), "читает Objects")
+	changedSource, changedAt := nameProofFixture(t, strings.Replace(fixture, "marker := 1\n _ = marker", "item.Objects = 2\n _ = item", 1))
+	assertTargetCheck(t, checkNameEntry(e, changedAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), changedSource), "читает Objects")
 	e.Result = "checked"
 	check("не подтверждает объект")
 	assertNameRepairStage(t, checkNameEntry(e, at("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), source), "writes", "conclusion", "write_object")

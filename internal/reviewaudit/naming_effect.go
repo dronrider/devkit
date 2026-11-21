@@ -320,8 +320,8 @@ func nameBoundFieldUse(writer, reader queryFunc, field, read *ast.SelectorExpr) 
 	return ok && id.Obj == source.Obj
 }
 
-// A call-chain writer and reader share an instance when the same caller
-// passes the same binding to consecutive calls.
+// Both calls must receive the same binding. Unrelated simple assignments
+// can intervene without accessing the instance.
 func (g *queryGoSource) nameFieldCallUse(entry, writer, reader queryFunc, field, read *ast.SelectorExpr, calls []NameWriteCall) bool {
 	source, sourceOK := field.X.(*ast.Ident)
 	destination, destinationOK := read.X.(*ast.Ident)
@@ -364,22 +364,55 @@ func (g *queryGoSource) nameFieldCallUse(entry, writer, reader queryFunc, field,
 	if !ok || binding.Obj == nil || next >= len(parent.node.Body.List) {
 		return false
 	}
-	var expression ast.Expr
-	switch stmt := parent.node.Body.List[next].(type) {
-	case *ast.ExprStmt:
-		expression = stmt.X
-	case *ast.ReturnStmt:
-		if len(stmt.Results) == 1 {
-			expression = stmt.Results[0]
+	for _, stmt := range parent.node.Body.List[next:] {
+		var expression ast.Expr
+		switch stmt := stmt.(type) {
+		case *ast.AssignStmt:
+			if !nameIndependentAssignment(stmt, binding.Obj) {
+				return false
+			}
+			continue
+		case *ast.ExprStmt:
+			expression = stmt.X
+		case *ast.ReturnStmt:
+			if len(stmt.Results) == 1 {
+				expression = stmt.Results[0]
+			}
+		}
+		call, ok := expression.(*ast.CallExpr)
+		if !ok || readSlot >= len(call.Args) {
+			return false
+		}
+		callee, called := call.Fun.(*ast.Ident)
+		value, passed := call.Args[readSlot].(*ast.Ident)
+		return called && passed && callee.Obj != nil && callee.Obj.Decl == reader.node && value.Obj == binding.Obj &&
+			!slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
+				_, simpleName := arg.(*ast.Ident)
+				_, literal := arg.(*ast.BasicLit)
+				return !simpleName && !literal
+			})
+	}
+	return false
+}
+
+func nameIndependentAssignment(stmt *ast.AssignStmt, binding *ast.Object) bool {
+	for _, target := range stmt.Lhs {
+		if id, ok := target.(*ast.Ident); !ok || id.Obj == binding {
+			return false
 		}
 	}
-	call, ok := expression.(*ast.CallExpr)
-	if !ok || readSlot >= len(call.Args) {
-		return false
+	for _, value := range stmt.Rhs {
+		switch x := value.(type) {
+		case *ast.BasicLit:
+		case *ast.Ident:
+			if x.Obj == binding {
+				return false
+			}
+		default:
+			return false
+		}
 	}
-	callee, called := call.Fun.(*ast.Ident)
-	value, passed := call.Args[readSlot].(*ast.Ident)
-	return called && passed && callee.Obj != nil && callee.Obj.Decl == reader.node && value.Obj == binding.Obj
+	return true
 }
 
 func nameSameFieldParameter(source, destination *ast.Ident) bool {

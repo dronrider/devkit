@@ -6,6 +6,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dronrider/devkit/internal/checkrun"
 	"github.com/dronrider/devkit/internal/taskhead"
 	"github.com/dronrider/devkit/internal/taskstate"
 )
@@ -20,7 +21,7 @@ func stopCodexChecker(home, root, id string) (bool, error) {
 	defer g.Close()
 	run := g.State.Run
 	if !g.State.Stopped || run == nil || run.PID <= 0 || run.Group != run.PID ||
-		!strings.HasPrefix(run.ID, fmt.Sprintf("check-%d-", run.PID)) || run.Harness != "codex" {
+		!strings.HasPrefix(run.ID, fmt.Sprintf("check-%d-", run.PID)) || run.Harness != checkrun.CodexHarness {
 		return false, nil
 	}
 	lock := taskhead.LockPath(home, id)

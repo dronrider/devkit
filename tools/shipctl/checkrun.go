@@ -106,14 +106,14 @@ func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 		if why == "" {
 			why = "яруса " + p.Choice.Tier + " в лестнице подписки нет"
 		}
-		if c.check && harness == "codex" {
+		if c.check && harness == checkrun.CodexHarness {
 			return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, модель проверяющего не названа (%s)", id, checkrun.NotRaised, why)}
 		}
 		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, модель проверяющего не названа (%s):"+
 			" без неё taskctl run спросил бы вердикт исполнителя и записал бы проверяющего разработчиком",
 			id, checkrun.NotRaised, why)}
 	}
-	if c.check && harness == "codex" {
+	if c.check && harness == checkrun.CodexHarness {
 		return c.raiseCodex(p)
 	}
 	args := []string{"run", id, "-C", c.root, "--model", p.Choice.Model,

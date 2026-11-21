@@ -622,3 +622,6 @@ func Perms(devkit, home string) string {
 	}
 	return "перечень прав " + p + " не ответил: " + err.Error()
 }
+
+// CodexHarness задаёт имя подписки для запуска и остановки отдельного проверяющего.
+const CodexHarness = "codex"

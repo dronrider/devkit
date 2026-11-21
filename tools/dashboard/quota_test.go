@@ -288,7 +288,7 @@ func TestQuotaNeedsLogin(t *testing.T) {
 // прежнему запрещены: там дорога чата выбирается по наличию поля protocol, а не
 // по его значению, и литерал означал бы ветвление по чужому имени.
 func TestQuotaNoHarnessNamesInCode(t *testing.T) {
-	names := map[string]bool{"claude-code": true, "glm-code": true}
+	names := map[string]bool{"claude-code": true, "codex": true, "glm-code": true}
 	if entries, err := os.ReadDir(filepath.FromSlash("../../kit/harness")); err == nil {
 		for _, e := range entries {
 			if n := strings.TrimSuffix(e.Name(), ".toml"); !e.IsDir() && n != e.Name() {

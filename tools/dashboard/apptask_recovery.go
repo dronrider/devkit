@@ -230,16 +230,20 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		state.Close()
 		return nil
 	}
+	legacyOwner := run.AppChat == "" && run.ID == st.TaskRunID && run.PID == st.TaskRunPID &&
+		state.State.Root == st.TaskRunRoot && st.TaskRunSession == sid
+	if !legacyOwner && run.AppChat != sid {
+		state.Close()
+		return nil
+	}
 	ownerErr := s.appTaskRecoveryOwner(p, sid, st.Task)
 	if ownerErr != nil && !errors.Is(ownerErr, errAppTaskRecoveryOwner) {
 		state.Close()
-		if run.AppChat == sid {
-			s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+ownerErr.Error(), true, "owner-read-"+run.ID)
-		}
+		s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+ownerErr.Error(), true, "owner-read-"+run.ID)
 		return ownerErr
 	}
 	legacy := appTaskLegacyNone
-	if ownerErr == nil && run.AppChat == "" && run.ID == st.TaskRunID && run.PID == st.TaskRunPID && state.State.Root == st.TaskRunRoot && st.TaskRunSession == sid {
+	if ownerErr == nil && legacyOwner {
 		if st.TaskRun {
 			legacy = appTaskLegacyActive
 		} else {

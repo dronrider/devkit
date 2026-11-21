@@ -105,6 +105,7 @@ func use(ready bool) {
 		{name: "correct slot"},
 		{name: "other slot", old: "75, readValue()", replacement: "readValue(), \"other\""},
 		{name: "shadowed value", old: "code, value = 75", replacement: "code, value := 75"},
+		{name: "unreachable assignment", old: "if ready {", replacement: "if false {"},
 		{name: "value overwritten", old: "consume(code, value)", replacement: "value = \"other\"; consume(code, value)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

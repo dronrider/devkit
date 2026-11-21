@@ -3,7 +3,9 @@ package reviewaudit
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
+	"go/types"
 	"slices"
 )
 
@@ -64,13 +66,17 @@ func (g *queryGoSource) checkNameUseExpression(fn queryFunc, call *ast.CallExpr,
 	if err != nil || file != fn.file || base != fn.base {
 		return fmt.Errorf("use_expression: укажите использование в вызывающей функции той же ревизии")
 	}
+	if nameInUnreachableBranch(parents, call) {
+		return fmt.Errorf("use_expression: вызов находится в недостижимой ветке")
+	}
 	matches := 0
 	ast.PreorderStack(fn.node.Body, nil, func(n ast.Node, stack []ast.Node) bool {
 		if _, closure := n.(*ast.FuncLit); closure {
 			return false
 		}
 		x, ok := n.(ast.Expr)
-		if !ok || g.fset.Position(x.Pos()).Line != line || !sameNameExpression(x, use.Expression) || nameIsAssignmentTarget(fn, x) {
+		if !ok || g.fset.Position(x.Pos()).Line != line || !sameNameExpression(x, use.Expression) ||
+			nameIsAssignmentTarget(fn, x) || nameInUnreachableBranch(stack, x) {
 			return true
 		}
 		var block ast.Node
@@ -108,6 +114,37 @@ func (g *queryGoSource) checkNameUseExpression(fn queryFunc, call *ast.CallExpr,
 		return fmt.Errorf("use_expression: %s должен однозначно использовать результат %q в выражении %q без переприсваивания", use.At, value, use.Expression)
 	}
 	return nil
+}
+
+func nameInUnreachableBranch(stack []ast.Node, node ast.Node) bool {
+	for _, parent := range stack {
+		branch, ok := parent.(*ast.IfStmt)
+		if !ok || branch.Init != nil {
+			continue
+		}
+		inThen := branch.Body.Pos() <= node.Pos() && node.End() <= branch.Body.End()
+		inElse := branch.Else != nil && branch.Else.Pos() <= node.Pos() && node.End() <= branch.Else.End()
+		if !inThen && !inElse {
+			continue
+		}
+		if condition, known := nameConstantCondition(branch.Cond); known && condition != inThen {
+			return true
+		}
+	}
+	return false
+}
+
+func nameConstantCondition(expr ast.Expr) (bool, bool) {
+	for n := range ast.Preorder(expr) {
+		if id, ok := n.(*ast.Ident); ok && id.Obj != nil {
+			return false, false
+		}
+	}
+	value, err := types.Eval(token.NewFileSet(), nil, token.NoPos, nameExpression(expr))
+	if err != nil || value.Value == nil || value.Value.Kind() != constant.Bool {
+		return false, false
+	}
+	return constant.BoolVal(value.Value), true
 }
 
 func nameValueUnchangedWithin(block ast.Node, from, to ast.Node, value string) bool {

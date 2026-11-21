@@ -453,11 +453,15 @@ func TestAppTaskRecoveryReportsAmbiguousLegacyOnce(t *testing.T) {
 
 func TestAppTaskInterruptedLegacy(t *testing.T) {
 	home := t.TempDir()
-	started := time.Now().Truncate(time.Second)
+	started := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.Local)
 	logPath := ".devkit/heads/XR-002.log"
 	prefix := started.Add(time.Second).Format(chat.Stamp) + " task-run XR-002: "
 	open := prefix + "проход поднят: python3 task-run.py --app-turn-client /tmp/test token\n"
 	putDoc(t, home, logPath, started.Format(chat.Stamp)+" task-run XR-002: проход поднят: python3 task-run.py --app-turn-client\n")
+	modified := started.Add(time.Second)
+	if err := os.Chtimes(filepath.Join(home, logPath), modified, modified); err != nil {
+		t.Fatal(err)
+	}
 	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
 		t.Fatal("same-second legacy entry cannot identify the current generation")
 	}
@@ -694,6 +698,12 @@ func TestAppTaskRecoveryReportsChangedOwner(t *testing.T) {
 }
 
 func TestAppTaskRecoveryReportsUnreadableOwnerJournal(t *testing.T) {
+	t.Run("current", func(t *testing.T) { testAppTaskUnreadableOwnerJournal(t, false) })
+	t.Run("legacy", func(t *testing.T) { testAppTaskUnreadableOwnerJournal(t, true) })
+}
+
+func testAppTaskUnreadableOwnerJournal(t *testing.T, legacy bool) {
+	t.Helper()
 	e, c := appTaskEnv(t, "mute")
 	appTaskRecoveryFixture(t, e)
 	code, first := appTaskStart(t, e, c)
@@ -705,6 +715,24 @@ func TestAppTaskRecoveryReportsUnreadableOwnerJournal(t *testing.T) {
 	waitAppTaskLockGone(t, e)
 	e.s.appWorkers.Wait()
 	waitAppTaskRecoveryCarrierExit(t, e, sid)
+
+	if legacy {
+		st := e.s.chatStoreRead(sid)
+		st.TaskRun = true
+		if err := e.s.chatStoreWrite(sid, st); err != nil {
+			t.Fatal(err)
+		}
+		state, err := taskstate.Acquire(e.home, e.proj, st.Task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state.State.Run.AppChat = ""
+		err = state.Save()
+		state.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	path := mainchat.Path(e.s.cfg.Home)
 	saved := path + ".saved"

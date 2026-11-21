@@ -271,12 +271,8 @@ func nameCallbackKeepsSlice(block *ast.BlockStmt, alias, write ast.Node, param *
 }
 
 func nameCallbackReturnsTrue(assign *ast.AssignStmt, stack []ast.Node) bool {
-	for _, parent := range stack {
-		if branch, ok := parent.(*ast.IfStmt); ok && branch.Body.Pos() <= assign.Pos() && assign.End() <= branch.Body.End() {
-			if id, ok := ast.Unparen(branch.Cond).(*ast.Ident); ok && id.Name == "false" && id.Obj == nil {
-				return false
-			}
-		}
+	if nameInUnreachableBranch(stack, assign) {
+		return false
 	}
 	block, ok := stack[len(stack)-1].(*ast.BlockStmt)
 	if !ok {

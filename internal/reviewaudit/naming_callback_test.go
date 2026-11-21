@@ -99,6 +99,7 @@ func queueClear() error {
 		{name: "slice replaced", old: "if ready {", replacement: "*entries = nil; if ready {"},
 		{name: "slice escapes", old: "if ready {", replacement: "replace(entries); if ready {"},
 		{name: "dead branch", old: "if ready {", replacement: "if false {"},
+		{name: "constant comparison", old: "if ready {", replacement: "if 1 == 0 {"},
 		{name: "flag is shadowed", old: "if ready {", replacement: "true := false; if ready {"},
 		{name: "mutation not persisted", old: "return true", replacement: "return false"},
 	} {

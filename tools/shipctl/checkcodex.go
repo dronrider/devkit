@@ -225,7 +225,7 @@ func codexCheckWorker(raw string) {
 			started = true
 			message := "поток " + thread + ", журнал " + logPath
 			if logErr != nil {
-				message += ", " + logErr.Error()
+				message += ", " + strings.Join(strings.Fields(logErr.Error()), " ")
 			}
 			reply(codexCheckStart{Started: true, Message: message})
 		}
@@ -251,7 +251,7 @@ func codexCheckWorker(raw string) {
 			message += ", " + streamErr.Error()
 		}
 		if logErr != nil {
-			message += ", " + logErr.Error()
+			message += ", " + strings.Join(strings.Fields(logErr.Error()), " ")
 		}
 		reply(codexCheckStart{Message: message})
 	}

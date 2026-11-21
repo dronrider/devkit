@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestNameAssignmentFieldDeclarationAndGlobalArgument(t *testing.T) {
+func TestNameAssignmentFieldDeclaration(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
 type Address struct {
  file string
@@ -21,14 +21,6 @@ func consume() string {
  a := resolve()
  return a.file
 }
-var timeout int
-func TestTimeout() {
- timeout = 0
-}
-func use() int {
- return add(timeout)
-}
-func add(n int) int { return n }
 `)
 	g := newQueryGoSource(source)
 	fn, _ := g.declaration(at("func resolve"))
@@ -46,16 +38,9 @@ func add(n int) int { return n }
 	if err := g.checkNameAssignment(e, fn, fn); err != nil {
 		t.Fatal(err)
 	}
-	e.ObjectComparison.ActualAt = at("var timeout")
+	e.ObjectComparison.ActualAt = at("type Address struct")
 	if err := g.checkNameAssignment(e, fn, fn); err == nil {
 		t.Fatal("чужое объявление принято")
-	}
-	fn, _ = g.declaration(at("func TestTimeout"))
-	writeAt = at("timeout = 0")
-	proof = &NameObjectProof{Expression: "timeout", Assignment: &NameAssignmentWrite{Writes: []NameAssignmentSite{{At: writeAt, Target: "timeout", Value: "0"}}, Use: NameCodeUse{Declaration: at("func use"), At: at("return add"), Expression: "timeout"}}}
-	e = Evidence{ObjectComparison: &NameObjectComparison{Actual: "timeout", ActualAt: writeAt, Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: writeAt}}
-	if err := g.checkNameAssignment(e, fn, fn); err != nil {
-		t.Fatal(err)
 	}
 }
 

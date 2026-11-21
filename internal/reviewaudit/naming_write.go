@@ -72,12 +72,9 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	switch f.Role {
 	case "destination":
-		if !sameNameExpression(path, pair.Actual) || f.PayloadAt != "" || f.EncodeAt != "" {
-			return fmt.Errorf("write_evidence.file: для destination укажите путь как actual")
-		}
 		actual, err := parser.ParseExpr(pair.Actual)
-		if err != nil {
-			return fmt.Errorf("actual: укажите выражение пути")
+		if err != nil || nameExpression(path) != nameExpression(actual) || f.PayloadAt != "" || f.EncodeAt != "" {
+			return fmt.Errorf("write_evidence.file: для destination укажите путь как actual")
 		}
 		if _, simple := actual.(*ast.Ident); !simple {
 			openAt := ""

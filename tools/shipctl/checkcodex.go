@@ -209,21 +209,7 @@ func codexCheckWorker(raw string) {
 		line := scan.Bytes()
 		if _, err := fmt.Fprintln(log, string(line)); err != nil && logErr == nil {
 			logErr = fmt.Errorf("запись журнала Codex: %w", err)
-			// Отдельный канал нужен после ответа check-run. Файл журнала
-			// уже недоступен, а вызывающий процесс мог завершиться.
-			logCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			sinkErr := exec.CommandContext(logCtx, "logger", "-t", "shipctl", o.ID+": "+logErr.Error()).Run()
-			cancel()
-			if sinkErr != nil {
-				diagnostic := "check-run " + o.ID + ": " + logErr.Error() + ", logger: " + sinkErr.Error()
-				diagnostic = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(diagnostic)
-				if err := appendRunLog(o.Root, diagnostic, 1); err != nil {
-					message := fmt.Sprintf("%s, журнал проекта: %v\n", diagnostic, err)
-					if err := os.WriteFile(logPath+".error", []byte(message), 0o600); err != nil {
-						logErr = fmt.Errorf("%s, резервный журнал: %w", strings.TrimSpace(message), err)
-					}
-				}
-			}
+			logErr = errors.Join(logErr, recordCodexDiagnostic(o, logPath, logErr))
 		}
 		var event struct {
 			Type     string `json:"type"`
@@ -247,11 +233,17 @@ func codexCheckWorker(raw string) {
 	streamErr := scan.Err()
 	if streamErr != nil {
 		streamErr = fmt.Errorf("чтение событий Codex: %w", streamErr)
-		fmt.Fprintln(log, streamErr)
 		_ = cmd.Cancel()
 	}
+	finishedErr := streamErr
 	if err := cmd.Wait(); err != nil {
-		fmt.Fprintf(log, "Codex завершился: %v\n", err)
+		finishedErr = errors.Join(finishedErr, fmt.Errorf("Codex завершился: %w", err))
+	}
+	if finishedErr != nil {
+		if _, err := fmt.Fprintln(log, finishedErr); err != nil {
+			cause := fmt.Errorf("запись причины завершения Codex: %w", err)
+			logErr = errors.Join(logErr, cause, recordCodexDiagnostic(o, logPath, errors.Join(finishedErr, cause)))
+		}
 	}
 	if !started {
 		message := "Codex не начал ход, журнал " + logPath
@@ -263,4 +255,30 @@ func codexCheckWorker(raw string) {
 		}
 		reply(codexCheckStart{Message: message})
 	}
+}
+
+// После подтверждения старта вызывающий процесс уже мог завершиться.
+// Причина должна остаться доступной при отказе журнала событий.
+func recordCodexDiagnostic(o codexCheckOrder, logPath string, cause error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	sinkErr := exec.CommandContext(ctx, "logger", "-t", "shipctl", o.ID+": "+cause.Error()).Run()
+	cancel()
+	if sinkErr == nil {
+		return nil
+	}
+	diagnostic := fmt.Sprintf("check-run %s: %v, logger: %v", o.ID, cause, sinkErr)
+	diagnostic = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(diagnostic)
+	projectErr := appendRunLog(o.Root, diagnostic, 1)
+	if projectErr == nil {
+		return nil
+	}
+	sink, err := os.OpenFile(logPath+".error", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, writeErr := fmt.Fprintf(sink, "%s, журнал проекта: %v\n", diagnostic, projectErr)
+		err = errors.Join(writeErr, sink.Close())
+	}
+	if err != nil {
+		return errors.Join(sinkErr, projectErr, fmt.Errorf("резервный журнал: %w", err))
+	}
+	return nil
 }

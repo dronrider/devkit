@@ -220,11 +220,13 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 		name           string
 		loggerFail     bool
 		projectLogFail bool
+		exitCode       int
 		diagnostic     string
 	}{
-		{"system_log", false, false, "-t shipctl XR-1: запись журнала Codex"},
-		{"project_log", true, false, "check-run XR-1: запись журнала Codex"},
-		{"supervisor_log", true, true, "журнал проекта:"},
+		{"system_log", false, false, 0, "-t shipctl XR-1: запись журнала Codex"},
+		{"project_log", true, false, 0, "check-run XR-1: запись журнала Codex"},
+		{"supervisor_log", true, true, 0, "журнал проекта:"},
+		{"late_client_exit", true, true, 7, "Codex завершился: exit status 7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -251,7 +253,7 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			defer gate.Close()
 			bin := t.TempDir()
 			for name, script := range map[string]string{
-				"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\n",
+				"agentctl": "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"fresh\"}' '{\"type\":\"turn.started\"}'\nread -r ready < \"$CHECK_GATE\"\nprintf '%s\\n' '{\"type\":\"turn.completed\"}'\ntouch \"$CHECK_FINISHED\"\nexit \"$CHECK_EXIT_CODE\"\n",
 				"logger":   "#!/bin/sh\nif [ \"$CHECK_LOGGER_FAIL\" = true ]; then exit 1; fi\nprintf '%s\\n' \"$*\" > \"$CHECK_ALERT\"\n",
 			} {
 				if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
@@ -273,7 +275,7 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			cmd.Env = append(os.Environ(), "CHECK_WORKER=1", "CHECK_ORDER="+string(raw),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath,
-				"CHECK_LOGGER_FAIL="+strconv.FormatBool(tc.loggerFail))
+				"CHECK_LOGGER_FAIL="+strconv.FormatBool(tc.loggerFail), "CHECK_EXIT_CODE="+strconv.Itoa(tc.exitCode))
 			out, err := cmd.StdoutPipe()
 			if err != nil {
 				t.Fatal(err)

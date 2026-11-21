@@ -784,8 +784,19 @@ func nameBoundResult(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBl
 		return false
 	}
 	assign, ok := parents[len(parents)-1].(*ast.AssignStmt)
-	if !ok || (assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN) || len(assign.Rhs) != 1 || assign.Rhs[0] != call ||
-		slot >= len(assign.Lhs) || nameIdentifier(assign.Lhs[slot]) != value {
+	if !ok || (assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN) {
+		return false
+	}
+	index := slot
+	if len(assign.Rhs) != 1 {
+		if slot != 0 || len(assign.Rhs) != len(assign.Lhs) {
+			return false
+		}
+		index = slices.Index(assign.Rhs, ast.Expr(call))
+	} else if assign.Rhs[0] != call {
+		return false
+	}
+	if index < 0 || index >= len(assign.Lhs) || nameIdentifier(assign.Lhs[index]) != value {
 		return false
 	}
 	block := parents[len(parents)-2]

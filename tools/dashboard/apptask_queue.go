@@ -150,13 +150,18 @@ func (s *server) appTaskQueueNext(sid string) (appTaskMessage, error) {
 	return entry, err
 }
 
-func (s *server) appTaskQueueMark(sid, id string, sent, accepted bool) error {
+type appTaskDelivery struct {
+	sent     bool
+	accepted bool
+}
+
+func (s *server) appTaskQueueMark(sid, id string, delivery appTaskDelivery) error {
 	return s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
 		for i := range *entries {
 			entry := &(*entries)[i]
 			if entry.ID == id {
-				entry.Sent, entry.Accepted = sent, accepted
-				if accepted {
+				entry.Sent, entry.Accepted = delivery.sent, delivery.accepted
+				if delivery.accepted {
 					entry.Text = ""
 				}
 				return true

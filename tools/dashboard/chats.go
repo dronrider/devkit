@@ -3355,10 +3355,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
-		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
-		// из чужого редактора и есть главный посетитель ручки, и сообщение
-		// «что-то не экранируется» родилось именно из молчаливого смешения
-		// этих двух причин.
+		// Для слишком длинной реплики панель предлагает вставку фрагментом.
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{

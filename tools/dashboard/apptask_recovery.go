@@ -78,7 +78,7 @@ func (s *server) appTaskNextOrder(a *appTask, p *Project, c *appChat, order stri
 			if err := s.appTaskQueueFeed(a.sid, entry); err != nil {
 				return "", entry, err
 			}
-			if err := s.appTaskQueueMark(a.sid, entry.ID, true, true); err != nil {
+			if err := s.appTaskQueueMark(a.sid, entry.ID, appTaskDelivery{sent: true, accepted: true}); err != nil {
 				return "", entry, err
 			}
 			if a.replyOnce && entry.Claim == a.replyClaim {
@@ -131,23 +131,44 @@ func (s *server) appTaskRecoveryKeeper(stop <-chan struct{}) {
 	}
 }
 
+// appTaskRecoveryStore не скрывает ошибки, чтобы тик можно было повторить.
+func (s *server) appTaskRecoveryStore(sid string) (chatStore, error) {
+	var st chatStore
+	data, err := os.ReadFile(filepath.Join(chatStoreDir(s.cfg.Home), sid+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return st, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &st)
+	}
+	if err != nil {
+		return chatStore{}, fmt.Errorf("не прочитан чат %s: %w", sid, err)
+	}
+	return st, nil
+}
+
 func (s *server) appTaskRecoveryTick(stop <-chan struct{}) error {
 	dir := chatStoreDir(s.cfg.Home)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("не прочитан каталог чатов: %w", err)
 	}
+	var failures error
 	for _, entry := range entries {
 		select {
 		case <-stop:
-			return nil
+			return failures
 		default:
 		}
 		sid, ok := strings.CutSuffix(entry.Name(), ".json")
-		if !ok || !sessionIDRe.MatchString(sid) {
+		if !ok || !sessionIDRe.MatchString(sid) || strings.HasPrefix(sid, "tmux-") {
 			continue
 		}
-		st := s.chatStoreRead(sid)
+		st, err := s.appTaskRecoveryStore(sid)
+		if err != nil {
+			failures = errors.Join(failures, err)
+			continue
+		}
 		if st.Protocol != taskhead.CodexAppProtocol || st.TaskRunPID <= 0 || st.Thread == "" || st.Task == "" {
 			continue
 		}
@@ -159,7 +180,7 @@ func (s *server) appTaskRecoveryTick(stop <-chan struct{}) error {
 			s.logf("восстановление Codex %s: %v", sid, err)
 		}
 	}
-	return nil
+	return failures
 }
 
 func (s *server) appTaskRecoveryWaiting(p *Project, sid string, st chatStore) (bool, error) {
@@ -171,8 +192,10 @@ func (s *server) appTaskRecoveryWaiting(p *Project, sid string, st chatStore) (b
 	protected := run != nil && run.AppChat == sid && (run.AppRecovery || run.AppRecoveryTerminal)
 	waiting := protected && !state.State.Stopped && !run.AppRecoveryTerminal
 	state.Close()
-	if protected && !s.appTaskRecoveryOwner(p, sid, st.Task) {
-		return false, errAppTaskRecoveryOwner
+	if protected {
+		if err := s.appTaskRecoveryOwner(p, sid, st.Task); err != nil {
+			return false, err
+		}
 	}
 	if !waiting {
 		return false, nil
@@ -186,16 +209,18 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		return err
 	}
 	defer lock.Close()
-	st := s.chatStoreRead(sid)
-	if s.appTaskFind(sid, p.Path, st.Task) != nil {
+	st, err := s.appTaskRecoveryStore(sid)
+	if err != nil {
+		return err
+	}
+	if st.Task == "" || s.appTaskFind(sid, p.Path, st.Task) != nil {
 		return nil
 	}
-	owner := s.appTaskRecoveryOwner(p, sid, st.Task)
 	home := realHomeFn()
 	const stateUnreadable = "Восстановление конвейера Codex ждёт: не прочитано состояние рабочего запуска"
 	state, err := taskstate.Acquire(home, p.Path, st.Task)
 	if err != nil {
-		if st.TaskRunSession == sid && st.TaskRunID != "" && s.appTaskRecoveryOwner(p, sid, st.Task) {
+		if st.TaskRunSession == sid && st.TaskRunID != "" && s.appTaskRecoveryOwner(p, sid, st.Task) == nil {
 			s.appTaskRecoveryNote(sid, stateUnreadable, true, "state-"+st.TaskRunID)
 		}
 		return err
@@ -205,8 +230,28 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		state.Close()
 		return nil
 	}
-	if owner && run.AppChat == "" && run.ID == st.TaskRunID && run.PID == st.TaskRunPID && state.State.Root == st.TaskRunRoot && st.TaskRunSession == sid &&
-		(st.TaskRun || appTaskInterruptedLegacy(home, st.Task, run.Started)) {
+	ownerErr := s.appTaskRecoveryOwner(p, sid, st.Task)
+	if ownerErr != nil && !errors.Is(ownerErr, errAppTaskRecoveryOwner) {
+		state.Close()
+		if run.AppChat == sid {
+			s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+ownerErr.Error(), true, "owner-read-"+run.ID)
+		}
+		return ownerErr
+	}
+	legacy := appTaskLegacyNone
+	if ownerErr == nil && run.AppChat == "" && run.ID == st.TaskRunID && run.PID == st.TaskRunPID && state.State.Root == st.TaskRunRoot && st.TaskRunSession == sid {
+		if st.TaskRun {
+			legacy = appTaskLegacyActive
+		} else {
+			legacy = appTaskInterruptedLegacy(home, st.Task, run.Started)
+		}
+	}
+	if legacy == appTaskLegacyAmbiguous {
+		state.Close()
+		s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: журнал не определяет поколение запуска; нужен разбор", true, "legacy-"+run.ID)
+		return nil
+	}
+	if legacy == appTaskLegacyActive {
 		stopped, err := s.appTaskLegacyStopped(home, state.State.Root, st.Task, run.Started)
 		if err != nil || stopped {
 			if stopped {
@@ -227,7 +272,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	if run.AppChat != sid || !run.AppRecovery || st.TaskRunRoot != canonical || st.TaskRunSession != sid {
 		return nil
 	}
-	if !owner {
+	if ownerErr != nil {
 		s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex невозможно: "+errAppTaskRecoveryOwner.Error(), true, "owner-"+run.ID)
 		return errAppTaskRecoveryOwner
 	}
@@ -275,7 +320,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	defer machine.Close()
 	state, err = taskstate.Acquire(home, p.Path, st.Task)
 	if err != nil {
-		if s.appTaskRecoveryOwner(p, sid, st.Task) {
+		if s.appTaskRecoveryOwner(p, sid, st.Task) == nil {
 			s.appTaskRecoveryNote(sid, stateUnreadable, true, "state-"+run.ID)
 		}
 		return err
@@ -309,7 +354,7 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 	}
 	state.Close()
 	outcome := "confirmed"
-	if err = s.raiseAppTask(nil, p, sid, st, h, "", appTaskRecoveryOrder, false, true, appTaskMessage{}); err != nil {
+	if err = s.raiseAppTask(nil, p, sid, st, h, "", appTaskRecoveryOrder, appTaskStartOptions{recover: true}, appTaskMessage{}); err != nil {
 		outcome = "launch-failed"
 		s.appTaskRecoveryFailure(sid, p.Path, st.Task, 0, err)
 	}
@@ -395,53 +440,73 @@ func (s *server) appTaskLegacyStopped(home, root, task, started string) (bool, e
 
 // Старый дашборд сбрасывал TaskRun при выгрузке. В этом случае нужен след
 // прохода, поднятого оболочкой после записи именно этого запуска.
-func appTaskInterruptedLegacy(home, task, started string) bool {
+type appTaskLegacyStatus int
+
+const (
+	appTaskLegacyNone appTaskLegacyStatus = iota
+	appTaskLegacyAmbiguous
+	appTaskLegacyActive
+)
+
+func appTaskInterruptedLegacy(home, task, started string) appTaskLegacyStatus {
 	since, err := time.Parse(time.RFC3339Nano, started)
 	if err != nil {
-		return false
+		return appTaskLegacyNone
 	}
 	file, err := os.Open(filepath.Join(home, ".devkit", "heads", task+".log"))
 	if err != nil {
-		return false
+		return appTaskLegacyNone
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || info.ModTime().Before(since) {
-		return false
+		return appTaskLegacyNone
 	}
 	size := min(info.Size(), 64*1024)
 	raw := make([]byte, size)
 	if _, err := file.ReadAt(raw, info.Size()-size); err != nil {
-		return false
+		return appTaskLegacyNone
 	}
-	open := false
+	status := appTaskLegacyNone
 	for _, line := range strings.Split(string(raw), "\n") {
 		stamp, event, ok := strings.Cut(line, " task-run "+task+": ")
 		if !ok {
 			continue
 		}
 		at, err := time.ParseInLocation(chat.Stamp, stamp, time.Local)
-		if err != nil || at.Before(since.Truncate(time.Second)) {
+		if err != nil {
 			continue
 		}
-		switch {
-		case strings.HasPrefix(event, "проход поднят:") && strings.Contains(event, "--app-turn-client"):
-			open = true
-		case strings.HasPrefix(event, "голова вышла кодом "), strings.HasPrefix(event, "стоп: "):
-			open = false
+		launch := strings.HasPrefix(event, "проход поднят:") && strings.Contains(event, "--app-turn-client")
+		if at.Equal(since.Truncate(time.Second)) && launch {
+			status = appTaskLegacyAmbiguous
+		} else if at.After(since.Truncate(time.Second)) {
+			switch {
+			case launch:
+				status = appTaskLegacyActive
+			case status == appTaskLegacyActive && (strings.HasPrefix(event, "голова вышла кодом ") || strings.HasPrefix(event, "стоп: ")):
+				status = appTaskLegacyNone
+			}
 		}
 	}
-	return open
+	return status
 }
 
-func (s *server) appTaskRecoveryOwner(p *Project, sid, id string) bool {
-	bind := s.mainChatBind(id)
-	return bind.Chat == sid && bind.Project == p.Name && bind.Source == mainchat.ByWork
+func (s *server) appTaskRecoveryOwner(p *Project, sid, id string) error {
+	data, err := s.readMainChatData()
+	if err != nil {
+		return fmt.Errorf("не прочитан журнал назначений чатов: %w", err)
+	}
+	bind := mainchat.Parse(data)[strings.ToUpper(strings.TrimSpace(id))]
+	if bind.Chat != sid || bind.Project != p.Name || bind.Source != mainchat.ByWork {
+		return errAppTaskRecoveryOwner
+	}
+	return nil
 }
 
 func (s *server) appTaskRecoveryGuard(p *Project, sid string, st chatStore) error {
-	if !s.appTaskRecoveryOwner(p, sid, st.Task) {
-		return errAppTaskRecoveryOwner
+	if err := s.appTaskRecoveryOwner(p, sid, st.Task); err != nil {
+		return err
 	}
 	ok, err := s.appTaskRecoveryEligible(p, st)
 	if err != nil {

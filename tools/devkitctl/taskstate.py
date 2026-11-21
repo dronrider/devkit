@@ -39,7 +39,7 @@ def read(home, root, task):
     return data
 
 
-def _interrupted_app_pass(home, task, started):
+def _legacy_app_pass(home, task, started):
     """Читает незавершённый проход прежнего дашборда по журналу оболочки."""
     try:
         since = datetime.fromisoformat(started)
@@ -55,7 +55,7 @@ def _interrupted_app_pass(home, task, started):
     except (OSError, TypeError, ValueError, OverflowError):
         return False
 
-    active = False
+    status = ""
     for line in lines:
         stamp, sep, event = line.partition(" task-run %s: " % task)
         if not sep:
@@ -64,13 +64,17 @@ def _interrupted_app_pass(home, task, started):
             at = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
         except (ValueError, OverflowError, OSError):
             continue
-        if at < after:
-            continue
-        if event.startswith("проход поднят:") and "--app-turn-client" in event:
-            active = True
-        elif event.startswith(("голова вышла кодом ", "стоп: ")):
-            active = False
-    return active
+        launch = event.startswith("проход поднят:") and "--app-turn-client" in event
+        if at == after and launch:
+            # Совпадающая секунда не доказывает поколение, но запрещает
+            # параллельный общий подъём до выяснения состояния.
+            status = "ambiguous"
+        elif at > after:
+            if launch:
+                status = "active"
+            elif status == "active" and event.startswith(("голова вышла кодом ", "стоп: ")):
+                status = ""
+    return status
 
 
 def app_runs(home, root, tasks):
@@ -112,21 +116,27 @@ def app_runs(home, root, tasks):
                 and chat.get("taskRunPID") == run["pid"]
                 and chat.get("harness") == run.get("harness")
                 and chat.get("model") == run.get("model")):
-            active = (chat.get("taskRun") is True
-                      or _interrupted_app_pass(home, task, run.get("started")))
-            confirmed[task] = dict(run, appChat=file.stem, appRecovery=active)
+            status = "active" if chat.get("taskRun") is True else _legacy_app_pass(home, task, run.get("started"))
+            active = status == "active"
+            confirmed[task] = dict(run, appChat=file.stem, appRecovery=active,
+                                   appRecoveryAmbiguous=not active and status == "ambiguous")
 
     # Дашборд может хранить чаты в своём HOME, а оболочка пишет журнал в
     # машинном. До сверки адреса дашбордом незавершённый проход удерживает
     # общий подъём, но сам по себе к запуску не ведёт.
     for task, run in legacy.items():
-        if task not in confirmed and _interrupted_app_pass(home, task, run.get("started")):
-            confirmed[task] = dict(run, appChat="", appRecovery=True)
+        if task in confirmed:
+            continue
+        status = _legacy_app_pass(home, task, run.get("started"))
+        if status:
+            confirmed[task] = dict(run, appChat="", appRecovery=status == "active",
+                                   appRecoveryAmbiguous=status == "ambiguous")
     return confirmed
 
 
 def app_handles_recovery(run):
     return (run["stopped"] or run.get("appRecovery") is True
+            or run.get("appRecoveryAmbiguous") is True
             or run.get("appRecoveryTerminal") is True)
 
 

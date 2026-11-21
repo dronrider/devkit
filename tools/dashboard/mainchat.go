@@ -403,10 +403,19 @@ func (s *server) draftDecorSeed(found *Project, id, chat, title string) string {
 // реестр сессий: назначение, поставленное прежней сборкой либо мимо дашборда,
 // лежит в доме машины, и без второго дома адрес смотрел бы в пустоту.
 func (s *server) mainChatData() []byte {
+	data, _ := s.readMainChatData()
+	return data
+}
+
+func (s *server) readMainChatData() ([]byte, error) {
 	var out []byte
+	var failures error
 	for _, home := range s.bindHomes() {
 		data, err := os.ReadFile(mainchat.Path(home))
 		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				failures = errors.Join(failures, err)
+			}
 			continue
 		}
 		out = append(out, data...)
@@ -414,7 +423,7 @@ func (s *server) mainChatData() []byte {
 			out = append(out, '\n')
 		}
 	}
-	return out
+	return out, failures
 }
 
 // mainChatBind сворачивает журнал в действующее назначение записи: та же

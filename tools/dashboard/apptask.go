@@ -451,7 +451,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		params["model"] = st.Model
 	}
 	if queued.ID != "" {
-		if err = s.appTaskQueueMark(a.sid, queued.ID, true, false); err != nil {
+		if err = s.appTaskQueueMark(a.sid, queued.ID, appTaskDelivery{sent: true}); err != nil {
 			return err
 		}
 		params["clientUserMessageId"] = queued.ID
@@ -462,7 +462,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	if err != nil {
 		var rejected *appError
 		if queued.ID != "" && errors.As(err, &rejected) && appTaskRecoveryPermanent(err) {
-			err = errors.Join(err, s.appTaskQueueMark(a.sid, queued.ID, false, false))
+			err = errors.Join(err, s.appTaskQueueMark(a.sid, queued.ID, appTaskDelivery{}))
 		}
 		return err
 	}
@@ -503,7 +503,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		return err
 	}
 	if queued.ID != "" {
-		if err = s.appTaskQueueMark(a.sid, queued.ID, true, true); err != nil {
+		if err = s.appTaskQueueMark(a.sid, queued.ID, appTaskDelivery{sent: true, accepted: true}); err != nil {
 			return err
 		}
 	}
@@ -514,10 +514,16 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 func (s *server) startAppTask(w http.ResponseWriter, p *Project, id string, h *Harness, tier, effort, order string) {
 	sid := "as" + msgID()
 	st := chatStore{Task: id, Project: p.Name, Model: h.tierModel(tier), Harness: h.Name, Protocol: h.Protocol, TaskRun: true, CxEffort: effort, Born: s.now().Unix()}
-	s.raiseAppTask(w, p, sid, st, h, tier, order, false, false, appTaskMessage{})
+	s.raiseAppTask(w, p, sid, st, h, tier, order, appTaskStartOptions{}, appTaskMessage{})
 }
 
-func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, replyOnce, recover bool, message appTaskMessage) error {
+type appTaskStartOptions struct {
+	replyOnce bool
+	recover   bool
+}
+
+func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st chatStore, h *Harness, tier, order string, options appTaskStartOptions, message appTaskMessage) error {
+	replyOnce, recover := options.replyOnce, options.recover
 	id := st.Task
 	respond := func(status int, body map[string]string) {
 		if w != nil {

@@ -618,10 +618,7 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 	case taskhead.CodeCalled:
 		return res, errors.New(strings.Join(res.Lines, "; "))
 	}
-	// Новое окно встаёт под того же сторожа, что и разговор (chatwatch.go):
-	// без отметки его смерть не замечал никто, и оборванная работа стояла до
-	// тех пор, пока человек сам не напишет задаче (DK-660). У живого окна
-	// отметка уже есть, у headless окна нет вовсе.
+	// Сторож получает отметку только при создании окна (DK-660).
 	if res.Rung == taskhead.RungWindow {
 		s.chatRaised(sess, "", id, proj.Name)
 	}

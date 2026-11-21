@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/mainchat"
 	"github.com/dronrider/devkit/internal/taskhead"
 	"github.com/dronrider/devkit/internal/taskstate"
 )
@@ -356,18 +357,119 @@ func TestAppTaskRecoveryTickSignal(t *testing.T) {
 		t.Fatal("terminal closed run was restarted")
 	}
 }
+func TestAppTaskRecoveryReportsAmbiguousLegacyOnce(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitTaskStopped(t, e, sid)
+	e.s.appWorkers.Wait()
+	st := e.s.chatStoreRead(sid)
+	st.TaskRun = false
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	state, err := taskstate.Acquire(e.home, e.proj, st.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-time.Minute).Truncate(time.Second)
+	state.State.Run.AppChat, state.State.Run.AppRecovery = "", false
+	state.State.Run.Started = started.Format(time.RFC3339Nano)
+	if err := state.Save(); err != nil {
+		t.Fatal(err)
+	}
+	state.Close()
+	putDoc(t, e.home, ".devkit/heads/"+st.Task+".log", started.Format(chat.Stamp)+" task-run "+st.Task+": проход поднят: task-run.py --app-turn-client\n")
+	project, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("project missing")
+	}
+	const reason = "Восстановление конвейера Codex ждёт: журнал не определяет поколение запуска; нужен разбор"
+	// Чужой запуск не должен оставлять диагностику в этом чате.
+	st.TaskRunID = "other"
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskRecover(project, sid); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Text == reason {
+			t.Fatal("чужой запуск получил диагностику")
+		}
+	}
+	state, err = taskstate.Acquire(e.home, e.proj, st.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.TaskRunID = state.State.Run.ID
+	state.Close()
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.appTaskRecoveryStore("as-missing"); err != nil {
+		t.Fatalf("исчезнувший чат: %v", err)
+	}
+	broken := filepath.Join(chatStoreDir(e.s.cfg.Home), "as-broken.json")
+	if err := os.WriteFile(broken, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chatStoreDir(e.s.cfg.Home), "tmux-broken.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskRecoveryTick(nil); err == nil || !strings.Contains(err.Error(), "as-broken") {
+		t.Fatalf("не сообщена повреждённая запись: %v", err)
+	}
+	found := false
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Text == reason {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ошибка другой записи остановила обработку исходного чата")
+	}
+	if err := os.WriteFile(broken, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskRecoveryTick(nil); err != nil {
+		t.Fatalf("исправленная запись не прочитана: %v", err)
+	}
+	count := 0
+	for _, item := range e.s.appFeedRead(sid) {
+		if item.Text == reason {
+			count++
+		}
+	}
+	if count != 1 || e.s.appTaskFind(sid, "", "") != nil {
+		t.Fatalf("диагностика %d, запуск не должен возобновляться", count)
+	}
+}
+
 func TestAppTaskInterruptedLegacy(t *testing.T) {
 	home := t.TempDir()
 	started := time.Now().Truncate(time.Second)
 	logPath := ".devkit/heads/XR-002.log"
-	prefix := started.Format(chat.Stamp) + " task-run XR-002: "
+	prefix := started.Add(time.Second).Format(chat.Stamp) + " task-run XR-002: "
 	open := prefix + "проход поднят: python3 task-run.py --app-turn-client /tmp/test token\n"
+	putDoc(t, home, logPath, started.Format(chat.Stamp)+" task-run XR-002: проход поднят: python3 task-run.py --app-turn-client\n")
+	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
+		t.Fatal("same-second legacy entry cannot identify the current generation")
+	}
+	if appTaskInterruptedLegacy(home, "XR-002", started.Add(500*time.Millisecond).Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
+		t.Fatal("same-second entry with fractional start cannot identify the current generation")
+	}
 	putDoc(t, home, logPath, open)
-	if !appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) {
+	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyActive {
 		t.Fatal("legacy interruption was lost")
 	}
 	putDoc(t, home, logPath, open+prefix+"голова вышла кодом 0 за 3 с, задача в check\n")
-	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) {
+	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyNone {
 		t.Fatal("normal legacy completion was mistaken for interruption")
 	}
 }
@@ -589,6 +691,42 @@ func TestAppTaskRecoveryReportsChangedOwner(t *testing.T) {
 	if e.s.appTaskFind(sid, "", "") != nil || e.s.mainChatBind("XR-002").Chat != "as-other-owner" {
 		t.Fatal("восстановление запустило прежнюю нить или сменило основное назначение")
 	}
+}
+
+func TestAppTaskRecoveryReportsUnreadableOwnerJournal(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("start %d: %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitAppTaskLockGone(t, e)
+	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
+
+	path := mainchat.Path(e.s.cfg.Home)
+	saved := path + ".saved"
+	if err := os.Rename(path, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.s.appTaskRecoveryTick(nil)
+	appWaitFeed(t, e, sid, "не прочитан журнал назначений чатов")
+	if got := readFile(t, filepath.Join(e.proj, "fake-app-log")); strings.Contains(got, "resume ") {
+		t.Fatalf("запуск до проверки владельца: %s", got)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(saved, path); err != nil {
+		t.Fatal(err)
+	}
+	e.s.appTaskRecoveryTick(nil)
+	appWaitFeed(t, e, sid, "Конвейер Codex продолжен в исходном разговоре")
 }
 
 func TestAppTaskManualRetryReconcilesExactMessage(t *testing.T) {
@@ -884,7 +1022,7 @@ func TestAppTaskImportAssignsDistinctIDsToLegacyLines(t *testing.T) {
 					t.Fatalf("entry %+v: %v", entry, err)
 				}
 				previous = entry
-				if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {
+				if err := e.s.appTaskQueueMark(sid, entry.ID, appTaskDelivery{sent: true, accepted: true}); err != nil {
 					t.Fatal(err)
 				}
 				if next, err := e.s.appTaskQueueNext(sid); err != nil || next.ID != "" {
@@ -1035,7 +1173,7 @@ func TestAppTaskImportRetriesAfterQueueFailure(t *testing.T) {
 	if err != nil || entry.Claim != claim || entry.ID != stored.ID {
 		t.Fatalf("entry %+v: %v", entry, err)
 	}
-	if err := e.s.appTaskQueueMark(sid, entry.ID, true, true); err != nil {
+	if err := e.s.appTaskQueueMark(sid, entry.ID, appTaskDelivery{sent: true, accepted: true}); err != nil {
 		t.Fatal(err)
 	}
 	if next, err := e.s.appTaskQueueNext(sid); err != nil || next.ID != "" {

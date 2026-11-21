@@ -73,3 +73,52 @@ func TestNameCallbackNoQueueWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestNameCallbackSliceElementWrite(t *testing.T) {
+	const code = guardedQueue + `
+type item struct { Text string }
+func queueClear() error {
+  return update(func(entries *[]item) bool {
+    for i := range *entries {
+      entry := &(*entries)[i]
+      if i == 0 {
+        if ready {
+          entry.Text = ""
+        }
+        return true
+      }
+    }
+    return false
+  })
+}
+`
+	for _, tc := range []struct{ name, old, replacement string }{
+		{name: "accepts the address of an element"},
+		{name: "unrelated element", old: "&(*entries)[i]", replacement: "&other[i]"},
+		{name: "alias rebound", old: "if ready {", replacement: "entry = &other[i]; if ready {"},
+		{name: "slice replaced", old: "if ready {", replacement: "*entries = nil; if ready {"},
+		{name: "slice escapes", old: "if ready {", replacement: "replace(entries); if ready {"},
+		{name: "dead branch", old: "if ready {", replacement: "if false {"},
+		{name: "flag is shadowed", old: "if ready {", replacement: "true := false; if ready {"},
+		{name: "mutation not persisted", old: "return true", replacement: "return false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code := strings.ReplaceAll(code, "[]int", "[]item")
+			source, at := nameProofFixture(t, strings.Replace(code, tc.old, tc.replacement, 1))
+			e := namingWire(t, `{
+                "object":"@func queueClear","check":"writes","result":"checked",
+                "object_comparison":{"expected":["queue","Clear"],"actual":"entry","actual_at":"@entry.Text",
+                    "proof":{"words":[
+                        {"word":"queue","role":"object","fact":{"location":"@entry :=","quote":"entry :=","value":"entry","text":"Элемент очереди."}},
+                        {"word":"Clear","role":"context","fact":{"location":"@entry.Text","quote":"entry.Text =","value":"entry.Text","text":"Удалён текст."}}]}},
+                "write_evidence":{"word":"Clear","target":"entry.Text","value":"\"\"","write_at":"@entry.Text",
+                    "callback":{"call_at":"@return update(","helper":"@func update","invoke_at":"@if !change",
+                    "use":{"declaration":"@func update","at":"@persist(","expression":"persist(items)"}}}}`, at)
+			want := ""
+			if tc.old != "" {
+				want = "следующий return true"
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func queueClear"), identifierWords("queueClear"), source), want)
+		})
+	}
+}

@@ -103,7 +103,8 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
-	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "", true)
+	const hidden, automaticContinuation = false, true
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", hidden, "", automaticContinuation)
 	if err != nil {
 		// После снятия парковки ответ заберёт живая голова либо дашборд
 		// при возобновлении рабочего чата.
@@ -380,7 +381,8 @@ func (s *server) taskReplyRaise(proj *Project, id string) (checkRunReport, bool)
 	}
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
 	order := taskhead.ReplyOrder(id)
-	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "", true)
+	const hidden, automaticContinuation = false, true
+	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", hidden, "", automaticContinuation)
 	if err != nil {
 		var busy *headBusy
 		if errors.As(err, &busy) {

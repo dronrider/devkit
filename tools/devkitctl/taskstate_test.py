@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime
 
 import taskstate
@@ -37,6 +38,9 @@ class TaskStateTest(unittest.TestCase):
                 "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
                 "model": "glm-5.3"}
         stored.write_text(json.dumps(chat))
+        with mock.patch.object(taskstate, "_legacy_app_pass", wraps=taskstate._legacy_app_pass) as journal:
+            taskstate.app_runs(self.home, self.root, ["DK-1"])
+            journal.assert_not_called()
         runs = taskstate.app_runs(self.home, self.root, ["DK-1"])
         self.assertEqual(runs["DK-1"]["appChat"], sid)
         self.assertTrue(taskstate.app_handles_recovery(runs["DK-1"]))
@@ -76,6 +80,15 @@ class TaskStateTest(unittest.TestCase):
             run = taskstate.app_runs(self.home, self.root, ["DK-1"]).get("DK-1")
             return run is not None and taskstate.app_handles_recovery(run)
 
+        same = datetime.fromisoformat("2026-11-20T10:00:00+03:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        write_log(same + launch)
+        with mock.patch.object(taskstate, "_legacy_app_pass", wraps=taskstate._legacy_app_pass) as journal:
+            taskstate.app_runs(self.home, self.root, ["DK-1"])
+            self.assertEqual(journal.call_count, 1)
+        self.assertTrue(recovery_owned())
+        self.assertTrue(taskstate.app_runs(self.home, self.root, ["DK-1"])["DK-1"]["appRecoveryAmbiguous"])
+        write_log(same + launch, new + " task-run DK-1: стоп: старый проход")
+        self.assertTrue(recovery_owned())
         write_log(old + launch)
         self.assertFalse(recovery_owned())
         write_log(old + launch, new + launch)

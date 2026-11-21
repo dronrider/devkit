@@ -842,7 +842,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			s.appTaskQueued(w, sid, entry.ID)
 			return
 		}
-		s.raiseAppTask(w, found, sid, st, h, "", text, true, false, entry)
+		s.raiseAppTask(w, found, sid, st, h, "", text, appTaskStartOptions{replyOnce: true}, entry)
 		return
 	}
 	if wasTaskRun && !st.TaskRun {

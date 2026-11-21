@@ -2,8 +2,8 @@
   "version": 1,
   "id": "DK-1750",
   "base_sha": "1341ae88b390f592b5fd0a6f11351ae957bd71bb",
-  "head_sha": "8bd01e6a3f9001cac9172e152bc6293655776c7f",
-  "code_hash": "eb838d0eaae5ba13f82cfa896d58b5f01e0704b3c9d7672a37bf1b8cbae5a101",
+  "head_sha": "8258f459e84fa10f83445e15139e826fef5083cd",
+  "code_hash": "1cdf76f5ef6ce9b716bc2f21ec235033eed2fd727a1af4a32f7afac766b03779",
   "task_hash": "4ddc2a8d9ebfe2051c801a096eb001e85c37f4126f7f86c8b1c3cd522cca5414",
   "sources": [
     {
@@ -54,7 +54,8 @@
       "На d751c8703 прежний план tmux находится при наличии CODEX_THREAD_ID. Для отдельного проверяющего используется собственный ID Codex.",
       "Независимая проба на d751c8703 подтвердила сохранение причины отказа и отклонение чтения чужого экземпляра поля.",
       "Изолированная установка fff7236a8 подняла новую сессию по DK-1525. В журнале есть thread.started и turn.started, повторный вызов увидел замок.",
-      "На 8bd01e6a3 независимый повтор принял чтение после локальных присваиваний и отклонил перезапись через другой аргумент. Обкатка на том же коде прошла четыре шага."
+      "На 8bd01e6a3 независимый повтор принял чтение после локальных присваиваний и отклонил перезапись через другой аргумент. Обкатка на том же коде прошла четыре шага.",
+      "На 8258f459e84f пройдены все четыре шага обкатки. Два изменения комментариев сверены с их фактической областью. Граница события Codex проверена мутациями Scanner с 8 до 4 и 16 МиБ."
     ]
   },
   "rules": [
@@ -157,8 +158,8 @@
       "source": "common-architecture",
       "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
       "applicability": "applicable",
-      "result": "pending",
-      "reason": "Проверены 33 операции запуска, остановки и валидатора. Открыта сверка тестовых границ, локальных замыканий worker и всех мест повторного использования.",
+      "result": "checked",
+      "reason": "Размещение 42 именованных операций сопоставлено с вызывающими сторонами и зависимостями. Двадцать одноразовых локальных callbacks разобраны в области родительских операций; синтетический код в строках тестов служит входом парсера. Существующие nameValueUnchanged, nameWriteFunction и nameSettingStatement сопоставлены с новыми помощниками.",
       "evidence": [
         {
           "object": "internal/reviewaudit/naming_effect.go:123#checkNameAssignment",
@@ -457,6 +458,11 @@
                 "location": "internal/reviewaudit/naming_effect.go:269",
                 "text": "Поиск по internal/reviewaudit и internal на имена FieldStatement, BoundField, Assignment и Unchanged нашёл существующие проверки потока значений, но не такую операцию поиска непосредственного оператора для доказательства поля; два потребителя в этом же модуле: строки 269-270 и 332-333.",
                 "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming_setting.go:334",
+                "text": "nameSettingStatement тоже проверяет позицию узла в операторе, но возвращает bool и допускает лишь ExprStmt/AssignStmt. nameFieldStatement возвращает сам верхнеуровневый оператор для проверки вида и связывания; вызовы проверены на naming_effect.go:269-270,332-333.",
+                "verdict": "domain"
               }
             ],
             "change": [
@@ -545,6 +551,11 @@
               {
                 "location": "internal/reviewaudit/naming_effect.go:525",
                 "text": "Разбирает текст доказательства как присваивание Go и сравнивает его AST с фактическим. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/reviewaudit/naming_effect.go:187",
+                "text": "Существующий sameNameExpression сравнивает левую часть как выражение; sameNameAssignment дополнительно разбирает полный оператор и проверяет токен и обе стороны.",
                 "verdict": "domain"
               }
             ],
@@ -1545,8 +1556,8 @@
             ],
             "caller": [
               {
-                "location": "tools/shipctl/main.go:195",
-                "text": "Вызов функции main в исходниках tools/shipctl не найден; точка входа программы package main вызывается средой Go.",
+                "location": "tools/shipctl/main.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
                 "verdict": "searched"
               }
             ],
@@ -1568,6 +1579,392 @@
                 "location": "tools/shipctl/main.go:195",
                 "text": "Точка входа программы остаётся в main пакета инструмента, worker реализации находится в checkcodex.go.",
                 "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:32#checkStopStand",
+          "symbol": "checkStopStand",
+          "location": "tools/dashboard/checkstop_test.go:32",
+          "observation": "Готовит стенд запуска и остановки проверяющего, включая состояние и замок.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:32",
+                "quote": "func checkStopStand(t *testing.T, foreign bool) (*testEnv, *http.Client, *exec.Cmd) {",
+                "text": "Готовит стенд запуска и остановки проверяющего, включая состояние и замок."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:78",
+                "text": "Вызов: e, c, cmd := checkStopStand(t, false)"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:32",
+                "text": "Готовит стенд запуска и остановки проверяющего, включая состояние и замок. Операция принадлежит данному локальному сценарию.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:32",
+                "text": "Смена способа построения тестового стенда затрагивает проверки остановки dashboard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:32",
+                "text": "Вызывающая операция и эта локальная логика принадлежат одному сценарию; место tools/dashboard.",
+                "value": "tools/dashboard"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/sessions/sessions_guard_test.go:10#TestMain",
+          "symbol": "TestMain",
+          "location": "internal/sessions/sessions_guard_test.go:10",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/sessions/sessions_guard_test.go:10",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/sessions/sessions_guard_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/sessions/sessions_guard_test.go:10",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту internal/sessions.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/sessions/sessions_guard_test.go:10",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/sessions/sessions_guard_test.go:10",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит internal/sessions.",
+                "value": "internal/sessions"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/stage/stage_guard_test.go:10#TestMain",
+          "symbol": "TestMain",
+          "location": "internal/stage/stage_guard_test.go:10",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/stage/stage_guard_test.go:10",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "internal/stage/stage_guard_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/stage/stage_guard_test.go:10",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту internal/stage.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/stage/stage_guard_test.go:10",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/stage/stage_guard_test.go:10",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит internal/stage.",
+                "value": "internal/stage"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/agentctl/touch_test.go:30#TestMain",
+          "symbol": "TestMain",
+          "location": "tools/agentctl/touch_test.go:30",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/agentctl/touch_test.go:30",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/agentctl/touch_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/agentctl/touch_test.go:30",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту tools/agentctl.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/agentctl/touch_test.go:30",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/agentctl/touch_test.go:30",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/agentctl.",
+                "value": "tools/agentctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/tasks_test.go:125#TestMain",
+          "symbol": "TestMain",
+          "location": "tools/dashboard/tasks_test.go:125",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/tasks_test.go:125",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/tasks_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/tasks_test.go:125",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту tools/dashboard.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/tasks_test.go:125",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/tasks_test.go:125",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/dashboard.",
+                "value": "tools/dashboard"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/notify_test.go:26#TestMain",
+          "symbol": "TestMain",
+          "location": "tools/shipctl/notify_test.go:26",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/notify_test.go:26",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/notify_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/notify_test.go:26",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту tools/shipctl.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/notify_test.go:26",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/notify_test.go:26",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/shipctl.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/taskctl/notify_test.go:33#TestMain",
+          "symbol": "TestMain",
+          "location": "tools/taskctl/notify_test.go:33",
+          "observation": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/taskctl/notify_test.go:33",
+                "quote": "func TestMain(m *testing.M) {",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/taskctl/notify_test.go:1",
+                "text": "Прямых вызовов в исходниках пакета не найдено; entry point вызывается средой Go или её тестовым раннером.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/taskctl/notify_test.go:33",
+                "text": "Специальный вход тестового пакета настраивает его окружение и вызывает runsguard.Guard перед завершением. Логика привязана к данным и контракту tools/taskctl.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/taskctl/notify_test.go:33",
+                "text": "Изменение изоляции конкретного тестового пакета остаётся в его TestMain; общий счётчик файлов живёт в internal/runsguard."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/taskctl/notify_test.go:33",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/taskctl.",
+                "value": "tools/taskctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:19#TestCodexCheckWorkerHelper",
+          "symbol": "TestCodexCheckWorkerHelper",
+          "location": "tools/shipctl/checkcodex_test.go:19",
+          "observation": "Тестовый подпроцесс по CHECK_WORKER вызывает codexCheckWorker с CHECK_ORDER.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:19",
+                "quote": "func TestCodexCheckWorkerHelper(t *testing.T) {",
+                "text": "Тестовый подпроцесс по CHECK_WORKER вызывает codexCheckWorker с CHECK_ORDER."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:50",
+                "text": "Потребитель: cmd := exec.Command(os.Args[0], \"-test.run=^TestCodexCheckWorkerHelper$\") Это строка отбора тестового раннера, прямого вызова функции в Go-коде нет.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:19",
+                "text": "Тестовый подпроцесс по CHECK_WORKER вызывает codexCheckWorker с CHECK_ORDER. Логика привязана к данным и контракту tools/shipctl.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:19",
+                "text": "Изменение запуска worker требует согласовать тестовый отбор -test.run и передаваемый заказ."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:19",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/shipctl.",
+                "value": "tools/shipctl"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
+          "symbol": "TestCheckStopSupervisorHelper",
+          "location": "tools/dashboard/checkstop_test.go:17",
+          "observation": "Тестовый supervisor сообщает готовность, ждёт SIGTERM и снимает собственный замок.",
+          "result": "checked",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:17",
+                "quote": "func TestCheckStopSupervisorHelper(t *testing.T) {",
+                "text": "Тестовый supervisor сообщает готовность, ждёт SIGTERM и снимает собственный замок."
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:35",
+                "text": "Потребитель: cmd := exec.Command(os.Args[0], \"-test.run=^TestCheckStopSupervisorHelper$\") Это строка отбора тестового раннера, прямого вызова функции в Go-коде нет.",
+                "verdict": "searched"
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:17",
+                "text": "Тестовый supervisor сообщает готовность, ждёт SIGTERM и снимает собственный замок. Логика привязана к данным и контракту tools/dashboard.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:17",
+                "text": "Изменение синхронизации процесса или способа снятия замка меняет эту фикстуру и запускающий стенд."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/checkstop_test.go:17",
+                "text": "Непосредственное использование в указанном контексте: функция принадлежит tools/dashboard.",
+                "value": "tools/dashboard"
               }
             ]
           }
@@ -1606,7 +2003,16 @@
         "tools/shipctl/checkrun.go:98#Raise",
         "tools/shipctl/checkrun.go:201#checkRuns",
         "tools/shipctl/runlog.go:19#logRun",
-        "tools/shipctl/main.go:195#main"
+        "tools/shipctl/main.go:195#main",
+        "tools/dashboard/checkstop_test.go:32#checkStopStand",
+        "internal/sessions/sessions_guard_test.go:10#TestMain",
+        "internal/stage/stage_guard_test.go:10#TestMain",
+        "tools/agentctl/touch_test.go:30#TestMain",
+        "tools/dashboard/tasks_test.go:125#TestMain",
+        "tools/shipctl/notify_test.go:26#TestMain",
+        "tools/taskctl/notify_test.go:33#TestMain",
+        "tools/shipctl/checkcodex_test.go:19#TestCodexCheckWorkerHelper",
+        "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper"
       ]
     },
     {
@@ -1648,7 +2054,7 @@
       "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Проверены отдельные формы JSON и отказы, но схема и потребители всех существенных входов audit-record и planResolve по каждому виду значения ещё не сопоставлены.",
       "checks": [
         "schema",
         "output",
@@ -1672,28 +2078,65 @@
       "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Прежний подтверждённый дефект связи экземпляра устранён на проверенных контрпримерах; полный перечень инвариантов изменённых входов и всех путей изменения состояния ещё не сверён.",
       "evidence": [
         {
           "object": "защита запуска",
           "location": "tools/shipctl/checkcodex.go:108",
           "observation": "Worker выполняет GuardGroomRun и GuardRecord, а GuardRecordLocked проверяет состояние под транзакцией.",
           "result": "checked"
+        },
+        {
+          "object": "связь экземпляра",
+          "location": "internal/reviewaudit/naming_effect.go:325",
+          "observation": "Внешние TestIndependent* на чистом архиве 8bd отвергли unrelated reader и reader с перезаписью через второй аргумент; корректную цепочку с промежуточными присваиваниями приняли.",
+          "result": "checked"
+        },
+        {
+          "object": "guard worker",
+          "location": "tools/shipctl/checkcodex.go:109",
+          "observation": "GuardGroomRun и GuardRecord повторно выполняются в worker, GuardRecordLocked \u2014 под draft transaction.",
+          "result": "checked"
         }
       ],
       "objects": [
-        "защита запуска"
+        "защита запуска",
+        "связь экземпляра",
+        "guard worker"
       ]
     },
     {
       "id": "common-architecture:ARCH-007",
       "source": "common-architecture",
       "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
-      "applicability": "pending",
+      "applicability": "applicable",
       "result": "pending",
-      "reason": "",
-      "evidence": [],
-      "objects": []
+      "reason": "На проверенных случаях прежние план и идентификатор этапа сохраняются; исправлена ложная несовместимость валидного доказательства. Полная сверка форм всех существующих потребителей и сохранённых audit evidence ещё не закончена.",
+      "evidence": [
+        {
+          "object": "адрес плана",
+          "location": "tools/agentctl/plan.go:104",
+          "observation": "Независимая проба: при DEVKIT_TMUX=terminal и CODEX_THREAD_ID=codex-thread читается план terminal; TestPlanCodexSession закрепляет приоритет.",
+          "result": "checked"
+        },
+        {
+          "object": "ID этапа",
+          "location": "internal/stage/stage_test.go:857",
+          "observation": "Существующий CLAUDE ID сохраняет приоритет; TestOpenKeepsCodexVerificationSession проверяет запись и чтение fallback Codex.",
+          "result": "checked"
+        },
+        {
+          "object": "валидное доказательство",
+          "location": "internal/reviewaudit/naming_effect.go:325",
+          "observation": "На чистом архиве 8bd независимая проверка writer(item), marker := 1, _ = marker, reader(item) проходит; случай reader(item,item) с перезаписью отклонён.",
+          "result": "checked"
+        }
+      ],
+      "objects": [
+        "адрес плана",
+        "ID этапа",
+        "валидное доказательство"
+      ]
     },
     {
       "id": "common-architecture:ARCH-008",
@@ -1807,17 +2250,31 @@
       "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Известная подмена экземпляра отвергается на 8bd, guard worker проверен. Остаётся последовательная проверка границ входных evidence и иных изменённых входов на фактический субъект и ресурс.",
       "evidence": [
         {
           "object": "вход worker",
           "location": "tools/shipctl/checkcodex.go:104",
           "observation": "JSON worker декодируется и затем применяются GuardGroomRun, GuardRecord и GuardRecordLocked.",
           "result": "checked"
+        },
+        {
+          "object": "граница worker",
+          "location": "tools/shipctl/checkcodex.go:99",
+          "observation": "JSON декодируется, затем выполняются GuardGroomRun, GuardRecord и GuardRecordLocked.",
+          "result": "checked"
+        },
+        {
+          "object": "связь поля",
+          "location": "internal/reviewaudit/naming_effect.go:325",
+          "observation": "Внешние TestIndependent* на 8bd отвергают несвязанный reader и перезапись через второй аргумент.",
+          "result": "checked"
         }
       ],
       "objects": [
-        "вход worker"
+        "вход worker",
+        "граница worker",
+        "связь поля"
       ]
     },
     {
@@ -1826,7 +2283,7 @@
       "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Случай ошибочного принятия чужого экземпляра устранён; части отказов запуска обработаны. Полное покрытие всех новых последовательностей и состояния после каждого частичного отказа ещё не установлено.",
       "evidence": [
         {
           "object": "частичный отказ запуска",
@@ -1839,11 +2296,25 @@
           "location": "tools/shipctl/checkcodex.go:199",
           "observation": "После отказа лога работа продолжается и диагностика направляется в logger, затем в журнал проекта.",
           "result": "checked"
+        },
+        {
+          "object": "до старта",
+          "location": "tools/shipctl/checkcodex.go:171",
+          "observation": "После HoldForDelegate освобождение замка отложено; ответы об ошибке возвращаются до подтверждения Started.",
+          "result": "checked"
+        },
+        {
+          "object": "отказ журнала",
+          "location": "tools/shipctl/checkcodex.go:200",
+          "observation": "После ошибки записи используется logger и запасной журнал проекта; проверка отказа описана в карточке задачи.",
+          "result": "checked"
         }
       ],
       "objects": [
         "частичный отказ запуска",
-        "отказ записи"
+        "отказ записи",
+        "до старта",
+        "отказ журнала"
       ]
     },
     {
@@ -1875,7 +2346,7 @@
       "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Точечная проба agentctl check исправлена, но не завершены обязательные отдельные записи origin/classification/boundary/cause/message для каждого изменённого отказа.",
       "evidence": [
         {
           "object": "agentctl check",
@@ -1970,7 +2441,7 @@
       "files": [
         {
           "path": "internal/checkrun/checkrun.go",
-          "reason": "В изменённых файлах нет SQL или доступа к драйверу БД по коллекции."
+          "reason": "После предыдущей проверки изменена формулировка комментария. Участок не добавляет операций с БД."
         },
         {
           "path": "internal/reviewaudit/naming.go",
@@ -2062,7 +2533,7 @@
         },
         {
           "path": "tools/dashboard/tasks_test.go",
-          "reason": "В изменённых файлах нет SQL или доступа к драйверу БД по коллекции."
+          "reason": "После предыдущей проверки изменена формулировка комментария. Участок не добавляет операций с БД."
         },
         {
           "path": "tools/shipctl/README.md",
@@ -2074,7 +2545,7 @@
         },
         {
           "path": "tools/shipctl/checkcodex_test.go",
-          "reason": "В изменённых файлах нет SQL или доступа к драйверу БД по коллекции."
+          "reason": "Тест дописывает большое событие в стендовый JSONL, запускает подменённый Codex, проверяет журнал и замок. База данных не используется."
         },
         {
           "path": "tools/shipctl/checkrun.go",
@@ -2289,17 +2760,24 @@
       "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Исправлена потеря stderr agentctl check; неправильные и конфликтующие значения остальных затронутых параметров ещё не сопоставлены с именем, способом исправления и маскированием.",
       "evidence": [
         {
           "object": "пустой effort",
           "location": "tools/shipctl/checkcodex.go:55",
           "observation": "Отсутствие effort и несовпадение модели или харнеса дают отказ.",
           "result": "checked"
+        },
+        {
+          "object": "agentctl check",
+          "location": "tools/shipctl/checkcodex.go:36",
+          "observation": "Непустой stderr передаётся в сообщение; независимый отказ agentctl check проверен на d751.",
+          "result": "checked"
         }
       ],
       "objects": [
-        "пустой effort"
+        "пустой effort",
+        "agentctl check"
       ]
     },
     {
@@ -2308,17 +2786,31 @@
       "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Минимальный запуск и конфликт старого адреса с Codex ID проверены; остаётся зафиксировать полный набор изменение одной опции и неверный ввод на актуальном снимке.",
       "evidence": [
         {
           "object": "переключение ID",
           "location": "tools/agentctl/plan_test.go:484",
           "observation": "Тест покрывает CODEX_THREAD_ID вместо DEVKIT_TMUX и приоритет ID панели.",
           "result": "checked"
+        },
+        {
+          "object": "конфликт источников",
+          "location": "tools/agentctl/plan.go:104",
+          "observation": "План terminal из временного HOME успешно читается при одновременных DEVKIT_TMUX=terminal и CODEX_THREAD_ID=codex-thread.",
+          "result": "checked"
+        },
+        {
+          "object": "реальный запуск",
+          "location": "docs/tasks/DK-1750.md:143",
+          "observation": "В карточке описан живой запуск Codex и обнаружение занятого замка при повторе.",
+          "result": "checked"
         }
       ],
       "objects": [
-        "переключение ID"
+        "переключение ID",
+        "конфликт источников",
+        "реальный запуск"
       ]
     },
     {
@@ -2336,7 +2828,7 @@
       "files": [
         {
           "path": "internal/checkrun/checkrun.go",
-          "reason": "Изменены только комментарии."
+          "reason": "По сравнению с базой правки менялись только комментарии. Имена, записи и результаты функций остались прежними."
         },
         {
           "path": "internal/reviewaudit/naming.go",
@@ -2521,11 +3013,11 @@
           "objects": [
             "tools/shipctl/checkcodex_test.go:19#TestCodexCheckWorkerHelper",
             "tools/shipctl/checkcodex_test.go:27#TestCodexCheckWorkerStartsFreshTurn",
-            "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
-            "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
-            "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
-            "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
-            "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure"
+            "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
+            "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
+            "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
+            "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
+            "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure"
           ]
         },
         {
@@ -2864,29 +3356,29 @@
           "location": "tools/shipctl/checkcodex_test.go:27"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
+          "object": "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
           "symbol": "TestCodexCheckWorkerFailsBeforeTurn",
-          "location": "tools/shipctl/checkcodex_test.go:66"
+          "location": "tools/shipctl/checkcodex_test.go:74"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
+          "object": "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
           "symbol": "TestCodexCheckWorkerRespectsStop",
-          "location": "tools/shipctl/checkcodex_test.go:102"
+          "location": "tools/shipctl/checkcodex_test.go:110"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
+          "object": "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
           "symbol": "TestCodexCheckWorkerDoesNotDuplicate",
-          "location": "tools/shipctl/checkcodex_test.go:121"
+          "location": "tools/shipctl/checkcodex_test.go:129"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
+          "object": "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
           "symbol": "TestCodexCheckWorkerStopsDescendant",
-          "location": "tools/shipctl/checkcodex_test.go:142"
+          "location": "tools/shipctl/checkcodex_test.go:150"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+          "object": "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
           "symbol": "TestCodexCheckWorkerReportsLateLogFailure",
-          "location": "tools/shipctl/checkcodex_test.go:209"
+          "location": "tools/shipctl/checkcodex_test.go:217"
         },
         {
           "object": "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
@@ -2993,11 +3485,11 @@
         "tools/shipctl/checkcodex.go:99#codexCheckWorker",
         "tools/shipctl/checkcodex_test.go:19#TestCodexCheckWorkerHelper",
         "tools/shipctl/checkcodex_test.go:27#TestCodexCheckWorkerStartsFreshTurn",
-        "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
-        "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
-        "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
-        "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
-        "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+        "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
+        "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
+        "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
+        "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
+        "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
         "tools/shipctl/checkrun.go:98#shipCarrier.Raise",
         "tools/shipctl/checkrun.go:201#checkRuns",
         "tools/shipctl/checkrun_test.go:504#TestCheckRunCodexEntry",
@@ -3638,9 +4130,9 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
+          "object": "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
           "check": "meaning",
-          "location": "tools/shipctl/checkcodex_test.go:102",
+          "location": "tools/shipctl/checkcodex_test.go:110",
           "observation": "Проверяет отказ запуска worker проверки Codex при остановленной задаче; создаёт файлы, устанавливает стоп и запускает процесс, результата не возвращает. Имя соответствует этому действию.",
           "result": "checked",
           "symbol": "TestCodexCheckWorkerRespectsStop",
@@ -3649,57 +4141,57 @@
               "word": "Test",
               "meaning": "тест",
               "fact": "func TestCodexCheckWorkerRespectsStop(t *testing.T)",
-              "location": "tools/shipctl/checkcodex_test.go:102",
+              "location": "tools/shipctl/checkcodex_test.go:110",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "Codex",
               "fact": "Harness: \"codex\"",
-              "location": "tools/shipctl/checkcodex_test.go:108",
+              "location": "tools/shipctl/checkcodex_test.go:116",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "codexCheckOrder",
-              "location": "tools/shipctl/checkcodex_test.go:108",
+              "location": "tools/shipctl/checkcodex_test.go:116",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "worker",
               "fact": "TestCodexCheckWorkerHelper",
-              "location": "tools/shipctl/checkcodex_test.go:109",
+              "location": "tools/shipctl/checkcodex_test.go:117",
               "result": "checked"
             },
             {
               "word": "Respects",
               "meaning": "учитывает",
               "fact": "got.Started",
-              "location": "tools/shipctl/checkcodex_test.go:116",
+              "location": "tools/shipctl/checkcodex_test.go:124",
               "result": "checked"
             },
             {
               "word": "Stop",
               "meaning": "стоп",
               "fact": "taskstate.SetStopped(home, home, \"XR-1\", true)",
-              "location": "tools/shipctl/checkcodex_test.go:105",
+              "location": "tools/shipctl/checkcodex_test.go:113",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
+          "object": "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
           "check": "result",
-          "location": "tools/shipctl/checkcodex_test.go:102",
+          "location": "tools/shipctl/checkcodex_test.go:110",
           "observation": "Функция не возвращает прикладное значение; её имя описывает точку входа или проверяемый сценарий.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
+          "object": "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
           "check": "writes",
-          "location": "tools/shipctl/checkcodex_test.go:102",
+          "location": "tools/shipctl/checkcodex_test.go:110",
           "observation": "Создаёт временный файл задачи через write и writeAt для сценария остановки.",
           "result": "checked",
           "object_comparison": {
@@ -3720,7 +4212,7 @@
                   "word": "Test",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3730,7 +4222,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3740,7 +4232,7 @@
                   "word": "Check",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3750,7 +4242,7 @@
                   "word": "Worker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3760,7 +4252,7 @@
                   "word": "Respects",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3770,7 +4262,7 @@
                   "word": "Stop",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:104",
+                    "location": "tools/shipctl/checkcodex_test.go:112",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание файла задачи как фикстуры теста остановки worker проверки Codex.",
                     "value": "home"
@@ -3790,7 +4282,7 @@
             },
             "calls": [
               {
-                "at": "tools/shipctl/checkcodex_test.go:104",
+                "at": "tools/shipctl/checkcodex_test.go:112",
                 "declaration": "tools/shipctl/ops_test.go:272",
                 "bindings": [
                   {
@@ -3833,9 +4325,9 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
+          "object": "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
           "check": "meaning",
-          "location": "tools/shipctl/checkcodex_test.go:121",
+          "location": "tools/shipctl/checkcodex_test.go:129",
           "observation": "Проверяет, что worker проверки Codex не запускается повторно при занятом замке; создаёт файлы и процесс, результата не возвращает. Имя соответствует этому действию.",
           "result": "checked",
           "symbol": "TestCodexCheckWorkerDoesNotDuplicate",
@@ -3844,64 +4336,64 @@
               "word": "Test",
               "meaning": "тест",
               "fact": "func TestCodexCheckWorkerDoesNotDuplicate(t *testing.T)",
-              "location": "tools/shipctl/checkcodex_test.go:121",
+              "location": "tools/shipctl/checkcodex_test.go:129",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "Codex",
               "fact": "Harness: \"codex\"",
-              "location": "tools/shipctl/checkcodex_test.go:129",
+              "location": "tools/shipctl/checkcodex_test.go:137",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "codexCheckOrder",
-              "location": "tools/shipctl/checkcodex_test.go:129",
+              "location": "tools/shipctl/checkcodex_test.go:137",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "worker",
               "fact": "TestCodexCheckWorkerHelper",
-              "location": "tools/shipctl/checkcodex_test.go:130",
+              "location": "tools/shipctl/checkcodex_test.go:138",
               "result": "checked"
             },
             {
               "word": "Does",
               "meaning": "действие теста",
               "fact": "got.Started",
-              "location": "tools/shipctl/checkcodex_test.go:137",
+              "location": "tools/shipctl/checkcodex_test.go:145",
               "result": "checked"
             },
             {
               "word": "Not",
               "meaning": "отрицание",
               "fact": "got.Started",
-              "location": "tools/shipctl/checkcodex_test.go:137",
+              "location": "tools/shipctl/checkcodex_test.go:145",
               "result": "checked"
             },
             {
               "word": "Duplicate",
               "meaning": "дублирование",
               "fact": "taskhead.HoldForDelegate(home, \"XR-1\", \"\")",
-              "location": "tools/shipctl/checkcodex_test.go:124",
+              "location": "tools/shipctl/checkcodex_test.go:132",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
+          "object": "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
           "check": "result",
-          "location": "tools/shipctl/checkcodex_test.go:121",
+          "location": "tools/shipctl/checkcodex_test.go:129",
           "observation": "Функция не возвращает прикладное значение; её имя описывает точку входа или проверяемый сценарий.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
+          "object": "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
           "check": "writes",
-          "location": "tools/shipctl/checkcodex_test.go:121",
+          "location": "tools/shipctl/checkcodex_test.go:129",
           "observation": "Создаёт временный файл задачи через write и writeAt для сценария остановки.",
           "result": "checked",
           "object_comparison": {
@@ -3923,7 +4415,7 @@
                   "word": "Test",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3933,7 +4425,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3943,7 +4435,7 @@
                   "word": "Check",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3953,7 +4445,7 @@
                   "word": "Worker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3963,7 +4455,7 @@
                   "word": "Does",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3973,7 +4465,7 @@
                   "word": "Not",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -3983,7 +4475,7 @@
                   "word": "Duplicate",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:123",
+                    "location": "tools/shipctl/checkcodex_test.go:131",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Создание временной задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4003,7 +4495,7 @@
             },
             "calls": [
               {
-                "at": "tools/shipctl/checkcodex_test.go:123",
+                "at": "tools/shipctl/checkcodex_test.go:131",
                 "declaration": "tools/shipctl/ops_test.go:272",
                 "bindings": [
                   {
@@ -4046,9 +4538,9 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
+          "object": "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
           "check": "meaning",
-          "location": "tools/shipctl/checkcodex_test.go:142",
+          "location": "tools/shipctl/checkcodex_test.go:150",
           "symbol": "TestCodexCheckWorkerStopsDescendant",
           "observation": "Проверяет остановку потомка worker проверки Codex по сигналу; создаёт файлы, каналы и процесс. Имя описывает это назначение.",
           "result": "checked",
@@ -4057,57 +4549,57 @@
               "word": "Test",
               "meaning": "тест",
               "fact": "func TestCodexCheckWorkerStopsDescendant(t *testing.T) {",
-              "location": "tools/shipctl/checkcodex_test.go:142",
+              "location": "tools/shipctl/checkcodex_test.go:150",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "харнес Codex",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:163",
+              "location": "tools/shipctl/checkcodex_test.go:171",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:163",
+              "location": "tools/shipctl/checkcodex_test.go:171",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "рабочий процесс",
               "fact": "cmd := exec.Command(os.Args[0], \"-test.run=^TestCodexCheckWorkerHelper$\")",
-              "location": "tools/shipctl/checkcodex_test.go:164",
+              "location": "tools/shipctl/checkcodex_test.go:172",
               "result": "checked"
             },
             {
               "word": "Stops",
               "meaning": "останавливает",
               "fact": "if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {",
-              "location": "tools/shipctl/checkcodex_test.go:194",
+              "location": "tools/shipctl/checkcodex_test.go:202",
               "result": "checked"
             },
             {
               "word": "Descendant",
               "meaning": "дочерний процесс",
               "fact": "if n, err := syscall.Read(fd, buf[:]); n != 0 || err != nil {",
-              "location": "tools/shipctl/checkcodex_test.go:200",
+              "location": "tools/shipctl/checkcodex_test.go:208",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
+          "object": "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
           "check": "result",
-          "location": "tools/shipctl/checkcodex_test.go:142",
+          "location": "tools/shipctl/checkcodex_test.go:150",
           "observation": "Функция не возвращает прикладной результат; результат выражается побочными действиями или проверками.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
+          "object": "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
           "check": "writes",
-          "location": "tools/shipctl/checkcodex_test.go:142",
+          "location": "tools/shipctl/checkcodex_test.go:150",
           "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
           "result": "checked",
           "object_comparison": {
@@ -4128,7 +4620,7 @@
                   "word": "Test",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4138,7 +4630,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4148,7 +4640,7 @@
                   "word": "Check",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4158,7 +4650,7 @@
                   "word": "Worker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4168,7 +4660,7 @@
                   "word": "Stops",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4178,7 +4670,7 @@
                   "word": "Descendant",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:144",
+                    "location": "tools/shipctl/checkcodex_test.go:152",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4198,7 +4690,7 @@
             },
             "calls": [
               {
-                "at": "tools/shipctl/checkcodex_test.go:144",
+                "at": "tools/shipctl/checkcodex_test.go:152",
                 "declaration": "tools/shipctl/ops_test.go:272",
                 "bindings": [
                   {
@@ -4280,7 +4772,7 @@
               "word": "Helper",
               "meaning": "помощник",
               "fact": "exec.Command(os.Args[0], \"-test.run=^TestCodexCheckWorkerHelper$\")",
-              "location": "tools/shipctl/checkcodex_test.go:42",
+              "location": "tools/shipctl/checkcodex_test.go:50",
               "result": "checked"
             }
           ]
@@ -4398,9 +4890,9 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+          "object": "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
           "check": "meaning",
-          "location": "tools/shipctl/checkcodex_test.go:209",
+          "location": "tools/shipctl/checkcodex_test.go:217",
           "symbol": "TestCodexCheckWorkerReportsLateLogFailure",
           "observation": "Проверяет сообщение о сбое журнала после запуска хода через системный или проектный журнал; создаёт фикстуры, каналы и процесс. Имя описывает это назначение.",
           "result": "checked",
@@ -4409,71 +4901,71 @@
               "word": "Test",
               "meaning": "тест",
               "fact": "func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {",
-              "location": "tools/shipctl/checkcodex_test.go:209",
+              "location": "tools/shipctl/checkcodex_test.go:217",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "харнес Codex",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:252",
+              "location": "tools/shipctl/checkcodex_test.go:260",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:252",
+              "location": "tools/shipctl/checkcodex_test.go:260",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "рабочий процесс",
               "fact": "cmd := exec.CommandContext(ctx, os.Args[0], \"-test.run=^TestCodexCheckWorkerHelper$\")",
-              "location": "tools/shipctl/checkcodex_test.go:255",
+              "location": "tools/shipctl/checkcodex_test.go:263",
               "result": "checked"
             },
             {
               "word": "Reports",
               "meaning": "сообщает",
               "fact": "if err != nil || !strings.Contains(string(alert), tc.diagnostic) {",
-              "location": "tools/shipctl/checkcodex_test.go:293",
+              "location": "tools/shipctl/checkcodex_test.go:301",
               "result": "checked"
             },
             {
               "word": "Late",
               "meaning": "после старта",
               "fact": "if err := reader.Close(); err != nil {",
-              "location": "tools/shipctl/checkcodex_test.go:277",
+              "location": "tools/shipctl/checkcodex_test.go:285",
               "result": "checked"
             },
             {
               "word": "Log",
               "meaning": "журнал",
               "fact": "logPath := filepath.Join(home, \".devkit\", \"heads\", \"XR-1-check.log\")",
-              "location": "tools/shipctl/checkcodex_test.go:221",
+              "location": "tools/shipctl/checkcodex_test.go:229",
               "result": "checked"
             },
             {
               "word": "Failure",
               "meaning": "сбой",
               "fact": "if err != nil || !strings.Contains(string(alert), tc.diagnostic) {",
-              "location": "tools/shipctl/checkcodex_test.go:293",
+              "location": "tools/shipctl/checkcodex_test.go:301",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+          "object": "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
           "check": "result",
-          "location": "tools/shipctl/checkcodex_test.go:209",
+          "location": "tools/shipctl/checkcodex_test.go:217",
           "observation": "Функция не возвращает прикладной результат; результат выражается побочными действиями или проверками.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+          "object": "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
           "check": "writes",
-          "location": "tools/shipctl/checkcodex_test.go:209",
+          "location": "tools/shipctl/checkcodex_test.go:217",
           "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
           "result": "checked",
           "object_comparison": {
@@ -4496,7 +4988,7 @@
                   "word": "Test",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4506,7 +4998,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4516,7 +5008,7 @@
                   "word": "Check",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4526,7 +5018,7 @@
                   "word": "Worker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4536,7 +5028,7 @@
                   "word": "Reports",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4546,7 +5038,7 @@
                   "word": "Late",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4556,7 +5048,7 @@
                   "word": "Log",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4566,7 +5058,7 @@
                   "word": "Failure",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:220",
+                    "location": "tools/shipctl/checkcodex_test.go:228",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4586,7 +5078,7 @@
             },
             "calls": [
               {
-                "at": "tools/shipctl/checkcodex_test.go:220",
+                "at": "tools/shipctl/checkcodex_test.go:228",
                 "declaration": "tools/shipctl/ops_test.go:272",
                 "bindings": [
                   {
@@ -4647,35 +5139,35 @@
               "word": "Codex",
               "meaning": "Codex",
               "fact": "Harness: \"codex\"",
-              "location": "tools/shipctl/checkcodex_test.go:40",
+              "location": "tools/shipctl/checkcodex_test.go:48",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "codexCheckOrder",
-              "location": "tools/shipctl/checkcodex_test.go:40",
+              "location": "tools/shipctl/checkcodex_test.go:48",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "worker",
               "fact": "TestCodexCheckWorkerHelper",
-              "location": "tools/shipctl/checkcodex_test.go:42",
+              "location": "tools/shipctl/checkcodex_test.go:50",
               "result": "checked"
             },
             {
               "word": "Starts",
               "meaning": "запускает",
               "fact": "!got.Started",
-              "location": "tools/shipctl/checkcodex_test.go:49",
+              "location": "tools/shipctl/checkcodex_test.go:57",
               "result": "checked"
             },
             {
               "word": "Fresh",
               "meaning": "свежий",
               "fact": "strings.Contains(got.Message, \"00000000-0000-4000-8000-000000000001\")",
-              "location": "tools/shipctl/checkcodex_test.go:49",
+              "location": "tools/shipctl/checkcodex_test.go:57",
               "result": "checked"
             },
             {
@@ -4842,9 +5334,9 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
+          "object": "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
           "check": "meaning",
-          "location": "tools/shipctl/checkcodex_test.go:66",
+          "location": "tools/shipctl/checkcodex_test.go:74",
           "symbol": "TestCodexCheckWorkerFailsBeforeTurn",
           "observation": "Проверяет отказ worker проверки Codex до начала хода при ошибке клиента или чрезмерном событии; создаёт фикстуры и запускает worker. Имя описывает это назначение.",
           "result": "checked",
@@ -4853,64 +5345,64 @@
               "word": "Test",
               "meaning": "тест",
               "fact": "func TestCodexCheckWorkerFailsBeforeTurn(t *testing.T) {",
-              "location": "tools/shipctl/checkcodex_test.go:66",
+              "location": "tools/shipctl/checkcodex_test.go:74",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "харнес Codex",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:80",
+              "location": "tools/shipctl/checkcodex_test.go:88",
               "result": "checked"
             },
             {
               "word": "Check",
               "meaning": "проверка",
               "fact": "raw, _ := json.Marshal(codexCheckOrder{Root: home, Home: home, ID: \"XR-1\", Harness: \"codex\"})",
-              "location": "tools/shipctl/checkcodex_test.go:80",
+              "location": "tools/shipctl/checkcodex_test.go:88",
               "result": "checked"
             },
             {
               "word": "Worker",
               "meaning": "рабочий процесс",
               "fact": "cmd := exec.Command(os.Args[0], \"-test.run=^TestCodexCheckWorkerHelper$\")",
-              "location": "tools/shipctl/checkcodex_test.go:81",
+              "location": "tools/shipctl/checkcodex_test.go:89",
               "result": "checked"
             },
             {
               "word": "Fails",
               "meaning": "завершается отказом",
               "fact": "if err := json.Unmarshal(out, &got); err != nil || got.Started || !strings.Contains(got.Message, \"не начал ход\") {",
-              "location": "tools/shipctl/checkcodex_test.go:88",
+              "location": "tools/shipctl/checkcodex_test.go:96",
               "result": "checked"
             },
             {
               "word": "Before",
               "meaning": "до наступления",
               "fact": "if err := json.Unmarshal(out, &got); err != nil || got.Started || !strings.Contains(got.Message, \"не начал ход\") {",
-              "location": "tools/shipctl/checkcodex_test.go:88",
+              "location": "tools/shipctl/checkcodex_test.go:96",
               "result": "checked"
             },
             {
               "word": "Turn",
               "meaning": "ход",
               "fact": "if err := json.Unmarshal(out, &got); err != nil || got.Started || !strings.Contains(got.Message, \"не начал ход\") {",
-              "location": "tools/shipctl/checkcodex_test.go:88",
+              "location": "tools/shipctl/checkcodex_test.go:96",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
+          "object": "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
           "check": "result",
-          "location": "tools/shipctl/checkcodex_test.go:66",
+          "location": "tools/shipctl/checkcodex_test.go:74",
           "observation": "Функция не возвращает прикладной результат; результат выражается побочными действиями или проверками.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
+          "object": "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
           "check": "writes",
-          "location": "tools/shipctl/checkcodex_test.go:66",
+          "location": "tools/shipctl/checkcodex_test.go:74",
           "observation": "Записывает временный файл задачи через write и writeAt для проверяемого сценария.",
           "result": "checked",
           "object_comparison": {
@@ -4932,7 +5424,7 @@
                   "word": "Test",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4942,7 +5434,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4952,7 +5444,7 @@
                   "word": "Check",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4962,7 +5454,7 @@
                   "word": "Worker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4972,7 +5464,7 @@
                   "word": "Fails",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4982,7 +5474,7 @@
                   "word": "Before",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -4992,7 +5484,7 @@
                   "word": "Turn",
                   "role": "context",
                   "fact": {
-                    "location": "tools/shipctl/checkcodex_test.go:75",
+                    "location": "tools/shipctl/checkcodex_test.go:83",
                     "quote": "write(t, home, \"docs/tasks/XR-1.md\", \"# XR-1\\n\")",
                     "text": "Фикстура задачи для проверяемого сценария worker Codex.",
                     "value": "home"
@@ -5012,7 +5504,7 @@
             },
             "calls": [
               {
-                "at": "tools/shipctl/checkcodex_test.go:75",
+                "at": "tools/shipctl/checkcodex_test.go:83",
                 "declaration": "tools/shipctl/ops_test.go:272",
                 "bindings": [
                   {
@@ -7460,8 +7952,8 @@
       "source": "common-style",
       "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом.",
       "applicability": "applicable",
-      "result": "pending",
-      "reason": "Сопоставлены отдельные утверждения комментариев с исполнением кода. Покрытие продолжается.",
+      "result": "checked",
+      "reason": "Проверены утверждения изменённых комментариев по исходникам, тестам и истории.",
       "files": [
         {
           "path": "internal/checkrun/checkrun.go",
@@ -7610,7 +8102,9 @@
         },
         {
           "path": "tools/shipctl/checkcodex_test.go",
-          "reason": "В изменённых строках файла нет комментариев к коду."
+          "objects": [
+            "tools/shipctl/checkcodex_test.go:39"
+          ]
         },
         {
           "path": "tools/shipctl/checkrun.go",
@@ -7670,11 +8164,11 @@
             "Shipctl запускает Codex через `codex exec`, остальные харнесы через `taskctl run`.",
             "До DK-947 правила жили в дашборде, и без его бинаря подъёма не было вовсе.",
             "Независимость проверяющего несёт отдельная сессия (DK-1360): прогон идёт в свежем разговоре, не участвовавшем в круге разработки, и совпадение модели с моделью разработки помехой не служит.",
-            "Ярус даёт вердикт `agentctl pick --role review`, у роли ревью пол base, а разработку задач ценой M ведёт тот же base.",
+            "Ярус даёт вердикт `agentctl pick --role review`, у роли ревью пол base.",
             "Ступень вверх по лестнице подписки отбор берёт только когда модель яруса недоступна: раскладка её не назвала либо подписку снял отбор допущенных.",
             "Сессии участников круга и прогона хранит запись этапов, а сверяет их ворота taskctl close.",
             "Если первая лестница не дала модели, отбор пробует другие включённые лестницы с того же яруса.",
-            "Отказ остаётся, когда ни одна из них модели яруса не дала."
+            "Отказ остаётся, когда модели нет на заданном ярусе и выше."
           ]
         },
         {
@@ -7917,9 +8411,9 @@
           "symbol": "TestMain",
           "location": "tools/dashboard/tasks_test.go:149",
           "comment_fragments": [
-            "Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет строку реестра в машинный дом (runs.go, headRequest), и стенд без подмены дома (useHeadHome) ложит её сюда.",
-            "Файл читают все тесты прогона и все повторы -count одним процессом, и одна строка красит чужие стенды порядком запуска.",
-            "Найденные строки сами называют дерево писавшего."
+            "Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет строку реестра в машинный дом (runs.go, headRequest), и стенд без подмены дома (useHeadHome) оставляет её здесь.",
+            "Файл общий для тестов и повторов -count в одном процессе, поэтому запись может повлиять на последующие проверки.",
+            "В строке остаётся дерево писавшего стенда."
           ]
         },
         {
@@ -7929,6 +8423,14 @@
           "comment_fragments": [
             "Отдельный канал нужен после ответа check-run.",
             "Файл журнала уже недоступен, а вызывающий процесс мог завершиться."
+          ]
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:39",
+          "symbol": "TestCodexCheckWorkerStartsFreshTurn",
+          "location": "tools/shipctl/checkcodex_test.go:39",
+          "comment_fragments": [
+            "A valid event above 4 MiB catches an accidental reduction of the limit."
           ]
         },
         {
@@ -8074,6 +8576,7 @@
         "tools/dashboard/tasks_test.go:142",
         "tools/dashboard/tasks_test.go:149",
         "tools/shipctl/checkcodex.go:201",
+        "tools/shipctl/checkcodex_test.go:39",
         "tools/shipctl/checkrun.go:20",
         "tools/shipctl/checkrun.go:47",
         "tools/shipctl/checkrun.go:96",
@@ -9025,6 +9528,506 @@
               }
             ]
           }
+        },
+        {
+          "object": "tools/agentctl/touch_test.go:12",
+          "location": "tools/agentctl/touch_test.go:31",
+          "observation": "Условия изоляции и последствия проверены по коду, исторический случай \u2014 по архиву DK-631.",
+          "result": "checked",
+          "comment_quote": "TestMain снимает с прогона ID живой сессии (DK-631).",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/agentctl/touch_test.go:31",
+                "text": "TestMain снимает SessionEnv и CODEX_THREAD_ID; guard запускает тесты после этого.",
+                "quote": "TestMain снимает с прогона ID живой сессии (DK-631).",
+                "value": "os.Unsetenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/agentctl/touch.go:18",
+                "text": "pick, run, spend, budget входят в touchCmds; touchWork разбирает --goal и вызывает sessions.Touch на строках 50\u201361.",
+                "quote": "touchWork зовётся на pick, run, spend и budget с ключом --goal, и берётся ID сессии из окружения: без подмены прогон, запущенный из живого разговора, дописывал бы её именем строки в живой реестр сессий.",
+                "value": "touchCmds",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/agentctl/touch_test.go:47",
+                "text": "Тест отметки самостоятельно устанавливает SessionEnv и затем проверяет журнал.",
+                "quote": "Тесты, которым нужна именно отметка, называют ID сами через t.Setenv.",
+                "value": "t.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:621",
+                "text": "mark возвращается до чтения домашнего каталога и Append при пустом sid.",
+                "quote": "Без ID отметка не пишется никуда: mark() в internal/sessions выходит по пустому sid раньше, чем тронет диск.",
+                "value": "sid",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/agentctl/touch_test.go:33",
+                "text": "TestMain снимает DEVKIT_TASK, runDepthEnv и LockFromEnv до запуска тестов.",
+                "quote": "Тем же порядком снимается хвост окружения головы задачи (DK-1694).",
+                "value": "os.Unsetenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/agentctl/exec.go:91",
+                "text": "exec ищет DEVKIT_TASK в окружении и использует его для GuardRecord; run.go:291 и :333 читает глубину и владельца замка.",
+                "quote": "Прогон, поднятый из живой головы или её делегата, несёт DEVKIT_TASK, и страж материала у exec ищет настоящую задачу в синтетическом корне; ограничитель вложенности и замок делегата у run читают свои переменные тем же способом.",
+                "value": "os.Getenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/agentctl/run_test.go:296",
+                "text": "Тест делегирования задаёт LockFromEnv собственным PID, другие тесты устанавливают runDepthEnv явно.",
+                "quote": "Тесты, которым хвост нужен, ставят его сами через t.Setenv.",
+                "value": "t.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/runsguard/runsguard.go:40",
+                "text": "Guard получает stage.Dir(stage.Home()) и m.Run; guard читает состав каталога до и после вызова в строках 44\u201347.",
+                "quote": "runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs, как у taskctl: писатели этапов (wait, run, stage) берут дом из HOME процесса, и тест без подмены дома оставлял бы след в боевом каталоге, который при параллельном прогоне пакетов ловил сторож соседа (DK-911).",
+                "value": "guard",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/agentctl/touch_test.go:31",
+                "text": "Объясняет защиту живых реестра и уведомлений от запуска тестов."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/notify_test.go:13",
+          "location": "tools/shipctl/notify_test.go:27",
+          "observation": "Условия изоляции и последствия проверены по коду, исторический случай \u2014 по архиву DK-631.",
+          "result": "checked",
+          "comment_quote": "TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF): без стаба notifyScript у большинства тестов уходит в ~/projects/devkit, а там лежит настоящий hooks/notify.py, который на машине разработчика реально дал бы баннер.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/shipctl/notify_test.go:27",
+                "text": "TestMain задаёт DEVKIT_NOTIFY_OFF, который hooks/notify.py:881 проверяет до отправки; notifyScript включает домашний devkit в кандидаты на notify.go:25.",
+                "quote": "TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF): без стаба notifyScript у большинства тестов уходит в ~/projects/devkit, а там лежит настоящий hooks/notify.py, который на машине разработчика реально дал бы баннер.",
+                "value": "os.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/notify_test.go:74",
+                "text": "Тест уведомления локально очищает DEVKIT_NOTIFY_OFF и ставит собственный стаб.",
+                "quote": "Тесты самого уведомления включают его точечно.",
+                "value": "t.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/notify_test.go:28",
+                "text": "Перед m.Run снимаются CLAUDE_CODE_SESSION_ID и CODEX_THREAD_ID.",
+                "quote": "Он же снимает с прогона ID живой сессии (DK-631).",
+                "value": "os.Unsetenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/args_test.go:15",
+                "text": "goRunShip вызывает дочерний go run без отдельного окружения; main вызывает touchWork на main.go:219. Инцидент с фикстурами и живым ID зафиксирован в docs/tasks/archive/2026/DK-631.md:65\u201369.",
+                "quote": "main зовёт touchWork до разбора аргументов, и тесты вида goRunShip гоняют собранный shipctl отдельным процессом: подпроцесс наследует окружение целиком, и прогон из живого разговора дописывал бы реестр сессии настоящими строками «shipctl start» по фикстурным ID, хотя команда тут же падает на «нет на доске» (живой случай, найден сверкой реестра до и после go test).",
+                "value": "exec.Command",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:621",
+                "text": "mark выходит при пустом sid до чтения HOME и Append.",
+                "quote": "Без ID отметка работы не пишется никуда: mark() в internal/sessions выходит по пустому sid раньше, чем тронет диск.",
+                "value": "sid",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/shipctl/notify_test.go:27",
+                "text": "Объясняет защиту живых реестра и уведомлений от запуска тестов."
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/checkrun/checkrun.go:1",
+          "location": "internal/checkrun/checkrun.go:92",
+          "observation": "Утверждения сопоставлены с ветвлением, потребителями и историей изменения.",
+          "result": "checked",
+          "comment_quote": "Package checkrun это отбор подъёма проверяющего после выката (DK-718, DK-947): нужен ли строке Check прогон агентской части сценария, кто вёл разработку и какой моделью поднимать того, кто сценарий прогонит.",
+          "facts": {
+            "claim": [
+              {
+                "location": "internal/checkrun/checkrun.go:92",
+                "text": "Need выбирает строки Check, а one на :396\u2013407 получает ярус, исполнителя и модель.",
+                "quote": "Package checkrun это отбор подъёма проверяющего после выката (DK-718, DK-947): нужен ли строке Check прогон агентской части сценария, кто вёл разработку и какой моделью поднимать того, кто сценарий прогонит.",
+                "value": "row.Sect",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/devkitctl/watch.py:1979",
+                "text": "Три точки входа: shipctl после выката, сторож через check-run и dashboard; два носителя зовут общий checkrun.Run.",
+                "quote": "Зовущих у отбора трое, и правила у них одни.",
+                "value": "call",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/ops.go:1451",
+                "text": "При автономном merge вызывается checkRunNote; сторож зовёт check-run, dashboard вызывает общий Run.",
+                "quote": "Выкат без человека в окне (shipctl merge и ship при autonomous = true) поднимает проверяющего сразу, тик devkitctl watch страхует то, что мимо выката проехало, командой `shipctl check-run`, а `dashboard check` остаётся обёрткой для экрана.",
+                "value": "checkRunNote",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:407",
+                "text": "Общий отбор передаёт план интерфейсу Carrier; dashboard и shipctl реализуют Raise различными методами.",
+                "quote": "Сам подъём у каждого свой носитель.",
+                "value": "c.Raise",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/checkcodex.go:155",
+                "text": "Codex вызывается в отдельном процессе через agentctl exec и codex exec; другие варианты идут через taskctl на checkrun.go:126.",
+                "quote": "Shipctl запускает Codex через `codex exec`, остальные харнесы через `taskctl run`.",
+                "value": "exec.CommandContext",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/checkrun.go:208",
+                "text": "Историческая запись описывает dashboard check. В ревизии 1e09b1bb0^ shipctl/checkrun.go использовал checkRunBin=\"dashboard\" и dashboard реализовывал отбор.",
+                "quote": "До DK-947 правила жили в дашборде, и без его бинаря подъёма не было вовсе.",
+                "value": "checkrun.Run",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/stage/stage.go:428",
+                "text": "Ворота сопоставляют сессии, а не названия моделей; заказ требует отдельного проверяющего.",
+                "quote": "Независимость проверяющего несёт отдельная сессия (DK-1360): прогон идёт в свежем разговоре, не участвовавшем в круге разработки, и совпадение модели с моделью разработки помехой не служит.",
+                "value": "verify.Session",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:451",
+                "text": "AskTier зовёт agentctl pick с ролью review; reviewShift на tools/agentctl/pick.go:79\u201384 не опускает ниже base.",
+                "quote": "Ярус даёт вердикт `agentctl pick --role review`, у роли ревью пол base.",
+                "value": "RoleReview",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:252",
+                "text": "ChooseAvailable сначала проверяет точный ярус во всех допущенных лестницах, затем перебирает старшие ярусы.",
+                "quote": "Ступень вверх по лестнице подписки отбор берёт только когда модель яруса недоступна: раскладка её не назвала либо подписку снял отбор допущенных.",
+                "value": "ladders",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/gate.go:255",
+                "text": "closeVerifyGate передаёт записи этапов и незакрытые этапы в VerifyIndependence.",
+                "quote": "Сессии участников круга и прогона хранит запись этапов, а сверяет их ворота taskctl close.",
+                "value": "stage.VerifyIndependence",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:253",
+                "text": "После отказа первой лестницы цикл ищет тот же tier по каждой включённой лестнице раньше старших.",
+                "quote": "Если первая лестница не дала модели, отбор пробует другие включённые лестницы с того же яруса.",
+                "value": "selectFrom",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:266",
+                "text": "После перебора заданного и старших ярусов без модели возвращается отказ.",
+                "quote": "Отказ остаётся, когда модели нет на заданном ярусе и выше.",
+                "value": "Refusal",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "internal/checkrun/checkrun.go:92",
+                "text": "Комментарий объясняет условия, историю или назначение поведения."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/tasks_test.go:149",
+          "location": "tools/dashboard/runs.go:557",
+          "observation": "Утверждения сопоставлены с ветвлением, потребителями и историей изменения.",
+          "result": "checked",
+          "comment_quote": "Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет строку реестра в машинный дом (runs.go, headRequest), и стенд без подмены дома (useHeadHome) оставляет её здесь.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/runs.go:557",
+                "text": "headRequest использует машинный дом; useHeadHome в runs_test.go:269 подставляет дом стенда.",
+                "quote": "Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет строку реестра в машинный дом (runs.go, headRequest), и стенд без подмены дома (useHeadHome) оставляет её здесь.",
+                "value": "realHomeFn",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/tasks_test.go:154",
+                "text": "TestMain после Guard проверяет общий запасной файл; остаток доступен последующим тестам процесса и повторам.",
+                "quote": "Файл общий для тестов и повторов -count в одном процессе, поэтому запись может повлиять на последующие проверки.",
+                "value": "sessions.Path",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:531",
+                "text": "Формат записи содержит поле дерева; писатель taskhead передаёт данные привязки.",
+                "quote": "В строке остаётся дерево писавшего стенда.",
+                "value": "b.Tree",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/runs.go:557",
+                "text": "Комментарий объясняет условия, историю или назначение поведения."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkcodex_test.go:39",
+          "location": "tools/shipctl/checkcodex_test.go:40",
+          "observation": "Утверждения сопоставлены с ветвлением, потребителями и историей изменения.",
+          "result": "checked",
+          "comment_quote": "A valid event above 4 MiB catches an accidental reduction of the limit.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:40",
+                "text": "Создаётся JSON-событие turn.started с padding 6 MiB; после замены оно направляется worker и проверяется подтверждение старта. При уменьшении лимита scanner до 4 MiB тест падает, при 8 MiB проходит.",
+                "quote": "A valid event above 4 MiB catches an accidental reduction of the limit.",
+                "value": "largeEvent",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/shipctl/checkcodex_test.go:40",
+                "text": "Комментарий объясняет условия, историю или назначение поведения."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/checkrun.go:20",
+          "location": "tools/shipctl/checkrun.go:228",
+          "observation": "Проверены условия вызова, общий отбор и носители; исторический случай сверён с архивом DK-947.",
+          "result": "checked",
+          "comment_quote": "Подъём прогона сценария после выката (DK-718, DK-947).",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/shipctl/checkrun.go:228",
+                "text": "На переданных после выката строках checkRunNote вызывает отбор и собирает отчёт.",
+                "quote": "Подъём прогона сценария после выката (DK-718, DK-947).",
+                "value": "checkRuns",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/ops.go:1544",
+                "text": "Сейчас автономный merge поднимает прогон; прежняя остановка и отсутствие отметки зафиксированы в архиве DK-947:5\u201310.",
+                "quote": "Выкат при autonomous = true доводит задачу до прода сам, а дальше конвейер упирался в правило независимости: сценарий прогоняет отдельная сессия со свежим контекстом, и поднять её было некому.",
+                "value": "checkRunNote",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:105",
+                "text": "Строка без smoke остаётся кандидатом на прогон; фактический пример ожидания DK-937 приведён в архиве DK-947:5\u201315.",
+                "quote": "Строка стояла в Check, держала очередь непроверенного выката и ждала, пока человек поднимет сессию руками.",
+                "value": "taskform.SmokeCovers",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/ops.go:1872",
+                "text": "Автономный ship поднимает прогон на разливе без адресата; автономный merge делает то же в ops.go:1543\u20131544.",
+                "quote": "Зовёт подъём тот, кто увёл строку в Check без человека в окне, то есть сам выкат: merge и ship при autonomous = true.",
+                "value": "p.Drain",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:88",
+                "text": "Общий отбор не поднимает проверку у проекта без доверенного автономного выката.",
+                "quote": "Признак тут не флаг вызова, а доверенный агенту конвейер: команду выката катит агент, и адресата у события «строка в Check» нет ни одного.",
+                "value": "deployconf.Autonomous",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/config.go:57",
+                "text": "Явная команда флага возвращает план без autonomous; человек получает выкат в текущем вызове.",
+                "quote": "Явный `--deploy` в это число не входит, он указание человека прямо сейчас, и человек в окне у него есть.",
+                "value": "deployPlan",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/devkitctl/watch.py:2520",
+                "text": "Тик после drain вызывает check_run; shipctl ship при p.Drain и autonomous поднимает проверки перемещённых строк.",
+                "quote": "Тем же кодом закрыт разлив поезда тиком сторожка: тик зовёт `ship --drain`, и подъём едет внутри той же команды, а строки, мимо которых выкат проехал, тик добирает командой `shipctl check-run`.",
+                "value": "check_run",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/checkrun.go:208",
+                "text": "Dashboard передаёт свой carrier в общий Run; shipctl делает это в checkrun.go:216.",
+                "quote": "Кого поднимать и какой моделью, решает общий отбор internal/checkrun, тот же у дашборда.",
+                "value": "checkrun.Run",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/shipctl/checkcodex.go:136",
+                "text": "Codex worker берёт замок и запускает codex exec на строке 155; другие харнесы идут через taskctl run с моделью.",
+                "quote": "Для Codex проверка идёт отдельным процессом с замком задачи; остальные харнесы поднимаются через `taskctl run <ID> --model <модель>`.",
+                "value": "taskhead.HoldForDelegate",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/shipctl/checkrun.go:228",
+                "text": "Объясняет причину и границы автоматического подъёма прогона."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/tasks_test.go:115",
+          "location": "tools/dashboard/tasks_test.go:126",
+          "observation": "Изоляция подтверждена текущим кодом, история потери tmux и реестра сверена с коммитами DK-397 и архивом DK-631.",
+          "result": "checked",
+          "comment_quote": "TestMain снимает с прогона ID живой сессии и убирает за собой собранный бинарь.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/tasks_test.go:126",
+                "text": "TestMain очищает оба идентификатора; после прогона удаляет каталоги собранных taskctl и dashboard на строках 159\u2013163.",
+                "quote": "TestMain снимает с прогона ID живой сессии и убирает за собой собранный бинарь.",
+                "value": "os.Unsetenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/touch.go:55",
+                "text": "touchWork вызывает sessions.Touch для команд с ID; sessions.Own берёт ID из окружения, а dashboard тесты используют настоящий taskctl.",
+                "quote": "ID тут не мелочь: стенды зовут настоящий taskctl, тот отмечает работу сессии строкой в реестре (touchWork -> sessions.Touch), и берётся ID из окружения.",
+                "value": "sessions.Touch",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:628",
+                "text": "mark получает рабочее дерево через Getwd и передаёт Tree в Append; коммит b2e28d1a4 описывает отключение тестовой записи в живой реестр.",
+                "quote": "Прогон, запущенный из живого разговора, дописывал её именем записи деревьями /var/folders/...",
+                "value": "os.Getwd",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:173",
+                "text": "До 50624d54c свёртка брала последнюю запись целиком, теряя tmux от прежней; сам коммит документирует chat-DK-397-1 и исправляет свёртку через Last.",
+                "quote": "в живой ~/.devkit/sessions.log, реестр забывал имя tmux этой сессии, и дашборд переставал видеть, чем её снимать (живой случай chat-DK-397-1, замечание пользователя).",
+                "value": "Last",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:621",
+                "text": "mark возвращается до записи, когда Own вернул пустой ID.",
+                "quote": "Без ID отметка работы не пишется никуда вовсе, и это и есть рубеж.",
+                "value": "sid",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/tasks_test.go:148",
+                "text": "TestMain не подменяет HOME; запускает тесты в окружении сквозного прогона. Изоляция HOME и уведомителя остаётся за самим сценарием.",
+                "quote": "Дом прогона тут не трогается: им распоряжается сам сквозной прогон, у которого свой синтетический дом, и подмена дома снаружи уводила его уведомитель мимо собственного журнала.",
+                "value": "runsguard.Guard",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/tasks_test.go:126",
+                "text": "Объясняет защиту живых уведомлений и реестра от тестовых процессов."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/taskctl/notify_test.go:13",
+          "location": "tools/taskctl/notify_test.go:34",
+          "observation": "Изоляция подтверждена текущим кодом, история потери tmux и реестра сверена с коммитами DK-397 и архивом DK-631.",
+          "result": "checked",
+          "comment_quote": "TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF): без стаба notifyScript у большинства тестов уходит в ~/projects/devkit, а там лежит настоящий hooks/notify.py, который на машине разработчика реально дал бы баннер.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/taskctl/notify_test.go:34",
+                "text": "Уведомитель выключается до m.Run; notifyScript включает ~/projects/devkit в поиск, hooks/notify.py проверяет DEVKIT_NOTIFY_OFF.",
+                "quote": "TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF): без стаба notifyScript у большинства тестов уходит в ~/projects/devkit, а там лежит настоящий hooks/notify.py, который на машине разработчика реально дал бы баннер.",
+                "value": "os.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/notify_test.go:75",
+                "text": "Тест уведомлений локально очищает DEVKIT_NOTIFY_OFF и использует стаб.",
+                "quote": "Тесты самого уведомления включают его точечно.",
+                "value": "t.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/notify_test.go:35",
+                "text": "Перед запуском тестов снимаются оба ID харнесов.",
+                "quote": "Он же снимает с прогона ID живой сессии.",
+                "value": "os.Unsetenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/touch.go:55",
+                "text": "touchWork передаёт ID задачи в sessions.Touch; mark берёт ID сессии и домашний каталог из окружения, а Getwd сохраняет дерево.",
+                "quote": "Команды доски отмечают работу сессии строкой в реестре (touchWork -> sessions.Touch), и берётся ID из окружения: прогон, запущенный из живого разговора, дописывал её именем десятки записей в живой ~/.devkit/sessions.log деревьями /var/folders/...",
+                "value": "sessions.Touch",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:173",
+                "text": "Коммит 50624d54c содержит прежнее взятие последней записи целиком и исправление, сохраняющее tmux; его описание называет живую сессию chat-DK-397-1.",
+                "quote": "Реестр после этого забывал имя tmux живой сессии, и дашборд переставал видеть, чем её снимать (живой случай chat-DK-397-1, замечание пользователя).",
+                "value": "Last",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/sessions/sessions.go:621",
+                "text": "При пустом sid mark возвращается до обращения к диску.",
+                "quote": "Без ID отметка работы не пишется никуда вовсе.",
+                "value": "sid",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/taskctl/drain_test.go:24",
+                "text": "muteShipctlInTests ставит фиктивный shipctl первым в PATH; TestMain вызывает его перед m.Run.",
+                "quote": "Тем же ходом глохнет shipctl: с DK-312 close зовёт разлив, и без стаба close-тесты звали бы настоящий shipctl с машины (drain_test.go).",
+                "value": "os.Setenv",
+                "verdict": "checked"
+              },
+              {
+                "location": "internal/runsguard/runsguard.go:44",
+                "text": "guard снимает список до m.Run и сравнивает его с каталогом после; Guard выбирает stage.Dir(stage.Home()).",
+                "quote": "runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs (DK-818): setup(t) уводит HOME во временный каталог, но сторож не верит одной этой подмене на слово, а считает файлы боевого каталога до и после всего прогона пакета.",
+                "value": "entryNames",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/taskctl/notify_test.go:34",
+                "text": "Объясняет защиту живых уведомлений и реестра от тестовых процессов."
+              }
+            ]
+          }
         }
       ]
     },
@@ -9095,43 +10098,43 @@
       "evidence": [
         {
           "object": "regcheck --base a9c4bbef6 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:87",
+          "location": "docs/tasks/DK-1750.md:95",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base e95588634 --tests internal/reviewaudit/naming_setting_test.go -- devkitctl test internal -run '^TestNameSettingEnvironmentGuard$'",
-          "location": "docs/tasks/DK-1750.md:89",
+          "location": "docs/tasks/DK-1750.md:97",
           "observation": "тест краснеет на e95588634 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_setting_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/agentctl/plan_test.go -- devkitctl test tools/agentctl -run '^TestPlanCodexSession$'",
-          "location": "docs/tasks/DK-1750.md:91",
+          "location": "docs/tasks/DK-1750.md:99",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/agentctl/plan_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/shipctl/checkrun_test.go -- devkitctl test tools/shipctl -run '^TestCheckRunCodexEntry$'",
-          "location": "docs/tasks/DK-1750.md:93",
+          "location": "docs/tasks/DK-1750.md:101",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/shipctl/checkrun_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base d751c8703 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:95",
+          "location": "docs/tasks/DK-1750.md:103",
           "observation": "тест краснеет на d751c8703 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 18dee7837 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:97",
+          "location": "docs/tasks/DK-1750.md:105",
           "observation": "тест краснеет на 18dee7837 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 1341ae88b --tests internal/sessions/sessions_test.go,internal/stage/stage_test.go -- devkitctl test internal -run '^Test(OwnCodexSession|OpenKeepsCodexVerificationSession)$'",
-          "location": "docs/tasks/DK-1750.md:99",
+          "location": "docs/tasks/DK-1750.md:107",
           "observation": "тест краснеет на 1341ae88b и проходит на текущем коде, регрессия закрыта (тесты: internal/sessions/sessions_test.go, internal/stage/stage_test.go)",
           "result": "checked"
         }
@@ -9152,7 +10155,7 @@
       "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Unit Own и стык stage/CLI проверены; для отдельных новых ветвей валидатора нужно показать изолированный уровень и стык либо явно принятую область без unit, а также сверить изменённые утверждения с базой.",
       "evidence": [
         {
           "object": "unit ID",
@@ -9171,12 +10174,19 @@
           "location": "tools/shipctl/checkrun_test.go:504",
           "observation": "TestCheckRunCodexEntry запускает бинарь shipctl и фальшивый agentctl.",
           "result": "checked"
+        },
+        {
+          "object": "стык этапа",
+          "location": "internal/stage/stage_test.go:857",
+          "observation": "TestOpenKeepsCodexVerificationSession проверяет сохранение и чтение этапа.",
+          "result": "checked"
         }
       ],
       "objects": [
         "unit ID",
         "unit связи поля",
-        "стык CLI"
+        "стык CLI",
+        "стык этапа"
       ]
     },
     {
@@ -9201,7 +10211,7 @@
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9221,20 +10231,20 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
-          "location": "tools/shipctl/checkcodex_test.go:66",
+          "object": "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
+          "location": "tools/shipctl/checkcodex_test.go:74",
           "observation": "Интеграционный тест выбран отдельным фильтром; выделенная команда изолированных тестов его не включает.",
           "result": "checked",
           "facts": {
             "test": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:66",
+                "location": "tools/shipctl/checkcodex_test.go:74",
                 "text": "TestCodexCheckWorkerFailsBeforeTurn проверяет затронутый сценарий."
               }
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9254,20 +10264,20 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
-          "location": "tools/shipctl/checkcodex_test.go:102",
+          "object": "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
+          "location": "tools/shipctl/checkcodex_test.go:110",
           "observation": "Интеграционный тест выбран отдельным фильтром; выделенная команда изолированных тестов его не включает.",
           "result": "checked",
           "facts": {
             "test": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:102",
+                "location": "tools/shipctl/checkcodex_test.go:110",
                 "text": "TestCodexCheckWorkerRespectsStop проверяет затронутый сценарий."
               }
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9287,20 +10297,20 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
-          "location": "tools/shipctl/checkcodex_test.go:121",
+          "object": "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
+          "location": "tools/shipctl/checkcodex_test.go:129",
           "observation": "Интеграционный тест выбран отдельным фильтром; выделенная команда изолированных тестов его не включает.",
           "result": "checked",
           "facts": {
             "test": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:121",
+                "location": "tools/shipctl/checkcodex_test.go:129",
                 "text": "TestCodexCheckWorkerDoesNotDuplicate проверяет затронутый сценарий."
               }
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9320,20 +10330,20 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
-          "location": "tools/shipctl/checkcodex_test.go:142",
+          "object": "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
+          "location": "tools/shipctl/checkcodex_test.go:150",
           "observation": "Интеграционный тест выбран отдельным фильтром; выделенная команда изолированных тестов его не включает.",
           "result": "checked",
           "facts": {
             "test": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:142",
+                "location": "tools/shipctl/checkcodex_test.go:150",
                 "text": "TestCodexCheckWorkerStopsDescendant проверяет затронутый сценарий."
               }
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9353,20 +10363,20 @@
           }
         },
         {
-          "object": "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
-          "location": "tools/shipctl/checkcodex_test.go:209",
+          "object": "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
+          "location": "tools/shipctl/checkcodex_test.go:217",
           "observation": "Интеграционный тест выбран отдельным фильтром; выделенная команда изолированных тестов его не включает.",
           "result": "checked",
           "facts": {
             "test": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:209",
+                "location": "tools/shipctl/checkcodex_test.go:217",
                 "text": "TestCodexCheckWorkerReportsLateLogFailure проверяет затронутый сценарий."
               }
             ],
             "dependency": [
               {
-                "location": "tools/shipctl/checkcodex_test.go:42",
+                "location": "tools/shipctl/checkcodex_test.go:50",
                 "text": "Стенд запускает тестовый либо собранный исполняемый процесс.",
                 "verdict": "integration"
               }
@@ -9949,11 +10959,11 @@
       ],
       "objects": [
         "tools/shipctl/checkcodex_test.go:27#TestCodexCheckWorkerStartsFreshTurn",
-        "tools/shipctl/checkcodex_test.go:66#TestCodexCheckWorkerFailsBeforeTurn",
-        "tools/shipctl/checkcodex_test.go:102#TestCodexCheckWorkerRespectsStop",
-        "tools/shipctl/checkcodex_test.go:121#TestCodexCheckWorkerDoesNotDuplicate",
-        "tools/shipctl/checkcodex_test.go:142#TestCodexCheckWorkerStopsDescendant",
-        "tools/shipctl/checkcodex_test.go:209#TestCodexCheckWorkerReportsLateLogFailure",
+        "tools/shipctl/checkcodex_test.go:74#TestCodexCheckWorkerFailsBeforeTurn",
+        "tools/shipctl/checkcodex_test.go:110#TestCodexCheckWorkerRespectsStop",
+        "tools/shipctl/checkcodex_test.go:129#TestCodexCheckWorkerDoesNotDuplicate",
+        "tools/shipctl/checkcodex_test.go:150#TestCodexCheckWorkerStopsDescendant",
+        "tools/shipctl/checkcodex_test.go:217#TestCodexCheckWorkerReportsLateLogFailure",
         "tools/shipctl/checkrun_test.go:504#TestCheckRunCodexEntry",
         "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
         "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
@@ -9979,7 +10989,7 @@
       "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Прежние частичные записи относятся к раннему снимку; по изменённым свойствам и тестам нужны сила assertions, уровни и сравнение старых гарантий на 8bd.",
       "checks": [
         "strength",
         "overlap"
@@ -10071,12 +11081,119 @@
               }
             ]
           }
+        },
+        {
+          "object": "чужой экземпляр",
+          "check": "strength",
+          "location": "internal/reviewaudit/naming_effect_test.go:246",
+          "observation": "Утверждение отличает названную поломку на наблюдаемой границе.",
+          "result": "checked",
+          "facts": {
+            "assertion": [
+              {
+                "location": "internal/reviewaudit/naming_effect_test.go:246",
+                "text": "Условие теста",
+                "quote": "if err := g.checkNameAssignment(e, fn); err == nil {"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "internal/reviewaudit/naming_effect_test.go:246",
+                "text": "Результат метода проверки доказательства",
+                "value": "Результат метода проверки доказательства"
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "internal/reviewaudit/naming_effect_test.go:246",
+                "text": "Принятие подменённого экземпляра приводит к ошибке теста."
+              }
+            ]
+          }
+        },
+        {
+          "object": "Own и этап",
+          "check": "overlap",
+          "location": "internal/stage/stage_test.go:869",
+          "observation": "Оба теста ловят потерю fallback ID; тест этапа добавляет проверку записи и чтения в файле.",
+          "result": "checked",
+          "kind": "cross_level",
+          "facts": {
+            "first": [
+              {
+                "location": "internal/sessions/sessions_test.go:16",
+                "related": "internal/sessions/sessions_test.go:13",
+                "quote": "if got := Own(); got != \"codex-thread\" {",
+                "text": "Проверяет результат Own."
+              }
+            ],
+            "second": [
+              {
+                "location": "internal/stage/stage_test.go:869",
+                "related": "internal/stage/stage_test.go:857",
+                "quote": "if !ok || live.Session != \"codex-checker\" {",
+                "text": "Проверяет сохранённую запись Verify."
+              }
+            ],
+            "first_input": [
+              {
+                "location": "internal/sessions/sessions_test.go:14",
+                "text": "CLAUDE ID пуст; CODEX ID с пробелами."
+              }
+            ],
+            "second_input": [
+              {
+                "location": "internal/stage/stage_test.go:859",
+                "text": "CLAUDE ID пуст; CODEX ID задан; временный HOME."
+              }
+            ],
+            "first_command": [
+              {
+                "location": "docs/tasks/DK-1750.md:67",
+                "text": "devkitctl test internal -v с отбором TestOwnCodexSession."
+              }
+            ],
+            "second_command": [
+              {
+                "location": "docs/tasks/DK-1750.md:67",
+                "text": "Тот же прогон с отбором TestOpenKeepsCodexVerificationSession."
+              }
+            ],
+            "first_level": [
+              {
+                "location": "internal/sessions/sessions_test.go:13",
+                "text": "Изолированная функция.",
+                "value": "unit"
+              }
+            ],
+            "second_level": [
+              {
+                "location": "internal/stage/stage_test.go:857",
+                "text": "Стык пакетов и файлового хранения во временном каталоге.",
+                "value": "component"
+              }
+            ],
+            "common_failure": [
+              {
+                "location": "internal/sessions/sessions.go:602",
+                "text": "Потеря fallback CODEX_THREAD_ID."
+              }
+            ],
+            "guarantees": [
+              {
+                "location": "internal/stage/stage_test.go:864",
+                "text": "Второй тест дополнительно проверяет повторное чтение сохранённого этапа."
+              }
+            ]
+          }
         }
       ],
       "objects": [
         "Own fallback",
         "stage Session",
-        "CLI отчёт"
+        "CLI отчёт",
+        "чужой экземпляр",
+        "Own и этап"
       ]
     },
     {
@@ -10085,17 +11202,31 @@
       "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
       "applicability": "applicable",
       "result": "pending",
-      "reason": "Сохранены подтверждённые пункты независимого ревью. Покрытие остальных пунктов проверяется.",
+      "reason": "Мутации подтверждают нижнюю и верхнюю границы Scanner, выбор замка, сохранение ID и оба признака старта. Остаётся проверить пустой ввод и пустой возврат.",
       "evidence": [
         {
-          "object": "три мутации",
-          "location": "docs/tasks/DK-1750.md:122",
-          "observation": "Мутации собственного ID, замка и раннего подтверждения краснят соответствующие тесты.",
+          "object": "границы Scanner",
+          "location": "docs/tasks/DK-1750.md:82",
+          "observation": "Позитивный тест упал при снижении лимита с 8 до 4 МиБ, негативный упал при увеличении с 8 до 16 МиБ. Оба прошли с лимитом 8 МиБ.",
+          "result": "checked"
+        },
+        {
+          "object": "ID, замок и подтверждение запуска",
+          "location": "docs/tasks/DK-1750.md:130",
+          "observation": "Снятие ID, неверный замок и подтверждение на thread.started до turn.started дали FAIL названных тестов.",
+          "result": "checked"
+        },
+        {
+          "object": "ожидание замка при остановке",
+          "location": "docs/tasks/DK-1750.md:128",
+          "observation": "Пропуск ожидания дал HTTP 200 вместо ожидаемого 503. Тест прошёл после восстановления ожидания.",
           "result": "checked"
         }
       ],
       "objects": [
-        "три мутации"
+        "границы Scanner",
+        "ID, замок и подтверждение запуска",
+        "ожидание замка при остановке"
       ]
     },
     {
@@ -10114,13 +11245,13 @@
         },
         {
           "object": "потомок",
-          "location": "tools/shipctl/checkcodex_test.go:142",
+          "location": "tools/shipctl/checkcodex_test.go:150",
           "observation": "FIFO и подтверждение начала связывают порядок запуска потомка, SIGTERM и проверку EOF.",
           "result": "checked"
         },
         {
           "object": "отказ журнала",
-          "location": "tools/shipctl/checkcodex_test.go:209",
+          "location": "tools/shipctl/checkcodex_test.go:217",
           "observation": "Handshake через FIFO и канал gate обеспечивает отказ после Started; тест имеет контекст с 10-секундным сроком.",
           "result": "checked"
         }
@@ -10135,9 +11266,9 @@
       "id": "common-tests:TEST-008",
       "source": "common-tests",
       "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
-      "applicability": "pending",
+      "applicability": "applicable",
       "result": "pending",
-      "reason": "",
+      "reason": "Не доказано принятое в проектном AGENTS.md исключение для участков новой логики guard и Fprintf, отдельно не покрытых unit.",
       "evidence": [],
       "objects": []
     },
@@ -10793,7 +11924,7 @@
       "evidence": [
         {
           "object": "check-run",
-          "location": "docs/tasks/DK-1750.md:117",
+          "location": "docs/tasks/DK-1750.md:124",
           "observation": "Указаны команда regcheck и красный/зелёный исход.",
           "result": "checked"
         },

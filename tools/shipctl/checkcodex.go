@@ -61,7 +61,6 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 		return checkrun.Report{Failed: true, Line: id + ": " + checkrun.NotRaised + ", " + err.Error()}
 	}
 	cmd := exec.Command(exe, "__check-codex", string(order))
-	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	pipe, err := cmd.StdoutPipe()
 	if err == nil {
@@ -208,7 +207,10 @@ func codexCheckWorker(raw string) {
 				diagnostic := "check-run " + o.ID + ": " + logErr.Error() + ", logger: " + sinkErr.Error()
 				diagnostic = strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(diagnostic)
 				if err := appendRunLog(o.Root, diagnostic, 1); err != nil {
-					fmt.Fprintf(os.Stderr, "%s, журнал проекта: %v\n", diagnostic, err)
+					message := fmt.Sprintf("%s, журнал проекта: %v\n", diagnostic, err)
+					if err := os.WriteFile(logPath+".error", []byte(message), 0o600); err != nil {
+						logErr = fmt.Errorf("%s, резервный журнал: %w", strings.TrimSpace(message), err)
+					}
 				}
 			}
 		}

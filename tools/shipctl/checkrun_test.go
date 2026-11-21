@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/checkrun"
 )
@@ -509,13 +511,24 @@ func TestCheckRunCodexEntry(t *testing.T) {
 	root, calls := checkStand(t)
 	bin := t.TempDir()
 	args := filepath.Join(bin, "args")
+	finish := filepath.Join(bin, "finish")
+	if err := syscall.Mkfifo(finish, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gate, err := os.OpenFile(finish, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close()
+	defer gate.WriteString("continue\n")
 	script := `#!/bin/sh
 case "$1" in
 pick) printf 'tier: base\n' ;;
 harness) printf '%s\n' '{"harnesses":[{"name":"codex","enabled":true,"default":true,"models":[{"tier":"base","model":"model"}]}]}' ;;
 -C) if [ "$CHECK_VERDICT_ERROR" = 1 ]; then printf '%s\n' 'сбой расчёта модели' >&2; exit 1; fi
     printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
-exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}' ;;
+exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}'
+      read -r ready < "$CHECK_FINISH" ;;
 *) exit 1 ;;
 esac
 `
@@ -524,6 +537,7 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHECK_ARGS", args)
+	t.Setenv("CHECK_FINISH", finish)
 	t.Setenv("TASKCTL_RUN_CODE", "2")
 	t.Setenv("CHECK_VERDICT_ERROR", "1")
 	failed, err := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json").CombinedOutput()
@@ -532,6 +546,7 @@ esac
 	}
 	t.Setenv("CHECK_VERDICT_ERROR", "")
 	cmd := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json")
+	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("check-run: %v %s", err, out)

@@ -223,7 +223,7 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 	}{
 		{"system_log", false, false, "-t shipctl XR-1: запись журнала Codex"},
 		{"project_log", true, false, "check-run XR-1: запись журнала Codex"},
-		{"stderr", true, true, "журнал проекта:"},
+		{"supervisor_log", true, true, "журнал проекта:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -273,8 +273,6 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"CHECK_GATE="+gatePath, "CHECK_ALERT="+alertPath, "CHECK_FINISHED="+finishedPath,
 				"CHECK_LOGGER_FAIL="+strconv.FormatBool(tc.loggerFail))
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
 			out, err := cmd.StdoutPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -304,21 +302,24 @@ func TestCodexCheckWorkerReportsLateLogFailure(t *testing.T) {
 			if _, err := os.Stat(finishedPath); err != nil {
 				t.Fatalf("проверяющий не закончил ход: %v", err)
 			}
-			if tc.projectLogFail {
-				diagnostic := stderr.String()
-				for _, part := range []string{tc.diagnostic, "check-run XR-1: запись журнала Codex", "logger:"} {
-					if !strings.Contains(diagnostic, part) {
-						t.Fatalf("в stderr отсутствует %q: %q", part, diagnostic)
-					}
-				}
-				return
-			}
-			if tc.loggerFail {
+			switch {
+			case tc.projectLogFail:
+				alertPath = logPath + ".error"
+			case tc.loggerFail:
 				alertPath = projectLogPath
 			}
 			alert, err := os.ReadFile(alertPath)
-			if err != nil || !strings.Contains(string(alert), tc.diagnostic) {
-				t.Fatalf("предупреждение в %s: %q, %v", alertPath, alert, err)
+			if err != nil {
+				t.Fatalf("не прочитан %s: %v", alertPath, err)
+			}
+			want := []string{tc.diagnostic}
+			if tc.projectLogFail {
+				want = append(want, "check-run XR-1: запись журнала Codex", "logger:")
+			}
+			for _, part := range want {
+				if !strings.Contains(string(alert), part) {
+					t.Fatalf("в %s отсутствует %q: %q", alertPath, part, alert)
+				}
 			}
 		})
 	}

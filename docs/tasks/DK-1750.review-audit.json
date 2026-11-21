@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1750",
-  "base_sha": "1341ae88b390f592b5fd0a6f11351ae957bd71bb",
-  "head_sha": "5339a62a2aa44f2a17e8df4c40520494a68f00bb",
-  "code_hash": "e5e74941dbee24108f7f9e50cabdf6110e6756465776bde11456e79c0abbbe78",
+  "base_sha": "e54b65d18968f79ec4286046fc2b70276f8325b7",
+  "head_sha": "7acf303bc88dcf7a4d11200824927c50a2411c8f",
+  "code_hash": "b5e65f11377a23d84b0c5ff617a1229cc1f52b2375a80af9655a58ab31c23a65",
   "task_hash": "6211d8e1b9a14eddef1d0f0735f1824822a53ca5af1028ff3e66f35f18a56b68",
   "sources": [
     {
@@ -4350,7 +4350,7 @@
         {
           "object": "единственный проверяющий",
           "location": "tools/shipctl/checkcodex.go:146",
-          "observation": "HoldForDelegate вызывается под транзакцией до запуска; освобождение отложено до выхода worker. Занятый замок даёт Busy; регрессия зафиксирована в docs/tasks/DK-1750.md:122.",
+          "observation": "HoldForDelegate вызывается под транзакцией до запуска; освобождение отложено до выхода worker. Занятый замок даёт Busy; регрессия зафиксирована в docs/tasks/DK-1750.md:191.",
           "result": "checked"
         },
         {
@@ -25237,61 +25237,61 @@
       "evidence": [
         {
           "object": "JSON до завершения",
-          "location": "docs/tasks/DK-1750.md:151",
+          "location": "docs/tasks/DK-1750.md:144",
           "observation": "regcheck на 4bc0e0271 получил exec.ErrWaitDelay на старой реализации. На исправлении оба теста проходят.",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:176",
+          "location": "docs/tasks/DK-1750.md:169",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base e95588634 --tests internal/reviewaudit/naming_setting_test.go -- devkitctl test internal -run '^TestNameSettingEnvironmentGuard$'",
-          "location": "docs/tasks/DK-1750.md:178",
+          "location": "docs/tasks/DK-1750.md:171",
           "observation": "тест краснеет на e95588634 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_setting_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/agentctl/plan_test.go -- devkitctl test tools/agentctl -run '^TestPlanCodexSession$'",
-          "location": "docs/tasks/DK-1750.md:180",
+          "location": "docs/tasks/DK-1750.md:173",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/agentctl/plan_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/shipctl/checkrun_test.go -- devkitctl test tools/shipctl -run '^TestCheckRunCodexEntry$'",
-          "location": "docs/tasks/DK-1750.md:182",
+          "location": "docs/tasks/DK-1750.md:175",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/shipctl/checkrun_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base d751c8703 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:184",
+          "location": "docs/tasks/DK-1750.md:177",
           "observation": "тест краснеет на d751c8703 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 18dee7837 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:186",
+          "location": "docs/tasks/DK-1750.md:179",
           "observation": "тест краснеет на 18dee7837 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 1341ae88b --tests internal/sessions/sessions_test.go,internal/stage/stage_test.go -- devkitctl test internal -run '^Test(OwnCodexSession|OpenKeepsCodexVerificationSession)$'",
-          "location": "docs/tasks/DK-1750.md:188",
+          "location": "docs/tasks/DK-1750.md:181",
           "observation": "тест краснеет на 1341ae88b и проходит на текущем коде, регрессия закрыта (тесты: internal/sessions/sessions_test.go, internal/stage/stage_test.go)",
           "result": "checked"
         },
         {
           "object": "системные и файловые доказательства на старом и новом коде",
-          "location": "docs/tasks/DK-1750.md:88",
+          "location": "docs/tasks/DK-1750.md:90",
           "result": "checked",
           "observation": "Тесты точного аргумента, shadowing, пути назначения и формы шаблона краснеют на 46a1e6625, на новой реализации проходят."
         },
         {
           "object": "ложные доказательства системного и файлового действия",
-          "location": "docs/tasks/DK-1750.md:83",
+          "location": "docs/tasks/DK-1750.md:85",
           "result": "checked",
           "observation": "На 0189a8b3b новый тест краснеет из-за принятия чужой цели и невызванного замыкания. На исправлении обе проверки проходят."
         }
@@ -27645,26 +27645,26 @@
       "evidence": [
         {
           "object": "границы Scanner",
-          "location": "docs/tasks/DK-1750.md:159",
+          "location": "docs/tasks/DK-1750.md:151",
           "observation": "Позитивный тест упал при снижении лимита с 8 до 4 МиБ, негативный упал при увеличении с 8 до 16 МиБ. Оба прошли с лимитом 8 МиБ.",
           "result": "checked"
         },
         {
           "object": "ID, замок и подтверждение запуска",
-          "location": "docs/tasks/DK-1750.md:211",
+          "location": "docs/tasks/DK-1750.md:203",
           "observation": "Снятие ID, неверный замок и подтверждение на thread.started до turn.started дали FAIL названных тестов.",
           "result": "checked"
         },
         {
           "object": "ожидание замка при остановке",
-          "location": "docs/tasks/DK-1750.md:209",
+          "location": "docs/tasks/DK-1750.md:201",
           "observation": "Пропуск ожидания дал HTTP 200 вместо ожидаемого 503. Тест прошёл после восстановления ожидания.",
           "result": "checked"
         },
         {
           "object": "пустая модель и пустой ответ",
           "result": "checked",
-          "location": "docs/tasks/DK-1750.md:165",
+          "location": "docs/tasks/DK-1750.md:157",
           "observation": "Мутации убрали проверку пустой модели и вернули пустой Report. Упали соответственно TestRaiseWithoutModelReportsRefusal и TestCheckRunCodexEntry."
         }
       ],
@@ -28370,61 +28370,61 @@
       "evidence": [
         {
           "object": "JSON до завершения",
-          "location": "docs/tasks/DK-1750.md:151",
+          "location": "docs/tasks/DK-1750.md:144",
           "observation": "regcheck на 4bc0e0271 получил exec.ErrWaitDelay на старой реализации. На исправлении оба теста проходят.",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:176",
+          "location": "docs/tasks/DK-1750.md:169",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base e95588634 --tests internal/reviewaudit/naming_setting_test.go -- devkitctl test internal -run '^TestNameSettingEnvironmentGuard$'",
-          "location": "docs/tasks/DK-1750.md:178",
+          "location": "docs/tasks/DK-1750.md:171",
           "observation": "тест краснеет на e95588634 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_setting_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/agentctl/plan_test.go -- devkitctl test tools/agentctl -run '^TestPlanCodexSession$'",
-          "location": "docs/tasks/DK-1750.md:180",
+          "location": "docs/tasks/DK-1750.md:173",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/agentctl/plan_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/shipctl/checkrun_test.go -- devkitctl test tools/shipctl -run '^TestCheckRunCodexEntry$'",
-          "location": "docs/tasks/DK-1750.md:182",
+          "location": "docs/tasks/DK-1750.md:175",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/shipctl/checkrun_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base d751c8703 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:184",
+          "location": "docs/tasks/DK-1750.md:177",
           "observation": "тест краснеет на d751c8703 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 18dee7837 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:186",
+          "location": "docs/tasks/DK-1750.md:179",
           "observation": "тест краснеет на 18dee7837 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 1341ae88b --tests internal/sessions/sessions_test.go,internal/stage/stage_test.go -- devkitctl test internal -run '^Test(OwnCodexSession|OpenKeepsCodexVerificationSession)$'",
-          "location": "docs/tasks/DK-1750.md:188",
+          "location": "docs/tasks/DK-1750.md:181",
           "observation": "тест краснеет на 1341ae88b и проходит на текущем коде, регрессия закрыта (тесты: internal/sessions/sessions_test.go, internal/stage/stage_test.go)",
           "result": "checked"
         },
         {
           "object": "системные и файловые доказательства на старом и новом коде",
-          "location": "docs/tasks/DK-1750.md:88",
+          "location": "docs/tasks/DK-1750.md:90",
           "result": "checked",
           "observation": "Тесты точного аргумента, shadowing, пути назначения и формы шаблона краснеют на 46a1e6625, на новой реализации проходят."
         },
         {
           "object": "ложные доказательства системного и файлового действия",
-          "location": "docs/tasks/DK-1750.md:83",
+          "location": "docs/tasks/DK-1750.md:85",
           "result": "checked",
           "observation": "На 0189a8b3b новый тест краснеет из-за принятия чужой цели и невызванного замыкания. На исправлении обе проверки проходят."
         }

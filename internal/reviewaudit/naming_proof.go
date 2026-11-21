@@ -22,6 +22,7 @@ type NameObjectProof struct {
 	Assignment *NameAssignmentWrite `json:"assignment,omitempty"`
 	API        *NameAPIWrite        `json:"api,omitempty"`
 	Setting    *NameSettingWrite    `json:"setting,omitempty"`
+	Effect     *NameSystemWrite     `json:"effect,omitempty"`
 	SQL        *NameSQLWrite        `json:"sql,omitempty"`
 	CLI        *NameCLIWrite        `json:"cli,omitempty"`
 }
@@ -57,7 +58,7 @@ func checkNameObjectProof(e Evidence, declaration string, source *evidenceSource
 	if e.Check == "writes" {
 		return g.checkNameWriteProof(e, fn)
 	}
-	if proof.Reference != nil || proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.SQL != nil || proof.Setting != nil || proof.Type == "" {
+	if proof.Reference != nil || proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.SQL != nil || proof.Setting != nil || proof.Effect != nil || proof.Type == "" {
 		return fmt.Errorf("proof: для результата укажите expression и объявленный type, без reference")
 	}
 	ret, _, err := g.nameForwardReturn(fn, e.ResultEvidence.ReturnAt)

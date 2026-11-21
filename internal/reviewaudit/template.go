@@ -314,7 +314,7 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 		if entry.Check != "meaning" {
 			entry.ObjectComparison = &NameObjectComparison{Expected: []string{}, NoExpectationReason: "основание пустого expected, если применимо"}
 			if (entry.Check == "result" && slices.Contains([]string{"proof", "use", "guard", "implementation", "source", "boolean"}, kind)) ||
-				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "destination", "content", "callback"}, kind)) {
+				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "effect", "destination", "content", "callback"}, kind)) {
 				entry.ObjectComparison.Proof = &NameObjectProof{Words: []NameProofWord{{Word: "слово из expected", Role: "object", Fact: ReviewFact{Value: "выражение из цитаты"}}}}
 				p := entry.ObjectComparison.Proof
 				switch kind {
@@ -325,6 +325,9 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 					p.Type = "объявленный тип результата"
 				case "proof", "use", "implementation", "source":
 					entry.ObjectComparison.Proof.Type = "объявленный тип результата"
+				case "effect":
+					p.Expression = "полный вызов системной операции"
+					p.Effect = &NameSystemWrite{Kind: "unsetenv или signal"}
 				case "setting":
 					p.Setting = &NameSettingWrite{}
 				case "sql":

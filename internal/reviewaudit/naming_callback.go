@@ -127,7 +127,7 @@ func checkNameCallbackWrite(e Evidence, declaration string, source *evidenceSour
 	w, pair := e.WriteEvidence, e.ObjectComparison
 	proof, c := pair.Proof, w.Callback
 	if w.File != nil || len(w.Calls) != 0 || proof == nil || pair.EquivalentAt != "" || pair.EquivalentFlow != nil ||
-		proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.Reference != nil || proof.SQL != nil || proof.Setting != nil {
+		proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.Reference != nil || proof.SQL != nil || proof.Setting != nil || proof.Effect != nil {
 		return fmt.Errorf("write_evidence.callback: укажите доказательства callback и слова имени одной записью")
 	}
 	if err := checkNameProofWords(pair, source); err != nil {

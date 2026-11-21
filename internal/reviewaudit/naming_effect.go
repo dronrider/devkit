@@ -49,17 +49,19 @@ func (g *queryGoSource) checkNameWriteProof(e Evidence, fn queryFunc) error {
 		conclusion = checkNamePromisedWrite(e, original)
 	}
 	kinds := 0
-	for _, present := range []bool{p.Reference != nil, p.Assignment != nil, p.API != nil, p.CLI != nil, p.SQL != nil, p.Setting != nil} {
+	for _, present := range []bool{p.Reference != nil, p.Assignment != nil, p.API != nil, p.CLI != nil, p.SQL != nil, p.Setting != nil, p.Effect != nil} {
 		if present {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		return errors.Join(conclusion, fmt.Errorf("writes: выберите proof.assignment, proof.api, proof.cli, proof.sql, proof.setting или proof.reference по фактической операции"))
+		return errors.Join(conclusion, fmt.Errorf("writes: выберите proof.assignment, proof.api, proof.cli, proof.sql, proof.setting, proof.effect или proof.reference по фактической операции"))
 	}
 	switch {
 	case p.Assignment != nil:
 		err = g.checkNameAssignment(e, original, fn)
+	case p.Effect != nil:
+		err = g.checkNameSystemWrite(e, fn)
 	case p.Setting != nil:
 		err = g.checkNameSettingWrite(e, fn)
 	case p.SQL != nil:

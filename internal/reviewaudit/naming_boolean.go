@@ -30,7 +30,7 @@ func checkNameBooleanResult(e Evidence, declaration string, source *evidenceSour
 	if proof == nil || proof.Type != "bool" || flow == nil || flow.Value != "" ||
 		flow.UseExpression == "" || flow.UseKind != "" || flow.UseField != "" || flow.Consumer != "" ||
 		flow.Projection != nil || len(flow.Forward) != 0 || pair.EquivalentAt != "" || pair.EquivalentFlow != nil ||
-		proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.Reference != nil || proof.SQL != nil || proof.Setting != nil {
+		proof.Assignment != nil || proof.API != nil || proof.CLI != nil || proof.Reference != nil || proof.SQL != nil || proof.Setting != nil || proof.Effect != nil {
 		return fmt.Errorf("булев результат: укажите полное выражение return, proof.type bool и прямое условие потребителя в flow")
 	}
 	if err := checkNameProofWords(pair, source); err != nil {

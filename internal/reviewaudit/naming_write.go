@@ -37,16 +37,38 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 	}
 	write, _, err := g.call(fn, w.WriteAt, func(expr ast.Expr) bool {
 		call, ok := expr.(*ast.SelectorExpr)
-		return ok && (call.Sel.Name == "Write" ||
-			call.Sel.Name == "WriteFile" && g.importPath(fn, nameIdentifier(call.X)) == "os" ||
-			call.Sel.Name == "Fprintf" && g.importPath(fn, nameIdentifier(call.X)) == "fmt")
+		if !ok {
+			return false
+		}
+		switch call.Sel.Name {
+		case "Remove", "RemoveAll", "Rename":
+			return g.namePackageSelector(fn, call, "os", call.Sel.Name)
+		case "Write":
+			return true
+		case "WriteFile":
+			return g.importPath(fn, nameIdentifier(call.X)) == "os"
+		case "Fprintf":
+			return g.importPath(fn, nameIdentifier(call.X)) == "fmt"
+		}
+		return false
 	})
 	if err != nil {
 		return err
 	}
 	var path, payload ast.Expr
 	var open *ast.CallExpr
-	switch write.Fun.(*ast.SelectorExpr).Sel.Name {
+	switch operation := calledName(write.Fun); operation {
+	case "Remove", "RemoveAll", "Rename":
+		if !sameNameExpression(write, w.Value) || f.Role != "destination" {
+			return fmt.Errorf("write_evidence.file: укажите полный вызов как value и роль destination")
+		}
+		arity := 1
+		if operation == "Rename" {
+			arity = 2
+		}
+		if len(write.Args) == arity {
+			path = write.Args[arity-1]
+		}
 	case "WriteFile":
 		if len(write.Args) == 3 && g.namePackageSelector(fn, write.Fun, "os", "WriteFile") {
 			path, payload = write.Args[0], write.Args[1]
@@ -68,7 +90,7 @@ func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) 
 		}
 	}
 	if path == nil || f.Path != w.Target || f.Path == "" || !sameNameExpression(path, f.Path) {
-		return fmt.Errorf("write_evidence.file: укажите фактический путь из вызова открытия или записи файла")
+		return fmt.Errorf("write_evidence.file: укажите фактический путь операции с файлом")
 	}
 	switch f.Role {
 	case "destination":

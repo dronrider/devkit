@@ -90,3 +90,47 @@ func appendLog(dir, text string) {
 	}
 
 }
+
+func TestNameFileMutationDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name, pkg, binding, call, path, value, role, want string
+	}{
+		{name: "remove", pkg: "os", call: "files.Remove(path)", path: "path", role: "destination"},
+		{name: "remove_all", pkg: "os", call: "files.RemoveAll(path)", path: "path", role: "destination"},
+		{name: "literal", pkg: "os", call: `files.RemoveAll("lock")`, path: `"lock"`, role: "destination"},
+		{name: "rename", pkg: "os", call: "files.Rename(old, path)", path: "path", role: "destination"},
+		{name: "rename_source", pkg: "os", call: "files.Rename(old, path)", path: "old", role: "destination", want: "фактический путь"},
+		{name: "other_literal", pkg: "os", call: `files.RemoveAll("lock")`, path: `"other"`, role: "destination", want: "фактический путь"},
+		{name: "content", pkg: "os", call: "files.Rename(old, path)", path: "path", role: "content", want: "роль destination"},
+		{name: "partial_value", pkg: "os", call: "files.Remove(path)", path: "path", value: "path", role: "destination", want: "полный вызов"},
+		{name: "different_value", pkg: "os", call: "files.Rename(old, path)", path: "path", value: "files.Rename(other, path)", role: "destination", want: "полный вызов"},
+		{name: "vendor", pkg: "example.org/os", call: "files.Remove(path)", path: "path", role: "destination", want: "найдено 0"},
+		{name: "shadowed", pkg: "os", binding: "files := localFiles{}", call: "files.RemoveAll(path)", path: "path", role: "destination", want: "найдено 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameCurrentProofFixture(t, `package sample
+import files "`+tc.pkg+`"
+var _ = files.Remove
+type localFiles struct{}
+func (localFiles) RemoveAll(path string) error { return nil }
+func File(old, path string) {
+ `+tc.binding+`
+ `+tc.call+`
+}
+`)
+			writeAt := at(tc.call)
+			value := tc.value
+			if value == "" {
+				value = tc.call
+			}
+			word := "File"
+			e := Evidence{
+				Check: "writes", Result: "checked",
+				ObjectComparison: &NameObjectComparison{Expected: []string{"File"}, Actual: tc.path, ActualAt: writeAt},
+				WriteEvidence: &WriteEvidence{Word: &word, Target: tc.path, Value: value, WriteAt: writeAt,
+					File: &NameFileWrite{Path: tc.path, Role: tc.role}},
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func File"), []string{"File"}, source), tc.want)
+		})
+	}
+}

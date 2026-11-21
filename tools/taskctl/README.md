@@ -1672,6 +1672,17 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 Поле `file.path` совпадает с путём открытия файла в `os.OpenFile`.
 В `write_at` указывается строка записи, а в `value` весь вызов
 `fmt.Fprintf` на полученном файловом дескрипторе.
+Для `os.Remove` и `os.RemoveAll` укажите путь из первого аргумента,
+а для `os.Rename` путь назначения из второго аргумента. Во всех трёх
+случаях укажите полный вызов в `value` и роль `destination`.
+
+Для `os.Unsetenv` и `syscall.Kill` используйте
+`audit-template STYLE-001 --check writes --kind effect`. В
+`proof.expression` укажите полный вызов, а в `actual_at` и `write_at`
+его строку. Для `effect.kind: unsetenv` укажите буквальное имя ключа
+в `actual` и `target` и значение `unset` в `value`.
+Для `effect.kind: signal` укажите в `actual` последнее поле выражения PID,
+в `target` выражение PID целиком, а в `value` выражение сигнала.
 
 У `sql` проверяются
 прямой `Exec`/`ExecContext`, точный текст `statement`, изменяемая `table`

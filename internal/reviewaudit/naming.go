@@ -514,7 +514,7 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 		return checkNameCallbackWrite(e, declaration, source)
 	}
 	if e.Check == "writes" && e.WriteEvidence != nil && e.WriteEvidence.File != nil {
-		if p := pair.Proof; p != nil && (p.Assignment != nil || p.API != nil || p.CLI != nil || p.Reference != nil || p.SQL != nil || p.Setting != nil) {
+		if p := pair.Proof; p != nil && (p.Assignment != nil || p.API != nil || p.CLI != nil || p.Reference != nil || p.SQL != nil || p.Setting != nil || p.Effect != nil) {
 			return fmt.Errorf("writes: выберите один способ доказательства: write_evidence.file или object_comparison.proof")
 		}
 		return checkNameFileWrite(e, declaration, source)

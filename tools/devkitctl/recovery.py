@@ -757,8 +757,11 @@ def main(args):
             print(app_reserve(*args[1:]))
         elif len(args) == 3 and args[0] == "app-finish":
             app_finish(*args[1:])
+        elif len(args) == 4 and args[0] == "app-legacy":
+            import taskstate
+            print(taskstate.legacy_app_pass(Path(args[1]), args[2], args[3]) or "none")
         else:
-            raise BudgetError("нужен app-reserve <корень> <задача> <попытка> либо app-finish <резерв> <исход>")
+            raise BudgetError("нужен app-reserve <корень> <задача> <попытка> либо app-finish <резерв> <исход> либо app-legacy <дом> <задача> <начало>")
     except (BudgetError, OSError, ValueError) as error:
         print(error, file=sys.stderr)
         return 1

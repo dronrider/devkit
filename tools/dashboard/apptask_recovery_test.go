@@ -449,10 +449,35 @@ func TestAppTaskRecoveryReportsAmbiguousLegacyOnce(t *testing.T) {
 	if count != 1 || e.s.appTaskFind(sid, "", "") != nil {
 		t.Fatalf("диагностика %d, запуск не должен возобновляться", count)
 	}
+	script := filepath.Join(filepath.Dir(e.proj), "devkit", "tools", "devkitctl", "recovery.py")
+	if err := os.WriteFile(script, []byte("raise RuntimeError('bridge failure')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskRecover(project, sid); err == nil || !strings.Contains(err.Error(), "bridge failure") {
+		t.Fatalf("ошибка вызова потеряна: %v", err)
+	}
+	found = false
+	for _, item := range e.s.appFeedRead(sid) {
+		if strings.Contains(item.Text, "старый журнал") && strings.Contains(item.Text, "bridge failure") {
+			found = true
+		}
+	}
+	if !found || e.s.appTaskFind(sid, "", "") != nil {
+		t.Fatal("причина ошибки не показана или запуск возобновлён")
+	}
 }
 
 func TestAppTaskInterruptedLegacy(t *testing.T) {
+	e, _ := appTaskEnv(t, "mute")
 	home := t.TempDir()
+	read := func(start string) appTaskLegacyStatus {
+		t.Helper()
+		status, err := e.s.appTaskInterruptedLegacy(home, "XR-002", start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
 	started := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.Local)
 	logPath := ".devkit/heads/XR-002.log"
 	prefix := started.Add(time.Second).Format(chat.Stamp) + " task-run XR-002: "
@@ -462,19 +487,42 @@ func TestAppTaskInterruptedLegacy(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(home, logPath), modified, modified); err != nil {
 		t.Fatal(err)
 	}
-	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
+	if read(started.Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
 		t.Fatal("same-second legacy entry cannot identify the current generation")
 	}
-	if appTaskInterruptedLegacy(home, "XR-002", started.Add(500*time.Millisecond).Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
+	if read(started.Add(500*time.Millisecond).Format(time.RFC3339Nano)) != appTaskLegacyAmbiguous {
 		t.Fatal("same-second entry with fractional start cannot identify the current generation")
 	}
+	precise := started.Add(123456789 * time.Nanosecond)
+	for _, tc := range []struct {
+		fraction time.Duration
+		want     appTaskLegacyStatus
+	}{
+		{123456100, appTaskLegacyNone}, {123456788, appTaskLegacyNone},
+		{123456789, appTaskLegacyAmbiguous}, {123456790, appTaskLegacyAmbiguous},
+	} {
+		modified := started.Add(tc.fraction)
+		if err := os.Chtimes(filepath.Join(home, logPath), modified, modified); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(precise.Format(time.RFC3339Nano)); got != tc.want {
+			t.Fatalf("mtime %v: got %s, want %s", tc.fraction, got, tc.want)
+		}
+	}
 	putDoc(t, home, logPath, open)
-	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyActive {
+	if read(started.Format(time.RFC3339Nano)) != appTaskLegacyActive {
 		t.Fatal("legacy interruption was lost")
 	}
 	putDoc(t, home, logPath, open+prefix+"голова вышла кодом 0 за 3 с, задача в check\n")
-	if appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)) != appTaskLegacyNone {
+	if read(started.Format(time.RFC3339Nano)) != appTaskLegacyNone {
 		t.Fatal("normal legacy completion was mistaken for interruption")
+	}
+	script := filepath.Join(filepath.Dir(e.proj), "devkit", "tools", "devkitctl", "recovery.py")
+	if err := os.WriteFile(script, []byte("raise RuntimeError('bridge failure')\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.appTaskInterruptedLegacy(home, "XR-002", started.Format(time.RFC3339Nano)); err == nil || !strings.Contains(err.Error(), "старый журнал") || !strings.Contains(err.Error(), "bridge failure") {
+		t.Fatalf("ошибка чтения журнала потеряна: %v", err)
 	}
 }
 

@@ -38,7 +38,7 @@ class TaskStateTest(unittest.TestCase):
                 "taskRunRoot": str(self.root.resolve()), "harness": "glm-code-2",
                 "model": "glm-5.3"}
         stored.write_text(json.dumps(chat))
-        with mock.patch.object(taskstate, "_legacy_app_pass", wraps=taskstate._legacy_app_pass) as journal:
+        with mock.patch.object(taskstate, "legacy_app_pass", wraps=taskstate.legacy_app_pass) as journal:
             taskstate.app_runs(self.home, self.root, ["DK-1"])
             journal.assert_not_called()
         runs = taskstate.app_runs(self.home, self.root, ["DK-1"])
@@ -82,7 +82,7 @@ class TaskStateTest(unittest.TestCase):
 
         same = datetime.fromisoformat("2026-11-20T10:00:00+03:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
         write_log(same + launch)
-        with mock.patch.object(taskstate, "_legacy_app_pass", wraps=taskstate._legacy_app_pass) as journal:
+        with mock.patch.object(taskstate, "legacy_app_pass", wraps=taskstate.legacy_app_pass) as journal:
             taskstate.app_runs(self.home, self.root, ["DK-1"])
             self.assertEqual(journal.call_count, 1)
         self.assertTrue(recovery_owned())
@@ -99,6 +99,39 @@ class TaskStateTest(unittest.TestCase):
         self.assertTrue(recovery_owned())
         write_log(old + launch, new + launch, new + " task-run DK-1: стоп: штатное завершение")
         self.assertFalse(recovery_owned())
+
+    def test_legacy_app_pass_uses_nanosecond_mtime(self):
+        log = self.home / ".devkit" / "heads" / "DK-1.log"
+        log.parent.mkdir(parents=True)
+        started = "2026-11-20T10:00:00.123456789+00:00"
+        line = datetime.fromisoformat("2026-11-20T10:00:00+00:00").astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        log.write_text(line + " task-run DK-1: проход поднят: task-run.py --app-turn-client\n")
+        second = int(datetime.fromisoformat("2026-11-20T10:00:00+00:00").timestamp()) * 1_000_000_000
+        for fraction, expected in ((123456100, False), (123456788, False), (123456789, "ambiguous"), (123456790, "ambiguous")):
+            with self.subTest(fraction=fraction):
+                os.utime(log, ns=(second + fraction, second + fraction))
+                self.assertEqual(taskstate.legacy_app_pass(self.home, "DK-1", started), expected)
+
+    def test_legacy_app_pass_distinguishes_missing_and_unreadable(self):
+        started = "2026-11-20T10:00:00Z"
+        self.assertFalse(taskstate.legacy_app_pass(self.home, "DK-1", started))
+        log = self.home / ".devkit" / "heads" / "DK-1.log"
+        log.mkdir(parents=True)
+        with self.assertRaises(IsADirectoryError):
+            taskstate.legacy_app_pass(self.home, "DK-1", started)
+
+    def test_unreadable_legacy_journal_blocks_only_its_task(self):
+        self.data["run"].update(pid=999999, started="2026-11-20T10:00:00Z")
+        self.name.write_text(json.dumps(self.data))
+        other = taskstate.path(self.home, self.root, "DK-2")
+        other.write_text(json.dumps(dict(self.data, task="DK-2", run=dict(self.data["run"], appChat="as-other", appRecovery=True))))
+        log = self.home / ".devkit" / "heads" / "DK-1.log"
+        log.mkdir(parents=True)
+        runs = taskstate.app_runs(self.home, self.root, ["DK-1", "DK-2"])
+        self.assertIn("Is a directory", runs["DK-1"]["appRecoveryError"])
+        self.assertTrue(taskstate.app_handles_recovery(runs["DK-1"]))
+        self.assertEqual(runs["DK-2"]["appChat"], "as-other")
+        self.assertTrue(taskstate.app_handles_recovery(runs["DK-2"]))
 
     def test_owner_acknowledgment_preserves_identity(self):
         taskstate.acknowledge(self.home, self.root, "DK-1", "run-one", os.getpid())

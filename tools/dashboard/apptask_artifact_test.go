@@ -228,16 +228,18 @@ func TestAppTaskRecoveryInstalledArtifact(t *testing.T) {
 	e, c, restart := appArtifactRestartable(t, "mute")
 	runtime := os.Getenv("DEVKIT_TASK_RUN_ARTIFACT")
 	root := strings.TrimSuffix(runtime, string(filepath.Separator)+filepath.FromSlash(taskhead.TaskRunRel))
-	rel := filepath.Join("tools", "devkitctl", "recovery.py")
-	bridge, err := os.ReadFile(filepath.Join(root, rel))
-	if err != nil {
-		t.Fatal(err)
-	}
 	kit := filepath.Join(filepath.Dir(e.proj), "devkit")
-	if err := os.WriteFile(filepath.Join(kit, rel), bridge, 0644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"recovery.py", "taskstate.py"} {
+		rel := filepath.Join("tools", "devkitctl", name)
+		bridge, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(kit, rel), bridge, 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s artifact sha256 %x", name, sha256.Sum256(bridge))
 	}
-	t.Logf("recovery artifact sha256 %x", sha256.Sum256(bridge))
 	appTaskRecoveryFixture(t, e)
 	code, first := appTaskStart(t, e, c)
 	if code != http.StatusOK {

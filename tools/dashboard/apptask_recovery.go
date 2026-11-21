@@ -247,7 +247,12 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 		if st.TaskRun {
 			legacy = appTaskLegacyActive
 		} else {
-			legacy = appTaskInterruptedLegacy(home, st.Task, run.Started)
+			legacy, err = s.appTaskInterruptedLegacy(home, st.Task, run.Started)
+			if err != nil {
+				state.Close()
+				s.appTaskRecoveryNote(sid, "Восстановление конвейера Codex ждёт: "+err.Error(), true, "legacy-read-"+run.ID)
+				return err
+			}
 		}
 	}
 	if legacy == appTaskLegacyAmbiguous {
@@ -367,6 +372,10 @@ func (s *server) appTaskRecover(p *Project, sid string) error {
 }
 
 func (s *server) appTaskBudgetCommand(home string, args ...string) (string, error) {
+	return s.appTaskRecoveryCommand(home, "команды бюджета восстановления", "журнал бюджета восстановления", args...)
+}
+
+func (s *server) appTaskRecoveryCommand(home, timeoutContext, errorContext string, args ...string) (string, error) {
 	runner := taskRunPath(s.cfg.Roots)
 	if runner == "" {
 		return "", errors.New(taskRunMissing)
@@ -382,9 +391,9 @@ func (s *server) appTaskBudgetCommand(home string, args ...string) (string, erro
 	line := strings.TrimSpace(string(raw))
 	if err != nil {
 		if deadlineErr := ctx.Err(); deadlineErr != nil {
-			return "", fmt.Errorf("истекло время команды бюджета восстановления: %s (%w, %w)", line, deadlineErr, err)
+			return "", fmt.Errorf("истекло время %s: %s (%w, %w)", timeoutContext, line, deadlineErr, err)
 		}
-		return "", fmt.Errorf("журнал бюджета восстановления: %s (%w)", line, err)
+		return "", fmt.Errorf("%s: %s (%w)", errorContext, line, err)
 	}
 	return line, nil
 }
@@ -444,56 +453,24 @@ func (s *server) appTaskLegacyStopped(home, root, task, started string) (bool, e
 
 // Старый дашборд сбрасывал TaskRun при выгрузке. В этом случае нужен след
 // прохода, поднятого оболочкой после записи именно этого запуска.
-type appTaskLegacyStatus int
+type appTaskLegacyStatus string
 
 const (
-	appTaskLegacyNone appTaskLegacyStatus = iota
-	appTaskLegacyAmbiguous
-	appTaskLegacyActive
+	appTaskLegacyNone      appTaskLegacyStatus = "none"
+	appTaskLegacyAmbiguous appTaskLegacyStatus = "ambiguous"
+	appTaskLegacyActive    appTaskLegacyStatus = "active"
 )
 
-func appTaskInterruptedLegacy(home, task, started string) appTaskLegacyStatus {
-	since, err := time.Parse(time.RFC3339Nano, started)
+func (s *server) appTaskInterruptedLegacy(home, task, started string) (appTaskLegacyStatus, error) {
+	line, err := s.appTaskRecoveryCommand(home, "чтения старого журнала", "не прочитан старый журнал", "app-legacy", home, task, started)
 	if err != nil {
-		return appTaskLegacyNone
+		return appTaskLegacyNone, fmt.Errorf("старый журнал: %w", err)
 	}
-	file, err := os.Open(filepath.Join(home, ".devkit", "heads", task+".log"))
-	if err != nil {
-		return appTaskLegacyNone
+	status := appTaskLegacyStatus(line)
+	if status != appTaskLegacyNone && status != appTaskLegacyAmbiguous && status != appTaskLegacyActive {
+		return appTaskLegacyNone, fmt.Errorf("старый журнал: неизвестный результат %q", line)
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || info.ModTime().Before(since) {
-		return appTaskLegacyNone
-	}
-	size := min(info.Size(), 64*1024)
-	raw := make([]byte, size)
-	if _, err := file.ReadAt(raw, info.Size()-size); err != nil {
-		return appTaskLegacyNone
-	}
-	status := appTaskLegacyNone
-	for _, line := range strings.Split(string(raw), "\n") {
-		stamp, event, ok := strings.Cut(line, " task-run "+task+": ")
-		if !ok {
-			continue
-		}
-		at, err := time.ParseInLocation(chat.Stamp, stamp, time.Local)
-		if err != nil {
-			continue
-		}
-		launch := strings.HasPrefix(event, "проход поднят:") && strings.Contains(event, "--app-turn-client")
-		if at.Equal(since.Truncate(time.Second)) && launch {
-			status = appTaskLegacyAmbiguous
-		} else if at.After(since.Truncate(time.Second)) {
-			switch {
-			case launch:
-				status = appTaskLegacyActive
-			case status == appTaskLegacyActive && (strings.HasPrefix(event, "голова вышла кодом ") || strings.HasPrefix(event, "стоп: ")):
-				status = appTaskLegacyNone
-			}
-		}
-	}
-	return status
+	return status, nil
 }
 
 func (s *server) appTaskRecoveryOwner(p *Project, sid, id string) error {

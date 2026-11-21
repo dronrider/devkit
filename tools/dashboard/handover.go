@@ -121,8 +121,7 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saidMark(saidTaskKey(id), fmt.Sprintf(
 		"работа передана новому диспетчеру: %s, новый поднят в tmux-сессии task-%s", what, id))
-	// Подъём нового носителя после освобождения имени окна: конвейер поднимается
-	// свежим окном и читает состояние с диска, это его способ продолжения.
+	// После остановки прежнего носителя способ продолжения выбирает taskhead.Raise.
 	model := ""
 	if own != nil {
 		model = own.tierModel(tier)

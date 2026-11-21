@@ -7,7 +7,7 @@ import os
 import re
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -39,20 +39,27 @@ def read(home, root, task):
     return data
 
 
-def _legacy_app_pass(home, task, started):
+def legacy_app_pass(home, task, started):
     """Читает незавершённый проход прежнего дашборда по журналу оболочки."""
     try:
-        since = datetime.fromisoformat(started)
-        if since.tzinfo is None:
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})", started)
+        if match is None:
             return False
-        after = since.replace(microsecond=0).timestamp()
+        since = datetime.fromisoformat(match[1] + match[3]).astimezone(timezone.utc)
+        delta = since - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        after = delta.days * 86400 + delta.seconds
+        fraction = int(((match[2] or "") + "000000000")[:9])
+        since_ns = after * 1_000_000_000 + fraction
+    except (TypeError, ValueError, OverflowError):
+        return False
+    try:
         with (home / ".devkit" / "heads" / (task + ".log")).open("rb") as log:
             stat = os.fstat(log.fileno())
-            if stat.st_mtime < since.timestamp():
+            if stat.st_mtime_ns < since_ns:
                 return False
             log.seek(max(0, stat.st_size - 64 * 1024))
             lines = log.read(64 * 1024).decode("utf-8", errors="replace").splitlines()
-    except (OSError, TypeError, ValueError, OverflowError):
+    except FileNotFoundError:
         return False
 
     status = ""
@@ -97,6 +104,12 @@ def app_runs(home, root, tasks):
     if not legacy:
         return confirmed
 
+    def journal(task, run):
+        try:
+            return legacy_app_pass(home, task, run.get("started")), ""
+        except OSError as error:
+            return "", str(error)
+
     # После обновления дашборд перенесёт адрес чата в Run. До этого тик
     # узнаёт прежний запуск по обоим сохранённым экземплярам его реквизитов.
     for file in (home / ".devkit" / "chats").glob("as*.json"):
@@ -116,10 +129,11 @@ def app_runs(home, root, tasks):
                 and chat.get("taskRunPID") == run["pid"]
                 and chat.get("harness") == run.get("harness")
                 and chat.get("model") == run.get("model")):
-            status = "active" if chat.get("taskRun") is True else _legacy_app_pass(home, task, run.get("started"))
+            status, error = ("active", "") if chat.get("taskRun") is True else journal(task, run)
             active = status == "active"
             confirmed[task] = dict(run, appChat=file.stem, appRecovery=active,
-                                   appRecoveryAmbiguous=not active and status == "ambiguous")
+                                   appRecoveryAmbiguous=not active and status == "ambiguous",
+                                   appRecoveryError=error)
 
     # Дашборд может хранить чаты в своём HOME, а оболочка пишет журнал в
     # машинном. До сверки адреса дашбордом незавершённый проход удерживает
@@ -127,15 +141,16 @@ def app_runs(home, root, tasks):
     for task, run in legacy.items():
         if task in confirmed:
             continue
-        status = _legacy_app_pass(home, task, run.get("started"))
-        if status:
+        status, error = journal(task, run)
+        if status or error:
             confirmed[task] = dict(run, appChat="", appRecovery=status == "active",
-                                   appRecoveryAmbiguous=status == "ambiguous")
+                                   appRecoveryAmbiguous=status == "ambiguous", appRecoveryError=error)
     return confirmed
 
 
 def app_handles_recovery(run):
     return (run["stopped"] or run.get("appRecovery") is True
+            or bool(run.get("appRecoveryError"))
             or run.get("appRecoveryAmbiguous") is True
             or run.get("appRecoveryTerminal") is True)
 

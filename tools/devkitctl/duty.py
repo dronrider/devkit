@@ -430,14 +430,17 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
     tasks = (item[0] for item in marks + incidents)
     app_runs = taskstate.app_runs(home, root, tasks)
     owned = {task: run for task, run in app_runs.items() if taskstate.app_handles_recovery(run)}
+    unreadable = {task: run["appRecoveryError"] for task, run in owned.items() if run.get("appRecoveryError")}
     ambiguous = {task for task, run in owned.items() if run.get("appRecoveryAmbiguous") is True}
     restoring = {task for task, run in owned.items()
-                 if task not in ambiguous and not run["stopped"] and run.get("appRecoveryTerminal") is not True}
+                 if task not in ambiguous and task not in unreadable and not run["stopped"] and run.get("appRecoveryTerminal") is not True}
 
     known = read_state(home=home)
     tries = read_tries(home=home)
     fresh = set()
     seen = set()
+    for task, error in sorted(unreadable.items()):
+        lines.append("корень %s: не прочитан старый журнал %s: %s" % (root, task, error))
     for task in sorted(ambiguous):
         lines.append("корень %s: журнал %s не определяет поколение запуска; нужен разбор" % (root, task))
     for task in sorted(restoring):

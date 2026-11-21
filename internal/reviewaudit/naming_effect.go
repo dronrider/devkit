@@ -342,6 +342,15 @@ func (g *queryGoSource) nameFieldCallUse(entry, writer, reader queryFunc, field,
 	default:
 		return false
 	}
+	for _, stmt := range reader.node.Body.List {
+		if stmt == readStmt {
+			break
+		}
+		assignment, ok := stmt.(*ast.AssignStmt)
+		if !ok || !nameIndependentAssignment(assignment, destination.Obj) {
+			return false
+		}
+	}
 	parent, err := g.nameWriteFunction(entry, calls[:len(calls)-1])
 	if err != nil {
 		return false
@@ -383,14 +392,14 @@ func (g *queryGoSource) nameFieldCallUse(entry, writer, reader queryFunc, field,
 		if !ok || readSlot >= len(call.Args) {
 			return false
 		}
+		for index, arg := range call.Args {
+			if _, literal := arg.(*ast.BasicLit); index != readSlot && !literal {
+				return false
+			}
+		}
 		callee, called := call.Fun.(*ast.Ident)
 		value, passed := call.Args[readSlot].(*ast.Ident)
-		return called && passed && callee.Obj != nil && callee.Obj.Decl == reader.node && value.Obj == binding.Obj &&
-			!slices.ContainsFunc(call.Args, func(arg ast.Expr) bool {
-				_, simpleName := arg.(*ast.Ident)
-				_, literal := arg.(*ast.BasicLit)
-				return !simpleName && !literal
-			})
+		return called && passed && callee.Obj != nil && callee.Obj.Decl == reader.node && value.Obj == binding.Obj
 	}
 	return false
 }

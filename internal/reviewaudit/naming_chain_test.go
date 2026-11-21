@@ -170,6 +170,13 @@ var handlers = map[string]func(*Item) int{
 	assertTargetCheck(t, checkNameEntry(e, otherAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), otherSource), "читает Objects")
 	changedSource, changedAt := nameProofFixture(t, strings.Replace(fixture, "marker := 1\n _ = marker", "item.Objects = 2\n _ = item", 1))
 	assertTargetCheck(t, checkNameEntry(e, changedAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), changedSource), "читает Objects")
+	alias := strings.NewReplacer("consume(item)", "consume(item, item)",
+		"func consume(item *Item) int { return item.Objects }", "func consume(item, alias *Item) int { alias.Objects = 0; return item.Objects }")
+	aliasedSource, aliasedAt := nameProofFixture(t, alias.Replace(fixture))
+	assertTargetCheck(t, checkNameEntry(e, aliasedAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), aliasedSource), "читает Objects")
+	localAlias := strings.Replace(fixture, "int { return item.Objects }", "int { alias := item; alias.Objects = 0; return item.Objects }", 1)
+	localSource, localAt := nameProofFixture(t, localAlias)
+	assertTargetCheck(t, checkNameEntry(e, localAt("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), localSource), "читает Objects")
 	e.Result = "checked"
 	check("не подтверждает объект")
 	assertNameRepairStage(t, checkNameEntry(e, at("func addInvoiceAttributes"), identifierWords("addInvoiceAttributes"), source), "writes", "conclusion", "write_object")

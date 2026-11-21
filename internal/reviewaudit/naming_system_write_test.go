@@ -1,6 +1,7 @@
 package reviewaudit
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -59,7 +60,12 @@ func TestNameSystemWriteTemplate(t *testing.T) {
 		t.Fatalf("нет шаблона proof.effect: %+v", e.ObjectComparison)
 	}
 	p := e.ObjectComparison.Proof
-	if !strings.Contains(p.Expression, "вызов") || p.Effect == nil || p.Effect.Kind == "" || len(p.Words) != 1 || p.Words[0].Word != "Checker" {
+	wire, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Expression, "вызов") || !strings.Contains(string(wire), `"effect":{"kind":"`) ||
+		len(p.Words) != 1 || p.Words[0].Word != "Checker" {
 		t.Fatalf("неполный шаблон proof.effect: %+v", p)
 	}
 }

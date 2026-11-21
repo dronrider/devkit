@@ -2,9 +2,9 @@
   "version": 1,
   "id": "DK-1750",
   "base_sha": "e54b65d18968f79ec4286046fc2b70276f8325b7",
-  "head_sha": "7acf303bc88dcf7a4d11200824927c50a2411c8f",
-  "code_hash": "b5e65f11377a23d84b0c5ff617a1229cc1f52b2375a80af9655a58ab31c23a65",
-  "task_hash": "6211d8e1b9a14eddef1d0f0735f1824822a53ca5af1028ff3e66f35f18a56b68",
+  "head_sha": "c3042609ff330d8b0ba74784e20c80b9b59d35bf",
+  "code_hash": "4371dd4c5e90018afb3d31352086c8014155394817eb17000b375a9032eb7421",
+  "task_hash": "269c2a1a405cde78b801f6c043cb7d382414f5da7ca285a653da66c09e10ceda",
   "sources": [
     {
       "name": "common-architecture",
@@ -47,7 +47,7 @@
     "evidence": [
       "tools/shipctl/checkrun.go:115: Codex идёт в worker, остальные харнесы остаются на taskctl run.",
       "tools/shipctl/checkcodex.go:108: taskstate и замок защищают остановку и повторный запуск.",
-      "tools/dashboard/checkstop.go:15: dashboard сигнализирует проверяющему и ждёт освобождения замка.",
+      "tools/dashboard/checkstop.go:16: dashboard сигнализирует проверяющему и ждёт освобождения замка.",
       "internal/sessions/sessions.go:598: ID текущей сессии берётся из окружения.",
       "internal/reviewaudit/naming_effect_test.go:201: независимый объект, ранний возврат и alias должны быть отклонены.",
       "internal/reviewaudit/naming_setting_test.go:123: фикстуры проверяют достижимость чтения и guard.",
@@ -60,7 +60,8 @@
       "На c49efc040 восстановлено допустимое чтение поля в условии if. Валидатор отличает настоящее утверждение теста об окружении от самосравнения и случайного журнального вывода. Код и тесты сверены с обоими прежними красными исходами.",
       "Архивный снимок DK-1748 проверен валидатором принятого выпуска 29f04090c. Текущий валидатор требует подтвердить чтение того же экземпляра и объясняет обновление доказательства. Для запуска Codex отвергается пробельный ID; резервный журнал дописывает причину завершения.",
       "Проверяются точные аргументы os.Unsetenv, syscall.Kill, удаления и перемещения. Работающий аудитор подтверждает выбранные реальные изменения тестового процесса, проверяющего и файла состояния.",
-      "Два случая ложного подтверждения отклоняются. Роль object требует совпадения слов с ключом или PID. Файловая форма требует вызова без неподтверждённого замыкания."
+      "Два случая ложного подтверждения отклоняются. Роль object требует совпадения слов с ключом или PID. Файловая форма требует вызова без неподтверждённого замыкания.",
+      "internal/checkrun/checkrun.go:627: checkrun владеет именем подписки. Подъём и остановка сверяют одно объявление."
     ]
   },
   "rules": [
@@ -86,7 +87,7 @@
         },
         {
           "object": "stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Останавливает найденного проверяющего, не меняя данные доски.",
           "result": "checked"
         },
@@ -106,6 +107,12 @@
           "object": "reviewaudit",
           "location": "internal/reviewaudit/naming_setting.go:84",
           "observation": "Проверяет свидетельство записи переменной окружения по AST исходника; naming_effect и naming_write проверяют доказательства записи и потребителя.",
+          "result": "checked"
+        },
+        {
+          "object": "CodexHarness",
+          "location": "internal/checkrun/checkrun.go:627",
+          "observation": "Имя подписки принадлежит общему пакету приёмки. Подъём использует его в shipctl:116, остановка сверяет тот же идентификатор в dashboard:24.",
           "result": "checked"
         }
       ],
@@ -134,7 +141,7 @@
         },
         {
           "object": "taskhead",
-          "location": "tools/dashboard/checkstop.go:26",
+          "location": "tools/dashboard/checkstop.go:27",
           "observation": "Dashboard использует LockPath, Owner и Working из общего пакета, не копируя устройство замка.",
           "result": "checked"
         },
@@ -148,6 +155,12 @@
           "object": "Go parser",
           "location": "internal/reviewaudit/naming_write.go:38",
           "observation": "Валидатор использует стандартный go/ast и действующие внутренние методы queryGoSource для связывания вызовов.",
+          "result": "checked"
+        },
+        {
+          "object": "общий идентификатор проверяющего",
+          "location": "tools/dashboard/checkstop.go:24",
+          "observation": "Обработчик остановки читает публичный checkrun.CodexHarness. Dashboard уже использовал этот пакет для общего отбора.",
           "result": "checked"
         }
       ],
@@ -1042,15 +1055,15 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "object": "tools/dashboard/checkstop.go:16#stopCodexChecker",
           "symbol": "stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint. Размещение tools/dashboard соответствует проверенной границе.",
           "result": "checked",
           "facts": {
             "implementation": [
               {
-                "location": "tools/dashboard/checkstop.go:15",
+                "location": "tools/dashboard/checkstop.go:16",
                 "text": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint.",
                 "quote": "func stopCodexChecker(home, root, id string) (bool, error) {"
               }
@@ -1063,20 +1076,25 @@
             ],
             "dependency": [
               {
-                "location": "tools/dashboard/checkstop.go:15",
+                "location": "tools/dashboard/checkstop.go:16",
                 "text": "Останавливает процесс проверки Codex по состоянию и владельцу замка для dashboard endpoint. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:627",
+                "text": "Имя подписки общее для выбора носителя и распознавания его процесса.",
                 "verdict": "domain"
               }
             ],
             "change": [
               {
-                "location": "tools/dashboard/checkstop.go:15",
+                "location": "tools/dashboard/checkstop.go:16",
                 "text": "Изменение договора записи PID и замка требует синхронизации с worker shipctl и dashboard."
               }
             ],
             "placement": [
               {
-                "location": "tools/dashboard/checkstop.go:15",
+                "location": "tools/dashboard/checkstop.go:16",
                 "text": "Функция принадлежит области, указанной выше; вызывающие используют её на границе модуля или внутри него.",
                 "value": "tools/dashboard"
               }
@@ -1317,6 +1335,11 @@
               {
                 "location": "tools/shipctl/checkrun.go:98",
                 "text": "Реализует носитель checkrun: выбирает запуск Codex или taskctl и возвращает отчёт отбора. Соседние функции того же сценария используют внутренние типы и правила этой области.",
+                "verdict": "domain"
+              },
+              {
+                "location": "internal/checkrun/checkrun.go:627",
+                "text": "Имя подписки общее для выбора носителя и распознавания его процесса.",
                 "verdict": "domain"
               }
             ],
@@ -2344,7 +2367,7 @@
         "tools/agentctl/plan.go:95#planResolve",
         "tools/shipctl/checkcodex.go:33#raiseCodex",
         "tools/shipctl/checkcodex.go:110#codexCheckWorker",
-        "tools/dashboard/checkstop.go:15#stopCodexChecker",
+        "tools/dashboard/checkstop.go:16#stopCodexChecker",
         "internal/reviewaudit/naming_effect.go:39#checkNameWriteProof",
         "internal/reviewaudit/naming_setting.go:395#namePackageSelector",
         "internal/reviewaudit/naming_write.go:146#nameFileDestinationMatches",
@@ -4350,13 +4373,13 @@
         {
           "object": "единственный проверяющий",
           "location": "tools/shipctl/checkcodex.go:146",
-          "observation": "HoldForDelegate вызывается под транзакцией до запуска; освобождение отложено до выхода worker. Занятый замок даёт Busy; регрессия зафиксирована в docs/tasks/DK-1750.md:191.",
+          "observation": "HoldForDelegate вызывается под транзакцией до запуска; освобождение отложено до выхода worker. Занятый замок даёт Busy; регрессия зафиксирована в docs/tasks/DK-1750.md:192.",
           "result": "checked"
         },
         {
           "object": "безопасная остановка",
-          "location": "tools/dashboard/checkstop.go:22",
-          "observation": "Перед сигналом проверяются Stopped, harness, PID, имя run, владелец и живость замка и совпадение группы; worker создаёт группу ребёнка и при отмене убивает её, ждёт cmd.Wait до возврата.",
+          "location": "tools/dashboard/checkstop.go:23",
+          "observation": "Перед сигналом проверяются Stopped, harness, PID, имя run, владелец и живость замка и совпадение группы; worker создаёт группу ребёнка и при отмене убивает её, ждёт cmd.Wait до возврата. Идентификатор централизован, предикат владельца и ожидаемая группа прежние.",
           "result": "checked"
         },
         {
@@ -4540,7 +4563,7 @@
         },
         {
           "object": "dashboard",
-          "location": "tools/dashboard/checkstop.go:40",
+          "location": "tools/dashboard/checkstop.go:41",
           "observation": "Отправляет SIGTERM владельцу и ждёт смены владельца замка, при таймауте сообщает ошибку.",
           "result": "checked"
         },
@@ -4613,8 +4636,8 @@
         },
         {
           "object": "разрешённый процесс для сигнала",
-          "location": "tools/dashboard/checkstop.go:27",
-          "observation": "HTTP проверяет Origin и находит проект, затем stopCodexChecker сверяет остановленную запись выбранного дерева, ID запуска, Codex, PID, живого владельца замка и идентичность группы процесса. Чужой PID и группа остаются без сигнала.",
+          "location": "tools/dashboard/checkstop.go:28",
+          "observation": "HTTP проверяет Origin и находит проект, затем stopCodexChecker сверяет остановленную запись выбранного дерева, ID запуска, Codex, PID, живого владельца замка и идентичность группы процесса. Чужой PID и группа остаются без сигнала. Имя сверяется с checkrun.CodexHarness, тем же именем, которое выбирает worker.",
           "result": "checked"
         },
         {
@@ -5809,20 +5832,20 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:16",
-          "location": "tools/dashboard/checkstop.go:16",
+          "object": "tools/dashboard/checkstop.go:17",
+          "location": "tools/dashboard/checkstop.go:17",
           "observation": "Не прочитано состояние для кнопки остановки.",
           "result": "checked",
           "facts": {
             "origin": [
               {
-                "location": "tools/dashboard/checkstop.go:16",
+                "location": "tools/dashboard/checkstop.go:17",
                 "text": "Не прочитано состояние для кнопки остановки."
               }
             ],
             "classification": [
               {
-                "location": "tools/dashboard/checkstop.go:18",
+                "location": "tools/dashboard/checkstop.go:19",
                 "text": "stopCodexChecker возвращает ошибку обработчику; обработчик классифицирует её как HTTP 503.",
                 "quote": "return false, err",
                 "value": "",
@@ -5845,7 +5868,7 @@
             ],
             "cause": [
               {
-                "location": "tools/dashboard/checkstop.go:18",
+                "location": "tools/dashboard/checkstop.go:19",
                 "text": "Возвращается фактическая ошибка блокировки или чтения состояния.",
                 "verdict": "preserved"
               }
@@ -5860,20 +5883,20 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:30",
-          "location": "tools/dashboard/checkstop.go:30",
+          "object": "tools/dashboard/checkstop.go:31",
+          "location": "tools/dashboard/checkstop.go:31",
           "observation": "Непредвиденная ошибка чтения группы процесса.",
           "result": "checked",
           "facts": {
             "origin": [
               {
-                "location": "tools/dashboard/checkstop.go:30",
+                "location": "tools/dashboard/checkstop.go:31",
                 "text": "Непредвиденная ошибка чтения группы процесса."
               }
             ],
             "classification": [
               {
-                "location": "tools/dashboard/checkstop.go:35",
+                "location": "tools/dashboard/checkstop.go:36",
                 "text": "stopCodexChecker возвращает ошибку обработчику; обработчик классифицирует её как HTTP 503.",
                 "quote": "return false, fmt.Errorf(\"группа процесса проверяющего %d: %w\", run.PID, err)",
                 "value": "",
@@ -5896,7 +5919,7 @@
             ],
             "cause": [
               {
-                "location": "tools/dashboard/checkstop.go:35",
+                "location": "tools/dashboard/checkstop.go:36",
                 "text": "PID добавляется в контекст, исходный errno сохраняется через %w. ESRCH отдельно означает исчезнувший процесс.",
                 "verdict": "preserved"
               }
@@ -5911,20 +5934,20 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:40",
-          "location": "tools/dashboard/checkstop.go:40",
+          "object": "tools/dashboard/checkstop.go:41",
+          "location": "tools/dashboard/checkstop.go:41",
           "observation": "Не отправлен SIGTERM подтверждённому процессу.",
           "result": "checked",
           "facts": {
             "origin": [
               {
-                "location": "tools/dashboard/checkstop.go:40",
+                "location": "tools/dashboard/checkstop.go:41",
                 "text": "Не отправлен SIGTERM подтверждённому процессу."
               }
             ],
             "classification": [
               {
-                "location": "tools/dashboard/checkstop.go:41",
+                "location": "tools/dashboard/checkstop.go:42",
                 "text": "stopCodexChecker возвращает ошибку обработчику; обработчик классифицирует её как HTTP 503.",
                 "quote": "return false, err",
                 "value": "",
@@ -5947,7 +5970,7 @@
             ],
             "cause": [
               {
-                "location": "tools/dashboard/checkstop.go:41",
+                "location": "tools/dashboard/checkstop.go:42",
                 "text": "Обработчик получает реальный отказ системного вызова.",
                 "verdict": "preserved"
               }
@@ -5962,20 +5985,20 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:46",
-          "location": "tools/dashboard/checkstop.go:46",
+          "object": "tools/dashboard/checkstop.go:47",
+          "location": "tools/dashboard/checkstop.go:47",
           "observation": "Процесс не вернул замок к пределу ожидания.",
           "result": "checked",
           "facts": {
             "origin": [
               {
-                "location": "tools/dashboard/checkstop.go:46",
+                "location": "tools/dashboard/checkstop.go:47",
                 "text": "Процесс не вернул замок к пределу ожидания."
               }
             ],
             "classification": [
               {
-                "location": "tools/dashboard/checkstop.go:47",
+                "location": "tools/dashboard/checkstop.go:48",
                 "text": "stopCodexChecker возвращает ошибку обработчику; обработчик классифицирует её как HTTP 503.",
                 "quote": "return false, fmt.Errorf(\"процесс проверки не освободил замок\")",
                 "value": "",
@@ -5998,7 +6021,7 @@
             ],
             "cause": [
               {
-                "location": "tools/dashboard/checkstop.go:47",
+                "location": "tools/dashboard/checkstop.go:48",
                 "text": "Сформулирована конкретная причина истечения срока.",
                 "verdict": "preserved"
               }
@@ -7054,10 +7077,10 @@
         "tools/shipctl/checkcodex.go:199",
         "tools/shipctl/checkcodex.go:133",
         "tools/shipctl/checkcodex.go:147",
-        "tools/dashboard/checkstop.go:16",
-        "tools/dashboard/checkstop.go:30",
-        "tools/dashboard/checkstop.go:40",
-        "tools/dashboard/checkstop.go:46",
+        "tools/dashboard/checkstop.go:17",
+        "tools/dashboard/checkstop.go:31",
+        "tools/dashboard/checkstop.go:41",
+        "tools/dashboard/checkstop.go:47",
         "tools/shipctl/checkcodex.go:210",
         "tools/shipctl/checkcodex.go:233",
         "tools/shipctl/checkcodex.go:239",
@@ -7154,7 +7177,7 @@
       "files": [
         {
           "path": "internal/checkrun/checkrun.go",
-          "reason": "После предыдущей проверки изменена формулировка комментария. Участок не добавляет операций с БД."
+          "reason": "Правка добавляет комментарий и константу маршрута проверки. Обращений к БД нет."
         },
         {
           "path": "internal/reviewaudit/naming.go",
@@ -7271,6 +7294,10 @@
         {
           "path": "tools/dashboard/checkstop_test.go",
           "reason": "В изменённых файлах нет SQL или доступа к драйверу БД по коллекции."
+        },
+        {
+          "path": "tools/dashboard/quota_test.go",
+          "reason": "Тест читает имена профилей и содержимое файлов. Базы данных и SQL отсутствуют."
         },
         {
           "path": "tools/dashboard/runs.go",
@@ -7598,7 +7625,7 @@
       "files": [
         {
           "path": "internal/checkrun/checkrun.go",
-          "reason": "По сравнению с базой правки менялись только комментарии. Имена, записи и результаты функций остались прежними."
+          "reason": "Константа CodexHarness на строке 627 задаёт имя харнеса для запуска и остановки. Оба потребителя сравнивают это имя. Константа не возвращает результат и не изменяет состояние."
         },
         {
           "path": "internal/reviewaudit/naming.go",
@@ -7800,7 +7827,7 @@
         {
           "path": "tools/dashboard/checkstop.go",
           "objects": [
-            "tools/dashboard/checkstop.go:15#stopCodexChecker"
+            "tools/dashboard/checkstop.go:16#stopCodexChecker"
           ]
         },
         {
@@ -7811,6 +7838,12 @@
             "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
             "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
             "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock"
+          ]
+        },
+        {
+          "path": "tools/dashboard/quota_test.go",
+          "objects": [
+            "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode"
           ]
         },
         {
@@ -8219,9 +8252,9 @@
           "location": "tools/agentctl/touch_test.go:30"
         },
         {
-          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "object": "tools/dashboard/checkstop.go:16#stopCodexChecker",
           "symbol": "stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15"
+          "location": "tools/dashboard/checkstop.go:16"
         },
         {
           "object": "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
@@ -8247,6 +8280,11 @@
           "object": "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
           "symbol": "TestRunStopCodexCheckerReportsUnreleasedLock",
           "location": "tools/dashboard/checkstop_test.go:101"
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode",
+          "symbol": "TestQuotaNoHarnessNamesInCode",
+          "location": "tools/dashboard/quota_test.go:290"
         },
         {
           "object": "tools/dashboard/runs.go:1047#server.handleRunStop",
@@ -8419,12 +8457,13 @@
         "tools/agentctl/plan.go:95#planResolve",
         "tools/agentctl/plan_test.go:484#TestPlanCodexSession",
         "tools/agentctl/touch_test.go:30#TestMain",
-        "tools/dashboard/checkstop.go:15#stopCodexChecker",
+        "tools/dashboard/checkstop.go:16#stopCodexChecker",
         "tools/dashboard/checkstop_test.go:17#TestCheckStopSupervisorHelper",
         "tools/dashboard/checkstop_test.go:32#checkStopStand",
         "tools/dashboard/checkstop_test.go:77#TestRunStopCodexChecker",
         "tools/dashboard/checkstop_test.go:89#TestRunStopCodexCheckerRejectsForeignGroup",
         "tools/dashboard/checkstop_test.go:101#TestRunStopCodexCheckerReportsUnreleasedLock",
+        "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode",
         "tools/dashboard/runs.go:1047#server.handleRunStop",
         "tools/dashboard/tasks_test.go:125#TestMain",
         "tools/shipctl/checkcodex.go:33#shipCarrier.raiseCodex",
@@ -8650,9 +8689,9 @@
           "observation": "logRun не возвращает значение. Имя описывает побочный эффект записи статистики."
         },
         {
-          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "object": "tools/dashboard/checkstop.go:16#stopCodexChecker",
           "check": "result",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Ветка отказа возвращает false, если запись не описывает проверяющего Codex. Обработчик пропускает ответ об остановке при stopped=false.",
           "result": "checked",
           "object_comparison": {
@@ -8661,7 +8700,7 @@
               "Checker"
             ],
             "actual": "false",
-            "actual_at": "tools/dashboard/checkstop.go:24",
+            "actual_at": "tools/dashboard/checkstop.go:25",
             "proof": {
               "expression": "false",
               "type": "bool",
@@ -8670,20 +8709,20 @@
                   "word": "Codex",
                   "role": "condition",
                   "fact": {
-                    "location": "tools/dashboard/checkstop.go:23",
+                    "location": "tools/dashboard/checkstop.go:24",
                     "text": "Условие допуска проверяющего к отправке сигнала.",
                     "value": "run.Harness",
-                    "quote": "!strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID)) || run.Harness != \"codex\" {"
+                    "quote": "!strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID)) || run.Harness != checkrun.CodexHarness {"
                   }
                 },
                 {
                   "word": "Checker",
                   "role": "condition",
                   "fact": {
-                    "location": "tools/dashboard/checkstop.go:23",
+                    "location": "tools/dashboard/checkstop.go:24",
                     "text": "Условие допуска проверяющего к отправке сигнала.",
                     "value": "run.ID",
-                    "quote": "!strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID)) || run.Harness != \"codex\" {"
+                    "quote": "!strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID)) || run.Harness != checkrun.CodexHarness {"
                   }
                 }
               ]
@@ -8692,7 +8731,7 @@
           "result_evidence": {
             "word": "Checker",
             "returned": "false, nil",
-            "return_at": "tools/dashboard/checkstop.go:24",
+            "return_at": "tools/dashboard/checkstop.go:25",
             "consumer": "Обработчик читает stopped и при успехе возвращает HTTP-ответ со state стоп.",
             "consumer_at": "tools/dashboard/runs.go:1071",
             "flow": {
@@ -8704,9 +8743,9 @@
           }
         },
         {
-          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
+          "object": "tools/dashboard/checkstop.go:16#stopCodexChecker",
           "check": "meaning",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "symbol": "stopCodexChecker",
           "observation": "Останавливает подходящий процесс проверяющего Codex, возвращает признак остановки и ошибку; отправляет SIGTERM и ожидает освобождения замка. Слова имени описывают это назначение.",
           "result": "checked",
@@ -8715,21 +8754,21 @@
               "word": "stop",
               "meaning": "остановка",
               "fact": "syscall.Kill(run.PID, syscall.SIGTERM)",
-              "location": "tools/dashboard/checkstop.go:40",
+              "location": "tools/dashboard/checkstop.go:41",
               "result": "checked"
             },
             {
               "word": "Codex",
               "meaning": "среда Codex",
-              "fact": "run.Harness != \"codex\"",
-              "location": "tools/dashboard/checkstop.go:23",
+              "fact": "run.Harness != checkrun.CodexHarness",
+              "location": "tools/dashboard/checkstop.go:24",
               "result": "checked"
             },
             {
               "word": "Checker",
               "meaning": "проверяющий",
               "fact": "strings.HasPrefix(run.ID, fmt.Sprintf(\"check-%d-\", run.PID))",
-              "location": "tools/dashboard/checkstop.go:23",
+              "location": "tools/dashboard/checkstop.go:24",
               "result": "checked"
             }
           ]
@@ -11766,8 +11805,8 @@
                   }
                 ],
                 "use": {
-                  "declaration": "tools/dashboard/checkstop.go:15",
-                  "at": "tools/dashboard/checkstop.go:44",
+                  "declaration": "tools/dashboard/checkstop.go:16",
+                  "at": "tools/dashboard/checkstop.go:45",
                   "expression": "checkStopTimeout"
                 }
               }
@@ -20685,8 +20724,8 @@
           "observation": "Сверяет данные доказательства и код операции. Выполнение операций из анализируемого кода не входит в проверку."
         },
         {
-          "object": "tools/dashboard/checkstop.go:15#stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15",
+          "object": "tools/dashboard/checkstop.go:16#stopCodexChecker",
+          "location": "tools/dashboard/checkstop.go:16",
           "check": "writes",
           "result": "checked",
           "observation": "После проверки среды Codex, PID владельца замка и группы процесса функция посылает SIGTERM по run.PID. Затем она ждёт освобождения замка.",
@@ -20696,7 +20735,7 @@
               "Checker"
             ],
             "actual": "PID",
-            "actual_at": "tools/dashboard/checkstop.go:40",
+            "actual_at": "tools/dashboard/checkstop.go:41",
             "proof": {
               "expression": "syscall.Kill(run.PID, syscall.SIGTERM)",
               "effect": {
@@ -20707,7 +20746,7 @@
                   "word": "Codex",
                   "role": "context",
                   "fact": {
-                    "location": "tools/dashboard/checkstop.go:40",
+                    "location": "tools/dashboard/checkstop.go:41",
                     "quote": "if err := syscall.Kill(run.PID, syscall.SIGTERM); err != nil {",
                     "value": "run.PID",
                     "text": "До отправки сигнала функция проверяет, что запись run относится к Codex."
@@ -20717,7 +20756,7 @@
                   "word": "Checker",
                   "role": "context",
                   "fact": {
-                    "location": "tools/dashboard/checkstop.go:40",
+                    "location": "tools/dashboard/checkstop.go:41",
                     "quote": "if err := syscall.Kill(run.PID, syscall.SIGTERM); err != nil {",
                     "value": "run.PID",
                     "text": "Эффект подтверждает точный PID в вызове. Проверка принадлежности PID проверяющему приведена в meaning и цепочке остановки."
@@ -20730,7 +20769,7 @@
             "word": "Checker",
             "target": "run.PID",
             "value": "syscall.SIGTERM",
-            "write_at": "tools/dashboard/checkstop.go:40"
+            "write_at": "tools/dashboard/checkstop.go:41"
           }
         },
         {
@@ -20923,6 +20962,79 @@
               }
             ]
           }
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode",
+          "location": "tools/dashboard/quota_test.go:290",
+          "observation": "Проверяет отсутствие имён подписок в коде и статических файлах.",
+          "result": "checked",
+          "check": "meaning",
+          "symbol": "TestQuotaNoHarnessNamesInCode",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "тест",
+              "fact": "Самостоятельный тест Go с testing.T.",
+              "location": "tools/dashboard/quota_test.go:290",
+              "result": "checked"
+            },
+            {
+              "word": "Quota",
+              "meaning": "квота",
+              "fact": "Сообщение объясняет источник подписок для панели квоты.",
+              "location": "tools/dashboard/quota_test.go:326",
+              "result": "checked"
+            },
+            {
+              "word": "No",
+              "meaning": "запрет",
+              "fact": "Любое вхождение известного имени считается ошибкой.",
+              "location": "tools/dashboard/quota_test.go:325",
+              "result": "checked"
+            },
+            {
+              "word": "Harness",
+              "meaning": "харнес",
+              "fact": "Имена загружаются из каталога профилей харнесов.",
+              "location": "tools/dashboard/quota_test.go:292",
+              "result": "checked"
+            },
+            {
+              "word": "Names",
+              "meaning": "имена",
+              "fact": "Начальный набор содержит точные имена подписок.",
+              "location": "tools/dashboard/quota_test.go:291",
+              "result": "checked"
+            },
+            {
+              "word": "In",
+              "meaning": "в",
+              "fact": "Поиск ведётся внутри содержимого каждого файла.",
+              "location": "tools/dashboard/quota_test.go:325",
+              "result": "checked"
+            },
+            {
+              "word": "Code",
+              "meaning": "код",
+              "fact": "Тест обходит локальный каталог Go и static.",
+              "location": "tools/dashboard/quota_test.go:300",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode",
+          "check": "result",
+          "location": "tools/dashboard/quota_test.go:290",
+          "result": "not_applicable",
+          "observation": "Тест Go не возвращает значения. Нарушение отмечается через testing.T."
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:290#TestQuotaNoHarnessNamesInCode",
+          "check": "writes",
+          "location": "tools/dashboard/quota_test.go:290",
+          "result": "not_applicable",
+          "observation": "Читает каталог и исходники. Дополняет локальный набор имён и отмечает ошибки теста."
         }
       ]
     },
@@ -20942,7 +21054,7 @@
         },
         {
           "object": "остановка проверяющего",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "stopCodexChecker сигнализирует только подтверждённому владельцу и возвращает успех остановки после освобождения его замка.",
           "result": "checked"
         },
@@ -21065,7 +21177,7 @@
       "evidence": [
         {
           "object": "ожидание остановки",
-          "location": "tools/dashboard/checkstop.go:13",
+          "location": "tools/dashboard/checkstop.go:14",
           "observation": "Порог задан как time.Duration в секундах, проверяется сравнением time.Now().After(deadline); шаг ожидания задан в time.Millisecond.",
           "result": "checked"
         },
@@ -21191,7 +21303,7 @@
         },
         {
           "object": "stopCodexChecker",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "home/root/id используются для taskstate.Acquire; home/id также задают путь замка. Вход PID берётся из записи, а не принимается извне.",
           "result": "checked"
         },
@@ -21286,7 +21398,7 @@
         },
         {
           "object": "результат остановки",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "handleRunStop читает оба значения: error даёт 503, true даёт 200, false с nil сохраняет старый путь проверки tmux.",
           "result": "checked"
         },
@@ -21417,7 +21529,7 @@
         },
         {
           "object": "остановка Codex",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Проверка владельца предшествует Getpgid и SIGTERM. Ожидание освобождения превращает удерживаемый замок в 503 у handleRunStop, а неподходящий процесс разрешает прежний путь tmux.",
           "result": "checked"
         },
@@ -21484,7 +21596,7 @@
         },
         {
           "object": "маркер проверяющего",
-          "location": "tools/dashboard/checkstop.go:23",
+          "location": "tools/dashboard/checkstop.go:24",
           "observation": "Метка check- проверяется вместе с PID и харнесом; это не произвольный флаг. Формат производителя в codexCheckWorker и условие стопа совпадают.",
           "result": "checked"
         },
@@ -21837,7 +21949,7 @@
                 "verdict": "used"
               },
               {
-                "location": "tools/dashboard/checkstop.go:21",
+                "location": "tools/dashboard/checkstop.go:22",
                 "text": "Потребитель или эффект шага: сохранённое состояние",
                 "related": "tools/shipctl/checkcodex.go:195",
                 "value": "сохранённое состояние",
@@ -21855,37 +21967,37 @@
         },
         {
           "object": "остановка отдельного проверяющего",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "result": "checked",
           "observation": "Кнопка остановки проверяет принадлежность живого процесса и ждёт освобождения замка.",
           "facts": {
             "entry": [
               {
-                "location": "tools/dashboard/checkstop.go:15",
+                "location": "tools/dashboard/checkstop.go:16",
                 "text": "Кнопка остановки проверяет принадлежность живого процесса и ждёт освобождения замка."
               }
             ],
             "condition": [
               {
-                "location": "tools/dashboard/checkstop.go:22",
+                "location": "tools/dashboard/checkstop.go:23",
                 "text": "Состояние остановлено, тип и идентификатор запуска соответствуют Codex."
               }
             ],
             "outcome": [
               {
-                "location": "tools/dashboard/checkstop.go:51",
+                "location": "tools/dashboard/checkstop.go:52",
                 "text": "Подтверждённый проверяющий освободил рабочий замок."
               }
             ],
             "control": [
               {
-                "location": "tools/dashboard/checkstop.go:31",
+                "location": "tools/dashboard/checkstop.go:32",
                 "text": "Исчезнувший процесс допускает общую ветвь, неожиданный системный сбой идёт в 503."
               }
             ],
             "return_value": [
               {
-                "location": "tools/dashboard/checkstop.go:51",
+                "location": "tools/dashboard/checkstop.go:52",
                 "text": "Подтверждение остановки идёт в штатный HTTP ответ.",
                 "value": "true, nil"
               }
@@ -21899,64 +22011,64 @@
             ],
             "step": [
               {
-                "location": "tools/dashboard/checkstop.go:16",
+                "location": "tools/dashboard/checkstop.go:17",
                 "text": "Читает защищённое состояние.",
                 "failure": true
               },
               {
-                "location": "tools/dashboard/checkstop.go:27",
+                "location": "tools/dashboard/checkstop.go:28",
                 "text": "Сверяет живого владельца рабочего замка.",
                 "failure": false
               },
               {
-                "location": "tools/dashboard/checkstop.go:30",
+                "location": "tools/dashboard/checkstop.go:31",
                 "text": "Сверяет фактическую группу.",
                 "failure": true
               },
               {
-                "location": "tools/dashboard/checkstop.go:40",
+                "location": "tools/dashboard/checkstop.go:41",
                 "text": "Передаёт SIGTERM проверяющему.",
                 "failure": true
               },
               {
-                "location": "tools/dashboard/checkstop.go:46",
+                "location": "tools/dashboard/checkstop.go:47",
                 "text": "Ограничивает ожидание освобождения.",
                 "failure": true
               }
             ],
             "use": [
               {
-                "location": "tools/dashboard/checkstop.go:21",
+                "location": "tools/dashboard/checkstop.go:22",
                 "text": "Потребитель или эффект шага: g.State.Run",
-                "related": "tools/dashboard/checkstop.go:16",
+                "related": "tools/dashboard/checkstop.go:17",
                 "value": "g.State.Run",
                 "verdict": "used"
               },
               {
-                "location": "tools/dashboard/checkstop.go:30",
+                "location": "tools/dashboard/checkstop.go:31",
                 "text": "Потребитель или эффект шага: ожидаемый PID",
-                "related": "tools/dashboard/checkstop.go:27",
+                "related": "tools/dashboard/checkstop.go:28",
                 "value": "ожидаемый PID",
                 "verdict": "used"
               },
               {
-                "location": "tools/dashboard/checkstop.go:37",
+                "location": "tools/dashboard/checkstop.go:38",
                 "text": "Потребитель или эффект шага: group",
-                "related": "tools/dashboard/checkstop.go:30",
+                "related": "tools/dashboard/checkstop.go:31",
                 "value": "group",
                 "verdict": "used"
               },
               {
-                "location": "tools/dashboard/checkstop.go:45",
+                "location": "tools/dashboard/checkstop.go:46",
                 "text": "Потребитель или эффект шага: запрошенная остановка",
-                "related": "tools/dashboard/checkstop.go:40",
+                "related": "tools/dashboard/checkstop.go:41",
                 "value": "запрошенная остановка",
                 "verdict": "effect"
               },
               {
-                "location": "tools/dashboard/checkstop.go:47",
+                "location": "tools/dashboard/checkstop.go:48",
                 "text": "Потребитель или эффект шага: deadline",
-                "related": "tools/dashboard/checkstop.go:46",
+                "related": "tools/dashboard/checkstop.go:47",
                 "value": "deadline",
                 "verdict": "used"
               }
@@ -22655,7 +22767,7 @@
         },
         {
           "object": "ошибка стопа",
-          "location": "tools/dashboard/checkstop.go:30",
+          "location": "tools/dashboard/checkstop.go:31",
           "observation": "Только ESRCH означает отсутствие живого процесса и отдаёт управление обычному поиску. Неожиданный errno сохраняется с операцией и PID, отказ SIGTERM возвращается в HTTP 503, таймаут отдельно указывает удерживаемый замок.",
           "result": "checked"
         },
@@ -22757,7 +22869,8 @@
           "path": "internal/checkrun/checkrun.go",
           "objects": [
             "internal/checkrun/checkrun.go:1",
-            "internal/checkrun/checkrun.go:349"
+            "internal/checkrun/checkrun.go:349",
+            "internal/checkrun/checkrun.go:626"
           ]
         },
         {
@@ -22901,6 +23014,13 @@
           "reason": "В изменённых строках файла нет комментариев к коду."
         },
         {
+          "path": "tools/dashboard/quota_test.go",
+          "objects": [
+            "tools/dashboard/quota_test.go:280",
+            "tools/dashboard/quota_test.go:310"
+          ]
+        },
+        {
           "path": "tools/dashboard/runs.go",
           "objects": [
             "tools/dashboard/runs.go:124",
@@ -23013,6 +23133,14 @@
           "comment_fragments": [
             "Carrier поднимает проверяющего через выбранный харнес.",
             "Дашборд и shipctl передают носителю модель и заказ прогона."
+          ]
+        },
+        {
+          "object": "internal/checkrun/checkrun.go:626",
+          "symbol": "",
+          "location": "internal/checkrun/checkrun.go:626",
+          "comment_fragments": [
+            "CodexHarness задаёт имя подписки для запуска и остановки отдельного проверяющего."
           ]
         },
         {
@@ -23156,6 +23284,27 @@
             "Прогон, поднятый из живой головы или её делегата, несёт DEVKIT_TASK, и страж материала у exec ищет настоящую задачу в синтетическом корне; ограничитель вложенности и замок делегата у run читают свои переменные тем же способом.",
             "Тесты, которым хвост нужен, ставят его сами через t.Setenv.",
             "runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs, как у taskctl: писатели этапов (wait, run, stage) берут дом из HOME процесса, и тест без подмены дома оставлял бы след в боевом каталоге, который при параллельном прогоне пакетов ловил сторож соседа (DK-911)."
+          ]
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:280",
+          "symbol": "TestQuotaNoHarnessNamesInCode",
+          "location": "tools/dashboard/quota_test.go:280",
+          "comment_fragments": [
+            "Ни одного имени харнеса в коде: список подписок это содержимое каталога, и стоит завести новую, она появится на экране без правки дашборда.",
+            "Имена берутся из профилей репозитория, поэтому новый профиль попадает под проверку сам; список рядом держит рубеж и там, где профили не под рукой.",
+            "Исключение одно: слова протоколов.",
+            "Это язык профилей, а не находка подписок: родное семейство дашборд узнаёт по слову и гасит его в раскладке, чужой протокол приезжает словом раскладки agentctl.",
+            "Экрану (static/) слова по прежнему запрещены: там дорога чата выбирается по наличию поля protocol, а не по его значению, и литерал означал бы ветвление по чужому имени."
+          ]
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:310",
+          "symbol": "TestQuotaNoHarnessNamesInCode",
+          "location": "tools/dashboard/quota_test.go:310",
+          "comment_fragments": [
+            "Инструкция включения называет имя профиля в примере enabled: человек включает профиль по имени, и взять его неоткуда, кроме текста.",
+            "Источник тот же, откуда сторож собирает список имён (kit/harness), а код и экраны имена по-прежнему не называют."
           ]
         },
         {
@@ -23394,6 +23543,7 @@
       "objects": [
         "internal/checkrun/checkrun.go:1",
         "internal/checkrun/checkrun.go:349",
+        "internal/checkrun/checkrun.go:626",
         "internal/reviewaudit/naming_effect.go:260",
         "internal/reviewaudit/naming_effect.go:330",
         "internal/reviewaudit/naming_effect.go:364",
@@ -23410,6 +23560,8 @@
         "internal/stage/stage_test.go:854",
         "tools/agentctl/plan.go:90",
         "tools/agentctl/touch_test.go:12",
+        "tools/dashboard/quota_test.go:280",
+        "tools/dashboard/quota_test.go:310",
         "tools/dashboard/runs.go:124",
         "tools/dashboard/runs.go:1092",
         "tools/dashboard/runs.go:1098",
@@ -24912,6 +25064,113 @@
               }
             ]
           }
+        },
+        {
+          "object": "internal/checkrun/checkrun.go:626",
+          "location": "tools/dashboard/checkstop.go:24",
+          "observation": "Сверены входы и условия реализации.",
+          "result": "checked",
+          "comment_quote": "CodexHarness задаёт имя подписки для запуска и остановки отдельного проверяющего.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/checkstop.go:24",
+                "text": "Работа останавливается только для подписки, которую shipctl выбирает тем же именем в tools/shipctl/checkrun.go:116.",
+                "quote": "CodexHarness задаёт имя подписки для запуска и остановки отдельного проверяющего.",
+                "value": "checkrun.CodexHarness",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/checkstop.go:24",
+                "text": "Указывает, где согласован общий идентификатор двух потребителей."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:280",
+          "location": "tools/dashboard/quota_test.go:292",
+          "observation": "Сверены входы и условия реализации.",
+          "result": "checked",
+          "comment_quote": "Ни одного имени харнеса в коде: список подписок это содержимое каталога, и стоит завести новую, она появится на экране без правки дашборда.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/quota_test.go:292",
+                "text": "Тест перечисляет каталог профилей, поэтому его набор расширяется при добавлении файла.",
+                "quote": "Ни одного имени харнеса в коде: список подписок это содержимое каталога, и стоит завести новую, она появится на экране без правки дашборда.",
+                "value": "os.ReadDir",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/quota_test.go:291",
+                "text": "Встроенные значения используются и при неудачном чтении каталога профилей.",
+                "quote": "Имена берутся из профилей репозитория, поэтому новый профиль попадает под проверку сам; список рядом держит рубеж и там, где профили не под рукой.",
+                "value": "names",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/quota_test.go:322",
+                "text": "Отсев известных слов протокола действует в каталоге Go-кода.",
+                "quote": "Исключение одно: слова протоколов.",
+                "value": "protocolWords",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/quota_test.go:299",
+                "text": "Список исключений содержит язык родного протокола отдельно от списка профилей.",
+                "quote": "Это язык профилей, а не находка подписок: родное семейство дашборд узнаёт по слову и гасит его в раскладке, чужой протокол приезжает словом раскладки agentctl.",
+                "value": "protocolWords",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/quota_test.go:325",
+                "text": "Поиск выполняется и по static, поскольку условие исключения ограничено каталогом Go-кода.",
+                "quote": "Экрану (static/) слова по прежнему запрещены: там дорога чата выбирается по наличию поля protocol, а не по его значению, и литерал означал бы ветвление по чужому имени.",
+                "value": "strings.Contains",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/quota_test.go:292",
+                "text": "Описывает набор проверяемых имён и границу исключения."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/quota_test.go:310",
+          "location": "tools/dashboard/quota_test.go:309",
+          "observation": "Сверены входы и условия реализации.",
+          "result": "checked",
+          "comment_quote": "Инструкция включения называет имя профиля в примере enabled: человек включает профиль по имени, и взять его неоткуда, кроме текста.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/quota_test.go:309",
+                "text": "README исключён из проверки Go-каталога, чтобы поддержать документированные примеры.",
+                "quote": "Инструкция включения называет имя профиля в примере enabled: человек включает профиль по имени, и взять его неоткуда, кроме текста.",
+                "value": "e.Name()",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/quota_test.go:292",
+                "text": "Имена берутся из каталога профилей, а обход кода и экранов остаётся общим.",
+                "quote": "Источник тот же, откуда сторож собирает список имён (kit/harness), а код и экраны имена по-прежнему не называют.",
+                "value": "os.ReadDir",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/quota_test.go:309",
+                "text": "Объясняет исключение для примеров в справочнике."
+              }
+            ]
+          }
         }
       ]
     },
@@ -25237,63 +25496,69 @@
       "evidence": [
         {
           "object": "JSON до завершения",
-          "location": "docs/tasks/DK-1750.md:144",
+          "location": "docs/tasks/DK-1750.md:145",
           "observation": "regcheck на 4bc0e0271 получил exec.ErrWaitDelay на старой реализации. На исправлении оба теста проходят.",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:169",
+          "location": "docs/tasks/DK-1750.md:170",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base e95588634 --tests internal/reviewaudit/naming_setting_test.go -- devkitctl test internal -run '^TestNameSettingEnvironmentGuard$'",
-          "location": "docs/tasks/DK-1750.md:171",
+          "location": "docs/tasks/DK-1750.md:172",
           "observation": "тест краснеет на e95588634 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_setting_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/agentctl/plan_test.go -- devkitctl test tools/agentctl -run '^TestPlanCodexSession$'",
-          "location": "docs/tasks/DK-1750.md:173",
+          "location": "docs/tasks/DK-1750.md:174",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/agentctl/plan_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/shipctl/checkrun_test.go -- devkitctl test tools/shipctl -run '^TestCheckRunCodexEntry$'",
-          "location": "docs/tasks/DK-1750.md:175",
+          "location": "docs/tasks/DK-1750.md:176",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/shipctl/checkrun_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base d751c8703 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:177",
+          "location": "docs/tasks/DK-1750.md:178",
           "observation": "тест краснеет на d751c8703 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 18dee7837 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:179",
+          "location": "docs/tasks/DK-1750.md:180",
           "observation": "тест краснеет на 18dee7837 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 1341ae88b --tests internal/sessions/sessions_test.go,internal/stage/stage_test.go -- devkitctl test internal -run '^Test(OwnCodexSession|OpenKeepsCodexVerificationSession)$'",
-          "location": "docs/tasks/DK-1750.md:181",
+          "location": "docs/tasks/DK-1750.md:182",
           "observation": "тест краснеет на 1341ae88b и проходит на текущем коде, регрессия закрыта (тесты: internal/sessions/sessions_test.go, internal/stage/stage_test.go)",
           "result": "checked"
         },
         {
           "object": "системные и файловые доказательства на старом и новом коде",
-          "location": "docs/tasks/DK-1750.md:90",
+          "location": "docs/tasks/DK-1750.md:91",
           "result": "checked",
           "observation": "Тесты точного аргумента, shadowing, пути назначения и формы шаблона краснеют на 46a1e6625, на новой реализации проходят."
         },
         {
           "object": "ложные доказательства системного и файлового действия",
-          "location": "docs/tasks/DK-1750.md:85",
+          "location": "docs/tasks/DK-1750.md:86",
           "result": "checked",
           "observation": "На 0189a8b3b новый тест краснеет из-за принятия чужой цели и невызванного замыкания. На исправлении обе проверки проходят."
+        },
+        {
+          "object": "запрет имени подписки в dashboard",
+          "location": "docs/tasks/DK-1750.md:238",
+          "observation": "TestQuotaNoHarnessNamesInCode падает на старом обработчике и проходит после использования общего имени.",
+          "result": "checked"
         }
       ],
       "objects": [
@@ -27645,26 +27910,26 @@
       "evidence": [
         {
           "object": "границы Scanner",
-          "location": "docs/tasks/DK-1750.md:151",
+          "location": "docs/tasks/DK-1750.md:152",
           "observation": "Позитивный тест упал при снижении лимита с 8 до 4 МиБ, негативный упал при увеличении с 8 до 16 МиБ. Оба прошли с лимитом 8 МиБ.",
           "result": "checked"
         },
         {
           "object": "ID, замок и подтверждение запуска",
-          "location": "docs/tasks/DK-1750.md:203",
+          "location": "docs/tasks/DK-1750.md:204",
           "observation": "Снятие ID, неверный замок и подтверждение на thread.started до turn.started дали FAIL названных тестов.",
           "result": "checked"
         },
         {
           "object": "ожидание замка при остановке",
-          "location": "docs/tasks/DK-1750.md:201",
+          "location": "docs/tasks/DK-1750.md:202",
           "observation": "Пропуск ожидания дал HTTP 200 вместо ожидаемого 503. Тест прошёл после восстановления ожидания.",
           "result": "checked"
         },
         {
           "object": "пустая модель и пустой ответ",
           "result": "checked",
-          "location": "docs/tasks/DK-1750.md:157",
+          "location": "docs/tasks/DK-1750.md:158",
           "observation": "Мутации убрали проверку пустой модели и вернули пустой Report. Упали соответственно TestRaiseWithoutModelReportsRefusal и TestCheckRunCodexEntry."
         }
       ],
@@ -27867,7 +28132,7 @@
       "evidence": [
         {
           "object": "остановка проверки",
-          "location": "tools/dashboard/checkstop.go:9",
+          "location": "tools/dashboard/checkstop.go:10",
           "observation": "Новый stopCodexChecker использует taskhead и taskstate из общего internal, а не копирует их реализации замка и состояния.",
           "result": "checked"
         }
@@ -27979,7 +28244,7 @@
       "evidence": [
         {
           "object": "остановка проверки",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Форма taskForm и обычные или подготовленные задачи не меняются; stopCodexChecker работает с состоянием запущенной проверки.",
           "result": "not_applicable"
         }
@@ -27996,7 +28261,7 @@
       "evidence": [
         {
           "object": "остановка проверки",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Компоненты формы содержимого черновика и поля мысли не затронуты.",
           "result": "not_applicable"
         }
@@ -28013,7 +28278,7 @@
       "evidence": [
         {
           "object": "остановка проверки",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Новой разделяемой памяти сервера или memo-кэша не добавлено; локальные переменные функции живут в одном вызове, состояние задачи защищено taskstate.Acquire.",
           "result": "not_applicable"
         }
@@ -28081,7 +28346,7 @@
       "evidence": [
         {
           "object": "изменённый сценарий",
-          "location": "tools/dashboard/checkstop.go:15",
+          "location": "tools/dashboard/checkstop.go:16",
           "observation": "Остановка проверяющего в dashboard работает с локальным процессом и замком. Внешняя сеть этим изменением не добавлена.",
           "result": "not_applicable"
         }
@@ -28098,7 +28363,7 @@
       "evidence": [
         {
           "object": "остановка проверки",
-          "location": "tools/dashboard/checkstop.go:40",
+          "location": "tools/dashboard/checkstop.go:41",
           "observation": "На изменённом пути dashboard только сигнализирует существующему PID; нового подъёма процесса из дерева dashboard нет.",
           "result": "not_applicable"
         }
@@ -28181,7 +28446,7 @@
         },
         {
           "object": "остановка",
-          "location": "tools/dashboard/checkstop.go:16",
+          "location": "tools/dashboard/checkstop.go:17",
           "observation": "Остановку и новый запуск сериализует тот же taskstate.Acquire.",
           "result": "checked"
         },
@@ -28370,61 +28635,61 @@
       "evidence": [
         {
           "object": "JSON до завершения",
-          "location": "docs/tasks/DK-1750.md:144",
+          "location": "docs/tasks/DK-1750.md:145",
           "observation": "regcheck на 4bc0e0271 получил exec.ErrWaitDelay на старой реализации. На исправлении оба теста проходят.",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:169",
+          "location": "docs/tasks/DK-1750.md:170",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base e95588634 --tests internal/reviewaudit/naming_setting_test.go -- devkitctl test internal -run '^TestNameSettingEnvironmentGuard$'",
-          "location": "docs/tasks/DK-1750.md:171",
+          "location": "docs/tasks/DK-1750.md:172",
           "observation": "тест краснеет на e95588634 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_setting_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/agentctl/plan_test.go -- devkitctl test tools/agentctl -run '^TestPlanCodexSession$'",
-          "location": "docs/tasks/DK-1750.md:173",
+          "location": "docs/tasks/DK-1750.md:174",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/agentctl/plan_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base a9c4bbef6 --tests tools/shipctl/checkrun_test.go -- devkitctl test tools/shipctl -run '^TestCheckRunCodexEntry$'",
-          "location": "docs/tasks/DK-1750.md:175",
+          "location": "docs/tasks/DK-1750.md:176",
           "observation": "тест краснеет на a9c4bbef6 и проходит на текущем коде, регрессия закрыта (тесты: tools/shipctl/checkrun_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base d751c8703 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:177",
+          "location": "docs/tasks/DK-1750.md:178",
           "observation": "тест краснеет на d751c8703 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 18dee7837 --tests internal/reviewaudit/naming_chain_test.go -- devkitctl test internal -run '^TestNameChainPreservesPromisedWrite$'",
-          "location": "docs/tasks/DK-1750.md:179",
+          "location": "docs/tasks/DK-1750.md:180",
           "observation": "тест краснеет на 18dee7837 и проходит на текущем коде, регрессия закрыта (тесты: internal/reviewaudit/naming_chain_test.go)",
           "result": "checked"
         },
         {
           "object": "regcheck --base 1341ae88b --tests internal/sessions/sessions_test.go,internal/stage/stage_test.go -- devkitctl test internal -run '^Test(OwnCodexSession|OpenKeepsCodexVerificationSession)$'",
-          "location": "docs/tasks/DK-1750.md:181",
+          "location": "docs/tasks/DK-1750.md:182",
           "observation": "тест краснеет на 1341ae88b и проходит на текущем коде, регрессия закрыта (тесты: internal/sessions/sessions_test.go, internal/stage/stage_test.go)",
           "result": "checked"
         },
         {
           "object": "системные и файловые доказательства на старом и новом коде",
-          "location": "docs/tasks/DK-1750.md:90",
+          "location": "docs/tasks/DK-1750.md:91",
           "result": "checked",
           "observation": "Тесты точного аргумента, shadowing, пути назначения и формы шаблона краснеют на 46a1e6625, на новой реализации проходят."
         },
         {
           "object": "ложные доказательства системного и файлового действия",
-          "location": "docs/tasks/DK-1750.md:85",
+          "location": "docs/tasks/DK-1750.md:86",
           "result": "checked",
           "observation": "На 0189a8b3b новый тест краснеет из-за принятия чужой цели и невызванного замыкания. На исправлении обе проверки проходят."
         }

@@ -52,8 +52,19 @@ func (c *shipCarrier) raiseCodex(p checkrun.Plan) checkrun.Report {
 			fields[key] = strings.TrimSpace(value)
 		}
 	}
-	if fields["model"] != p.Choice.Model || fields["harness"] != p.Choice.Harness || fields["effort"] == "" {
-		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, вердикт agentctl check изменился или не назвал effort", id, checkrun.NotRaised)}
+	var invalid []string
+	if fields["model"] != p.Choice.Model {
+		invalid = append(invalid, "model")
+	}
+	if fields["harness"] != p.Choice.Harness {
+		invalid = append(invalid, "harness")
+	}
+	if fields["effort"] == "" {
+		invalid = append(invalid, "effort")
+	}
+	if len(invalid) != 0 {
+		return checkrun.Report{Failed: true, Line: fmt.Sprintf("%s: %s, поля вердикта изменились или пусты: %s. Повторите `agentctl check %s` перед новым запуском",
+			id, checkrun.NotRaised, strings.Join(invalid, ", "), id)}
 	}
 	order, _ := json.Marshal(codexCheckOrder{c.root, c.home, id, p.Choice.Model, fields["effort"], p.Choice.Harness, p.Order})
 	exe, err := os.Executable()

@@ -31,6 +31,55 @@ func Own() string {
 	}
 }
 
+func TestNameSettingRequiresEffectiveAssertion(t *testing.T) {
+	const set = `t.Setenv("TOKEN", "value")`
+	const comparison = `if got := Own(); got != "value" { t.Fatal(got) }`
+	cases := []struct {
+		name, before, between, assertion string
+		valid                            bool
+	}{
+		{"valid", "", "", comparison, true},
+		{"repeat", `t.Setenv("TOKEN", "first"); if got := Own(); got != "first" { t.Fatal(got) }`, "", comparison, true},
+		{"equal_else", "", "", `if got := Own(); got == "value" {} else { t.Error(got) }`, true},
+		{"wrong_branch", "", "", `if got := Own(); got == "value" { t.Fatal(got) }`, false},
+		{"log_only", "", "", `if got := Own(); got != "value" { t.Log(got) }`, false},
+		{"self_comparison", "", "", `if got := Own(); got != got { t.Fatal(got) }`, false},
+		{"clearenv", "", "os.Clearenv()", `if got := Own(); got != "" { t.Fatal(got) }`, false},
+		{"indirect_reset", "", "clear()", comparison, false},
+		{"early_return", "if true { return }", "", comparison, false},
+		{"earlier_success_stops_test", `t.Setenv("TOKEN", "first"); if got := Own(); got == "first" { return } else { t.Fatal(got) }`, "", comparison, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameProofFixture(t, `package sample
+import "testing"
+import "os"
+func TestOwn(t *testing.T) {
+ `+tc.before+`
+ `+set+`
+ `+tc.between+`
+ `+tc.assertion+`
+}
+func Own() string {
+ return os.Getenv("TOKEN")
+}
+func clear() { os.Clearenv() }
+`)
+			g := newQueryGoSource(source)
+			fn, err := g.declaration(at("func TestOwn"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeAt := at(set)
+			p := &NameObjectProof{Expression: set, Setting: &NameSettingWrite{SubtestAt: at("func TestOwn"), Use: NameCodeUse{Declaration: at("func Own"), At: at(tc.assertion), Expression: "Own()"}, ReadAt: at("return os.Getenv")}}
+			e := Evidence{Result: "checked", ObjectComparison: &NameObjectComparison{Actual: "TOKEN", ActualAt: writeAt, Proof: p}, WriteEvidence: &WriteEvidence{Target: "TOKEN", Value: `"value"`, WriteAt: writeAt}}
+			if err := g.checkNameSettingWrite(e, fn); (err == nil) != tc.valid {
+				t.Fatalf("принято: %v, ожидалось: %v, ошибка: %v", err == nil, tc.valid, err)
+			}
+		})
+	}
+}
+
 func TestNameSettingRejectsEnvironmentChangedBeforeRead(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
 import "testing"

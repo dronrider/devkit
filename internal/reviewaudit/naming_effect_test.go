@@ -285,3 +285,49 @@ func consume() string {
 		})
 	}
 }
+
+func TestNameAssignmentFieldCondition(t *testing.T) {
+	for _, tc := range []struct {
+		name, middle, condition, read, want string
+	}{
+		{"own_field", "", `(a.file) == ""`, "a.file", ""},
+		{"unrelated_assignments", "other := 1\n _ = other", `a.file == ""`, "a.file", ""},
+		{"intervening_call", `panic("stop")`, `a.file == ""`, "a.file", "выражение, которое читает file"},
+		{"short_circuit", "", `false && a.file == ""`, "a.file", "выражение, которое читает file"},
+		{"dead_body", "", `false { _ = a.file; return "empty" }`, "a.file", "выражение, которое читает file"},
+		{"mutating_initializer", "", `a.file = ""; a.file == ""`, "a.file", "выражение, которое читает file"},
+		{"return_before_condition", `return "different"`, `a.file == ""`, "a.file", "выражение, которое читает file"},
+		{"other_value", `var b Address`, `b.file == ""`, "b.file", "выражение, которое читает file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			branch := " if " + tc.condition
+			if tc.name != "dead_body" {
+				branch += ` { return "empty" }`
+			}
+			source, at := nameProofFixture(t, `package sample
+type Address struct{ file string }
+func resolve() string {
+ var a Address
+ a.file = "written"
+ `+tc.middle+"\n"+branch+`
+ return "nonempty"
+}
+`)
+			g := newQueryGoSource(source)
+			fn, err := g.declaration(at("func resolve"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeAt := at(`a.file = "written"`)
+			proof := &NameObjectProof{Expression: "a.file", Assignment: &NameAssignmentWrite{
+				Writes: []NameAssignmentSite{{At: writeAt, Target: "a.file", Value: `"written"`}},
+				Use:    NameCodeUse{Declaration: at("func resolve"), At: at(branch), Expression: tc.read},
+			}}
+			e := Evidence{
+				ObjectComparison: &NameObjectComparison{Actual: "file", ActualAt: writeAt, Proof: proof},
+				WriteEvidence:    &WriteEvidence{WriteAt: writeAt},
+			}
+			assertTargetCheck(t, g.checkNameAssignment(e, fn, fn), tc.want)
+		})
+	}
+}

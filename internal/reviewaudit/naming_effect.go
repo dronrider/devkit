@@ -268,8 +268,13 @@ func nameBoundFieldUse(writer, reader queryFunc, field, read *ast.SelectorExpr) 
 	writerBody, readerBody := writer.node.Body, reader.node.Body
 	writeStmt, direct := nameFieldStatement(writerBody, field).(*ast.AssignStmt)
 	readStmt := nameFieldStatement(readerBody, read)
-	switch readStmt.(type) {
+	switch stmt := readStmt.(type) {
 	case *ast.AssignStmt, *ast.ReturnStmt, *ast.ExprStmt:
+	case *ast.IfStmt:
+		if writerBody != readerBody || source.Obj != destination.Obj ||
+			!nameDirectFieldCondition(readerBody, writeStmt, stmt, read, destination.Obj) {
+			return false
+		}
 	default:
 		return false
 	}
@@ -318,6 +323,40 @@ func nameBoundFieldUse(writer, reader queryFunc, field, read *ast.SelectorExpr) 
 	}
 	id, ok := ret.Results[slot].(*ast.Ident)
 	return ok && id.Obj == source.Obj
+}
+
+// The condition must read the field directly before either branch. An init
+// or a short-circuit expression can change or skip that read.
+func nameDirectFieldCondition(body *ast.BlockStmt, write *ast.AssignStmt, stmt *ast.IfStmt, read *ast.SelectorExpr, receiver *ast.Object) bool {
+	if write == nil || stmt.Init != nil {
+		return false
+	}
+	start := slices.Index(body.List, ast.Stmt(write))
+	end := slices.Index(body.List, ast.Stmt(stmt))
+	if start < 0 || end <= start {
+		return false
+	}
+	for _, between := range body.List[start+1 : end] {
+		assignment, ok := between.(*ast.AssignStmt)
+		if !ok || !nameIndependentAssignment(assignment, receiver) {
+			return false
+		}
+	}
+	switch cond := ast.Unparen(stmt.Cond).(type) {
+	case *ast.SelectorExpr:
+		return cond == read
+	case *ast.UnaryExpr:
+		return cond.Op == token.NOT && ast.Unparen(cond.X) == read
+	case *ast.BinaryExpr:
+		switch cond.Op {
+		case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			_, leftLiteral := ast.Unparen(cond.X).(*ast.BasicLit)
+			_, rightLiteral := ast.Unparen(cond.Y).(*ast.BasicLit)
+			return ast.Unparen(cond.X) == read && rightLiteral ||
+				ast.Unparen(cond.Y) == read && leftLiteral
+		}
+	}
+	return false
 }
 
 // Both calls must receive the same binding. Unrelated simple assignments

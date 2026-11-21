@@ -526,6 +526,7 @@ case "$1" in
 pick) printf 'tier: base\n' ;;
 harness) printf '%s\n' '{"harnesses":[{"name":"codex","enabled":true,"default":true,"models":[{"tier":"base","model":"model"}]}]}' ;;
 -C) if [ "$CHECK_VERDICT_ERROR" = 1 ]; then printf '%s\n' 'сбой расчёта модели' >&2; exit 1; fi
+    if [ "$CHECK_VERDICT_MISMATCH" = 1 ]; then printf 'model: unseen-model\neffort: \ntier: base\nharness: unseen-harness\n'; exit 0; fi
     printf 'model: model\neffort: high\ntier: base\nharness: codex\n' ;;
 exec) printf '%s\n' "$*" > "$CHECK_ARGS"; printf '%s\n' '{"type":"thread.started","thread_id":"fresh"}' '{"type":"turn.started"}'
       read -r ready < "$CHECK_FINISH" ;;
@@ -545,6 +546,15 @@ esac
 		t.Fatalf("причина отказа agentctl check потеряна: %s %v", failed, err)
 	}
 	t.Setenv("CHECK_VERDICT_ERROR", "")
+	t.Setenv("CHECK_VERDICT_MISMATCH", "1")
+	mismatch, err := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json").CombinedOutput()
+	var rejected []checkrun.Report
+	if decodeErr := json.Unmarshal(mismatch, &rejected); err == nil || decodeErr != nil || len(rejected) != 1 ||
+		!rejected[0].Failed || rejected[0].Raised || !strings.Contains(rejected[0].Line, "model, harness, effort") ||
+		!strings.Contains(rejected[0].Line, "agentctl check XR-001") || strings.Contains(rejected[0].Line, "unseen-") {
+		t.Fatalf("ожидался отказ с именами полей и командой проверки: %q, %v", mismatch, err)
+	}
+	t.Setenv("CHECK_VERDICT_MISMATCH", "")
 	cmd := exec.Command(shipctl, "-C", root, "check-run", "XR-001", "--json")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()

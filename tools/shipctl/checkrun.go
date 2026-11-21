@@ -113,11 +113,11 @@ func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 			" без неё taskctl run спросил бы вердикт исполнителя и записал бы проверяющего разработчиком",
 			id, checkrun.NotRaised, why)}
 	}
-	args := []string{"run", id, "-C", c.root, "--model", p.Choice.Model,
-		"--order", p.Order, "--again", p.Again, "--hidden"}
 	if c.check && harness == "codex" {
 		return c.raiseCodex(p)
 	}
+	args := []string{"run", id, "-C", c.root, "--model", p.Choice.Model,
+		"--order", p.Order, "--again", p.Again, "--hidden"}
 	if harness != "" {
 		args = append(args, "--harness", harness)
 	}

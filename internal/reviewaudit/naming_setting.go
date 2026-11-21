@@ -116,25 +116,8 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 		return fmt.Errorf("proof.setting: записанный ключ не подтверждает объект в имени")
 	}
 	use, err := g.nameCallExpression(fn, proof.Use.At, proof.Use.Expression)
-	if err != nil || use.Pos() <= set.End() || !nameEnvironmentUse(fn, use) {
-		return fmt.Errorf("proof.setting.use: укажите проверку результата вызова после записи")
-	}
-	for node := range ast.Preorder(fn.node.Body) {
-		if stmt, ok := node.(*ast.AssignStmt); ok && stmt.Pos() < set.Pos() {
-			for _, target := range stmt.Lhs {
-				if id, ok := target.(*ast.Ident); ok && id.Obj == receiver.Obj {
-					return fmt.Errorf("proof.setting: параметр теста был изменён")
-				}
-			}
-		}
-		if call, ok := node.(*ast.CallExpr); ok && call.Pos() > set.End() && call.Pos() < use.Pos() {
-			if s, ok := call.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "Setenv" && nameIdentifier(s.X) == nameIdentifier(sel.X) && len(call.Args) > 0 && nameSettingKey(call.Args[0]) == w.Target {
-				return fmt.Errorf("proof.setting.use: ключ изменился до вызова")
-			}
-			if (g.namePackageSelector(fn, call.Fun, "os", "Setenv") || g.namePackageSelector(fn, call.Fun, "os", "Unsetenv")) && len(call.Args) > 0 && nameSettingKey(call.Args[0]) == w.Target {
-				return fmt.Errorf("proof.setting.use: ключ изменился до вызова")
-			}
-		}
+	if err != nil || !nameEnvironmentUse(fn, set, use, receiver.Obj, w.Target) {
+		return fmt.Errorf("proof.setting.use: укажите проверку результата после записи без неподтверждённых действий между ними")
 	}
 	reader, err := g.declaration(proof.Use.Declaration)
 	if err != nil || reader.base != fn.base || !g.nameSettingConsumer(fn, reader, use) {
@@ -147,33 +130,112 @@ func (g *queryGoSource) checkNameEnvironmentSetting(e Evidence, fn queryFunc) er
 	return checkNameWriteWordLinks(p.Proof.Words, nameWriteLines(e, map[string]bool{w.WriteAt: true, proof.SubtestAt: true, proof.Use.At: true, proof.ReadAt: true}))
 }
 
-// nameEnvironmentUse accepts a top-level test condition that checks the
-// returned value; calls inside unrelated or unreachable blocks prove nothing.
-func nameEnvironmentUse(fn queryFunc, call *ast.CallExpr) bool {
+// Only simple assignments and direct Setenv calls are allowed between the
+// selected write and its assertion. Earlier failure-only checks of the same
+// call can precede the selected write.
+func nameEnvironmentUse(fn queryFunc, set, use *ast.CallExpr, tester *ast.Object, key string) bool {
+	written := false
 	for _, stmt := range fn.node.Body.List {
-		cond, ok := stmt.(*ast.IfStmt)
-		if !ok {
-			continue
-		}
-		init, ok := cond.Init.(*ast.AssignStmt)
-		if !ok || len(init.Lhs) != 1 || len(init.Rhs) != 1 || init.Rhs[0] != call {
-			continue
-		}
-		id, ok := init.Lhs[0].(*ast.Ident)
-		if !ok || id.Name == "_" || id.Obj == nil {
-			continue
-		}
-		comparison, ok := cond.Cond.(*ast.BinaryExpr)
-		if !ok || (comparison.Op != token.EQL && comparison.Op != token.NEQ) {
-			continue
-		}
-		for _, expr := range []ast.Expr{comparison.X, comparison.Y} {
-			if read, ok := expr.(*ast.Ident); ok && read.Obj == id.Obj {
-				return true
+		switch stmt := stmt.(type) {
+		case *ast.IfStmt:
+			asserted := nameEnvironmentAssertion(stmt, tester)
+			if written {
+				return asserted == use
+			}
+			if asserted != nil && stmt.Else == nil && len(stmt.Body.List) == 1 && sameNameExpression(asserted, nameExpression(use)) {
+				continue
+			}
+		case *ast.AssignStmt:
+			if nameIndependentAssignment(stmt, tester) {
+				continue
+			}
+		case *ast.ExprStmt:
+			if stmt.X == set {
+				written = true
+				continue
+			}
+			call, ok := stmt.X.(*ast.CallExpr)
+			if ok && len(call.Args) == 2 && nameTestingMethod(call, tester) == "Setenv" {
+				otherKey := nameSettingKey(call.Args[0])
+				value, literal := call.Args[1].(*ast.BasicLit)
+				if otherKey != "" && (!written || otherKey != key) && literal && value.Kind == token.STRING {
+					continue
+				}
 			}
 		}
+		return false
 	}
 	return false
+}
+
+func nameEnvironmentAssertion(cond *ast.IfStmt, tester *ast.Object) *ast.CallExpr {
+	init, ok := cond.Init.(*ast.AssignStmt)
+	if !ok || len(init.Lhs) != 1 || len(init.Rhs) != 1 {
+		return nil
+	}
+	used, ok := init.Rhs[0].(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	id, ok := init.Lhs[0].(*ast.Ident)
+	if !ok || id.Name == "_" || id.Obj == nil {
+		return nil
+	}
+	comparison, ok := cond.Cond.(*ast.BinaryExpr)
+	if !ok {
+		return nil
+	}
+	var compared ast.Expr
+	switch {
+	case nameBinding(comparison.X, id.Obj):
+		compared = comparison.Y
+	case nameBinding(comparison.Y, id.Obj):
+		compared = comparison.X
+	}
+	literal, ok := compared.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return nil
+	}
+	failure := cond.Body
+	switch comparison.Op {
+	case token.EQL:
+		failure, ok = cond.Else.(*ast.BlockStmt)
+		if !ok {
+			return nil
+		}
+	case token.NEQ:
+	default:
+		return nil
+	}
+	if len(failure.List) == 0 {
+		return nil
+	}
+	stmt, ok := failure.List[0].(*ast.ExprStmt)
+	if !ok {
+		return nil
+	}
+	call, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	switch nameTestingMethod(call, tester) {
+	case "Error", "Errorf", "Fatal", "Fatalf", "Fail", "FailNow":
+		return used
+	}
+	return nil
+}
+
+func nameBinding(expr ast.Expr, binding *ast.Object) bool {
+	id, ok := expr.(*ast.Ident)
+	return ok && id.Obj == binding
+}
+
+func nameTestingMethod(call *ast.CallExpr, tester *ast.Object) string {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if ok && nameBinding(sel.X, tester) {
+		return sel.Sel.Name
+	}
+	return ""
 }
 
 // nameEnvironmentReturn supports a direct return or TrimSpace of the value.

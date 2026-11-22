@@ -329,6 +329,7 @@ func TestNameAssignmentFieldInNestedBody(t *testing.T) {
 		{"overwritten_field", "", "confirm", "turn.work = false", "turn.work", "выражение, которое читает work"},
 		{"potential_alias_write", "", "confirm", "other.work = false", "turn.work", "выражение, которое читает work"},
 		{"potential_whole_alias_write", "", "confirm", "*other = activity{}", "turn.work", "выражение, которое читает work"},
+		{"potential_type_alias_write", "", "confirm", "*other = activity{}", "turn.work", "выражение, которое читает work"},
 		{"potential_alias_method", "", "confirm", "other.reset()", "turn.work", "выражение, которое читает work"},
 		{"local_false_constant", "const never = false", "never", "", "turn.work", "выражение, которое читает work"},
 		{"receiver_escape", "alias := turn; _ = alias", "confirm", "", "turn.work", "выражение, которое читает work"},
@@ -343,13 +344,20 @@ func TestNameAssignmentFieldInNestedBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			read := "observed := " + tc.consumer
 			tail := ""
+			alias := ""
+			params := "turn, other *activity"
+			if tc.name == "potential_type_alias_write" {
+				alias = "type activityAlias = activity"
+				params = "turn *activity, other *activityAlias"
+			}
 			if tc.name == "goto_before_read" {
 				tail = "done:\n return false"
 			}
 			source, at := nameCurrentProofFixture(t, `package sample
 type activity struct { work bool; last int }
+`+alias+`
 func (a *activity) reset() { a.work = false }
-func wait(turn, other *activity, confirm bool) bool {
+func wait(`+params+`, confirm bool) bool {
  `+tc.before+`
  turn.work = true
  remaining := func() int { return turn.last }

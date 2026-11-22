@@ -252,8 +252,8 @@ func (g *queryGoSource) namePointerFieldDeclaration(fn queryFunc, parameter *ast
 	return nil
 }
 
-// The address can reach only the verified call. The callee must use its
-// parameter through fields, so it cannot keep an alias alive after returning.
+// The address can reach only the verified call. Other uses must select direct
+// fields without taking their addresses or changing the field under review.
 func namePointerFieldSafe(body *ast.BlockStmt, object *ast.Object, fields *ast.FieldList, field string, address *ast.UnaryExpr, write *ast.AssignStmt, through token.Pos) bool {
 	valid := true
 	ast.PreorderStack(body, nil, func(node ast.Node, parents []ast.Node) bool {

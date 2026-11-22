@@ -25,6 +25,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 # Начало заказа дежурному. Строка одна на оболочку конвейера и на этот заход:
 # task-run.py узнаёт по ней дежурную голову и держит её одним проходом, каким
@@ -491,13 +492,13 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
                             "уведомление не доставлено"))
             continue
         before = draft_names(root)
-        said, code = spawn(root, task, why, call=call, taskctl=taskctl)
-        if code == 3:
+        launch = spawn(root, task, why, call=call, taskctl=taskctl)
+        if launch.code == 3:
             lines.append("корень %s: дежурный по %s ждёт свободного замка; "
                          "исход записи «%s»; запуск: %s; повтор тиком"
-                         % (root, task, sig, said))
+                         % (root, task, sig, launch.message))
             continue
-        if code == 0:
+        if launch.code == 0:
             # Запуск кончился сам: исход обязан лежать в корне, вопросом либо
             # черновиком. Лежит и не лежит, разбирать некому: попытка пишется,
             # и повтор поднял бы дежурного заново (DK-1454).
@@ -505,20 +506,20 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
                 fresh.add(sig)
                 lines.append("корень %s: дежурный по %s кончился вопросом "
                              "человеку, отказ «%s» закрыт вопросом; %s"
-                             % (root, task, sig, said))
+                             % (root, task, sig, launch.message))
                 continue
             draft = fresh_draft(root, before, None)
             if draft:
                 fresh.add(sig)
                 lines.append("корень %s: дежурный по %s кончился черновиком %s, "
                              "отказ «%s» закрыт черновиком; %s"
-                             % (root, task, draft, sig, said))
+                             % (root, task, draft, sig, launch.message))
                 continue
             write_try(sig, drafts=before, home=home)
             lines.append("корень %s: дежурный по %s прошёл без исхода, отказ «%s» "
                          "(попытка %d из %d), повтор тиком; %s"
                          % (root, task, sig, tries.get(sig, 0) + 1,
-                            SPAWN_TRIES, said))
+                            SPAWN_TRIES, launch.message))
             continue
         # Разбор не начался. Подпись не пишется: повтор идёт ближайшим тиком
         # и исход не виснет (замечание ревью). Постоянный сбой добивается
@@ -528,12 +529,12 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
         if n < SPAWN_TRIES:
             lines.append("корень %s: дежурного по %s не поднять, отказ «%s» "
                          "(попытка %d из %d), повтор тиком; %s"
-                         % (root, task, sig, n, SPAWN_TRIES, said))
+                         % (root, task, sig, n, SPAWN_TRIES, launch.message))
         else:
             lines.append("корень %s: дежурного по %s не поднять, отказ «%s» "
                          "(попытка %d из %d), следующим тиком потолок добивается "
                          "громким зовом; %s"
-                         % (root, task, sig, n, SPAWN_TRIES, said))
+                         % (root, task, sig, n, SPAWN_TRIES, launch.message))
     # Открытые инциденты конвейера (DK-1415): тот же разбор, но исходы у него
     # свои, и каждый дописывается в запись инцидента. Очередь общая с метками
     # файлов задач: подпись одна, и дежурный по ней тоже один.
@@ -615,26 +616,26 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
                             "уведомление не доставлено"))
             continue
         before = draft_names(root)
-        said, code = spawn(root, task, "%s. %s" % (why, RESUME_RULE),
-                           call=call, taskctl=taskctl,
-                           diagnostic_run=run["id"] if app_terminal else "")
-        _note(hook, ident, "запуск дежурного: код %d" % code, home)
-        if code == 3:
+        launch = spawn(root, task, "%s. %s" % (why, RESUME_RULE),
+                       call=call, taskctl=taskctl,
+                       diagnostic_run=run["id"] if app_terminal else "")
+        _note(hook, ident, "запуск дежурного: код %d" % launch.code, home)
+        if launch.code == 3:
             lines.append("корень %s. Запуск дежурного по инциденту %s отложен. "
-                         "%s. Повтор на следующем тике." % (root, ident, said))
+                         "%s. Повтор на следующем тике." % (root, ident, launch.message))
             continue
-        if code == 0:
+        if launch.code == 0:
             write_try(sig, drafts=before, home=home)
             lines.append("корень %s: дежурный по инциденту %s прошёл без исхода, "
                          "подпись «%s» (попытка %d из %d), повтор тиком; %s"
                          % (root, ident, sig, tries.get(sig, 0) + 1,
-                            SPAWN_TRIES, said))
+                            SPAWN_TRIES, launch.message))
             continue
         n = tries.get(sig, 0) + 1
         write_try(sig, home=home)
         lines.append("корень %s: дежурного по инциденту %s не поднять, подпись «%s» "
                      "(попытка %d из %d), повтор тиком; %s"
-                     % (root, ident, sig, n, SPAWN_TRIES, said))
+                     % (root, ident, sig, n, SPAWN_TRIES, launch.message))
     if fresh and act:
         remember_many(fresh, home=home)
     return lines
@@ -656,17 +657,22 @@ def remember_many(sigs, home=None):
     write_state(sigs, home=home)
 
 
-def spawn(root, task, why, call=None, taskctl=None, diagnostic_run=""):
+class DutyLaunchResult(NamedTuple):
+    message: str
+    code: int
+
+
+def spawn(root, task, why, call=None, taskctl=None, diagnostic_run="") -> DutyLaunchResult:
     """Поднимает голову дежурного заказом `taskctl run`.
 
     Лестница и замок остаются у taskctl: вторая копия тут не нужна, а отказ
     занятого замка значит, что по этой задаче уже идёт работа, и дежурный
-    к ней не подмешивается. Возврат это (слова, код).
+    к ней не подмешивается. Запуск возвращает диагностический вывод и код завершения.
     """
     call = subprocess.run if call is None else call
     bin = taskctl or which("taskctl")
     if not bin:
-        return "бинаря taskctl нет ни в PATH, ни в каталогах релиза", 2
+        return DutyLaunchResult("бинаря taskctl нет ни в PATH, ни в каталогах релиза", 2)
     args = [bin, "-C", str(root), "run", task]
     if diagnostic_run:
         args += ["--diagnostic-run", diagnostic_run]
@@ -674,8 +680,8 @@ def spawn(root, task, why, call=None, taskctl=None, diagnostic_run=""):
         p = call(args + ["--order", duty_order(task, why)],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return str(e), 2
-    return " ".join((p.stdout or "").split()), p.returncode
+        return DutyLaunchResult(str(e), 2)
+    return DutyLaunchResult(" ".join((p.stdout or "").split()), p.returncode)
 
 
 def shout(title, body, root, call=None, task=None):

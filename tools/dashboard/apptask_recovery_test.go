@@ -237,6 +237,7 @@ func TestAppTaskRecoveryHonorsStopAndExhaustion(t *testing.T) {
 			e.s.appTasksClose()
 			waitAppTaskLockGone(t, e)
 			e.s.appWorkers.Wait()
+			waitAppTaskRecoveryCarrierExit(t, e, sid)
 			if mode == "stopped" {
 				resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", `{}`)
 				if raw := body(t, resp); resp.StatusCode != http.StatusOK {
@@ -254,6 +255,7 @@ func TestAppTaskRecoveryHonorsStopAndExhaustion(t *testing.T) {
 				e.s.appTaskRecoveryTick(nil)
 				waitAppTaskLockGone(t, e)
 				e.s.appWorkers.Wait()
+				waitAppTaskRecoveryCarrierExit(t, e, sid)
 			}
 			state, err := taskstate.Acquire(e.home, e.proj, "XR-002")
 			if err != nil {

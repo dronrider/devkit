@@ -15,11 +15,17 @@ func (g *queryGoSource) checkNameHTTPJSONWrite(e Evidence, entry, helper queryFu
 	}
 	callAt := w.Calls[0].At
 	encode, err := g.nameCallExpression(helper, w.WriteAt, p.Expression)
-	if err != nil || !g.nameHTTPJSONEncoder(helper, encode, w.Target, w.Value) {
+	if err != nil {
+		return fmt.Errorf("proof.effect: %w", err)
+	}
+	if !g.nameHTTPJSONEncoder(helper, encode, w.Target, w.Value) {
 		return fmt.Errorf("proof.effect: покажите запись статуса и JSON тем же http.ResponseWriter")
 	}
 	send, _, err := g.call(entry, callAt, func(expr ast.Expr) bool { return nameHTTPJSONHelper(expr, helper) })
-	if err != nil || pair.ActualAt != callAt {
+	if err != nil {
+		return fmt.Errorf("proof.effect: %w", err)
+	}
+	if pair.ActualAt != callAt {
 		return fmt.Errorf("proof.effect: укажите строку вызова помощника с полем ответа как actual_at")
 	}
 	if !g.nameHTTPJSONSite(entry, send, pair.Actual) {

@@ -1733,7 +1733,9 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 `json.NewEncoder(w).Encode(v)` в помощнике. В `proof.expression`
 укажите полный вызов кодирования, в `target` параметр получателя и
 в `value` параметр данных. Статус и тело записываются через один
-`ResponseWriter`.
+`ResponseWriter`. Проверяемая функция передаёт его только этому
+помощнику. Вызов завершает функцию либо идёт перед `return`
+в конце ветки.
 
 У `sql` проверяются
 прямой `Exec`/`ExecContext`, точный текст `statement`, изменяемая `table`

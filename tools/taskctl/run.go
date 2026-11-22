@@ -58,7 +58,7 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 		Harness: harness, Model: o.model, ContinueStopped: o.continueStopped,
 		RecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,
 		Order: order, Again: o.again, Hidden: o.hidden, Wanted: true,
-		Adopt: adopt, Pick: func() (string, error) { return runPick(root, id, harness) }}, nil
+		Adopt: adopt}, nil
 }
 
 // runPickWait ограничивает вопрос вердикту: подъём не должен висеть на agentctl.
@@ -131,6 +131,9 @@ func cmdRun(root, id string, o runOpts) (string, int, error) {
 	if err != nil {
 		return "", taskhead.CodeSetup, err
 	}
+	// Подбор модели нужен только при запуске нового клиента.
+	id, harness := q.ID, q.Harness
+	q.Pick = func() (string, error) { return runPick(root, id, harness) }
 	res, err := taskhead.Raise(q)
 	if err != nil {
 		return "", taskhead.CodeSetup, err

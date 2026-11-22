@@ -128,6 +128,31 @@ func use(ready bool) {
 	}
 }
 
+func TestNameChainParallelAssignmentUse(t *testing.T) {
+	for _, tc := range []struct {
+		name, between, want string
+	}{
+		{name: "unchanged value"},
+		{name: "incremented value", between: "value++", want: "должен однозначно указывать использование"},
+		{name: "range overwrites value", between: "for _, value = range []int{7} {}", want: "должен однозначно указывать использование"},
+		{name: "return before use", between: "return", want: "должен однозначно указывать использование"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameCurrentProofFixture(t, `package sample
+func readValue() int { value := 3; return value }
+func use() {
+ code, value := 75, readValue()
+ `+tc.between+`
+ observed := value
+ _, _ = code, observed
+}
+`)
+			entry := namingWire(t, `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"use","consumer_at":"@observed := value","flow":{"caller":"@func use","call_at":"@code, value :=","value":"value","use_kind":"assignment"}}}`, at)
+			assertTargetCheck(t, checkNameEntry(entry, at("func readValue"), identifierWords("readValue"), source), tc.want)
+		})
+	}
+}
+
 func TestNameChainContextFileAndBindings(t *testing.T) {
 	source, at := nameProofFixture(t, `package sample
 import "os"

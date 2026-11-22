@@ -66,7 +66,8 @@ func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast
 	}
 	var initialGuard func(ast.Expr) (bool, bool)
 	if g.namePointerBuiltin(writer, nameNamedStructField(fields, field.Sel.Name).Type, "string") {
-		if initial, known := nameLocalStringField(decl, local.Obj, field.Sel.Name); known {
+		initial, known := nameLocalStringField(decl, local.Obj, field.Sel.Name)
+		if known {
 			initialGuard = func(condition ast.Expr) (bool, bool) {
 				return nameInitialStringCondition(condition, parameter.Obj, field.Sel.Name, initial)
 			}

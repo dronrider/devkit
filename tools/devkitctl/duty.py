@@ -616,11 +616,12 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True,
             continue
         before = draft_names(root)
         said, code = spawn(root, task, "%s. %s" % (why, RESUME_RULE),
-                           call=call, taskctl=taskctl)
+                           call=call, taskctl=taskctl,
+                           diagnostic_run=run["id"] if app_terminal else "")
         _note(hook, ident, "запуск дежурного: код %d" % code, home)
         if code == 3:
-            lines.append("корень %s: дежурный по инциденту %s ждёт свободного "
-                         "замка; запуск: %s; повтор тиком" % (root, ident, said))
+            lines.append("корень %s. Запуск дежурного по инциденту %s отложен. "
+                         "%s. Повтор на следующем тике." % (root, ident, said))
             continue
         if code == 0:
             write_try(sig, drafts=before, home=home)
@@ -655,7 +656,7 @@ def remember_many(sigs, home=None):
     write_state(sigs, home=home)
 
 
-def spawn(root, task, why, call=None, taskctl=None):
+def spawn(root, task, why, call=None, taskctl=None, diagnostic_run=""):
     """Поднимает голову дежурного заказом `taskctl run`.
 
     Лестница и замок остаются у taskctl: вторая копия тут не нужна, а отказ
@@ -666,9 +667,11 @@ def spawn(root, task, why, call=None, taskctl=None):
     bin = taskctl or which("taskctl")
     if not bin:
         return "бинаря taskctl нет ни в PATH, ни в каталогах релиза", 2
-    order = duty_order(task, why)
+    args = [bin, "-C", str(root), "run", task]
+    if diagnostic_run:
+        args += ["--diagnostic-run", diagnostic_run]
     try:
-        p = call([bin, "-C", str(root), "run", task, "--order", order],
+        p = call(args + ["--order", duty_order(task, why)],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
         return str(e), 2

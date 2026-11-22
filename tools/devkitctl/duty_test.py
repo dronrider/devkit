@@ -437,7 +437,10 @@ class IncidentDutyTest(unittest.TestCase):
                                     home=self.home, identity={"id": "run-one"})
         lines = self.duty_lines()
         self.assertEqual(len(self.runs()), 1, lines)
-        self.assertIn("лимит исчерпан", self.runs()[0][-1])
+        argv = self.runs()[0]
+        flag = argv.index("--diagnostic-run")
+        self.assertEqual(argv[flag + 1], "run-one")
+        self.assertIn("лимит исчерпан", argv[-1])
         self.assertIn(incident, " ".join(lines))
         self.assertFalse(self.settled())
 

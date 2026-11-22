@@ -93,10 +93,9 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	// Строка журнала стоит первой среди правок состояния: назначение
-	// смещается одной строкой до всякого стопа, и реплика, вошедшая в
-	// передачу, ложится безадресно во вход записи по решению 4. Уходящей
-	// голове она уже не достаётся.
+	// Отметка передачи направляет новые реплики во вход задачи без адреса
+	// конкретного чата. Ошибка записи отметки попадает в журнал,
+	// после чего передача продолжается.
 	s.mainChatMove(id, bind.Chat, bind.Chat, found.Name)
 	// Стоп уходящей голове существующим «Стопом»: сторож снимается с окна до
 	// его смерти, сессия убивается точным именем, лента получает строку о
@@ -122,8 +121,7 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saidMark(saidTaskKey(id), fmt.Sprintf(
 		"работа передана новому диспетчеру: %s, новый поднят в tmux-сессии task-%s", what, id))
-	// Подъём нового носителя после освобождения имени окна: конвейер поднимается
-	// свежим окном и читает состояние с диска, это его способ продолжения.
+	// После остановки прежнего носителя способ продолжения выбирает taskhead.Raise.
 	model := ""
 	if own != nil {
 		model = own.tierModel(tier)
@@ -134,7 +132,7 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res, err := s.startTaskSession(found, id, "task-"+id, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, "")
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, "", false)
 	if err != nil {
 		var busy *headBusy
 		if errors.As(err, &busy) {
@@ -269,4 +267,3 @@ func liftWindow(id, was string, alive func(string) bool) string {
 	}
 	return was
 }
-

@@ -13941,6 +13941,7 @@ function echoRead(project, addr) {
       // легшая во вход задачи, обязана и после неё называть очередь, а не
       // недоставку. Прежде оба поля писались в персист и не читались из него.
       queue: Boolean(m.queue), refused: Boolean(m.refused),
+      appMessageID: m.appMessageID ? String(m.appMessageID) : "",
       task: m.task ? String(m.task) : "",
       // Ключ записи переживает перезагрузку вместе с ней: по нему сервер узнаёт
       // повтор, а вкладка, поднятая заново, шлёт ту же запись, а не новую.
@@ -13988,7 +13989,8 @@ function echoWrite(project, addr, list) {
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection, launch: m.launch, unknown: m.unknown,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
-        queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "", since: m.since || m.born }));
+        queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "",
+        appMessageID: m.appMessageID || "", since: m.since || m.born }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -14285,18 +14287,18 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       sinceOf.set(rec.id, rec.since);
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task,
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID,
         scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection, rec.launch) });
     }
-    // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
-    // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
-    // следующей пересборки панели, и сверка может снять их эхом, если текст
-    // нашёлся в транскрипте этого разговора.
+    // echoSweep возвращает нераспознанные записи со старого адреса для
+    // показа до следующей пересборки. Сверка может снять такую запись
+    // раньше по совпадению ID или текста.
+    // Сверка не снимает записи с явным отказом.
     for (const rec of once || []) {
       seq += 1;
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, launch: rec.launch, unknown: rec.unknown, once: true });
+        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID, launch: rec.launch, unknown: rec.unknown, once: true });
     }
     if (mine.length) {
       draw();
@@ -14431,18 +14433,12 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       return names;
     },
-    // Сверка с лентой: пузырь отправки снимается, как только его копия
-    // появилась в ленте, откуда бы лента её ни взяла (журнал отправленного,
-    // эхо из транскрипта, догон после спящей вкладки, страница истории).
-    // Сверяется весь показанный кусок, а не одна свежая запись: копия встаёт
-    // в ленту по времени, то есть выше следующих за ней ходов инструмента, а
-    // пузырь всегда висит в самом хвосте, и сверка «по последней записи»
-    // своей же реплики не узнавала (снимок пользователя: реплика из
-    // транскрипта на своём месте, ниже ход Bash, а под ним тот же текст
-    // пузырём «вы, доставлено»).
-    // Сверка идёт по сырому тексту отправленного, а не по показанному:
-    // в ленте текст собран разметкой, и сравнивать с ним отправленное значит
-    // сравнивать разное.
+    // Сверяется всё показанное окно ленты: нужная запись может стоять
+    // выше более новых ходов инструмента.
+    // Пузырь с явным отказом сохраняет причину.
+    // Рабочий Codex сверяет ID из квитанции с записью в ленте.
+    // Без ID сверяется исходный текст отправки. Показанный текст может
+    // отличаться из-за разметки.
     reconcile(list) {
       if (!mine.length || !list || !list.length) return;
       let went = false;
@@ -14450,8 +14446,16 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         if (m.refused) continue;
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
-        const hit = list.find((it) => it && it.role === "user" && !it.who && (it.text || it.selection || it.proposal) &&
-          !claimed.has(itemKey(it)) && (m.selection ? (sameSay(it.wire || it.text, m.wire) || sameSelection(it.selection, m.selection) && it.text === m.text) : (sameSay(it.wire || it.text, m.wire) || !it.selection && sameSay(it.text, m.text))));
+        const hit = list.find((it) => {
+          if (!it || it.role !== "user" || it.who || claimed.has(itemKey(it))) return false;
+          if (m.appMessageID) {
+            return it.app?.method === "devkit/appTaskMessage" && it.app?.item?.id === m.appMessageID;
+          }
+          if (!it.text && !it.selection && !it.proposal) return false;
+          if (sameSay(it.wire || it.text, m.wire)) return true;
+          return m.selection ? sameSelection(it.selection, m.selection) && it.text === m.text :
+            !it.selection && sameSay(it.text, m.text);
+        });
         if (!hit) continue;
         claimed.add(itemKey(hit));
         const at = mine.indexOf(m);
@@ -15126,10 +15130,10 @@ function chatPanel(project, st) {
         return;
       }
       busy.on(st.sid);
-      // Ключ записи едет с каждой попыткой: по нему сервер отличает повтор от
-      // следующей реплики и второй раз ту же не доставляет. Глубина из меню
-      // едет рядом: ручка применяет её только на реплике, поднимающей сессию,
-      // а живому процессу она безразлична.
+      // Все попытки отправки одной реплики используют один ключ, по которому
+      // сервер распознаёт повтор. Глубина из меню едет рядом. Codex применяет
+      // её в следующем ходе, в том числе после восстановления. Терминальный
+      // клиент получает её при подъёме процесса.
       m.flying = true;
       const armEffort = chatEffortOf(project, st.task || st.addr);
       const sayBody = { text: wire, msg_id: m.id };
@@ -15170,19 +15174,18 @@ function chatPanel(project, st) {
           // Слова дороги (DK-480): ответ отпустил запертый вопрос, строка с !
           // уехала текстом мимо терминала. Удача обычной доставки молчит.
           if (r.body.note) sayResult(r.body.note);
+          if (r.body.app_message_id) m.appMessageID = r.body.app_message_id;
           // Дорога вопроса (way=ask) отвечает итогом сама: принятый ответ,
           // откладывание в файл задачи и отказ мёртвого окна (DK-1399)
           // называются словами, отказ идёт ошибкой. Пузырь вслед словам держит
           // причину: «отправлено» на непринятом ответе читалось бы удачей
           // доставки, а отложенная реплика стоит очередью файла задачи, как у
           // дороги задачи выше.
-          // Ответ с полем stuck говорит, что хода реплике не дали. Дорога
-          // «queued» это очередь панели при запертом вопросе: реплика уедет
-          // в окно сразу после ответа на вопрос (DK-1300), и пузырь зовёт её
-          // очередью. «held» это прежний ответ, где ехать было некуда, пузырь
-          // держит тогда одну причину без кнопки. Все прочие stuck это
-          // очереди, которые разберут без человека (очередь харнеса на сбросе
-          // подписки, очередь вставшего клиента), и пузырь называет их.
+          // «queued» означает, что сервер сохранил реплику до следующего
+          // хода Codex или до ответа на запертый вопрос (DK-1300). Пузырь
+          // показывает причину ожидания. «held» с полем stuck означает
+          // отказ доставки. В других ответах stuck называет очередь клиента,
+          // например ожидание сброса квоты.
           if (r.body.way === "ask") {
             if (r.body.wire) m.wire = r.body.wire;
             if (r.body.message) sayResult(r.body.message, Boolean(r.body.refused));
@@ -15191,6 +15194,7 @@ function chatPanel(project, st) {
             else echo.sent(m);
           } else if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
+          else if (r.body.way === "queued") echo.queued(m, r.body.message);
           else echo.sent(m);
           // Дорога сервера приложения отвечает словами сразу, а ответ клиента
           // приходит в ленту ходом: слово уходит в панель, чтобы отправка не

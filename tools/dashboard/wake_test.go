@@ -9,6 +9,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/taskhead"
+	"github.com/dronrider/devkit/internal/taskstate"
 )
 
 // Подъём сессии после ответа человека (DK-922). Стенд тот же, что у подъёма
@@ -387,6 +388,40 @@ func TestTaskWakeBusyLockLeavesHeadAlone(t *testing.T) {
 	}
 	if args := readFile(t, moved); strings.Contains(args, "move XR-7 blocked") {
 		t.Errorf("строку вернули в Blocked при живой голове: %q", args)
+	}
+}
+
+func TestTaskWakeReportsReservedCodexChatWithoutLiveHead(t *testing.T) {
+	e, tmuxLog, moved := parkedMoveEnv(t)
+	state, err := taskstate.Acquire(e.home, e.proj, "XR-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Start("old-run", "codex", "gpt", ""); err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
+	state.State.Run.AppChat = "as-original"
+	state.State.Run.AppRecoveryTerminal = true
+	if err := state.Save(); err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
+	state.Close()
+
+	wake := wakeOne(t, e, "XR-7")
+	reply, _ := e.s.taskReplyRaise(&Project{Name: "demo", Path: e.proj}, "XR-7")
+	for _, rep := range []checkRunReport{wake, reply} {
+		if rep.Raised || rep.Failed || !strings.Contains(rep.Line, "закреплён за рабочим разговором Codex") ||
+			strings.Contains(rep.Line, "работа уже идёт") {
+			t.Fatalf("неверный исход ожидания рабочего чата: %+v", rep)
+		}
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Fatalf("общая голова подменяет рабочий чат: %s", got)
+	}
+	if args := readFile(t, moved); strings.Contains(args, "move XR-7 blocked") {
+		t.Fatalf("снятая парковка возвращена: %s", args)
 	}
 }
 

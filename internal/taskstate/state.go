@@ -17,13 +17,18 @@ import (
 )
 
 type Run struct {
-	ID      string `json:"id"`
-	Harness string `json:"harness"`
-	Model   string `json:"model"`
-	PID     int    `json:"pid"`
-	Group   int    `json:"group"`
-	Started string `json:"started"`
-	Attempt string `json:"attempt,omitempty"`
+	ID                  string `json:"id"`
+	Harness             string `json:"harness"`
+	Model               string `json:"model"`
+	PID                 int    `json:"pid"`
+	Group               int    `json:"group"`
+	Started             string `json:"started"`
+	Attempt             string `json:"attempt,omitempty"`
+	AppChat             string `json:"appChat,omitempty"`
+	AppRecovery         bool   `json:"appRecovery,omitempty"`
+	AppRecoveryAttempts int    `json:"appRecoveryAttempts,omitempty"`
+	AppRecoveryTerminal bool   `json:"appRecoveryTerminal,omitempty"`
+	AppRecoveryWhy      string `json:"appRecoveryWhy,omitempty"`
 }
 
 type State struct {
@@ -193,10 +198,15 @@ func SetStopped(home, root, task string, stopped bool) error {
 }
 
 func (g *Guard) Start(id, harness, model, attempt string) error {
+	return g.StartRun(Run{ID: id, Harness: harness, Model: model, Attempt: attempt})
+}
+
+func (g *Guard) StartRun(run Run) error {
 	if g.State.Stopped {
 		return fmt.Errorf("задача остановлена пользователем; требуется явное продолжение")
 	}
-	g.State.Run = &Run{ID: id, Harness: harness, Model: model, Attempt: attempt, Started: time.Now().UTC().Format(time.RFC3339Nano)}
+	run.Started = time.Now().UTC().Format(time.RFC3339Nano)
+	g.State.Run = &run
 	return g.Save()
 }
 

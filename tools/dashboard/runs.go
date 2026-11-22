@@ -573,35 +573,16 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 		Prefix: s.headlessEnv(id, sess, hidden) + effortPair(effort), Name: chatName}, nil
 }
 
-// startTaskSession поднимает голову задачи общим подъёмом taskhead.Raise: та
-// же лестница носителей и тот же замок, что у `taskctl run` (DK-935). Дорог
-// сюда четыре: кнопка экрана, подъём ответом человека (wake.go), прогон
-// сценария после выката (checkrun.go) и второй круг ревью (round.go). Заказ
-// каждой собирает зовущий: первый проход зависит от статуса строки, следующие
-// всегда «продолжай», потому что строку к тому времени уже двигали. Правила
-// плана и канала в текст заказа не приписываются (DK-612): их доставляет хук
-// старта сессии.
-//
-// role это слово, которым названа голова в списке чатов: «работа» у кнопки
-// экрана, ответа человека и второго круга ревью, «проверка» у прогона
-// сценария (DK-879). Пустое значит, что голова идёт без имени.
-//
-// hidden называет зовущего (DK-847): кнопка экрана и ответ человека поднимают
-// голову для него, а прогон проверки и второй круг ревью поднимает тик без
-// него, и запись уходит из списка панели.
-//
-// Занятый замок это *headBusy: голову уже поднял кто-то другой, чаще всего тик
-// командой `taskctl run`. Лестница, которой поднять голову нечем, зовёт
-// человека сама, а сюда приходит ошибкой со своими строками.
-//
-// effort это ручной уровень глубины размышления из меню запуска (DK-1570):
-// пусто у всех дорог, кроме кнопки, где человек подвинул ползунок. Едет он
-// парой окружения в приставку головы, и живёт ровно этот подъём.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string) (taskhead.Result, error) {
+// startTaskSession использует лестницу и замок taskhead.Raise, как taskctl run.
+// Вызывающий передаёт роль для имени головы и заказы текущего и следующего хода.
+// При CodeBusy причина из Raise попадает в headBusy. Подъём откладывается
+// при занятом замке, закреплённом запуске Codex или сверке прежнего запуска.
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string, automaticContinuation bool) (taskhead.Result, error) {
 	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden, effort)
 	if err != nil {
 		return taskhead.Result{}, err
 	}
+	q.AutomaticContinuation = automaticContinuation
 	res, err := taskhead.Raise(q)
 	if err != nil {
 		return res, err
@@ -617,10 +598,7 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 	case taskhead.CodeCalled:
 		return res, errors.New(strings.Join(res.Lines, "; "))
 	}
-	// Новое окно встаёт под того же сторожа, что и разговор (chatwatch.go):
-	// без отметки его смерть не замечал никто, и оборванная работа стояла до
-	// тех пор, пока человек сам не напишет задаче (DK-660). У живого окна
-	// отметка уже есть, у headless окна нет вовсе.
+	// Сторож получает отметку только при создании окна (DK-660).
 	if res.Rung == taskhead.RungWindow {
 		s.chatRaised(sess, "", id, proj.Name)
 	}
@@ -664,13 +642,12 @@ func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness
 	return ""
 }
 
-// headBusy это отказ занятого замка головы задачи.
+// headBusy хранит причину, по которой подъём отложен.
 type headBusy struct{ id, where string }
 
 func (e *headBusy) Error() string { return runBusy(e.id, e.where) }
 
-// runBusy это отказ запуска поверх живой работы. Слова одни у живой
-// tmux-сессии и у занятого замка: для человека причина одна, работа уже идёт.
+// runBusy сообщает, почему второй запуск сейчас невозможен.
 func runBusy(id, where string) string {
 	return fmt.Sprintf("работа %s уже идёт (%s): запускать поверх живой сессии нельзя, сначала стоп", id, where)
 }
@@ -699,11 +676,11 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		ID string `json:"id"`
-		// Harness это выбранная подписка. Пусто значит «как раньше»: список не
-		// прочитан или экран старый, и работа идёт на подписке по умолчанию.
+		// Пустой Harness оставляет выбор вердикту запуска. Если вердикт
+		// не назвал подписку, используется подписка по умолчанию.
 		Harness string `json:"harness"`
-		// Tier это выбранный человеком ярус. Пусто значит «как назначено»: у
-		// задачи ярус называет вердикт agentctl pick, у цели это pro.
+		// Пустой Tier оставляет выбор вердикту задачи. Если вердикт не
+		// назначил ярус, берётся pro. У цели pro действует по умолчанию.
 		Tier string `json:"tier"`
 		// Effort это ручной уровень глубины размышления из ползунка меню
 		// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
@@ -748,7 +725,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	kind := "task"
@@ -766,11 +743,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "tmux-сессия "+name)})
 			return
 		}
-		// Ступень живого окна у цели, как у задачи в taskhead (замечание ревью
-		// DK-1009). Сессия goal-<ID> это сам цикл, вставший на стоп-маркере или
-		// на вопросе человеку: снятие потеряло бы весь его контекст и подняло
-		// бы на том же месте пустую сессию. Заказ уходит клавишами в то же
-		// окно, и цикл идёт дальше с того, на чём стоял.
+		// Если свободное окно цели ждёт ввода, продолжаем в нём, чтобы
+		// сохранить контекст цикла (DK-1009). При сбое подачи пытаемся
+		// снять остаток окна и возвращаемся к обычному запуску.
 		if kind == "goal" && name == sess {
 			if err := chatSend(name, goalContinuePrompt(id, "")); err != nil {
 				s.logf("ступень живого окна цели %s в %s не сработала, остаток снят: %v",
@@ -786,12 +761,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Сессия без хода это досчитавший разговор (чаще всего груминг, который
-		// кончился строкой и остался стоять на приглашении). Работой строка его
-		// не считает, кнопку запуска показывает, и отказывать тут значило бы
-		// обещать кнопкой то, чего ручка не делает: остаток снимается, а на его
-		// месте поднимается заказанная работа. Снятие пишется и в ленту
-		// уведомлений: молча оно уже губило живые разговоры (DK-1292).
+		// Окно разговора без активного хода можно освободить для нового
+		// запуска. Пытаемся сообщить о снятии в ленте (DK-1292).
 		s.logf("запуск %s в %s: остаток разговора в tmux-сессии %s снят", id, found.Name, name)
 		s.chatWatchOff(name)
 		runProc("tmux", "kill-session", "-t", name)
@@ -799,13 +770,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			s.logf("%s", note)
 		}
 	}
-	// Подписка и ярус назначаются до подъёма: у задачи обоих назначает вердикт
-	// (ярус tier, подписка via), выбор человека сильнее обоих, у цели ярус это
-	// pro, а подписка без выбора идёт по умолчанию. Выбранные имена сверяются
-	// с раскладкой машины: имени, которого в ней нет, верить нельзя, иначе
-	// экран, устаревший на смену конфига, поднимал бы сессию неизвестно на чём.
-	// Проверка одна на цель и на задачу: витки цели платятся той же квотой,
-	// которую человек выбрал (замечание пользователя).
+	// Явный выбор имеет приоритет над вердиктом. Подписка должна быть в
+	// раскладке машины. Ручной ярус сверяем со списком ступеней, если
+	// подписка его объявляет.
 	harness, tier, tierWhy, tierBad := s.runAssign(found.Path, id, body.Tier, body.Harness, kind == "goal")
 	if tierBad != "" {
 		s.logf("запуск %s в %s отклонён: %s", id, found.Name, tierBad)
@@ -921,10 +888,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		if harness != nil {
 			args = append(args, "--harness", harness.Name)
 		}
-		// Ярус едет оболочке той же дорогой, что и подписка: разворачивать его
-		// моделью она будет сама, раскладкой машины (agentctl harness --json).
-		// Собирать модель тут значило бы решать за неё на каждом витке, а витков
-		// у цикла много и подписка между ними меняется.
+		// Оболочка получает ярус. Для клиента по умолчанию она разрешает его
+		// в модель перед первым витком. Клиент явно выбранной подписки
+		// использует свою настройку.
 		if tier != "" {
 			args = append(args, "--tier", tier)
 		}
@@ -988,16 +954,14 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Ярус называется флагом всякой подписке: клиент второй подписки принимает
-	// имя из своей лестницы (DK-750), а без флага берёт свой дефолт, и он
-	// бывает верхним ярусом, которого никто не назначал (находка этого
-	// захода).
+	// Для tmux-конвейера берём модель яруса из раскладки подписки.
+	// Без явной модели клиент выбирает своё умолчание.
 	model := ""
 	if own != nil {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что
@@ -1018,10 +982,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// носителем у неё становится виток, чью строку положит свой писатель
 	// (DK-1431).
 	s.mainChatAssign(id, "tmux-"+sess, found.Name, "работа")
-	// Строка результата называет подписку: подмена квоты иначе ничем не видна, а
-	// сказано тут именно про сессию конвейера. Куда она отдаст исполнителя
-	// дальше, решает вердикт pick по лестнице этой подписки, и обещать тут
-	// большее значило бы обещать чужую настройку.
+	// Если подписка задана явно или вердиктом, ответ называет её,
+	// чтобы было видно, чья квота пошла на запуск.
 	where := headWhere(res, sess)
 	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier,
 		"message": fmt.Sprintf("конвейер задачи %s поднят %s", id, where)}
@@ -1055,7 +1017,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !s.recoveryStopped(w, found.Path, id, true) {
+	if !s.setRecoveryStopped(w, found.Path, id, true) {
 		return
 	}
 	if a := s.appTaskFind("", found.Path, id); a != nil {

@@ -195,6 +195,8 @@ type server struct {
 	// подпроцесс, и держать за ним сканы корней нельзя.
 	// Проверка занятости и подъём грумера выполняются под одним замком.
 	// appMu при этом берётся внутри appStartRecord.
+	// При записи ленты appFeedAppend берёт файловый замок, находит индекс
+	// под appMu, отпускает appMu и берёт mutex индекса.
 	groomStartMu   sync.Mutex
 	appMu          sync.Mutex
 	appWorkers     sync.WaitGroup

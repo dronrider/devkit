@@ -159,6 +159,79 @@ func writeLines(path string, lines []string) error {
 	return os.Rename(tmp, path)
 }
 
+// TransferLines сохраняет подготовленные строки до переноса и держит замок
+// входа до завершения переноса. При ошибке строки остаются во входе.
+func TransferLines(tree, name string, prepare func(string) string, transfer func([]string) ([]string, error)) error {
+	dir := Root(tree)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	lock, err := Lock(filepath.Join(dir, name+LockSuffix))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	path := Path(tree, name)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var lines []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	changed := false
+	for i, line := range lines {
+		if next := prepare(line); next != line {
+			lines[i], changed = next, true
+		}
+	}
+	if changed {
+		f, err := os.CreateTemp(dir, ".in-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(f.Name())
+		if err = f.Chmod(0o644); err == nil {
+			_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
+		}
+		if err == nil {
+			err = f.Sync()
+		}
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return err
+		}
+		if err = os.Rename(f.Name(), path); err != nil {
+			return err
+		}
+		d, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = d.Sync()
+		d.Close()
+		if err != nil {
+			return err
+		}
+	}
+	keep, err := transfer(lines)
+	if err != nil {
+		return err
+	}
+	if len(keep) == len(lines) {
+		return nil
+	}
+	return writeLines(path, keep)
+}
+
 // Put кладёт готовую строку во вход разговора name дерева tree под тем же
 // замком, каким собирается подхват. Непустой возврат lying это лежащая копия
 // той же реплики: второй строки повтор не заводит, иначе сессия прочитала бы

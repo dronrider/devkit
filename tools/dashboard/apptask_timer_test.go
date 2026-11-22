@@ -29,7 +29,7 @@ func TestAppTaskSilenceTimer(t *testing.T) {
 				s := &server{now: time.Now, appChats: map[string]*appChat{"chat": c}}
 				done := make(chan error, 1)
 				go func() {
-					done <- c.waitTaskTurnProbe(turn, "ours", nil, appBusyCap, func() (json.RawMessage, error) { return nil, errors.New("offline") })
+					done <- c.waitTaskTurnProbe(turn, "ours", nil, appBusyCap, nil, func() (json.RawMessage, error) { return nil, errors.New("offline") })
 				}()
 				time.Sleep(25 * time.Minute)
 				if tc.thread != "" {
@@ -54,11 +54,22 @@ func TestAppTaskSilenceTimer(t *testing.T) {
 					t.Fatalf("текущий ход завершился раньше уведомления: %v", err)
 				default:
 				}
+				time.Sleep(5 * time.Minute)
 				s.appNote("chat", "turn/completed", json.RawMessage(`{"threadId":"main","turn":{"id":"ours","status":"completed"}}`))
 				if err := <-done; err != nil {
 					t.Fatal(err)
 				}
 			})
 		})
+	}
+}
+
+func TestAppTaskTurnNoteRecordsConfirmedActivity(t *testing.T) {
+	before := time.Unix(100, 0)
+	now := before.Add(time.Second)
+	turn := &appTaskTurn{thread: "main", turn: "ours", last: before}
+	turn.note("item/agentMessage/delta", json.RawMessage(`{"threadId":"main","turnId":"ours"}`), now)
+	if !turn.last.Equal(now) {
+		t.Fatalf("время активности %v, жду время уведомления %v", turn.last, now)
 	}
 }

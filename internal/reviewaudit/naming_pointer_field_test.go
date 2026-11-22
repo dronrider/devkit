@@ -32,6 +32,8 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
 		{name: "opposite return", condition: "!written", want: "покажите выражение"},
 		{name: "no fallthrough", between: "if written { return \"other\" }", want: "покажите выражение"},
 		{name: "overwritten flag", between: "written = false", want: "покажите выражение"},
+		{name: "parenthesized flag", writer: "if blocked() { return false, nil }", between: "(written) = true", want: "покажите выражение"},
+		{name: "parenthesized flag address", writer: "if blocked() { return false, nil }", between: "*(&(written)) = true", want: "покажите выражение"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			argument, condition, observed := test.argument, test.condition, test.observed
@@ -54,6 +56,7 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
  Value string
  Other string
  }
+ func blocked() bool { return true }
  func (s *server) write(st *store) (bool, error) {
  `+test.writer+`
  `+writeLine+`

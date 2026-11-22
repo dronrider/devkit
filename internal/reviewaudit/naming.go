@@ -806,6 +806,18 @@ func nameBoundResultReachesUse(call *ast.CallExpr, parents []ast.Node, use ast.N
 	if index < 0 || index >= len(assign.Lhs) || nameIdentifier(assign.Lhs[index]) != value {
 		return false
 	}
+	if len(assign.Rhs) > 1 {
+		target, ok := assign.Lhs[index].(*ast.Ident)
+		if !ok || target.Obj == nil {
+			return false
+		}
+		for node := range ast.Preorder(parents[0]) {
+			if address, ok := node.(*ast.UnaryExpr); ok && address.Op == token.AND && address.Pos() < assign.Pos() &&
+				nameUsesObject(ast.Unparen(address.X), target.Obj) {
+				return false
+			}
+		}
+	}
 	for i, target := range assign.Lhs {
 		// Another target may alias value (for example, *(&value)).
 		name := nameIdentifier(target)
@@ -835,13 +847,22 @@ func nameValueUnchanged(block ast.Node, from, to ast.Node, value string) bool {
 		if stmt.Pos() <= from.Pos() || stmt.Pos() >= to.Pos() {
 			continue
 		}
-		if _, returns := stmt.(*ast.ReturnStmt); returns {
+		switch control := stmt.(type) {
+		case *ast.ReturnStmt, *ast.BranchStmt:
 			return false
+		case *ast.IfStmt:
+			condition, ok := ast.Unparen(control.Cond).(*ast.Ident)
+			body := control.Body.List
+			if ok && condition.Name == "true" && condition.Obj == nil && len(body) != 0 {
+				if _, returns := body[len(body)-1].(*ast.ReturnStmt); returns {
+					return false
+				}
+			}
 		}
 		for node := range ast.Preorder(stmt) {
 			switch n := node.(type) {
 			case *ast.AssignStmt:
-				if slices.ContainsFunc(n.Lhs, func(expr ast.Expr) bool { return nameIdentifier(expr) == value }) {
+				if slices.ContainsFunc(n.Lhs, func(expr ast.Expr) bool { return nameIdentifier(ast.Unparen(expr)) == value }) {
 					return false
 				}
 			case *ast.DeclStmt:
@@ -857,7 +878,7 @@ func nameValueUnchanged(block ast.Node, from, to ast.Node, value string) bool {
 					return false
 				}
 			case *ast.UnaryExpr:
-				if n.Op == token.AND && nameIdentifier(n.X) == value {
+				if n.Op == token.AND && nameIdentifier(ast.Unparen(n.X)) == value {
 					return false
 				}
 			}

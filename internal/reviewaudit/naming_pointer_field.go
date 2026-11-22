@@ -462,7 +462,7 @@ func namePointerResultStable(body *ast.BlockStmt, call, read ast.Node, result *a
 			}
 		}
 		for _, target := range targets {
-			if id, ok := target.(*ast.Ident); ok && id.Obj == result {
+			if id, ok := ast.Unparen(target).(*ast.Ident); ok && id.Obj == result {
 				return false
 			}
 		}

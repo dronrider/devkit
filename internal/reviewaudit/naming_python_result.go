@@ -214,8 +214,8 @@ def import_aliases(statements, package):
 def import_names(package, module, caller, imports, before):
     local = [] if caller is None else [part for part in import_aliases(imports, package)
                                       if stable_name(caller, part.asname or part.name, part, module_alias=True)]
-    outer = [part for part in import_aliases(module.body, package)
-             if part.lineno < before and stable_name(module, part.asname or part.name, part, module_alias=True)
+    outer = [part for part in import_aliases((stmt for stmt in module.body if stmt.lineno < before), package)
+             if stable_name(module, part.asname or part.name, part, module_alias=True)
              and (caller is None or stable_name(caller, part.asname or part.name, module_alias=True))]
     if not local and not outer:
         return set()

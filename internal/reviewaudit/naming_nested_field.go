@@ -192,20 +192,30 @@ func nameExplicitStructFields(binding *ast.Object) *ast.FieldList {
 	default:
 		return nil
 	}
-	if pointer, ok := typ.(*ast.StarExpr); ok {
-		typ = pointer.X
+	seen := make(map[*ast.TypeSpec]bool)
+	pointer := false
+	for typ != nil {
+		switch expr := ast.Unparen(typ).(type) {
+		case *ast.StarExpr:
+			if pointer {
+				return nil
+			}
+			typ, pointer = expr.X, true
+		case *ast.Ident:
+			if expr.Obj == nil {
+				return nil
+			}
+			declaration, ok := expr.Obj.Decl.(*ast.TypeSpec)
+			if !ok || seen[declaration] {
+				return nil
+			}
+			seen[declaration] = true
+			typ = declaration.Type
+		case *ast.StructType:
+			return expr.Fields
+		default:
+			return nil
+		}
 	}
-	id, ok := typ.(*ast.Ident)
-	if !ok || id.Obj == nil {
-		return nil
-	}
-	declaration, ok := id.Obj.Decl.(*ast.TypeSpec)
-	if !ok || declaration.Assign.IsValid() {
-		return nil
-	}
-	structure, ok := declaration.Type.(*ast.StructType)
-	if !ok {
-		return nil
-	}
-	return structure.Fields
+	return nil
 }

@@ -142,16 +142,21 @@ func nameNestedFieldBindingStable(body *ast.BlockStmt, write *ast.AssignStmt, re
 		}
 		switch node := node.(type) {
 		case *ast.Ident:
-			if node.Obj != nil && (node.Obj == binding || nameExplicitStructFields(node.Obj) == fields) {
-				parent := parents[len(parents)-1]
-				sel, field := parent.(*ast.SelectorExpr)
-				if field && sel.X == node {
-					valid = slices.ContainsFunc(fields.List, func(field *ast.Field) bool {
-						return slices.ContainsFunc(field.Names, func(id *ast.Ident) bool { return id.Name == sel.Sel.Name })
-					})
-				} else {
-					valid = parent == binding.Decl
+			if node.Obj == nil {
+				return true
+			}
+			candidate := fields
+			if node.Obj != binding {
+				candidate = nameExplicitStructFields(node.Obj)
+				if candidate == nil || nameNamedStructField(candidate, read.Sel.Name) == nil {
+					return true
 				}
+			}
+			parent := parents[len(parents)-1]
+			if sel, field := parent.(*ast.SelectorExpr); field && sel.X == node {
+				valid = nameNamedStructField(candidate, sel.Sel.Name) != nil
+			} else {
+				valid = parent == binding.Decl
 			}
 		case *ast.AssignStmt:
 			if node != write && node.Pos() > write.Pos() {

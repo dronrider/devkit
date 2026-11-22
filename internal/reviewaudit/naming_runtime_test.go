@@ -16,7 +16,6 @@ func TestReadNameRuntimeRecord(t *testing.T) {
 		{`{"version":1,"command":["program",""]}`, ""},
 		{`{"version":2}`, "version 1"},
 		{`{"version":1,"read":{"unexpected":"value"}}`, "unknown field"},
-		{`{"version":1,"command":["program",null]}`, "аргумент команды должен быть строкой"},
 		{`{"version":1,"command":["program",1]}`, "cannot unmarshal number"},
 		{`{"version":1} {}`, "один объект JSON"},
 		{"\xff", "UTF-8"},
@@ -24,12 +23,13 @@ func TestReadNameRuntimeRecord(t *testing.T) {
 		t.Run(tc.payload, func(t *testing.T) {
 			got, err := readNameRuntimeRecord(tc.payload)
 			assertTargetCheck(t, err, tc.want)
-			if tc.want == "" && (!validNameRuntimeCommand(got.Command) || len(got.Command) != 2 || got.Command[1] != "") {
+			if tc.want == "" && (!validNameRuntimeCommand(got.Command) || len(got.Command) != 2 || got.Command[1] == nil || *got.Command[1] != "") {
 				t.Fatalf("значимый пустой аргумент потерян: %#v", got.Command)
 			}
 		})
 	}
-	for _, argv := range []nameRuntimeCommand{nil, {}, {" "}, {"program", "\x00"}} {
+	program, blank, nul := "program", " ", "\x00"
+	for _, argv := range []nameRuntimeCommand{nil, {}, {nil}, {&blank}, {&program, nil}, {&program, &nul}} {
 		if validNameRuntimeCommand(argv) {
 			t.Errorf("принята некорректная команда %#v", argv)
 		}
@@ -58,7 +58,13 @@ func TestNameRuntimeWriteIntegration(t *testing.T) {
 		{name: "нарушение", change: func(e *Evidence) { e.Result = "violated" }, want: "результатом checked"},
 		{name: "нет записи", changeRun: func(r *nameRuntimeRecord) { r.Write = nameRuntimeWrite{} }, want: "payload.write"},
 		{name: "нет потребителя", changeRun: func(r *nameRuntimeRecord) { r.Read = nameRuntimeObservation{} }, want: "запись и последующее чтение"},
-		{name: "другая команда контроля обязательна", changeRun: func(r *nameRuntimeRecord) { r.Negative.Command = r.Command }, want: "отдельного контроля"},
+		{name: "другая команда контроля обязательна", changeRun: func(r *nameRuntimeRecord) {
+			program, arg := *r.Command[0], *r.Command[1]
+			r.Negative.Command = nameRuntimeCommand{&program, &arg}
+		}, want: "отдельного контроля"},
+		{name: "null среди аргументов", changeRun: func(r *nameRuntimeRecord) {
+			r.Command = nameRuntimeCommand{r.Command[0], nil}
+		}, want: "команды прогона и отдельного контроля"},
 		{name: "другой наблюдаемый объект", changeRun: func(r *nameRuntimeRecord) { r.Read.Identity = "activity:other-row" }, want: "один объект и одно значение"},
 		{name: "подменена правая часть", change: func(e *Evidence) { e.WriteEvidence.Value = "previous" }, want: "write_evidence и proof.expression"},
 		{name: "подменено выражение", change: func(e *Evidence) { e.ObjectComparison.Proof.Expression = "row" }, want: "write_evidence и proof.expression"},
@@ -167,6 +173,22 @@ func TestNameRuntimeSignatureAndTreeIntegration(t *testing.T) {
 		t.Setenv(nameRuntimeSigners, linked)
 		check("должен находиться вне репозитория")
 	})
+	t.Run("список ключей через путь со сменой регистра", func(t *testing.T) {
+		alias := strings.ToUpper(source.root)
+		original, err := os.Stat(source.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(alias)
+		if alias == source.root || err != nil || !os.SameFile(original, info) {
+			t.Skip("файловая система различает регистр пути")
+		}
+		allowed := filepath.Join(source.root, "allowed")
+		writeNameRuntimeAllowed(t, allowed, key)
+		t.Cleanup(func() { os.Remove(allowed) })
+		t.Setenv(nameRuntimeSigners, filepath.Join(alias, "allowed"))
+		check("должен находиться вне репозитория")
+	})
 	write(t, source.reportPath, "{}\n")
 	gitT(t, source.root, "add", "--", source.reportPath)
 	gitT(t, source.root, "commit", "-qm", "attach audit")
@@ -260,15 +282,16 @@ func nameRuntimeFixture(t *testing.T) (*evidenceSource, string, nameRuntimeRecor
 	writeNameRuntimeAllowed(t, filepath.Join(os.Getenv("HOME"), ".devkit", "style-runtime.allowed_signers"), key)
 	source := &evidenceSource{root: root, reportPath: report, taskID: "XR-1", files: files, cache: make(map[string][]string)}
 	stamp, before, zero := "2026-11-22T13:14:00Z", "2026-11-21T13:14:00Z", 0
+	probe, writeArg, controlArg := "independent-activity-probe", "write", "control"
 	writeSite := nameRuntimeSite{At: "code.go:4", Quote: "row.LastActivityAt = stamp", Expression: "row.LastActivityAt", Identity: "activity:row-1"}
 	readSite := nameRuntimeSite{At: "activity.py:2", Quote: "return row.LastActivityAt", Expression: "row.LastActivityAt", Identity: "activity:row-1"}
 	record := nameRuntimeRecord{
 		Version: 1, Task: "XR-1", Commit: gitT(t, root, "rev-parse", "HEAD"), Object: "code.go#SetActivity", Declaration: nameRuntimeDeclaration, Actual: "LastActivityAt",
-		Command: []string{"independent-activity-probe", "write"},
+		Command: nameRuntimeCommand{&probe, &writeArg},
 		Write:   nameRuntimeWrite{nameRuntimeObservation: nameRuntimeObservation{nameRuntimeSite: writeSite, Value: &stamp}, SourceValue: "stamp"},
 		Read:    nameRuntimeObservation{nameRuntimeSite: readSite, Value: &stamp},
 		Negative: nameRuntimeControl{
-			Command: []string{"independent-activity-probe", "control"}, TargetWrites: &zero,
+			Command: nameRuntimeCommand{&probe, &controlArg}, TargetWrites: &zero,
 			Read: nameRuntimeObservation{nameRuntimeSite: readSite, Value: &before},
 		},
 	}

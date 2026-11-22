@@ -80,7 +80,8 @@ func checkNameRuntimeWrite(e Evidence, declaration string, source *evidenceSourc
 	if source.taskID == "" || run.Task != source.taskID || run.Object != e.Object || run.Declaration != declaration || run.Actual != pair.Actual {
 		return fmt.Errorf("proof.runtime.payload: задача, цель, объявление и actual должны совпадать с проверкой")
 	}
-	if !validNameRuntimeCommand(run.Command) || !validNameRuntimeCommand(run.Negative.Command) || slices.Equal(run.Command, run.Negative.Command) {
+	if !validNameRuntimeCommand(run.Command) || !validNameRuntimeCommand(run.Negative.Command) ||
+		slices.EqualFunc(run.Command, run.Negative.Command, func(a, b *string) bool { return *a == *b }) {
 		return fmt.Errorf("proof.runtime.payload: укажите команды прогона и отдельного контроля")
 	}
 	if run.Write.At != write.WriteAt || run.Write.Expression != write.Target || run.Write.Expression != pair.Proof.Expression || run.Write.SourceValue != write.Value {
@@ -99,7 +100,7 @@ func checkNameRuntimeWrite(e Evidence, declaration string, source *evidenceSourc
 	if err := checkNameRuntimeTree(source.root, source.reportPath, run.Commit); err != nil {
 		return fmt.Errorf("proof.runtime.payload.commit: %w", err)
 	}
-	lines := nameRuntimeSource{source: source, revision: run.Commit, files: make(map[string][]string)}
+	lines := nameRuntimeSource{source: source, revision: run.Commit}
 	if _, err := lines.line(declaration); err != nil {
 		return fmt.Errorf("proof.runtime.payload.declaration: %w", err)
 	}
@@ -158,7 +159,6 @@ func checkNameRuntimeWords(e Evidence, run nameRuntimeRecord, source *evidenceSo
 type nameRuntimeSource struct {
 	source   *evidenceSource
 	revision string
-	files    map[string][]string
 }
 
 func (s *nameRuntimeSource) line(ref string) (string, error) {
@@ -169,33 +169,27 @@ func (s *nameRuntimeSource) line(ref string) (string, error) {
 	if base {
 		return "", fmt.Errorf("укажите строку проверяемой ревизии без base@")
 	}
-	lines, ok := s.files[path]
-	if !ok {
-		entry, err := gitRaw(s.source.root, "--no-replace-objects", "ls-tree", "-z", "--full-tree", s.revision, "--", ":(literal)"+path)
-		if err != nil {
-			return "", err
-		}
-		mode, name, _ := strings.Cut(entry, "\t")
-		if name != path+"\x00" || !(strings.HasPrefix(mode, "100644 blob ") || strings.HasPrefix(mode, "100755 blob ")) {
-			return "", fmt.Errorf("%s: ссылка должна вести в обычный файл коммита прогона", path)
-		}
-		body, err := gitRaw(s.source.root, "--no-replace-objects", "cat-file", "blob", s.revision+":"+path)
-		if err != nil {
-			return "", err
-		}
-		working, err := s.source.read(path, false)
-		if err != nil {
-			return "", err
-		}
-		if working != body {
-			return "", fmt.Errorf("%s: содержимое рабочего файла отличается от коммита прогона", path)
-		}
-		if body != "" {
-			lines = strings.Split(strings.TrimSuffix(body, "\n"), "\n")
-		}
-		s.files[path] = lines
+	entry, err := gitRaw(s.source.root, "--no-replace-objects", "ls-tree", "-z", "--full-tree", s.revision, "--", ":(literal)"+path)
+	if err != nil {
+		return "", err
 	}
-	if line > len(lines) {
+	mode, name, _ := strings.Cut(entry, "\t")
+	if name != path+"\x00" || !(strings.HasPrefix(mode, "100644 blob ") || strings.HasPrefix(mode, "100755 blob ")) {
+		return "", fmt.Errorf("%s: ссылка должна вести в обычный файл коммита прогона", path)
+	}
+	body, err := gitRaw(s.source.root, "--no-replace-objects", "cat-file", "blob", s.revision+":"+path)
+	if err != nil {
+		return "", err
+	}
+	working, err := s.source.read(path, false)
+	if err != nil {
+		return "", err
+	}
+	if working != body {
+		return "", fmt.Errorf("%s: содержимое рабочего файла отличается от коммита прогона", path)
+	}
+	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	if body == "" || line > len(lines) {
 		return "", fmt.Errorf("строка %d отсутствует в %s", line, path)
 	}
 	return lines[line-1], nil
@@ -220,27 +214,11 @@ func readNameRuntimeRecord(payload string) (nameRuntimeRecord, error) {
 	return run, nil
 }
 
-type nameRuntimeCommand []string
-
-func (argv *nameRuntimeCommand) UnmarshalJSON(data []byte) error {
-	var args []*string
-	if err := json.Unmarshal(data, &args); err != nil {
-		return err
-	}
-	command := make(nameRuntimeCommand, len(args))
-	for i, arg := range args {
-		if arg == nil {
-			return fmt.Errorf("аргумент команды должен быть строкой")
-		}
-		command[i] = *arg
-	}
-	*argv = command
-	return nil
-}
+type nameRuntimeCommand []*string
 
 func validNameRuntimeCommand(argv nameRuntimeCommand) bool {
-	return len(argv) > 0 && strings.TrimSpace(argv[0]) != "" && !slices.ContainsFunc(argv, func(arg string) bool {
-		return strings.ContainsRune(arg, '\x00')
+	return len(argv) > 0 && argv[0] != nil && strings.TrimSpace(*argv[0]) != "" && !slices.ContainsFunc(argv, func(arg *string) bool {
+		return arg == nil || strings.ContainsRune(*arg, '\x00')
 	})
 }
 
@@ -261,17 +239,22 @@ func nameRuntimeAllowedSigners(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("proof.runtime: нужен обычный файл со списком доверенных проверяющих %q (%s)", allowed, nameRuntimeSigners)
 	}
-	repo, err := filepath.Abs(root)
+	repo, err := os.Stat(root)
 	if err != nil {
 		return "", err
 	}
-	resolvedRepo, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		return "", err
-	}
-	for _, paths := range [][2]string{{repo, allowed}, {resolvedRepo, allowed}, {resolvedRepo, resolved}} {
-		if rel, err := filepath.Rel(paths[0], paths[1]); err == nil && filepath.IsLocal(rel) {
-			return "", fmt.Errorf("proof.runtime: список доверенных проверяющих должен находиться вне репозитория (%s)", nameRuntimeSigners)
+	for _, path := range []string{allowed, resolved} {
+		for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+			info, err := os.Stat(dir)
+			if err != nil {
+				return "", err
+			}
+			if os.SameFile(repo, info) {
+				return "", fmt.Errorf("proof.runtime: список доверенных проверяющих должен находиться вне репозитория (%s)", nameRuntimeSigners)
+			}
+			if dir == filepath.Dir(dir) {
+				break
+			}
 		}
 	}
 	if info, err := os.Stat(resolved); err != nil || !info.Mode().IsRegular() {

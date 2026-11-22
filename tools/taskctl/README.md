@@ -1711,9 +1711,9 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 
 Список доверенных проверяющих хранится на машине, где идут ревью и слияние.
 Укажите открытый ключ проверяющего в `$HOME/.devkit/style-runtime.allowed_signers`
-в формате OpenSSH `principal ssh-ed25519 AAAA...`. Другой абсолютный путь
-можно задать через `DEVKIT_STYLE_RUN_ALLOWED_SIGNERS` в окружении `taskctl`
-и `shipctl`. Ключ подписи остаётся у проверяющего. Код под проверкой
+в формате OpenSSH `principal ssh-ed25519 AAAA...`. Абсолютный путь за пределами
+проверяемого репозитория можно задать через `DEVKIT_STYLE_RUN_ALLOWED_SIGNERS`
+в окружении `taskctl` и `shipctl`. Ключ подписи остаётся у проверяющего. Код под проверкой
 запускается без доступа к ключу и сокету SSH-агента.
 
 Проверяющий берёт полный SHA из `git rev-parse HEAD` в чистом чекауте.

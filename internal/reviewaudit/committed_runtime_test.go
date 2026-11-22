@@ -39,22 +39,23 @@ func TestRuntimeReportIntegrationUsesCommittedAudit(t *testing.T) {
 }
 
 func TestRuntimeProofTemplateIsLimitedToWrites(t *testing.T) {
-	entries, err := EvidenceTemplates("", "STYLE-001", "writes", "code.go:1#writeClock", "checked", "runtime")
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("template: %+v, %v", entries, err)
-	}
-	e := entries[0]
-	if e.ObjectComparison.Proof == nil || e.ObjectComparison.Proof.Runtime == nil {
-		t.Fatal("runtime proof template is missing")
-	}
-	for _, check := range []string{"result", "meaning"} {
-		e.Check = check
-		if err := checkNameEntry(e, "code.go:1", []string{"write", "Clock"}, nil); err == nil || !strings.Contains(err.Error(), "для writes") {
-			t.Fatalf("runtime %s: %v", check, err)
+	for _, tc := range []struct {
+		check, result string
+		wantRuntime   bool
+	}{
+		{"writes", "checked", true},
+		{"result", "checked", false},
+		{"meaning", "checked", false},
+		{"writes", "pending", false},
+	} {
+		entries, err := EvidenceTemplates("", "STYLE-001", tc.check, "code.go:1#writeClock", tc.result, "runtime")
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("template %s/%s: %+v, %v", tc.check, tc.result, entries, err)
 		}
-	}
-	e.Check, e.Result = "writes", "pending"
-	if err := checkNameEntry(e, "code.go:1", []string{"write", "Clock"}, nil); err == nil || !strings.Contains(err.Error(), "checked") {
-		t.Fatalf("pending runtime proof: %v", err)
+		pair := entries[0].ObjectComparison
+		hasRuntime := pair != nil && pair.Proof != nil && pair.Proof.Runtime != nil
+		if hasRuntime != tc.wantRuntime {
+			t.Errorf("template %s/%s: runtime = %t, want %t", tc.check, tc.result, hasRuntime, tc.wantRuntime)
+		}
 	}
 }

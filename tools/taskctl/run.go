@@ -120,8 +120,8 @@ func taskGoal(root, id string) string {
 	return filepath.Join("docs", "tasks", key+".md")
 }
 
-// cmdRun поднимает голову и отдаёт вывод с кодом выхода. Ошибка это сломанная
-// раскладка, у неё код taskhead.CodeSetup.
+// cmdRun исполняет заказ подъёма и отдаёт отчёт со ступенью и кодом выхода.
+// При ошибке команда возвращает taskhead.CodeSetup.
 func cmdRun(root, id string, o runOpts) (string, int, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -494,6 +494,12 @@ func checkNameObject(e Evidence, word *string, words []string, observed, declara
 	if e.Check == "result" && isGoRef(declaration) && e.ResultEvidence != nil && isNameBooleanExpression(pair.Actual) {
 		return checkNameBooleanResult(e, declaration, source)
 	}
+	if isPythonNameResult(e, declaration) {
+		if pair.EquivalentAt != "" || pair.EquivalentFlow != nil {
+			return fmt.Errorf("proof: используйте одну форму соответствия; цепочку запишите в result_evidence.flow")
+		}
+		return checkNameObjectProof(e, declaration, source)
+	}
 	destinationExpr := e.Check == "writes" && e.WriteEvidence != nil && e.WriteEvidence.File != nil && e.WriteEvidence.File.Role == "destination" && isGoRef(declaration)
 	if !destinationExpr && (pair.Actual == "" || !strings.ContainsFunc(pair.Actual, unicode.IsLetter) ||
 		strings.ContainsFunc(pair.Actual, func(r rune) bool {

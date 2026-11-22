@@ -11,9 +11,11 @@ import (
 )
 
 type NameAssignmentWrite struct {
-	Writes []NameAssignmentSite `json:"writes"`
-	Use    NameCodeUse          `json:"use"`
-	TypeAt string               `json:"type_at,omitempty"`
+	Writes           []NameAssignmentSite `json:"writes"`
+	Use              NameCodeUse          `json:"use"`
+	TypeAt           string               `json:"type_at,omitempty"`
+	PointerCallAt    string               `json:"pointer_call_at,omitempty"`
+	NextCallReturnAt string               `json:"next_call_return_at,omitempty"`
 }
 
 type NameAssignmentSite struct {
@@ -60,6 +62,8 @@ func (g *queryGoSource) checkNameWriteProof(e Evidence, fn queryFunc) error {
 	switch {
 	case p.Assignment != nil:
 		err = g.checkNameAssignment(e, original, fn)
+	case p.Effect != nil && p.Effect.Kind == "http_json":
+		err = g.checkNameHTTPJSONWrite(e, original, fn)
 	case p.Effect != nil:
 		err = g.checkNameSystemWrite(e, fn)
 	case p.Setting != nil:
@@ -125,6 +129,10 @@ func nameExprIn(n ast.Node, expression string) bool {
 func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) error {
 	pair, p := e.ObjectComparison, e.ObjectComparison.Proof
 	a := p.Assignment
+	pointerCall, nextCall := a.PointerCallAt != "", a.NextCallReturnAt != ""
+	if pointerCall && nextCall || (pointerCall || nextCall) && len(a.Writes) != 1 {
+		return fmt.Errorf("proof.assignment: укажите один способ чтения и одно присваивание")
+	}
 	if len(a.Writes) == 0 {
 		return fmt.Errorf("proof.assignment.writes: укажите присваивания с целевым полем и выражением значения")
 	}
@@ -134,6 +142,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 	var binding *ast.Object
 	var assignedTarget string
 	var assignedNode ast.Expr
+	var writeStmt *ast.AssignStmt
 	ordinaryWrite := false
 	commaOK := false
 	for _, site := range a.Writes {
@@ -186,10 +195,11 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 		if exprSlot >= len(stmt.Rhs) || !sameNameExpression(stmt.Rhs[exprSlot], site.Value) {
 			return fmt.Errorf("proof.assignment: %s должно получать правую часть %s", site.Target, site.Value)
 		}
-		if site.At == e.WriteEvidence.WriteAt && (site.At == pair.ActualAt || g.nameAssignmentFieldDeclaration(fn, stmt.Lhs[slot], pair.ActualAt)) && (sameNameExpression(stmt.Lhs[slot], p.Expression) || sameNameAssignment(stmt, p.Expression)) {
+		if site.At == e.WriteEvidence.WriteAt && (site.At == pair.ActualAt || g.nameAssignmentFieldDeclaration(fn, stmt.Lhs[slot], pair.ActualAt) || pointerCall || nextCall) && (sameNameExpression(stmt.Lhs[slot], p.Expression) || sameNameAssignment(stmt, p.Expression)) {
 			assigned, commaOK = stmt.Rhs[exprSlot], isMapOK
 			assignedTarget = site.Target
 			assignedNode = stmt.Lhs[slot]
+			writeStmt = stmt
 		}
 		proofLines[site.At] = true
 	}
@@ -231,6 +241,14 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 		}
 		for node := range ast.Preorder(x) {
 			if field, ok := node.(*ast.SelectorExpr); ok && field.Sel.Name == pair.Actual {
+				if pointerCall {
+					written, ok := assignedNode.(*ast.SelectorExpr)
+					return ok && g.namePointerFieldUse(fn, consumer, writeStmt, written, field, a.PointerCallAt, pair.ActualAt)
+				}
+				if nextCall {
+					written, ok := assignedNode.(*ast.SelectorExpr)
+					return ok && g.nameCacheFieldUse(entry, fn, consumer, writeStmt, written, field, assigned, pair.ActualAt, a.NextCallReturnAt, e.WriteEvidence.Calls)
+				}
 				if written, ok := assignedNode.(*ast.SelectorExpr); ok && nameIdentifier(written.X) != "" {
 					return nameBoundFieldUse(fn, consumer, written, field) ||
 						g.nameNestedLocalFieldRead(fn, consumer, written, field) ||
@@ -238,13 +256,13 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 				}
 				return pair.ActualAt == e.WriteEvidence.WriteAt
 			}
-			if id, ok := node.(*ast.Ident); ok && id.Name == pair.Actual && (consumer.node.Body == fn.node.Body || g.nameAssignmentGlobal(fn, consumer, id, assignedNode)) {
+			if id, ok := node.(*ast.Ident); !pointerCall && !nextCall && ok && id.Name == pair.Actual && (consumer.node.Body == fn.node.Body || g.nameAssignmentGlobal(fn, consumer, id, assignedNode)) {
 				return true
 			}
 		}
 		return false
 	})
-	if scenario != nil {
+	if scenario != nil && !pointerCall && !nextCall {
 		match := g.nameSynctestNode(consumer, a.Use.At, a.Use.Expression, false)
 		if consumer.node.Body != fn.node.Body || match == nil || match.scenario != scenario || !nameSynctestUsesBinding(match.node, binding, assignedTarget) || nameIsAssignmentTarget(consumer, match.node.(ast.Expr)) {
 			return &nameConsumerIssue{field: pair.Actual, err: fmt.Errorf("proof.assignment.use: покажите чтение того же значения в сценарии synctest")}
@@ -255,6 +273,14 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 		return &nameConsumerIssue{field: pair.Actual, err: fmt.Errorf("proof.assignment.use: покажите выражение, которое читает %s: %w", pair.Actual, err)}
 	}
 	proofLines[a.Use.At] = true
+	if pointerCall {
+		proofLines[a.PointerCallAt] = true
+		proofLines[pair.ActualAt] = true
+	}
+	if nextCall {
+		proofLines[a.NextCallReturnAt] = true
+		proofLines[pair.ActualAt] = true
+	}
 	return checkNameWriteWordLinks(p.Words, nameWriteLines(e, proofLines))
 }
 

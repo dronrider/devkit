@@ -1682,6 +1682,18 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 второго аргумента, в `actual_at` и `write_at` строку вызова, в `value`
 полный вызов. Для составного имени укажите факты о словах в `proof.words`.
 Проверка использует AST из стандартной библиотеки `python3`.
+Для записи JSONL через `os.open`, `os.fdopen` и `write` укажите
+роль `content`, путь открытия и точные `payload_at` и `encode_at`.
+`write_evidence.calls` связывает прямые вызовы в том же модуле.
+
+Для результата Python укажите строку `return` в `actual_at` и
+`return_at`, полное выражение в `proof.expression` и слова из него
+в `proof.words`. Поле `proof.type` оставьте пустым. В `flow.caller`
+укажите объявление потребителя, а для входа `sys.exit` условие
+`if __name__ == "__main__"`. `flow.value` содержит имя переменной при
+присваивании результата. Для прямого использования достаточно
+`use_expression`. Межмодульный вызов связывается через обычный
+импорт Python из того же каталога.
 
 Для `os.Unsetenv` и `syscall.Kill` используйте
 `audit-template STYLE-001 --check writes --kind effect`. В
@@ -1693,6 +1705,12 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 Форма сверяет вызов и его аргументы по исходнику. Условия, по которым
 процесс выбран для сигнала, обоснуйте отдельно в проверке назначения
 имени. Слова роли `object` должны называть сам ключ или поле PID.
+
+Для `effect.kind: flock` укажите полный вызов `syscall.Flock` в
+`proof.expression`, аргумент дескриптора в `target` и режим в `value`.
+В `actual` укажите имя локального дескриптора. Поля `open_at` и
+`path` указывают его открытие с созданием файла и фактический первый
+аргумент `syscall.Open` или `os.OpenFile`.
 
 У `sql` проверяются
 прямой `Exec`/`ExecContext`, точный текст `statement`, изменяемая `table`

@@ -6,7 +6,9 @@ import (
 )
 
 type NameSystemWrite struct {
-	Kind string `json:"kind"`
+	Kind   string `json:"kind"`
+	OpenAt string `json:"open_at,omitempty"`
+	Path   string `json:"path,omitempty"`
 }
 
 func (g *queryGoSource) checkNameSystemWrite(e Evidence, fn queryFunc) error {
@@ -34,8 +36,10 @@ func (g *queryGoSource) checkNameSystemWrite(e Evidence, fn queryFunc) error {
 		if !ok || pid.Sel.Name != pair.Actual {
 			return fmt.Errorf("proof.effect: в actual укажите последнее поле выражения PID")
 		}
+	case "flock":
+		return g.checkNameFlock(e, fn, call)
 	default:
-		return fmt.Errorf("proof.effect.kind: укажите unsetenv или signal")
+		return fmt.Errorf("proof.effect.kind: укажите unsetenv, signal или flock")
 	}
 	if objects := nameProofObjects(pair); e.Result == "checked" && len(objects) != 0 && !sameObjectName(objects, identifierWords(pair.Actual)) {
 		return fmt.Errorf("proof.effect: цель системного вызова не соответствует объекту в имени")

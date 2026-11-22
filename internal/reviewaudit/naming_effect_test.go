@@ -330,6 +330,7 @@ func TestNameAssignmentFieldInNestedBody(t *testing.T) {
 		{"potential_alias_write", "", "confirm", "other.work = false", "turn.work", "выражение, которое читает work"},
 		{"potential_whole_alias_write", "", "confirm", "*other = activity{}", "turn.work", "выражение, которое читает work"},
 		{"potential_type_alias_write", "", "confirm", "*other = activity{}", "turn.work", "выражение, которое читает work"},
+		{"potential_anonymous_alias_write", "", "confirm", "*other = struct{ work bool; last int }{}", "turn.work", "выражение, которое читает work"},
 		{"potential_alias_method", "", "confirm", "other.reset()", "turn.work", "выражение, которое читает work"},
 		{"local_false_constant", "const never = false", "never", "", "turn.work", "выражение, которое читает work"},
 		{"receiver_escape", "alias := turn; _ = alias", "confirm", "", "turn.work", "выражение, которое читает work"},
@@ -346,9 +347,12 @@ func TestNameAssignmentFieldInNestedBody(t *testing.T) {
 			tail := ""
 			alias := ""
 			params := "turn, other *activity"
-			if tc.name == "potential_type_alias_write" {
+			switch tc.name {
+			case "potential_type_alias_write":
 				alias = "type activityAlias = activity"
 				params = "turn *activity, other *activityAlias"
+			case "potential_anonymous_alias_write":
+				params = "turn *struct{ work bool; last int }, other *struct{ work bool; last int }"
 			}
 			if tc.name == "goto_before_read" {
 				tail = "done:\n return false"

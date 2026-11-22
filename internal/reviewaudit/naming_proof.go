@@ -39,6 +39,9 @@ func checkNameObjectProof(e Evidence, declaration string, source *evidenceSource
 		return err
 	}
 	if !isGoRef(declaration) {
+		if isPythonNameResult(e, declaration) {
+			return checkNamePythonResult(e, declaration, source)
+		}
 		return fmt.Errorf("proof: разбор выражений для этого языка недоступен; используйте equivalent_at или для одноимённой реализации на Go возьмите --kind source")
 	}
 	g := newQueryGoSource(source)

@@ -14,6 +14,10 @@ func TestNamePythonFileDestination(t *testing.T) {
 	}{
 		{"replace", "import os", "    try:\n        os.replace(temporary, path)\n    finally:\n        cleanup(temporary)", "path", ""},
 		{"alias", "import os as fs", "    fs.replace(temporary, path)", "path", ""},
+
+		{"generator_does_not_write_on_call", "import os", "    yield None\n    os.replace(temporary, path)", "path", "yield"},
+		{"replace_changed_through_other_import", "import os; import os as alias; alias.replace = lambda source, destination: None", "    os.replace(temporary, path)", "path", "os.replace"},
+
 		{"wrong_import", "from os import os", "    os.replace(temporary, path)", "path", "os.replace"},
 		{"unrelated_destination", "import os", "    os.replace(path, other)", "path", "фактический путь"},
 		{"empty_destination", "import os", "    path = ''\n    os.replace(temporary, path)", "path", "пустой путь"},
@@ -118,6 +122,104 @@ def signal_tick(home, temporary):
 				assertTargetCheck(t, checkNameEntry(e, decl, identifierWords("signal_tick"), source), "путь не подтверждает объект")
 				e.ObjectComparison.Proof = nil
 				assertTargetCheck(t, checkNameEntry(e, decl, identifierWords("signal_tick"), source), "путь не подтверждает объект")
+			}
+		})
+	}
+}
+
+func TestNamePythonAppendRecord(t *testing.T) {
+	const fixture = `import json
+import os
+
+def append(rec, home=None):
+    path = log_path(home)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write((json.dumps(rec, ensure_ascii=False) + "\n").encode())
+    except OSError:
+        return False
+    return True
+
+def reserve_record(incident, home=None):
+    rec = {"kind": "reserve", "attempt": marker(), "incident": incident}
+    if not append(rec, home=home):
+        raise RuntimeError()
+
+def app_reserve(incident):
+    incident = "app:" + incident
+    return reserve_record(incident)
+
+def log_path(home):
+    return "/tmp/recovery.jsonl"
+`
+	const location, writeAt, payloadAt = "sample.py:19", "sample.py:9", "sample.py:15"
+	for _, tc := range []struct {
+		name, old, replacement, want string
+	}{
+		{name: "bound_record"},
+		{"unrelated_fd", "fdopen(fd,", "fdopen(other,", "дескриптор"},
+		{"not_open_for_write", "os.O_WRONLY", "os.O_RDONLY", "дескриптор"},
+		{"replaced_target", "        fd =", "        path = other; fd =", "путь"},
+		{"foreign_open_path", "os.open(path,", "os.open(other,", "фактический путь"},
+		{"shadowed_open", "import os", "import os; os.open = fake", "дескриптор"},
+
+		{"fdopen_changed_through_other_import", "import os", "import os; import os as alias; import io; alias.fdopen = lambda fd, mode: io.BytesIO()", "дескриптор"},
+		{"helper_returns_non_path", "return \"/tmp/recovery.jsonl\"", "return None", "путь"},
+
+		{"fake_stream", "as stream:", "as temp:", "дескриптор"},
+		{"false_helper", "return reserve_record(incident)", "return False and reserve_record(incident)", "calls[0]"},
+		{"generator_helper", "        return False", "        if False: yield", "calls[1]"},
+		{"rebound_helper", "def log_path(home):", "reserve_record = fake\ndef log_path(home):", "calls[0]"},
+		{"substituted_argument", "reserve_record(incident)", "reserve_record(other)", "bindings"},
+		{"wrong_serialized_object", "json.dumps(rec,", "json.dumps(other,", "value"},
+		{"changed_argument", "rec, home=home", "mutate(rec), home=home", "bindings"},
+		{"mutated_payload", `"incident": incident}`, `"incident": incident}; rec.update(kind="result")`, "содержимое"},
+		{"substituted_record", "\"reserve\",", "\"result\", ", "содержимое"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code := fixture
+			if tc.old != "" {
+				code = strings.Replace(code, tc.old, tc.replacement, 1)
+			}
+			root := t.TempDir()
+			write(t, filepath.Join(root, "sample.py"), code)
+			files, err := os.OpenRoot(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer files.Close()
+			source := &evidenceSource{root: root, files: files, cache: map[string][]string{}, names: map[string]bool{"sample.py": true}}
+			word := "reserve"
+			e := Evidence{
+				Object: location + "#app_reserve", Check: "writes", Result: "checked",
+				ObjectComparison: &NameObjectComparison{Expected: []string{"app", "reserve"}, Actual: "rec", ActualAt: writeAt,
+					Proof: &NameObjectProof{Expression: "rec", Words: []NameProofWord{
+						{Word: "app", Role: "context", Fact: ReviewFact{Location: "sample.py:20", Quote: `incident = "app:" + incident`, Value: `"app:"`, Text: "Префикс передаётся в запись."}},
+						{Word: "reserve", Role: "object", Fact: ReviewFact{Location: payloadAt, Quote: `rec = {"kind": "reserve", "attempt": marker(), "incident": incident}`, Value: `"reserve"`, Text: "Словарь помечен как резерв."}},
+					}}},
+				WriteEvidence: &WriteEvidence{Word: &word, Target: "path",
+					Value: `(json.dumps(rec, ensure_ascii=False) + "\n").encode()`, WriteAt: writeAt,
+					File: &NameFileWrite{Path: "path", Role: "content", PayloadAt: payloadAt, EncodeAt: writeAt},
+					Calls: []NameWriteCall{
+						{At: "sample.py:21", Declaration: "sample.py:14", Bindings: []NameCallBinding{{Parameter: "incident", Argument: "incident"}}},
+						{At: "sample.py:16", Declaration: "sample.py:4", Bindings: []NameCallBinding{
+							{Parameter: "rec", Argument: "rec"}, {Parameter: "home", Argument: "home"},
+						}},
+					}},
+			}
+			if tc.name == "wrong_serialized_object" {
+				e.ObjectComparison.ActualAt = payloadAt
+			}
+			if tc.name == "substituted_record" {
+				fact := &e.ObjectComparison.Proof.Words[1].Fact
+				fact.Quote = strings.Replace(fact.Quote, tc.old, tc.replacement, 1)
+				fact.Value = `"result"`
+			}
+			assertTargetCheck(t, checkNameEntry(e, location, identifierWords("app_reserve"), source), tc.want)
+			if tc.name == "bound_record" {
+				e.ObjectComparison.Proof.Words[1].Role = "context"
+				assertTargetCheck(t, checkNameEntry(e, location, identifierWords("app_reserve"), source), "object")
 			}
 		})
 	}

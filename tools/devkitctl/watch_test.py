@@ -1077,6 +1077,33 @@ class RunRootsTest(Stand):
         self.assertIn("DK-902", moved[0])
         self.assertIn("припаркована страховкой", out.getvalue())
 
+    def test_tick_reports_terminal_codex_once_without_stage_records(self):
+        import duty
+        import taskstate
+
+        task = "DK-902"
+        root = str(self.proj.resolve())
+        data = {"version": 1, "root": root, "task": task, "stopped": False,
+                "run": {"id": "run-one", "appChat": "as-original", "harness": "codex",
+                        "model": "sol", "pid": 999999, "appRecoveryTerminal": True,
+                        "appRecoveryWhy": "сервер завершился до подтверждения хода"}}
+        taskstate.path(self.home, root, task).parent.mkdir(parents=True)
+        taskstate.save(self.home, root, task, data)
+        call = Fake(out=json.dumps({"sections": [
+            {"key": "in-progress", "rows": [{"id": task, "title": "Задача стенда"}]}]}))
+        hook = duty.incidents_mod()
+        for _ in range(2):
+            watch.run(self.now, 45 * 60, self.home, io.StringIO(), call, TASKCTL, SHIPCTL)
+        entries = hook.read(home=self.home)
+        self.assertEqual(len(entries), 1, entries)
+        self.assertEqual(entries[0]["reason"], hook.APP_RECOVERY_OUT)
+        self.assertEqual(entries[0]["why"], data["run"]["appRecoveryWhy"])
+        self.assertEqual(entries[0]["seen"], 1)
+        orders = [a[-1] for a in call.calls if "run" in a]
+        self.assertTrue(orders)
+        self.assertTrue(all(order.startswith(duty.ORDER) for order in orders), orders)
+        self.assertFalse(call.argv_with("--drain"))
+
     def test_record_of_a_gone_project_is_skipped(self):
         # Запись этапа переживает сам проект: корня нет, и обходить нечего.
         self.stage_record("DK-903", str(self.dir / "снесённый"))
@@ -2457,6 +2484,16 @@ class QuotaTick(unittest.TestCase):
         path = self.home / ".devkit" / "goal-watch.log"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
+    def test_tick_signals_dashboard_without_goals(self):
+        signal = self.home / ".devkit" / "app-task-tick"
+        self.tick(Fake())
+        first = signal.read_text(encoding="utf-8")
+        self.tick(Fake())
+        second = signal.read_text(encoding="utf-8")
+        self.assertTrue(first.strip())
+        self.assertTrue(second.strip())
+        self.assertNotEqual(first, second)
+
     def test_tick_calls_refresh_all_if_stale(self):
         # Красный на старом коде: тик вовсе не звал agentctl, и снимок между
         # заходами стоял часами.
@@ -2952,6 +2989,24 @@ class ResumeFailedTest(ResumeHelpers, Stand):
     отказа подряд и простой старше двенадцати часов кончаются исходом дежурному
     (инцидент в журнале да уведомление, DK-1460), пустой баланс уходит туда же
     сразу, а доведение проверяет тик тем же прогоном сценария."""
+
+    def test_codex_work_failure_is_owned_by_dashboard(self):
+        import taskstate
+
+        task = "DK-901"
+        root = str(self.proj.resolve())
+        sid = "as123456-original"
+        self.notify("turn_failed", ago_minutes=40, sid=sid[:8], task=task)
+        self.chat(sid=sid, task=task)
+        path = taskstate.path(self.home, root, task)
+        path.parent.mkdir(parents=True)
+        taskstate.save(self.home, root, task, {"version": 1, "root": root,
+                       "task": task, "stopped": False, "run": {"id": "run-one",
+                       "appChat": sid, "harness": "codex", "model": "sol"}})
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(self.ran(), [])
+        self.assertEqual(self.keys(), [])
+        self.assertEqual(self.incidents(), [])
 
     def test_hook_owned_failure_is_not_resumed_twice(self):
         self.task_file()

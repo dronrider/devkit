@@ -870,6 +870,17 @@ func (s *server) chatStoreRead(key string) chatStore {
 }
 
 func (s *server) chatStoreWrite(key string, st chatStore) error {
+	return s.chatStoreUpdate(key, func(previous chatStore) chatStore {
+		st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+		st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
+		if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
+			st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+		}
+		return st
+	})
+}
+
+func (s *server) chatStoreUpdate(key string, update func(chatStore) chatStore) error {
 	dir := chatStoreDir(s.cfg.Home)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -879,12 +890,7 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 		return err
 	}
 	defer lock.Close()
-	previous := s.chatStoreRead(key)
-	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
-	st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
-	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
-		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
-	}
+	st := update(s.chatStoreRead(key))
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -3077,9 +3083,9 @@ func (s *server) chatForeignLive(projPath, sid string) bool {
 	return ok && info.mod.After(s.now().Add(-sessionLiveTTL))
 }
 
-// handleChatStop прерывает идущий ход чата. Прервать можно только то, что
-// поднято нашей tmux: у окна vscode и у мёртвой сессии клавиатуры отсюда нет,
-// и кнопки стопа у них на экране тоже нет.
+// handleChatStop прерывает ход чата. Для терминального чата нужен доступ
+// к клавиатуре своего окна tmux. Ход и конвейер app-server останавливаются
+// через клиент дашборда.
 func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3094,9 +3100,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
-	// Стоп бывает двух родов, и род называет зовущий: обычный это Escape в
-	// живой терминал, а клин снимается сигналом самому процессу. Мёртвому
-	// терминалу Escape подать некуда, и разговор в клине оставался бы вечным.
+	// При идущем ходе обычный стоп посылает Escape в окно tmux.
+	// При клине сигнал получает сам процесс. Без терминала
+	// Escape подать некуда.
 	var body struct {
 		Kill bool `json:"kill"`
 		// Drop это третий род: снять живую сессию целиком под перезапуск
@@ -3109,7 +3115,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
 	}
 	if a := s.appTaskFind(sid, "", ""); a != nil {
-		if !s.recoveryChatStopped(w, found, sid, "stop") {
+		if !s.updateChatRecoveryState(w, found, sid, "stop") {
 			return
 		}
 		s.appTaskClose(a)
@@ -3119,6 +3125,9 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// Разговор чужого протокола останавливается своей дорогой: прерывание хода
 	// это уведомление клиенту, а снятие под перезапуск это снятие процесса.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
+		if st.TaskRunID != "" && st.Task != "" && st.Project == found.Name && !s.appTaskStopOrphan(w, found.Path, sid, st) {
+			return
+		}
 		if body.Drop || body.Kill {
 			s.appDrop(sid, "снятие под перезапуск")
 			writeJSON(w, http.StatusOK, map[string]any{"way": "gone",
@@ -3128,7 +3137,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		s.appStop(w, sid)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "stop") {
+	if !s.updateChatRecoveryState(w, found, sid, "stop") {
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -3140,11 +3149,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	last.Tmux, _ = s.chatWinOf(sid, recs, s.peers(), s.chatWinMemory())
 	alive := tmuxAliveFn()
 	if body.Drop {
-		// Сессия, которой уже нет, это не отказ, а сделанное дело: человек жал
-		// закрытие, и закрыто оно и есть. Прежде сюда приходил 409 со словами
-		// «снимать под перезапуск нечего», экран показывал красную карточку, а
-		// строка оставалась стоять, и второе нажатие упиралось в тот же отказ
-		// (живой случай пользователя: tmux-сессии на машине давно не было).
+		// Повторное закрытие уже исчезнувшего окна считаем успешным.
 		if last.Tmux != "" && !alive(last.Tmux) {
 			s.logf("сессия чата %s уже закрыта: tmux-сессии %s нет", sid, last.Tmux)
 			writeJSON(w, http.StatusOK, map[string]any{"way": "gone", "tmux": last.Tmux,
@@ -3244,12 +3249,8 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// его снова. Тот же случай, что у стопа со строки доски, и лечится он тем
 	// же дожимом (stopwait.go). Задачи у стопа из панели нет, снимать нечего:
 	// заказ тут держит только прерывание новых ходов.
-	// Поле state то же самое, что у стопа со строки доски (stopChatWork).
-	// «Останавливается» говорит клиенту не гасить плашку хода молча, а
-	// назвать её тем же словом, что несёт run_stopping строки (замечание
-	// ревью 9, вторая приёмка DK-716). Без него клиент читал голый OK как
-	// «ход кончен» и гасил плашку, пока строка доски ещё стояла под «Стопом»
-	// дожима.
+	// Состояние «останавливается» удерживает плашку в чате, пока
+	// продолжается дожим фоновой работы (DK-716).
 	if s.chatSubBusy(found.Path, sid) {
 		s.stopWaitSet(last.Tmux, sid, "", found.Name, found.Path, false)
 		s.logf("ход чата %s прерван (tmux-сессия %s), фоновая работа жива, стоп дожимается", sid, last.Tmux)
@@ -3280,10 +3281,10 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
 }
 
-// handleChatSay доставляет реплику диалогу. Правило одно на три состояния:
-// живому процессу реплика подаётся прямо в него, кончившемуся поднимается
-// продолжение той же сессии, а окно vscode дашборду не принадлежит, и туда
-// человек пишет сам.
+// handleChatSay принимает реплику разговора. Во время восстановления
+// Codex реплика сохраняется в очереди. Для терминального клиента дашборд
+// использует живую сессию или продолжает завершившуюся. Клиент без
+// своей tmux-сессии может принять реплику по сокету.
 func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -3303,7 +3304,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	taskIDs := sessions.Works(records)
 	stored := s.chatStoreRead(sid)
 	chosenModel, _ := s.chatChoice(sid, guardLast.Tmux)
-	if !chatModelCurrent(w, chosenModel) {
+	if stored.TaskRunID == "" && !chatModelCurrent(w, chosenModel) {
 		return
 	}
 	if stored.Blank && stored.Task != "" {
@@ -3340,16 +3341,13 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
-		// Effort это ручной уровень глубины из ползунка меню модели (DK-1570).
-		// Едет он только с репликой, которая поднимает сессию: живому процессу
-		// уровень не доставить, и выбор ждёт следующего подъёма.
+		// Effort это уровень глубины из меню модели (DK-1570). У app-server
+		// выбор применяется в следующем ходе. Для терминального клиента
+		// глубина передаётся при подъёме процесса.
 		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
-		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
-		// из чужого редактора и есть главный посетитель ручки, и сообщение
-		// «что-то не экранируется» родилось именно из молчаливого смешения
-		// этих двух причин.
+		// Для слишком длинной реплики панель предлагает вставку фрагментом.
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -3396,12 +3394,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Повтор той же записи дальше не едет. Отправитель повторяет её, когда не
-	// увидел ответа ручки, а не увидеть его он может и после доставки: связь
-	// рвётся на обратном пути, панель считает реплику неушедшей и шлёт снова.
-	// Живой случай: одна реплика доехала до сессии пятью копиями подряд, пять
-	// отдельных отправок с разницей в минуты, и каждая легла в очередь клиента,
-	// потому что общего ключа у повторов не было вовсе.
+	// Ответ ручки может потеряться после доставки. Панель повторяет
+	// отправку с тем же ключом, и сервер возвращает состояние первой
+	// попытки, пока помнит ключ (до часа). Очередь рабочего Codex
+	// дополнительно сверяет его со своими сохранёнными записями.
+	// Подтверждение доставки очищает текст в очереди, а ключ остаётся
+	// доступен для сверки последующих повторов.
 	claim := body.MsgID
 	if claim != "" {
 		if prev, taken := s.chatSayStart(sid, claim); !taken {
@@ -3436,22 +3434,17 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
 		return
 	}
-	// Разговор чужого протокола идёт своей дорогой: транскриптов и tmux у него
-	// нет, реплика уходит процессу app-server, а лента живёт файлом.
+	// У app-server своя лента. При восстановлении реплика ждёт в очереди,
+	// пока дашборд не сможет передать её клиенту исходной нити.
 	if stored.Protocol != "" {
 		s.appSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
-	if !s.recoveryChatStopped(w, found, sid, "continue") {
+	if !s.updateChatRecoveryState(w, found, sid, "continue") {
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
 	if !ok {
-		// Транскрипта нет вовсе: разговор заведён, а сессии за ним никогда не
-		// было (произвольный чат, у которого подъём не случился). Отказ тут
-		// ронял реплику в никуда, и человек писал в пустой чат по разу в день,
-		// не получая ответа (жалоба пользователя). Реплика человека и есть
-		// начало разговора: она поднимает сессию заказом.
 		s.chatRaiseSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
@@ -3474,12 +3467,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// отпускает диалог: сообщению соседней сессии харнес одобрением не верит,
 	// и это правильно, чинится доставка, а не правила доверия.
 	term := s.sayTermOf(sid, recs)
-	// Замороженный терминал глотает send-keys без эха (клин 69975): tmux
-	// пишет в pty без ошибки, а событийный цикл клиента мёртв, и клавиши не
-	// доходят никуда. Живость цикла спрашивает зонд сокета с памятью до любой
-	// посылки клавиш, ответа на запертый диалог в том числе: успех тут был бы
-	// молчанием, неотличимым от работы. Свежий транскрипт снимает вопрос без
-	// зонда.
+	// Если для терминала есть запись о сокете, перед клавишами проверяем
+	// отклик клиента. Свежий транскрипт позволяет пропустить сам зонд.
 	if term != "" {
 		if p, ok := s.peers()[sid]; ok && s.peerDeaf(p.Sock, info.mod) {
 			s.logf("терминал чата %s заморожен, клавиши туда не едут (%s)", sid, stuckDeafWord)
@@ -3521,13 +3510,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			// клиента, и клиент разбирает её после ответа на вопрос.
 			s.logf("ответ чата %s клавишами не подался: %v; реплика едет дорогами ниже", sid, err)
 		}
-		// Свободные слова в модальный вопрос не печатаются: латинская буква в
-		// них сработала бы горячей клавишей диалога, и реплика человека нажала
-		// бы кнопку за него. Сокет кладёт такую реплику в очередь клиента
-		// (дорога ниже), а без сокета она ложится в очередь панели и уезжает в
-		// окно сразу после ответа на вопрос (DoD DK-1300): терять её нельзя,
-		// а слово причины ведёт к блоку вопроса панели. Кнопок у пузыря нет ни
-		// у одного состояния (DK-1011).
+		// Пропускаем ввод клавишами, чтобы текст не стал ответом
+		// на открытый диалог. Без сокета сохраняем текст в очереди панели.
 		stuckDialog = true
 		if _, ok := s.peers()[sid]; !ok {
 			s.askHoldPut(sid, text)
@@ -3545,10 +3529,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		err := chatSend(term, text)
 		switch {
 		case errors.Is(err, errSendGone):
-			// Клиент вышел посреди подачи, и реплика осталась ненабранной
-			// строкой в панели, которой больше нет. Отказ здесь заставил бы
-			// писать реплику заново. Дорога та же, что у мёртвой сессии, и
-			// текст едет вводной резюма ниже.
+			// Окно пропало во время подачи. Оставляем текст для сокета
+			// или для следующего запуска, чтобы его не вводили заново.
 			s.logf("реплика чата %s хода не дала: %s", sid, sendGoneWord(term))
 			s.saidMark(saidSessionKey(sid), sendGoneWord(term))
 			term, sendGone = "", true
@@ -3599,10 +3581,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			if bangLine(text) {
 				out["note"] = "терминального входа у сессии нет: строка с ! уехала агенту текстом, терминал её не исполнит"
 			}
-			// Клиент с пропавшим терминалом берёт реплику сокетом так же
-			// охотно, как живой, и кладёт её в очередь, которую уже некому
-			// разобрать: про клин надо сказать здесь, иначе доставка выглядит
-			// удачной (инцидент с чатом DK-460).
+			// Сокет может подтвердить реплику после потери окна. Отдельная
+			// проверка позволяет показать признаки застрявшей доставки.
 			if lostTerminal(p.PID, last.Tmux, tmuxAliveFn(), info.mod, s.now()) {
 				out["stuck"] = stuckLostTermWord
 				out["wedged"] = true
@@ -3626,12 +3606,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, errPeerNoAck) {
-			// Байты ушли, подтверждения нет: событийный цикл клиента мёртв при
-			// живом pty (клин клиента 69975). Запасные дороги тут не выход:
-			// send-keys в замороженный терминал исчезает без эха, а резюм
-			// поверх живого процесса завёл бы второго агента. Реплика остаётся
-			// недоставленной в исходящем, клин назван словами, а выход из него
-			// стоит кнопкой на плашке.
+			// Сокет не подтвердил доставку. Завершаем запрос с причиной,
+			// чтобы повторная подача не создала второй ход.
 			s.markDeaf(p.Sock)
 			s.logf("клиент чата %s не подтвердил доставку (pid %d): %v", sid, p.PID, err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{
@@ -3653,12 +3629,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			"stuck": stuckAskSayWord})
 		return
 	}
-	// Отказа «разговор идёт в vscode» тут больше нет: канал клиента достаёт
-	// любое живое окно, и раз до сюда дошло, живого процесса у диалога нет ни в
-	// реестре, ни в tmux. Свежий транскрипт без сокета значит клиента старой
-	// версии либо сессию, умершую только что, и обоим годится резюм.
-	// Процесса нет: поднимается продолжение той же сессии. История не рвётся,
-	// клиент дочитывает её сам по --resume.
+	// Когда предыдущие способы не доставили реплику, пробуем продолжить
+	// диалог через общий подъём. При резюме клиент сам читает историю.
 	task := ""
 	if len(recs[sid]) > 0 {
 		if t := sessions.Touched(recs[sid]); len(t) > 0 {
@@ -3668,10 +3640,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if id := taskIDInName(info.suffix); id != "" {
 		task = id
 	}
-	// Реплики, которые агент так и не прочитал, едут вводной резюма. Клин берёт
-	// их сокетом и складывает в свою очередь, а та умирает вместе с процессом:
-	// без этого человек пишет три реплики, снимает клин и получает ответ только
-	// на последнюю (инцидент с чатом DK-460).
+	// В вводную добавляем реплики из ленты, пришедшие после последнего
+	// изменения транскрипта. Так сохраняем ввод, который мог остаться
+	// в очереди клиента (DK-460).
 	text = withLost(s.lostSaid(sid, info.mod), text)
 	// Способ продолжения тот же, что у «Продолжить работу» (LLD DK-1422,
 	// решение 5), и сама последовательность подъёма живёт общим помощником.
@@ -4514,9 +4485,9 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	return archDone{dropped: true, tmux: name, message: "разговор убран в архив, сессия снята"}, nil
 }
 
-// handleChatModel меняет модель диалога. Смена действует на следующий подъём
-// или резюм: у идущего процесса модель уже выбрана его запуском, и подменить
-// её со стороны нечем.
+// handleChatModel сохраняет выбор модели и подписки.
+// Для начатого разговора разрешена совместимая пара, которая сохраняет
+// клиентский протокол.
 func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -4568,9 +4539,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Смена модели разговора чужого протокола: модель зашита в нить клиента, и
-	// новая нить заводится следующим ходом, а лента остаётся: это и есть
-	// разговор. Живой процесс снимается, модель в нити на ходу не меняется.
+	// При смене модели или подписки app-чата сбрасывается нить и снимается
+	// живой процесс. Лента хранится по адресу разговора.
+	// Продолжение рабочего чата требует сохранённой исходной нити.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
 		wasModel, wasHarness := st.Model, st.Harness
 		st.Model, st.Harness = model, harness
@@ -4596,7 +4567,7 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wasModel, wasHarness := s.chatChoice(sid, "")
-	if (wasModel != model || wasHarness != harness) && !s.recoveryChatStopped(w, found, sid, "invalidate") {
+	if (wasModel != model || wasHarness != harness) && !s.updateChatRecoveryState(w, found, sid, "invalidate") {
 		return
 	}
 	st := s.chatStoreRead(sid)
@@ -4691,10 +4662,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Ручной уровень глубины из меню модели (DK-1570) едет только с подъёмом:
-	// разбудить им живой процесс нельзя, и выбор ждёт ступени, которая
-	// поднимает. Тело читается мягко: прежние экраны продолжения шлют пустой
-	// JSON, и отказывать им из-за нового поля незачем.
+	// Уровень глубины из меню (DK-1570) берётся для подъёма новой сессии.
+	// Живая сессия получает реплику на уже выбранном уровне.
+	// Прежние экраны отправляют пустое тело или JSON без уровня. Тогда
+	// подъём использует обычное назначение.
 	var body struct {
 		Effort string `json:"effort"`
 	}
@@ -4707,11 +4678,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
-	// Цель продолжается так же, как задача, только правило про живую сессию у
-	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
-	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
+	// Живому носителю цели повторный заказ не посылаем.
+	// Для свежего подъёма цели и задачи заказы различаются.
 	goal := isGoalTitle(row.Title)
-	if !s.recoveryStopped(w, found.Path, id, false) {
+	if !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	// Заказ собирается по месту: ветки живого чата и резюма несут своё имя
@@ -4731,9 +4701,8 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	name := id + " " + role
 	e, has := s.taskChat(found.Path, id)
 	if !has {
-		// Чата нет ни одного: поднимается новый, с той же репликой. Раньше тут
-		// экран откатывался на подъём конвейера, и у цели это был не тот
-		// механизм вовсе.
+		// Если среди чатов проекта нет подходящего, начинаем новый
+		// с тем же заказом.
 		s.startFresh(w, found, id, prompt(""), name, body.Effort)
 		return
 	}
@@ -4756,9 +4725,8 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, errPeerNoAck) {
-			// Молчащий канал это клин, а не повод поднимать резюм поверх
-			// живого процесса: вторым агентом клин не лечится, лечится он
-			// кнопкой на плашке чата.
+			// Сокет не подтвердил доставку. Показываем проблему в панели чата
+			// и выходим, чтобы не запустить вторую сессию поверх первой.
 			s.markDeaf(e.Sock)
 			s.logf("клиент чата %s не подтвердил доставку, продолжение %s не поехало: %v", e.ID, id, err)
 			writeJSON(w, http.StatusBadGateway, map[string]any{
@@ -4795,8 +4763,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, errSendGone) {
-			// Носитель умер на подаче, и подъём ниже поднимает его штатным
-			// порядком: это дорога умершего процесса, а не второго рядом.
+			// Окно пропало во время подачи. Продолжаем через общий подъём.
 			s.logf("окно %s разговора %s кончилось на подаче, продолжение идёт подъёмом: %s",
 				term, id, sendGoneWord(term))
 		} else {
@@ -4814,12 +4781,9 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		s.startFresh(w, found, id, prompt(""), name, body.Effort)
 		return
 	}
-	// Выбор способа подъёма (LLD DK-1422, решение 5): транскрипт у головы есть,
-	// и если харнес носителя умеет продолжение, подъём идёт резюмом в то же имя
-	// окна, From-цепочка продолжается. На харнесе без продолжения поднимается
-	// свежая сессия того же разговора, и в её первую реплику подкладывается
-	// доступное состояние записи со ссылками на прежние отрезки. Сама
-	// последовательность подъёма живёт общим помощником liftChat.
+	// liftChat продолжает по транскрипту, если подписка умеет резюм
+	// и перевод прошёл. Иначе открывает новый заход с доступным
+	// состоянием задачи (LLD DK-1422, решение 5).
 	lifted, err := s.liftChat(liftOrder{
 		found: found, info: info, sid: sid, task: id, tmux: e.Tmux, text: prompt(e.Tmux),
 		effort: body.Effort,
@@ -4829,8 +4793,8 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	// Назначение ведётся за поднятым заходом: носителем записи становится окно
-	// нового захода, и адрес записи открывает его (LLD DK-1422, решение 3).
+	// Если запись уже имеет основной чат, переносим её назначение
+	// на поднятое окно (LLD DK-1422, решение 3).
 	s.mainChatFollow(id, "tmux-"+lifted.sess, found.Name)
 	how := "резюмом"
 	if lifted.way != "resume" {

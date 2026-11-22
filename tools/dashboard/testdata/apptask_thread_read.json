@@ -1,0 +1,21 @@
+{
+  "thread": {
+    "id": "sample-thread",
+    "status": {
+      "type": "idle"
+    },
+    "turns": [
+      {
+        "id": "sample-turn",
+        "status": "interrupted",
+        "itemsView": "full",
+        "items": [
+          {
+            "type": "userMessage",
+            "clientId": "sample-client-message"
+          }
+        ]
+      }
+    ]
+  }
+}

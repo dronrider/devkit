@@ -381,6 +381,34 @@ class RecoveryTest(unittest.TestCase):
 
     # Бюджет устойчив: окно, попытка на инцидент, обрыв и повреждение.
 
+    def test_app_bridge_shares_day_budget_and_preserves_receipts(self):
+        def bridge(*args):
+            return subprocess.run(
+                [sys.executable, recovery.__file__, *args], capture_output=True,
+                text=True, env=dict(os.environ, HOME=str(self.home)), timeout=5)
+
+        with recovery.operation(self.home) as taken:
+            self.assertTrue(taken)
+            reserve = ("app-reserve", str(self.proj), self.TASK, "old-run/1")
+            first = bridge(*reserve)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            mark = first.stdout.strip()
+            self.assertRegex(mark, r"^RV-[0-9a-f]{32}$")
+            self.assertEqual(bridge(*reserve).stdout.strip(), mark)
+            self.assertEqual(recovery.day_spent(self.home), 1)
+            self.assertEqual(bridge("app-finish", mark, recovery.CONFIRMED).returncode, 0)
+            self.assertEqual(bridge("app-finish", mark, recovery.CONFIRMED).returncode, 0)
+            self.assertNotEqual(bridge("app-finish", mark, recovery.STALLED).returncode, 0)
+            self.assertNotEqual(bridge(*reserve).returncode, 0)
+            closed = [rec for rec in recovery._read(self.home) if rec.get("kind") == "result"]
+            self.assertEqual([rec["outcome"] for rec in closed], [recovery.CONFIRMED])
+            for _ in range(recovery.DAY_TRIES - 1):
+                self.reserve()
+            fourth = bridge("app-reserve", str(self.proj), self.TASK, "old-run/2")
+            self.assertNotEqual(fourth.returncode, 0)
+            self.assertIn("лимит восстановлений за 24 часа исчерпан", fourth.stderr)
+            self.assertEqual(recovery.day_spent(self.home), recovery.DAY_TRIES)
+
     def test_day_budget_of_three_blocks_fourth(self):
         for _ in range(recovery.DAY_TRIES):
             self.reserve()

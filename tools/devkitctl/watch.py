@@ -131,6 +131,7 @@ import socket
 import say
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -1130,7 +1131,7 @@ def lift_rows(root, call=None, taskctl=None, home=None, remaining=None):
         return ["корень %s: подъём осиротевших строк не отработал, %s" % (root, e)]
 
 
-def duty_rows(root, call=None, taskctl=None, home=None):
+def duty_rows(root, call=None, taskctl=None, home=None, app_only=False):
     """Дежурный по записям исхода корня (DK-1323). Возврат это строки отчёта.
 
     Стоит за подъёмом осиротевших строк: одна и та же работа не должна
@@ -1140,7 +1141,7 @@ def duty_rows(root, call=None, taskctl=None, home=None):
     try:
         recovery_call = None if isinstance(call, Timed) and call.call is run_soft else call
         return duty.duty_root(root, call=call, taskctl=taskctl, home=home,
-                              recovery_call=recovery_call)
+                              recovery_call=recovery_call, app_only=app_only)
     except Exception as e:
         return ["корень %s: разбор дежурного не отработал, %s" % (root, e)]
 
@@ -1212,6 +1213,12 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
             continue
         task = field(row, "задача") or (fall["task"] if fall["task"] != "-" else "")
         root = field(row, "дерево") or here()
+        if task:
+            import taskstate
+            run = taskstate.app_runs(home, root, [task]).get(task)
+            if run and run["appChat"] in ("", field(row, "сессия")):
+                state.pop(sid, None)
+                continue
 
         def outcome(title, why, reason):
             # Исход идёт дежурному: инцидент в журнале и фоновое уведомление
@@ -2403,6 +2410,19 @@ def heartbeat(home=None):
     return None
 
 
+def signal_app_task_tick(home):
+    """Передаёт тик дашборду для сверки его рабочих чатов Codex."""
+    path = home_path(home, "~/.devkit/app-task-tick")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".app-task-tick-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(Path(temporary).name + "\n")
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None,
         agentctl=None, dashboard=None, tmux=None, probe=None, devkitctl=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
@@ -2418,9 +2438,17 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)
+    try:
+        signal_app_task_tick(home)
+    except OSError as error:
+        line = "дашборду не передан тик восстановления чатов Codex: %s" % error
+        out.write(line + "\n")
+        log_line(line, home)
     import budgetwake
     import lift
-    budget_roots = set(run_roots(home))
+    import taskstate
+    task_roots = run_roots(home)
+    budget_roots = set(task_roots)
     budget_roots.update(read_entry(path).get("root") for path in entries(home))
     budget_left = lift.MACHINE_LIMIT
     for root in sorted(r for r in budget_roots if r and os.path.isdir(r)):
@@ -2477,7 +2505,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     # Разговор задачи живёт и вне цикла цели, поэтому корни задач обходятся
     # тем же порядком: пробуждение ответом и страховка брошенного ожидания не
     # спрашивают, ведут ли задачу целью.
-    for root in run_roots(home):
+    for root in task_roots:
         if root in swept:
             continue
         swept.add(root)
@@ -2489,6 +2517,16 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
                      + duty_rows(root, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl, home=home)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):
+            out.write(line + "\n")
+            log_line(line, home)
+    # Для исхода рабочего чата достаточно состояния запуска. Запись этапа
+    # могла ещё не появиться либо уже уехать с доски.
+    terminal_roots = taskstate.terminal_app_roots(home) - {os.path.realpath(root) for root in swept}
+    for root in sorted(terminal_roots):
+        if not board_present(root):
+            continue
+        for line in (lift.app_terminal_root(root, timed(root), taskctl, home)
+                     + duty_rows(root, timed(root), taskctl, home, app_only=True)):
             out.write(line + "\n")
             log_line(line, home)
     # Разлив идёт тем же множеством корней отдельным проходом: событие

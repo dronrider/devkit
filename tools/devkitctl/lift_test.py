@@ -960,6 +960,38 @@ class ReplyCase(unittest.TestCase):
         self.lying("DK-40")
         self.assertEqual(self.find([self.checked(title="Цель: пробный цикл")]), [])
 
+    def test_codex_work_reply_stays_with_dashboard(self):
+        import taskstate
+
+        self.lying("DK-40")
+        devhome = self.home / ".devkit"
+        root = str(self.root)
+        state = taskstate.path(self.home, root, "DK-40")
+        state.parent.mkdir(parents=True)
+        data = {"version": 1, "root": os.path.realpath(root), "task": "DK-40",
+                "stopped": False, "run": {"id": "run-one", "appChat": "as-original",
+                "harness": "codex", "model": "sol", "pid": 999999}}
+        for active, terminal, stopped in ((True, False, False), (False, True, False),
+                                          (False, False, True)):
+            with self.subTest(active=active, terminal=terminal, stopped=stopped):
+                data["run"].update(appRecovery=active, appRecoveryTerminal=terminal)
+                data["stopped"] = stopped
+                taskstate.save(self.home, root, "DK-40", data)
+                call = Fake(board([row("DK-40", "разработка", "сессии нет, брошена")]))
+                lines, raised = lift.lift_root(root, call=call, taskctl="taskctl",
+                                               home=str(devhome))
+                self.assertEqual(raised, 0, lines)
+                self.assertFalse([a for a in call.calls if "run" in a], call.calls)
+                self.assertIn("Codex", " ".join(lines))
+                self.assertTrue((self.root / ".devkit/chat/task-DK-40.in").is_file())
+
+        data["stopped"] = False
+        taskstate.save(self.home, root, "DK-40", data)
+        call = Fake(board([row("DK-40", "разработка", "сессии нет, брошена")]))
+        _, raised = lift.lift_root(root, call=call, taskctl="taskctl", home=str(devhome))
+        self.assertEqual(raised, 1)
+        self.assertTrue([a for a in call.calls if "--reply" in a], call.calls)
+
     def test_lift_root_raises_with_reply_order(self):
         """Заход поднимает строку с репликой своим заказом: «продолжай» увело бы
         голову в работу мимо слов человека."""

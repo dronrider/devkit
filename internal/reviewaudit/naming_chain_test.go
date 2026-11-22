@@ -396,6 +396,8 @@ func TestNameChainEquivalentParallelProof(t *testing.T) {
 		{name: "compile-time true expression", assignment: "code, value := 75, readValue()", between: "if 1 == 1 { return }", want: "должен однозначно указывать использование"},
 		{name: "true shadowed in another file", secondFile: "var true = false", assignment: "code, value := 75, readValue()", between: "if true { return }"},
 		{name: "global address aliases producer target", definitions: "var code, value int; var saved = &value", assignment: "code, value = 75, readValue()", between: "*saved = 7", want: "должен однозначно указывать использование"},
+		{name: "single assignment before finite loop", assignment: "code := 75; value := readValue()", between: "if true { for i := 0; i < 1; i++ {} }"},
+		{name: "parallel assignment before finite loop", assignment: "code, value := 75, readValue()", between: "if true { for i := 0; i < 1; i++ {} }"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, at := nameCurrentProofFixture(t, `package sample

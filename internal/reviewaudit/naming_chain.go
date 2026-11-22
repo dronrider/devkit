@@ -106,7 +106,7 @@ func (g *queryGoSource) checkNameUseExpression(fn queryFunc, call *ast.CallExpr,
 			}
 			return true
 		}
-		if nameIntersects(x, map[string]bool{value: true}) && nameBoundResultReachesUse(call, parents, nameEnclosingStatement(stack, x), block, value, slot) {
+		if nameIntersects(x, map[string]bool{value: true}) && g.nameBoundResultReachesUse(fn, call, parents, nameEnclosingStatement(stack, x), block, value, slot) {
 			matches++
 		}
 		return true

@@ -690,7 +690,7 @@ func checkNameResultFlow(e Evidence, declaration string, source *evidenceSource,
 		if err != nil {
 			return err
 		}
-		slot = nameFlowIndex(call, parents, ret, block, ret.Results, value, slot)
+		slot = g.nameFlowIndex(caller, call, parents, ret, block, ret.Results, value, slot)
 		if slot < 0 {
 			return fmt.Errorf("flow: %s должен возвращать то же значение из %s", hop.ReturnAt, caller.node.Name.Name)
 		}
@@ -737,7 +737,7 @@ func checkNameResultFlow(e Evidence, declaration string, source *evidenceSource,
 	if err := g.receiver(caller, consumer, use, ""); err != nil {
 		return err
 	}
-	i := nameConsumerArgument(call, parents, use, useParents, value, slot)
+	i := g.nameConsumerArgument(caller, call, parents, use, useParents, value, slot)
 	if i < 0 {
 		return fmt.Errorf("flow: вызов найден, передачу значения от %s к %s подтвердить не удалось; покажите, как результат поступает в вызов, начиная с %s", producer.node.Name.Name, consumer.node.Name.Name, result.ConsumerAt)
 	}
@@ -762,15 +762,15 @@ func (g *queryGoSource) nameReturnSlot(fn queryFunc, ref, actual string) (int, e
 	return -1, fmt.Errorf("equivalent_flow: %s должен возвращать %q из проверяемой функции", ref, actual)
 }
 
-func nameConsumerArgument(call *ast.CallExpr, parents []ast.Node, use *ast.CallExpr, useParents []ast.Node, value string, slot int) int {
+func (g *queryGoSource) nameConsumerArgument(fn queryFunc, call *ast.CallExpr, parents []ast.Node, use *ast.CallExpr, useParents []ast.Node, value string, slot int) int {
 	var block ast.Node
 	if len(useParents) >= 2 {
 		block = useParents[len(useParents)-2]
 	}
-	return nameFlowIndex(call, parents, use, block, use.Args, value, slot)
+	return g.nameFlowIndex(fn, call, parents, use, block, use.Args, value, slot)
 }
 
-func nameFlowIndex(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, operands []ast.Expr, value string, slot int) int {
+func (g *queryGoSource) nameFlowIndex(fn queryFunc, call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, operands []ast.Expr, value string, slot int) int {
 	if value == "" {
 		if _, returns := use.(*ast.ReturnStmt); returns && len(operands) == 1 && operands[0] == call {
 			return slot
@@ -780,13 +780,13 @@ func nameFlowIndex(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBloc
 		}
 		return -1
 	}
-	if !nameBoundResultReachesUse(call, parents, use, useBlock, value, slot) {
+	if !g.nameBoundResultReachesUse(fn, call, parents, use, useBlock, value, slot) {
 		return -1
 	}
 	return slices.IndexFunc(operands, func(arg ast.Expr) bool { return nameIdentifier(arg) == value })
 }
 
-func nameBoundResultReachesUse(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, value string, slot int) bool {
+func (g *queryGoSource) nameBoundResultReachesUse(fn queryFunc, call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, value string, slot int) bool {
 	if value == "_" || len(parents) < 2 {
 		return false
 	}
@@ -811,6 +811,10 @@ func nameBoundResultReachesUse(call *ast.CallExpr, parents []ast.Node, use ast.N
 		if !ok || target.Obj == nil {
 			return false
 		}
+		declaration, ok := target.Obj.Decl.(ast.Node)
+		if !ok || !nameNodeContains(fn.node.Body, declaration) {
+			return false
+		}
 		for node := range ast.Preorder(parents[0]) {
 			if address, ok := node.(*ast.UnaryExpr); ok && address.Op == token.AND && address.Pos() < assign.Pos() &&
 				nameUsesObject(ast.Unparen(address.X), target.Obj) {
@@ -826,6 +830,12 @@ func nameBoundResultReachesUse(call *ast.CallExpr, parents []ast.Node, use ast.N
 		}
 	}
 	block := parents[len(parents)-2]
+	for _, stmt := range nameStatements(block) {
+		if condition, ok := stmt.(*ast.IfStmt); ok && assign.End() <= condition.Pos() &&
+			condition.End() <= use.Pos() && g.namePointerStops(fn, condition, nil) {
+			return false
+		}
+	}
 	if block == useBlock {
 		return nameValueUnchanged(block, assign, use, value)
 	}
@@ -847,17 +857,9 @@ func nameValueUnchanged(block ast.Node, from, to ast.Node, value string) bool {
 		if stmt.Pos() <= from.Pos() || stmt.Pos() >= to.Pos() {
 			continue
 		}
-		switch control := stmt.(type) {
+		switch stmt.(type) {
 		case *ast.ReturnStmt, *ast.BranchStmt:
 			return false
-		case *ast.IfStmt:
-			condition, ok := ast.Unparen(control.Cond).(*ast.Ident)
-			body := control.Body.List
-			if ok && condition.Name == "true" && condition.Obj == nil && len(body) != 0 {
-				if _, returns := body[len(body)-1].(*ast.ReturnStmt); returns {
-					return false
-				}
-			}
 		}
 		for node := range ast.Preorder(stmt) {
 			switch n := node.(type) {

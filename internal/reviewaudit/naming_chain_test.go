@@ -3,6 +3,7 @@ package reviewaudit
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -385,5 +386,34 @@ func TestNameChainTemplatesExposeEvidence(t *testing.T) {
 		if !strings.Contains(string(data), `"`+tc.field+`"`) {
 			t.Fatalf("шаблон %s не содержит %s: %s", tc.kind, tc.field, data)
 		}
+	}
+}
+
+func TestNameChainEquivalentParallelProof(t *testing.T) {
+	for _, tc := range []struct {
+		name, definitions, secondFile, assignment, between, want string
+	}{
+		{name: "compile-time true expression", assignment: "code, value := 75, readValue()", between: "if 1 == 1 { return }", want: "должен однозначно указывать использование"},
+		{name: "true shadowed in another file", secondFile: "var true = false", assignment: "code, value := 75, readValue()", between: "if true { return }"},
+		{name: "global address aliases producer target", definitions: "var code, value int; var saved = &value", assignment: "code, value = 75, readValue()", between: "*saved = 7", want: "должен однозначно указывать использование"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameCurrentProofFixture(t, `package sample
+`+tc.definitions+`
+func readValue() int { value := 3; return value }
+func use() {
+ `+tc.assignment+`
+ `+tc.between+`
+ observed := value
+ _, _ = code, observed
+}
+`)
+			if tc.secondFile != "" {
+				write(t, filepath.Join(source.root, "sibling.go"), "package sample\n"+tc.secondFile+"\n")
+				source.names["sibling.go"] = true
+			}
+			entry := namingWire(t, `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"use","consumer_at":"@observed := value","flow":{"caller":"@func use","call_at":"@`+tc.assignment+`","value":"value","use_kind":"assignment"}}}`, at)
+			assertTargetCheck(t, checkNameEntry(entry, at("func readValue"), identifierWords("readValue"), source), tc.want)
+		})
 	}
 }

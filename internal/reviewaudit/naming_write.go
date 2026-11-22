@@ -13,6 +13,9 @@ import (
 func checkNameFileWrite(e Evidence, declaration string, source *evidenceSource) error {
 	w, pair := e.WriteEvidence, e.ObjectComparison
 	f := w.File
+	if path, _, _, err := evidenceLocation(declaration); err == nil && strings.HasSuffix(path, ".py") {
+		return checkNamePythonFileWrite(e, declaration, source)
+	}
 	g := newQueryGoSource(source)
 	fn, err := g.nameProofFunction(declaration, nameObjectSymbol(e.Object))
 	if err != nil {

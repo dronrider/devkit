@@ -774,20 +774,38 @@ func nameFlowIndex(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBloc
 		}
 		return -1
 	}
-	if !nameBoundResult(call, parents, use, useBlock, value, slot) {
+	if !nameBoundResultReachesUse(call, parents, use, useBlock, value, slot) {
 		return -1
 	}
 	return slices.IndexFunc(operands, func(arg ast.Expr) bool { return nameIdentifier(arg) == value })
 }
 
-func nameBoundResult(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, value string, slot int) bool {
+func nameBoundResultReachesUse(call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, value string, slot int) bool {
 	if value == "_" || len(parents) < 2 {
 		return false
 	}
 	assign, ok := parents[len(parents)-1].(*ast.AssignStmt)
-	if !ok || (assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN) || len(assign.Rhs) != 1 || assign.Rhs[0] != call ||
-		slot >= len(assign.Lhs) || nameIdentifier(assign.Lhs[slot]) != value {
+	if !ok || (assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN) {
 		return false
+	}
+	index := slot
+	if len(assign.Rhs) != 1 {
+		if slot != 0 || len(assign.Rhs) != len(assign.Lhs) {
+			return false
+		}
+		index = slices.Index(assign.Rhs, ast.Expr(call))
+	} else if assign.Rhs[0] != call {
+		return false
+	}
+	if index < 0 || index >= len(assign.Lhs) || nameIdentifier(assign.Lhs[index]) != value {
+		return false
+	}
+	for i, target := range assign.Lhs {
+		// Another target may alias value (for example, *(&value)).
+		name := nameIdentifier(target)
+		if name == "" || i != index && name == value {
+			return false
+		}
 	}
 	block := parents[len(parents)-2]
 	if block == useBlock {

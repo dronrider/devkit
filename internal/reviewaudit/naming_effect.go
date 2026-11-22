@@ -233,6 +233,7 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 			if field, ok := node.(*ast.SelectorExpr); ok && field.Sel.Name == pair.Actual {
 				if written, ok := assignedNode.(*ast.SelectorExpr); ok && nameIdentifier(written.X) != "" {
 					return nameBoundFieldUse(fn, consumer, written, field) ||
+						g.nameNestedLocalFieldRead(fn, consumer, written, field) ||
 						g.nameFieldCallUse(entry, fn, consumer, written, field, e.WriteEvidence.Calls)
 				}
 				return pair.ActualAt == e.WriteEvidence.WriteAt

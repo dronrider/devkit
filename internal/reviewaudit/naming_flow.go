@@ -179,7 +179,7 @@ func (g *queryGoSource) checkLocalNameUse(caller queryFunc, call *ast.CallExpr, 
 		} else {
 			used = g.countNameFieldReads(stmt, line, value, flow.UseField)
 		}
-		if used > 0 && nameBoundResult(call, parents, stmt, block, value, slot) {
+		if used > 0 && nameBoundResultReachesUse(call, parents, stmt, block, value, slot) {
 			matches += used
 		}
 	}

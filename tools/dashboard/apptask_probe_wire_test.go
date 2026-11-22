@@ -2,11 +2,42 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"testing"
 	"testing/synctest"
 	"time"
 )
+
+func TestAppTaskReadThreadPreservesDecodeError(t *testing.T) {
+	client, peer := net.Pipe()
+	defer client.Close()
+	proc := &appServer{in: client, pending: make(map[int64]chan *appMsg), dead: make(chan struct{})}
+	go proc.readOut(client)
+	peerErr := make(chan error, 1)
+	go func() {
+		defer peer.Close()
+		var request struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.NewDecoder(peer).Decode(&request); err != nil {
+			peerErr <- err
+			return
+		}
+		peerErr <- json.NewEncoder(peer).Encode(appMsg{
+			ID: &request.ID, Result: json.RawMessage(`{"thread":{"id":123}}`),
+		})
+	}()
+
+	_, err := appTaskReadThread(&appChat{thread: "thread-1", proc: proc})
+	if err := <-peerErr; err != nil {
+		t.Fatal(err)
+	}
+	var decodeErr *json.UnmarshalTypeError
+	if !errors.As(err, &decodeErr) {
+		t.Fatalf("ожидалась причина декодирования ID нити: %v", err)
+	}
+}
 
 func TestAppTaskSilenceProbeWire(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -47,7 +78,7 @@ func TestAppTaskSilenceProbeWire(t *testing.T) {
 			peerErr <- json.NewEncoder(peer).Encode(map[string]any{"id": req.ID, "result": map[string]any{"thread": map[string]any{"id": "thread-1", "turns": []any{map[string]any{"id": "turn-1", "status": "completed"}}}}})
 		}()
 		done := make(chan error, 1)
-		go func() { done <- c.waitTaskTurn(turn, "turn-1", nil, 30*time.Minute) }()
+		go func() { done <- c.waitTaskTurn(turn, "turn-1", nil, 30*time.Minute, nil) }()
 		synctest.Wait()
 		time.Sleep(30*time.Minute - time.Nanosecond)
 		synctest.Wait()

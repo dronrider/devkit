@@ -12,36 +12,14 @@ import (
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
-// Подъём сессии задачи, разбуженной ответом человека (DK-922). Строка,
-// припаркованная вопросом, после ответа возвращалась в In progress и стояла:
-// оболочка конвейера к тому времени вышла по стопу wait_human и снесла окно, а
-// поднять новое было некому. Человек отвечал и ждал, пока сам не заметит и не
-// нажмёт «Запуск» заново.
+// taskWake обрабатывает ответ из панели сразу после записи во вход задачи.
+// Сторожок подхватывает оставшиеся ответы через taskctl wake. Новую голову
+// обе дороги поднимают через taskhead.Raise (DK-922).
 //
-// Зовущих у подъёма двое, и дорога у обоих одна. Панель поднимает сессию сразу,
-// как только ответ лёг во вход задачи, а тик сторожка добирает пропущенное
-// (реплику из терминала, ответ, написанный при мёртвом дашборде, строку,
-// разбуженную прежним тиком). Тот же порядок держат подъём прогона сценария
-// (checkrun.go) и второй круг чужого ревью (round.go): решения о том, кого
-// поднимать и кому подъём не отдавать, живут в одном месте, потому что вторая
-// копия этих правил разошлась бы с первой на первой же правке.
-//
-// Возврат строки из Blocked живёт тут же, а не у зовущих: снять парковку и
-// поднять сессию это один ход. Пока сессия не поднялась, строка стоит
-// припаркованной вопросом, и повторить подъём есть кому.
-
-// taskWake поднимает сессию по одной разбуженной строке. Возврат тот же, что у
-// подъёма прогона: слова отчёта и два признака, чтобы зовущий знал, поднялось
-// ли что-нибудь и была ли поломка.
-//
-// Порядок ходов тут важнее самих ходов. Парковка вопросом это единственное, чем
-// строку видно тому, кто повторит подъём: тик берёт будимых из Blocked с
-// причиной «вопрос: ...» (wake в tools/devkitctl/watch.py), а лежащий во входе
-// ответ никуда не девается и ждёт следующего захода. Поэтому всё, чем подъём
-// может отказать, спрашивается до снятия парковки, а снимается она последним
-// ходом перед самим подъёмом. Снятая раньше времени, она оставляла бы строку в
-// работе без сессии и без признака ожидания: такую не подхватит ни тик, ни
-// панель, и это ровно тот случай, из которого выросла задача.
+// Перед запуском снимается парковка, чтобы оболочка увидела задачу в работе.
+// При занятом замке, закреплённом запуске Codex или сверке прежнего запуска
+// ответ остаётся во входе, а строка в работе. При других отказах пытаемся
+// вернуть снятую здесь парковку и сообщаем, удалось ли это.
 func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) checkRunReport {
 	row, ok := rows[id]
 	if !ok {
@@ -69,17 +47,12 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 		if name != sess {
 			continue
 		}
-		// Живая сессия под этим именем читает вход сама, и поднимать поверх
-		// неё нечего. Парковку тут снять надо всё равно: ответ дошёл до
-		// адресата, а строка осталась бы висеть в Blocked с вопросом, на
-		// который человек уже ответил.
+		// Найденное окно удерживает второй подъём. Снимаем парковку,
+		// а ответ оставляем во входе.
 		if err := s.unparkIf(proj.Path, id, parked); err != nil {
 			return unparkFailed(id, err)
 		}
 		if talk[name] {
-			// Под тем же именем идёт разговор человека. Ответ он прочитает сам
-			// первым же ходом, а сессия поверх его окна встала бы вторым
-			// собеседником в том же чате.
 			return checkRunReport{Line: id + ": подъём не нужен, в сессии " + sess + " идёт разговор"}
 		}
 		return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт в tmux-сессии " + sess}
@@ -98,19 +71,17 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	if err := s.unparkIf(proj.Path, id, parked); err != nil {
 		return unparkFailed(id, err)
 	}
-	// Признак hidden тут не ставится, в отличие от прогона сценария и второго
-	// круга ревью (DK-847). Те поднимает тик сам по себе, а этот подъём начал
-	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
-	// в списке панели, а не гадать, куда делся чат.
+	// Ответ человека запускает видимую сессию, чтобы продолжение можно
+	// было открыть из списка разговоров (DK-847).
 	order := runPrompt("in-progress", id)
-	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false, "")
+	const hidden, automaticContinuation = false, true
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", hidden, "", automaticContinuation)
 	if err != nil {
-		// Замок держит живая голова, поднятая мимо дашборда: ответ дойдёт до
-		// неё так же, как до живой tmux-сессии выше, и возвращать строку в
-		// Blocked незачем.
+		// После снятия парковки ответ заберёт живая голова либо дашборд
+		// при возобновлении рабочего чата.
 		var busy *headBusy
 		if errors.As(err, &busy) {
-			return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт (" + busy.where + ")"}
+			return checkRunReport{Line: continuationWaitLine(id, busy.where, res.Rung)}
 		}
 		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error() +
 			s.repark(proj.Path, id, row.Block, parked)}
@@ -252,9 +223,8 @@ func askTrees(root, id string) []string {
 	return []string{top, tree}
 }
 
-// cmdWake это вход команды `dashboard wake <ID>`: подъём сессии разбуженной
-// строки. Зовёт её тик сторожка без экрана и без демона, поэтому сервер тут
-// собирается на месте, как у подъёма прогона и второго круга.
+// cmdWake поднимает сессию разбуженной строки по явному вызову
+// dashboard wake. Сервер собирается из конфига на месте.
 func cmdWake(home, root string, ids []string, out io.Writer) error {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -350,6 +320,13 @@ func (s *server) headModel(tier string) string {
 	return own.tierModel(tier)
 }
 
+func continuationWaitLine(id, why, rung string) string {
+	if rung == taskhead.RungAppChat {
+		return id + ": " + why
+	}
+	return id + ": подъём не нужен, работа уже идёт (" + why + ")"
+}
+
 // taskReplyRaise поднимает голову задачи по реплике, легшей в её чат (DK-1194).
 // Дорога та же, что у подъёма ответом: одна лестница носителей, один замок, один
 // предполёт. Отличий два, и оба идут от повода.
@@ -360,10 +337,8 @@ func (s *server) headModel(tier string) string {
 // распространяется (оболочка конвейера, preflight в task-run.py), а после ответа
 // голова засыпает тем же стопом.
 //
-// Второе: возвращать строку никуда не надо. Отказ ничего на доске не менял,
-// реплика лежит во входе, и повторить подъём есть кому: тик сторожка берёт
-// строки с лежащей репликой тем же обходом, что и осиротевшую работу
-// (tools/devkitctl/lift.py).
+// Реплика остаётся во входе. Общий сторожок повторяет подъём обычных задач,
+// а восстановление рабочего запуска Codex ведёт дашборд.
 //
 // Второй возврат говорит, что человека позвала сама лестница последней ступенью:
 // второй баннер о том же ему не нужен.
@@ -374,13 +349,12 @@ func (s *server) taskReplyRaise(proj *Project, id string) (checkRunReport, bool)
 	}
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
 	order := taskhead.ReplyOrder(id)
-	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false, "")
+	const hidden, automaticContinuation = false, true
+	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", hidden, "", automaticContinuation)
 	if err != nil {
-		// Замок держит голова, поднятая мимо дашборда: реплика дойдёт до неё
-		// подхватом, как дошла бы до живой tmux-сессии.
 		var busy *headBusy
 		if errors.As(err, &busy) {
-			return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт (" + busy.where + ")"}, false
+			return checkRunReport{Line: continuationWaitLine(id, busy.where, res.Rung)}, false
 		}
 		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error()},
 			res.Code == taskhead.CodeCalled

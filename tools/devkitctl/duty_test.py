@@ -414,6 +414,33 @@ class IncidentDutyTest(unittest.TestCase):
         call = call or self.call
         return [a for a in call.calls if len(a) > 1 and "notify.py" in str(a[1])]
 
+    def test_codex_duty_waits_for_recovery_terminal(self):
+        import taskstate
+
+        root = str(self.proj.resolve())
+        path = taskstate.path(self.home, root, self.TASK)
+        path.parent.mkdir(parents=True)
+        data = {"version": 1, "root": root, "task": self.TASK, "stopped": False,
+                "run": {"id": "run-one", "appChat": "as-original", "harness": "codex",
+                        "model": "sol", "pid": 999999, "appRecovery": True}}
+        taskstate.save(self.home, root, self.TASK, data)
+        self.task_file("- 2026-10-10 %s: проходы исчерпаны.\n" % duty.DUTY_MARK)
+        lines = self.duty_lines()
+        self.assertEqual(self.runs(), [], lines)
+        self.assertIn("Codex", " ".join(lines))
+        self.assertFalse(self.settled())
+
+        data["run"]["appRecoveryTerminal"] = True
+        taskstate.save(self.home, root, self.TASK, data)
+        incident = self.hook.report(self.TASK, self.hook.APP_RECOVERY_OUT,
+                                    "лимит исчерпан", root=str(self.proj),
+                                    home=self.home, identity={"id": "run-one"})
+        lines = self.duty_lines()
+        self.assertEqual(len(self.runs()), 1, lines)
+        self.assertIn("лимит исчерпан", self.runs()[0][-1])
+        self.assertIn(incident, " ".join(lines))
+        self.assertFalse(self.settled())
+
     def test_tick_rises_duty_by_open_incident(self):
         lines = self.duty_lines()
         ran = self.runs()

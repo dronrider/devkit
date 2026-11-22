@@ -277,8 +277,8 @@ func cmdServe(home, staticDir string) error {
 	// адрес отправителя, и без слушателя его ход уходит в ошибку доставки.
 	defer peerListen(logf)()
 	if cfg.Token == "" {
-		// Секрет рождается на машине при первом старте; по сети он не ездит,
-		// печатает его команда dashboard secret.
+		// Секрет создаётся на машине при первом старте, команда dashboard secret
+		// его печатает. Пользователь вводит его для отправки в /api/login.
 		token, err := newSecret()
 		if err != nil {
 			return err
@@ -326,19 +326,28 @@ func cmdServe(home, staticDir string) error {
 	httpSrv := httpServer(srv.handler())
 	// Снимок квоты держит свежим сам демон: без этого он обновлялся только
 	// стартом сессии, и на экране почти всегда стоял часовой давности.
-	// Просроченный вход снимается тем же кругом, а не ленивым нажатием
-	// «Войти»: открытая и забытая ссылка иначе держит tmux с живым клиентом.
+	// Сторож входа снимает просроченные попытки сам: забытая ссылка
+	// иначе держит tmux с живым клиентом до следующего нажатия «Войти».
 	keeperStop := make(chan struct{})
-	defer close(keeperStop)
 	go srv.quotaKeeper(keeperStop)
-	defer srv.appTasksClose()
+	recoveryDone := make(chan struct{})
+	go func() {
+		defer close(recoveryDone)
+		srv.appTaskRecoveryKeeper(keeperStop)
+	}()
+	defer func() {
+		close(keeperStop)
+		srv.appTasksClose()
+		<-recoveryDone
+		srv.appTasksClose()
+	}()
 	go srv.loginKeeper(keeperStop)
 	// Сторож поднятых сессий: смерть подъёма замечает он, когда на разговор
 	// никто не смотрит (chatwatch.go).
 	go srv.chatWatchKeeper(keeperStop)
-	// Снятие разговоров за простой: ход, молчавший дольше порога из машинного
-	// конфига, закрывает окно сам той же точкой, что и уборка в архив
-	// (chatidle.go, DK-828).
+	// Простаивающий разговор закрывается после порога из машинного конфига
+	// той же точкой, что и уборка в архив (chatidle.go, DK-828).
+	// Идущий и ждущий ходы сторож не снимает.
 	go srv.chatIdleKeeper(keeperStop)
 	// Дозор мёртвых окон: лежащие реплики задач, которых доставка не дождётся,
 	// откладываются в файлы задач с причиной (chathold.go, DK-1399).

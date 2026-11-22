@@ -244,6 +244,30 @@ func appIndexLine(t *testing.T, it reply) []byte {
 	return []byte(appFeedBody(t, it) + "\n")
 }
 
+func TestAppFeedConcurrentWritersKeepOneEvent(t *testing.T) {
+	e, _ := appEnv(t)
+	const sid = "as-concurrent-feed"
+	const writers = 8
+	events := []reply{appIndexReply(t, "shared", "одна реплика")}
+	start := make(chan struct{})
+	replies := make(chan error, writers)
+	for range writers {
+		go func() {
+			<-start
+			replies <- e.s.appFeedAppend(sid, events)
+		}()
+	}
+	close(start)
+	for range writers {
+		if err := <-replies; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if feed := e.s.appFeedRead(sid); len(feed) != 1 || feed[0].Text != "одна реплика" {
+		t.Fatalf("лента после параллельной записи: %+v", feed)
+	}
+}
+
 func TestAppFeedIndexReadsOnlyNewBytes(t *testing.T) {
 	e, _ := appEnv(t)
 	sid := "as-index-cost"

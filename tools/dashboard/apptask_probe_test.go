@@ -37,7 +37,9 @@ func TestAppTaskSilenceProbe(t *testing.T) {
 					}
 					return json.RawMessage(tc.response), nil
 				}
-				go func() { done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, probe) }()
+				confirmations := 0
+				confirm := func() { confirmations++ }
+				go func() { done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, confirm, probe) }()
 				time.Sleep(30 * time.Minute)
 				synctest.Wait()
 				select {
@@ -70,23 +72,26 @@ func TestAppTaskSilenceProbe(t *testing.T) {
 					default:
 						t.Fatal("повторная проверка не вызвана")
 					}
+					if confirmations != 0 {
+						t.Fatalf("активность из сверки преждевременно подтвердила восстановление: %d", confirmations)
+					}
 					c.mu.Lock()
 					turn.note("turn/completed", json.RawMessage(`{"threadId":"main","turn":{"id":"ours","status":"completed"}}`), time.Now())
 					c.mu.Unlock()
-					if err := <-done; err != nil {
-						t.Fatal(err)
+					if err := <-done; err != nil || confirmations != 1 {
+						t.Fatalf("завершение хода: %v, подтверждений: %d", err, confirmations)
 					}
 					return
 				}
 				err := <-done
 				if tc.want == "completed" {
-					if err != nil {
-						t.Fatal(err)
+					if err != nil || confirmations != 1 {
+						t.Fatalf("завершение по сверке: %v, подтверждений: %d", err, confirmations)
 					}
 					return
 				}
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("want %s, got %v", tc.want, err)
+				if err == nil || !strings.Contains(err.Error(), tc.want) || confirmations != 0 {
+					t.Fatalf("ожидали %s, получили %v, подтверждений: %d", tc.want, err, confirmations)
 				}
 			})
 		})
@@ -101,7 +106,7 @@ func TestAppTaskSilenceProbeEventRace(t *testing.T) {
 		release := make(chan struct{})
 		done := make(chan error, 1)
 		probe := func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New("offline") }
-		go func() { done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, probe) }()
+		go func() { done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, nil, probe) }()
 		time.Sleep(30 * time.Minute)
 		<-entered
 		c.mu.Lock()
@@ -123,7 +128,7 @@ func TestAppTaskSilenceProbeStop(t *testing.T) {
 		stop := make(chan struct{})
 		done := make(chan error, 1)
 		go func() {
-			done <- c.waitTaskTurnProbe(turn, "ours", stop, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New("offline") })
+			done <- c.waitTaskTurnProbe(turn, "ours", stop, 30*time.Minute, nil, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New("offline") })
 		}()
 		time.Sleep(30 * time.Minute)
 		<-entered
@@ -142,8 +147,10 @@ func TestAppTaskSilenceProbeProgressRace(t *testing.T) {
 		entered := make(chan struct{})
 		release := make(chan struct{})
 		done := make(chan error, 1)
+		confirmations := 0
+		confirm := func() { confirmations++ }
 		go func() {
-			done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New("offline") })
+			done <- c.waitTaskTurnProbe(turn, "ours", nil, 30*time.Minute, confirm, func() (json.RawMessage, error) { close(entered); <-release; return nil, errors.New("offline") })
 		}()
 		time.Sleep(30 * time.Minute)
 		<-entered
@@ -157,6 +164,9 @@ func TestAppTaskSilenceProbeProgressRace(t *testing.T) {
 			t.Fatalf("progress lost: %v", err)
 		default:
 		}
+		if confirmations != 1 {
+			t.Fatalf("рабочее событие должно подтвердить восстановление один раз: %d", confirmations)
+		}
 		time.Sleep(29 * time.Minute)
 		synctest.Wait()
 		select {
@@ -167,8 +177,8 @@ func TestAppTaskSilenceProbeProgressRace(t *testing.T) {
 		c.mu.Lock()
 		turn.note("turn/completed", json.RawMessage(`{"threadId":"main","turn":{"id":"ours","status":"completed"}}`), time.Now())
 		c.mu.Unlock()
-		if err := <-done; err != nil {
-			t.Fatal(err)
+		if err := <-done; err != nil || confirmations != 1 {
+			t.Fatalf("завершение после рабочего события: %v, подтверждений: %d", err, confirmations)
 		}
 	})
 }
@@ -180,7 +190,8 @@ func TestAppTaskSilenceProbeStopAndCompletion(t *testing.T) {
 		c := &appChat{thread: "main", proc: &appServer{dead: make(chan struct{})}}
 		stop := make(chan struct{})
 		close(stop)
-		err := c.waitTaskTurnProbe(turn, "ours", stop, 30*time.Minute, func() (json.RawMessage, error) { t.Fatal("unexpected probe"); return nil, nil })
+		confirm := func() { t.Error("остановленный ход подтвердил восстановление") }
+		err := c.waitTaskTurnProbe(turn, "ours", stop, 30*time.Minute, confirm, func() (json.RawMessage, error) { t.Fatal("unexpected probe"); return nil, nil })
 		if err == nil || !strings.Contains(err.Error(), "остановлен") {
 			t.Fatalf("stop lost: %v", err)
 		}

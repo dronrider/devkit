@@ -165,7 +165,9 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 
-	return newTestEnvAt(t, home, proj, bin)
+	e := newTestEnvAt(t, home, proj, bin)
+	useHeadHome(t, e)
+	return e
 }
 
 // newTestEnvAt достраивает сервер стенда на готовом доме и проекте: цель, конфиг

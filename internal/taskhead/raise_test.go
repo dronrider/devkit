@@ -970,3 +970,95 @@ func TestContinuationExpectedRunPreservesStoppedState(t *testing.T) {
 		t.Fatalf("client started: %s", got)
 	}
 }
+
+func TestAppRecoveryReservesAutomaticWakeUntilWorkEnds(t *testing.T) {
+	s := newStand(t, true, true)
+	q := s.req()
+	q.Order = "Продолжай выполнение DK-1"
+	q.AutomaticContinuation = true
+	g, err := taskstate.Acquire(s.home, s.root, q.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.StartRun(taskstate.Run{ID: "original", Harness: "codex", Model: "model", AppChat: "as-original", AppRecovery: true}); err != nil {
+		g.Close()
+		t.Fatal(err)
+	}
+	g.Close()
+	res, err := Raise(q)
+	if err != nil || res.Code != CodeBusy {
+		t.Fatalf("wake обошёл восстановление: %+v %v", res, err)
+	}
+	if got := s.tmux("calls.log"); strings.Contains(got, "new-session") {
+		t.Fatalf("wake поднял другой профиль: %s", got)
+	}
+	g, err = taskstate.Acquire(s.home, s.root, q.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := g.State.Run; run.ID != "original" || run.AppChat != "as-original" {
+		g.Close()
+		t.Fatalf("wake заменил исходный запуск: %+v", run)
+	}
+	g.State.Run.AppRecovery = false
+	err = g.Save()
+	g.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = Raise(q)
+	if err != nil || res.Code != CodeRaised {
+		t.Fatalf("штатный wake после завершения: %+v %v", res, err)
+	}
+}
+
+func TestRaiseLegacyCodexPassHoldsAutomaticContinuation(t *testing.T) {
+	const sameSecond = "2000-01-01T00:00:00 task-run DK-1: проход поднят: python3 --app-turn-client\n"
+	const laterPass = "2000-01-01T00:00:01 task-run DK-1: проход поднят: python3 --app-turn-client\n"
+	const finish = "2000-01-01T00:00:02 task-run DK-1: голова вышла кодом 0\n"
+	for _, tc := range []struct {
+		name, journal string
+		hold          bool
+	}{
+		{"ambiguous", sameSecond + finish, true},
+		{"active", laterPass, true},
+		{"finished", laterPass + finish, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStand(t, true, true)
+			t.Setenv("TZ", "UTC")
+			for _, name := range []string{"recovery.py", "taskstate.py"} {
+				source := filepath.Join("..", "..", "tools", "devkitctl", name)
+				data, err := os.ReadFile(source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, filepath.Join(s.devkit, "tools", "devkitctl", name), string(data), 0o644)
+			}
+			put(t, filepath.Join(s.home, ".devkit", "heads", "DK-1.log"), tc.journal, 0o600)
+			state, err := taskstate.Acquire(s.home, s.root, "DK-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.State.Run = &taskstate.Run{ID: "legacy", PID: 999999, Harness: "stub", Started: "2000-01-01T00:00:00.5Z"}
+			err = state.Save()
+			state.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := s.req()
+			q.AutomaticContinuation = true
+			res, err := Raise(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.hold {
+				if res.Code != CodeBusy || res.Rung != RungAppChat {
+					t.Fatalf("общий подъём обошёл рабочий чат: %+v", res)
+				}
+			} else if res.Code != CodeRaised {
+				t.Fatalf("завершённый проход удержал подъём: %+v", res)
+			}
+		})
+	}
+}

@@ -101,6 +101,7 @@ type Request struct {
 	RecoveryAttempt string
 	PreviousRun     string
 	ExpectedRun     string
+	DiagnosticRun   string // терминальный запуск из инцидента дежурного
 	ContinueStopped bool
 	runID           string
 	ID              string // задача доски
@@ -210,6 +211,9 @@ func Raise(q Request) (Result, error) {
 	if q.ExpectedRun != "" && (state.State.Run == nil || state.State.Run.ID != q.ExpectedRun) {
 		return res, fmt.Errorf("исходный запуск продолжения изменился")
 	}
+	if q.ContinueStopped && q.DiagnosticRun != "" {
+		return res, fmt.Errorf("диагностика инцидента несовместима с явным продолжением")
+	}
 	if q.ContinueStopped && q.ExpectedRun == "" {
 		state.State.Stopped = false
 		state.State.Run = nil
@@ -217,20 +221,26 @@ func Raise(q Request) (Result, error) {
 			return res, err
 		}
 	}
+	old := state.State.Run
+	dutyOrder := q.AppServer == nil && strings.HasPrefix(q.Order, "Разбери неизвестный отказ конвейера ")
+	diagnostic := dutyOrder && old != nil && old.AppChat != "" && old.AppRecoveryTerminal
+	if q.DiagnosticRun != "" && (!diagnostic || old.ID != q.DiagnosticRun || state.State.Stopped) {
+		res.Code, res.Rung = CodeBusy, RungAppChat
+		res.say("%s: терминальный запуск Codex из инцидента сменился либо задача остановлена", q.ID)
+		return res, nil
+	}
 	if state.State.Stopped && !q.ContinueStopped {
 		return res, fmt.Errorf("задача остановлена пользователем; используйте явное продолжение")
 	}
-	old := state.State.Run
 	if q.AppServer != nil && q.AppServer.Recover {
 		if old == nil || !old.AppRecovery || old.AppRecoveryTerminal || old.AppChat != q.AppServer.Chat || old.Harness != q.Harness || old.Model != q.Model ||
 			Alive(old.PID) || old.Group > 0 && !errors.Is(syscall.Kill(-old.Group, 0), syscall.ESRCH) || Alive(Owner(LockPath(q.Home, q.ID))) {
 			return res, fmt.Errorf("исходный конвейер Codex сменился либо ещё работает")
 		}
 	}
-	diagnostic := old != nil && old.AppChat != "" && old.AppRecoveryTerminal && strings.HasPrefix(q.Order, "Разбери неизвестный отказ конвейера ")
-	if q.AppServer == nil && old != nil && !q.ContinueStopped && q.automaticContinuation() {
+	if q.AppServer == nil && old != nil && !q.ContinueStopped && (q.automaticContinuation() || dutyOrder && !diagnostic) {
 		reason := ""
-		if old.AppChat != "" && (old.AppRecovery || old.AppRecoveryTerminal) {
+		if old.AppChat != "" && (old.AppRecovery || old.AppRecoveryTerminal || dutyOrder) {
 			reason = "запуск закреплён за рабочим разговором Codex"
 		} else if old.AppChat == "" && old.PID > 0 {
 			status, err := ReadLegacyAppPassStatus(q.Devkit, q.Home, q.ID, old.Started)

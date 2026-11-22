@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"path"
 	"slices"
+	"strconv"
 )
 
 func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast.AssignStmt, field, read *ast.SelectorExpr, callAt, fieldAt string) bool {
@@ -15,7 +16,7 @@ func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast
 		return false
 	}
 	fields := g.namePointerFieldDeclaration(writer, parameter, field.Sel.Name, fieldAt)
-	if fields == nil {
+	if fields == nil || !nameDistinctDirectFields(write, parameter.Obj, fields) {
 		return false
 	}
 	params := paramNames(writer.node.Type.Params)
@@ -24,7 +25,7 @@ func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast
 		return false
 	}
 	statements := writer.node.Body.List
-	if len(statements) < 2 || statements[len(statements)-2] != write || !g.namePointerPath(writer, writer.node.Body, write, nil) {
+	if len(statements) < 2 || statements[len(statements)-2] != write {
 		return false
 	}
 	result, ok := statements[len(statements)-1].(*ast.ReturnStmt)
@@ -63,6 +64,17 @@ func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast
 		!namePointerFieldSafe(reader.node.Body, local.Obj, fields, field.Sel.Name, address, nil, read.End()) {
 		return false
 	}
+	var initialGuard func(ast.Expr) (bool, bool)
+	if g.namePointerBuiltin(writer, nameNamedStructField(fields, field.Sel.Name).Type, "string") {
+		if initial, known := nameLocalStringField(decl, local.Obj, field.Sel.Name); known {
+			initialGuard = func(condition ast.Expr) (bool, bool) {
+				return nameInitialStringCondition(condition, parameter.Obj, field.Sel.Name, initial)
+			}
+		}
+	}
+	if !g.namePointerPath(writer, writer.node.Body, write, initialGuard) {
+		return false
+	}
 	flag, flagOK := assignment.Lhs[0].(*ast.Ident)
 	failure, failureOK := assignment.Lhs[1].(*ast.Ident)
 	if !flagOK || !failureOK || flag.Obj == nil || failure.Obj == nil || flag.Obj.Decl != assignment || failure.Obj.Decl != assignment {
@@ -82,6 +94,79 @@ func (g *queryGoSource) namePointerFieldUse(writer, reader queryFunc, write *ast
 	return readStatement != nil && namePointerResultStable(reader.node.Body, assignment, readStatement, flag.Obj) &&
 		g.namePointerPath(reader, reader.node.Body, readStatement, known) &&
 		!g.namePointerPath(reader, reader.node.Body, readStatement, failed)
+}
+
+// Go assigns multiple targets in order; a later alias can overwrite the
+// observed field before the statement completes.
+func nameDistinctDirectFields(write *ast.AssignStmt, receiver *ast.Object, fields *ast.FieldList) bool {
+	seen := make(map[string]bool, len(write.Lhs))
+	for _, target := range write.Lhs {
+		field, ok := ast.Unparen(target).(*ast.SelectorExpr)
+		if !ok || !nameUsesObject(field.X, receiver) || seen[field.Sel.Name] || nameNamedStructField(fields, field.Sel.Name) == nil {
+			return false
+		}
+		seen[field.Sel.Name] = true
+	}
+	return true
+}
+
+func nameNamedStructField(fields *ast.FieldList, name string) *ast.Field {
+	for _, field := range fields.List {
+		if slices.ContainsFunc(field.Names, func(id *ast.Ident) bool { return id.Name == name }) {
+			return field
+		}
+	}
+	return nil
+}
+
+func nameLocalStringField(declaration *ast.AssignStmt, binding *ast.Object, field string) (string, bool) {
+	slot := slices.IndexFunc(declaration.Lhs, func(expr ast.Expr) bool { return nameUsesObject(expr, binding) })
+	if len(declaration.Lhs) != len(declaration.Rhs) || slot < 0 {
+		return "", false
+	}
+	literal, ok := ast.Unparen(declaration.Rhs[slot]).(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	for _, value := range literal.Elts {
+		entry, ok := value.(*ast.KeyValueExpr)
+		if !ok {
+			return "", false
+		}
+		if nameIdentifier(entry.Key) == field {
+			return nameLiteralString(entry.Value)
+		}
+	}
+	return "", true
+}
+
+func nameInitialStringCondition(condition ast.Expr, receiver *ast.Object, field, initial string) (bool, bool) {
+	comparison, ok := ast.Unparen(condition).(*ast.BinaryExpr)
+	if !ok || comparison.Op != token.EQL && comparison.Op != token.NEQ {
+		return false, false
+	}
+	left, right := comparison.X, comparison.Y
+	matches := func(expr ast.Expr) bool {
+		selected, ok := ast.Unparen(expr).(*ast.SelectorExpr)
+		return ok && nameUsesObject(selected.X, receiver) && selected.Sel.Name == field
+	}
+	if !matches(left) {
+		left, right = right, left
+	}
+	if !matches(left) {
+		return false, false
+	}
+	value, ok := nameLiteralString(right)
+	return (initial == value) == (comparison.Op == token.EQL), ok
+}
+
+func nameLiteralString(expr ast.Expr) (string, bool) {
+	literal, ok := ast.Unparen(expr).(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	return value, err == nil
 }
 
 // A true result must come through the write immediately above it. Otherwise
@@ -184,9 +269,7 @@ func namePointerFieldSafe(body *ast.BlockStmt, object *ast.Object, fields *ast.F
 			return true
 		}
 		sel, selected := parent.(*ast.SelectorExpr)
-		if !selected || sel.X != id || !slices.ContainsFunc(fields.List, func(entry *ast.Field) bool {
-			return slices.ContainsFunc(entry.Names, func(name *ast.Ident) bool { return name.Name == sel.Sel.Name })
-		}) {
+		if !selected || sel.X != id || nameNamedStructField(fields, sel.Sel.Name) == nil {
 			valid = false
 			return false
 		}

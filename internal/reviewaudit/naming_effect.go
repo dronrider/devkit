@@ -171,6 +171,13 @@ func (g *queryGoSource) checkNameAssignment(e Evidence, entry, fn queryFunc) err
 		}
 		stmt := node.(*ast.AssignStmt)
 		slot := slices.IndexFunc(stmt.Lhs, func(x ast.Expr) bool { return sameNameExpression(x, site.Target) })
+		target := stmt.Lhs[slot]
+		targetKey := nameExpression(ast.Unparen(target))
+		if slices.ContainsFunc(stmt.Lhs, func(lhs ast.Expr) bool {
+			return lhs != target && nameExpression(ast.Unparen(lhs)) == targetKey
+		}) {
+			return fmt.Errorf("proof.assignment.writes: %s присваивается повторно в той же строке %s", site.Target, site.At)
+		}
 		if scenario != nil {
 			root := nameSynctestTargetRoot(fn, stmt.Lhs[slot])
 			if root == nil {

@@ -89,8 +89,8 @@ func checkNamePythonResult(e Evidence, declaration string, source *evidenceSourc
 		}
 		request.Import = strings.TrimSuffix(path.Base(file), ".py")
 	}
-	var message string
-	if err := readNamePythonAST(pythonResultAST, request, &message); err != nil {
+	message, err := runNamePythonVerifier[string](pythonResultAST, request)
+	if err != nil {
 		return fmt.Errorf("proof: %w", err)
 	}
 	if message != "" {
@@ -107,7 +107,9 @@ import sys
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 SCOPES = (*FUNCTIONS, ast.ClassDef, ast.Lambda)
-UNSUPPORTED = (ast.Match, ast.AsyncFor, ast.AsyncWith, getattr(ast, "TryStar", ast.Try))
+MATCH = (ast.Match,) if hasattr(ast, "Match") else ()
+PATTERN_BINDINGS = (ast.MatchAs, ast.MatchStar, ast.MatchMapping) if MATCH else ()
+UNSUPPORTED = (*MATCH, ast.AsyncFor, ast.AsyncWith, getattr(ast, "TryStar", ast.Try))
 DYNAMIC_NAMES = {"exec", "eval", "globals", "locals", "vars", "__import__", "setattr", "delattr"}
 UNKNOWN = object()
 COMPARE = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
@@ -163,7 +165,7 @@ def binds(node, name):
         return name in node.names
     if isinstance(node, ast.arg):
         return node.arg == name
-    return (isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar, ast.MatchMapping))
+    return (isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.ExceptHandler, *PATTERN_BINDINGS))
             and (getattr(node, "name", None) == name or getattr(node, "rest", None) == name))
 
 def binding_nodes(scope):

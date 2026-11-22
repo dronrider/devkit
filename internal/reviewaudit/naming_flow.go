@@ -179,7 +179,7 @@ func (g *queryGoSource) checkLocalNameUse(caller queryFunc, call *ast.CallExpr, 
 		} else {
 			used = g.countNameFieldReads(stmt, line, value, flow.UseField)
 		}
-		if used > 0 && nameBoundResultReachesUse(call, parents, stmt, block, value, slot) {
+		if used > 0 && g.nameBoundResultReachesUse(caller, call, parents, stmt, block, value, slot) {
 			matches += used
 		}
 	}
@@ -274,7 +274,7 @@ func (g *queryGoSource) checkNameProjection(producer, caller, consumer queryFunc
 	if loop == nil || block == nil || !slices.Contains(block.List, ast.Stmt(loop)) || loop.Tok != token.DEFINE {
 		return fmt.Errorf("projection: %s должен указывать цикл обработки результата", projection.RangeAt)
 	}
-	if nameFlowIndex(call, parents, loop, block, []ast.Expr{loop.X}, value, slot) < 0 {
+	if g.nameFlowIndex(caller, call, parents, loop, block, []ast.Expr{loop.X}, value, slot) < 0 {
 		return fmt.Errorf("projection: цикл должен перебирать значение из вызова")
 	}
 	var loopStatement ast.Stmt

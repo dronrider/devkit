@@ -787,7 +787,7 @@ func (g *queryGoSource) nameFlowIndex(fn queryFunc, call *ast.CallExpr, parents 
 }
 
 func (g *queryGoSource) nameBoundResultReachesUse(fn queryFunc, call *ast.CallExpr, parents []ast.Node, use ast.Node, useBlock ast.Node, value string, slot int) bool {
-	if value == "_" || len(parents) < 2 {
+	if value == "_" || use == nil || len(parents) < 2 {
 		return false
 	}
 	assign, ok := parents[len(parents)-1].(*ast.AssignStmt)
@@ -831,9 +831,22 @@ func (g *queryGoSource) nameBoundResultReachesUse(fn queryFunc, call *ast.CallEx
 	}
 	block := parents[len(parents)-2]
 	for _, stmt := range nameStatements(block) {
-		if condition, ok := stmt.(*ast.IfStmt); ok && assign.End() <= condition.Pos() &&
-			condition.End() <= use.Pos() && g.namePointerStops(fn, condition, nil) {
-			return false
+		branch, ok := stmt.(*ast.IfStmt)
+		if !ok || branch.Pos() < assign.End() || branch.End() > use.Pos() {
+			continue
+		}
+		taken, known := g.nameNestedFieldCondition(fn, branch.Cond)
+		if !known {
+			continue
+		}
+		selected := branch.Body
+		if !taken {
+			selected, _ = branch.Else.(*ast.BlockStmt)
+		}
+		if selected != nil && len(selected.List) == 1 {
+			if _, returns := selected.List[0].(*ast.ReturnStmt); returns {
+				return false
+			}
 		}
 	}
 	if block == useBlock {

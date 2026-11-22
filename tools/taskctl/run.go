@@ -22,6 +22,7 @@ type runOpts struct {
 	hidden                       bool
 	continueStopped              bool
 	recoveryAttempt, previousRun string
+	diagnosticRun                string
 	// reply это заказ головы по лежащей в чате задачи реплике (DK-1194): текст
 	// заказа собирает taskhead.ReplyOrder, и зовущему его переписывать нечем.
 	reply bool
@@ -55,7 +56,8 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 	// разрешён даже в голом окружении (DK-1562).
 	return taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,
 		Harness: harness, Model: o.model, ContinueStopped: o.continueStopped,
-		RecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, Order: order, Again: o.again, Hidden: o.hidden, Wanted: true,
+		RecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,
+		Order: order, Again: o.again, Hidden: o.hidden, Wanted: true,
 		Adopt: adopt, Pick: func() (string, error) { return runPick(root, id, harness) }}, nil
 }
 

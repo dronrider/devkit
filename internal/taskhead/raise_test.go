@@ -1012,6 +1012,60 @@ func TestAppRecoveryReservesAutomaticWakeUntilWorkEnds(t *testing.T) {
 	}
 }
 
+func TestDutyDiagnosticKeepsCodexRun(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		diagnosticRun string
+		terminal      bool
+		stopped       bool
+		want          int
+	}{
+		{name: "stale unbound order", want: CodeBusy},
+		{name: "new recovering run", diagnosticRun: "old", want: CodeBusy},
+		{name: "new terminal run", diagnosticRun: "old", terminal: true, want: CodeBusy},
+		{name: "stopped original run", diagnosticRun: "current", terminal: true, stopped: true, want: CodeBusy},
+		{name: "terminal original run", diagnosticRun: "current", terminal: true, want: CodeRaised},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStand(t, true, true)
+			q := s.req()
+			q.Order = "Разбери неизвестный отказ конвейера DK-1"
+			q.DiagnosticRun = tc.diagnosticRun
+			g, err := taskstate.Acquire(s.home, s.root, q.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := taskstate.Run{ID: "current", Harness: "codex", Model: "sol", AppChat: "as-original",
+				AppRecovery: true, AppRecoveryTerminal: tc.terminal}
+			err = g.StartRun(run)
+			if err == nil && tc.stopped {
+				g.State.Stopped = true
+				err = g.Save()
+			}
+			g.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			res, err := Raise(q)
+			if err != nil || res.Code != tc.want {
+				t.Errorf("диагностика: %+v %v, нужен код %d", res, err, tc.want)
+			}
+			if tc.want == CodeBusy && strings.Contains(s.tmux("calls.log"), "new-session") {
+				t.Error("при отказе поднялось диагностическое окно")
+			}
+			g, err = taskstate.Acquire(s.home, s.root, q.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer g.Close()
+			if got := g.State.Run; got == nil || got.ID != run.ID || got.AppChat != run.AppChat || got.AppRecoveryTerminal != tc.terminal || g.State.Stopped != tc.stopped {
+				t.Fatalf("диагностика изменила рабочий запуск: %+v", g.State)
+			}
+		})
+	}
+}
+
 func TestRaiseLegacyCodexPassHoldsAutomaticContinuation(t *testing.T) {
 	const sameSecond = "2000-01-01T00:00:00 task-run DK-1: проход поднят: python3 --app-turn-client\n"
 	const laterPass = "2000-01-01T00:00:01 task-run DK-1: проход поднят: python3 --app-turn-client\n"

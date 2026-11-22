@@ -835,6 +835,9 @@ func nameValueUnchanged(block ast.Node, from, to ast.Node, value string) bool {
 		if stmt.Pos() <= from.Pos() || stmt.Pos() >= to.Pos() {
 			continue
 		}
+		if _, returns := stmt.(*ast.ReturnStmt); returns {
+			return false
+		}
 		for node := range ast.Preorder(stmt) {
 			switch n := node.(type) {
 			case *ast.AssignStmt:
@@ -843,6 +846,14 @@ func nameValueUnchanged(block ast.Node, from, to ast.Node, value string) bool {
 				}
 			case *ast.DeclStmt:
 				if nameDeclaresLocal(n, value) {
+					return false
+				}
+			case *ast.RangeStmt:
+				if nameIdentifier(ast.Unparen(n.Key)) == value || nameIdentifier(ast.Unparen(n.Value)) == value {
+					return false
+				}
+			case *ast.IncDecStmt:
+				if nameIdentifier(ast.Unparen(n.X)) == value {
 					return false
 				}
 			case *ast.UnaryExpr:

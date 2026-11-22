@@ -1,9 +1,9 @@
 {
   "version": 1,
   "id": "DK-1746",
-  "base_sha": "cb41fd46b837a4a496f2edbaeb23cb1ecf60849a",
-  "head_sha": "9a315a694bf4bcefc8066a644e657fb1023e2dd8",
-  "code_hash": "a50090c8a7202d6936394757a87b4388024792cea588b48c9d2f34c0dbdd41df",
+  "base_sha": "b049d944b7ebb19ff7313c511ef67e50137435a8",
+  "head_sha": "e97f237b4e8cb6396f672bec49bec942bfd95e64",
+  "code_hash": "f06e8f5a1d69b0a6ccb160f238be02e12260fa81e53065041cdbb16b30f8e9f5",
   "task_hash": "914ebdbd06b9df2d7dd04fe286aab543c807dc1327b57a759d8a930590043813",
   "sources": [
     {
@@ -53,7 +53,8 @@
       "tools/dashboard/apptask_recovery.go:408 сохраняет Terminal и причину до заметки. TestAppTaskRecoveryReportsExhaustionWithQuotaUnavailable проверяет прежний ID, сохранённый исход и запись в исходной ленте.",
       "tools/dashboard/apptask.go:441 повторяет допуск после сверки нити. TestAppTaskRecoveryRechecksGuardAfterThreadRead проверяет отсутствие новой отправки при смене владельца, закрытии или стопе.",
       "tools/dashboard/apptask_recovery.go:563, tools/dashboard/apptask_recovery.go:607 и tools/dashboard/apptask_queue.go:205 сохраняют тип причины разбора. Интегрированный прогон также подтвердил HTTP 502 с причиной отказа и отказ чтения повреждённого заголовка .ask.",
-      "internal/taskhead/raise.go:227 связывает диагностический заказ с терминальным запуском под замком состояния. Тест internal/taskhead/raise_test.go:1015 и прогон штатного taskctl подтверждают сохранение AppChat при смене запуска."
+      "internal/taskhead/raise.go:227 связывает диагностический заказ с терминальным запуском под замком состояния. Тест internal/taskhead/raise_test.go:1015 и прогон штатного taskctl подтверждают сохранение AppChat при смене запуска.",
+      "tools/taskctl/run.go:57 собирает заказ из окружения и флагов. tools/taskctl/run.go:136 подключает выбор модели при исполнении заказа. tools/devkitctl/duty.py:684 возвращает именованные поля кода и вывода для учёта запуска."
     ]
   },
   "rules": [
@@ -85,7 +86,7 @@
         },
         {
           "object": "дежурство",
-          "location": "tools/devkitctl/duty.py:542",
+          "location": "tools/devkitctl/duty.py:543",
           "observation": "Дежурный принимает конечный исход и ещё раз проверяет поколение.",
           "result": "checked"
         }
@@ -3499,8 +3500,8 @@
       "source": "common-style",
       "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
       "applicability": "applicable",
-      "result": "pending",
-      "reason": "Пооперационная проверка завершена для принятых доказательств. Оставшиеся открытые цепочки описаны в итоге аудита.",
+      "result": "checked",
+      "reason": "Для всех операций проверены назначение имени, результат и запись. Для пятнадцати цепочек добавлены подписанные наблюдения записи и чтения с контрольным прогоном.",
       "checks": [
         "meaning",
         "result",
@@ -3532,12 +3533,12 @@
         {
           "path": "internal/taskhead/raise.go",
           "objects": [
+            "internal/taskhead/raise.go:104#DiagnosticRun",
             "internal/taskhead/raise.go:191#Raise",
             "internal/taskhead/raise.go:28#CodexAppProtocol",
             "internal/taskhead/raise.go:370#Request.automaticContinuation",
             "internal/taskhead/raise.go:509#Request.env",
-            "internal/taskhead/raise.go:847#Request.readHead",
-            "internal/taskhead/raise.go:104#DiagnosticRun"
+            "internal/taskhead/raise.go:847#Request.readHead"
           ]
         },
         {
@@ -3834,10 +3835,13 @@
         {
           "path": "tools/devkitctl/duty.py",
           "objects": [
-            "tools/devkitctl/duty.py:405#duty_root",
-            "tools/devkitctl/duty.py:406#app_only",
-            "tools/devkitctl/duty.py:549#legacy_recovery",
-            "tools/devkitctl/duty.py:659#spawn"
+            "tools/devkitctl/duty.py:406#duty_root",
+            "tools/devkitctl/duty.py:407#app_only",
+            "tools/devkitctl/duty.py:550#legacy_recovery",
+            "tools/devkitctl/duty.py:660#DutyLaunchResult",
+            "tools/devkitctl/duty.py:661#message",
+            "tools/devkitctl/duty.py:662#code",
+            "tools/devkitctl/duty.py:665#spawn"
           ]
         },
         {
@@ -3918,6 +3922,7 @@
         {
           "path": "tools/taskctl/run.go",
           "objects": [
+            "tools/taskctl/run.go:125#cmdRun",
             "tools/taskctl/run.go:32#runRequest"
           ]
         }
@@ -4582,12 +4587,18 @@
           "object": "tools/taskctl/run.go:32#runRequest",
           "symbol": "runRequest",
           "location": "tools/taskctl/run.go:32"
+        },
+        {
+          "object": "tools/taskctl/run.go:125#cmdRun",
+          "symbol": "cmdRun",
+          "location": "tools/taskctl/run.go:125"
         }
       ],
       "objects": [
         "hooks/incidents.py:55#APP_RECOVERY_OUT",
         "internal/chat/chat.go:164#TransferLines",
         "internal/taskhead/legacy.go:23#ReadLegacyAppPassStatus",
+        "internal/taskhead/raise.go:104#DiagnosticRun",
         "internal/taskhead/raise.go:191#Raise",
         "internal/taskhead/raise.go:28#CodexAppProtocol",
         "internal/taskhead/raise.go:370#Request.automaticContinuation",
@@ -4723,9 +4734,13 @@
         "tools/dashboard/wake.go:323#continuationWaitLine",
         "tools/dashboard/wake.go:345#server.taskReplyRaise",
         "tools/dashboard/wake_test.go:394#TestTaskWakeReportsReservedCodexChatWithoutLiveHead",
-        "tools/devkitctl/duty.py:405#duty_root",
-        "tools/devkitctl/duty.py:406#app_only",
-        "tools/devkitctl/duty.py:549#legacy_recovery",
+        "tools/devkitctl/duty.py:406#duty_root",
+        "tools/devkitctl/duty.py:407#app_only",
+        "tools/devkitctl/duty.py:550#legacy_recovery",
+        "tools/devkitctl/duty.py:660#DutyLaunchResult",
+        "tools/devkitctl/duty.py:661#message",
+        "tools/devkitctl/duty.py:662#code",
+        "tools/devkitctl/duty.py:665#spawn",
         "tools/devkitctl/duty_test.py:417#test_codex_duty_waits_for_recovery_terminal",
         "tools/devkitctl/lift.py:694#report_app_terminal_incidents",
         "tools/devkitctl/lift.py:725#app_terminal_root",
@@ -4747,9 +4762,8 @@
         "tools/devkitctl/watch.py:2413#signal_app_task_tick",
         "tools/devkitctl/watch_test.py:2487#test_tick_signals_dashboard_without_goals",
         "tools/taskctl/main.go:501#main",
-        "tools/taskctl/run.go:32#runRequest",
-        "internal/taskhead/raise.go:104#DiagnosticRun",
-        "tools/devkitctl/duty.py:659#spawn"
+        "tools/taskctl/run.go:125#cmdRun",
+        "tools/taskctl/run.go:32#runRequest"
       ],
       "evidence": [
         {
@@ -12215,8 +12229,8 @@
           "observation": "У метода unittest нет возвращаемого прикладного значения. Результат сообщают утверждения."
         },
         {
-          "object": "tools/devkitctl/duty.py:405#duty_root",
-          "location": "tools/devkitctl/duty.py:405",
+          "object": "tools/devkitctl/duty.py:406#duty_root",
+          "location": "tools/devkitctl/duty.py:406",
           "check": "meaning",
           "symbol": "duty_root",
           "result": "checked",
@@ -12226,14 +12240,14 @@
               "word": "duty",
               "meaning": "дежурный",
               "fact": "Используется общая очередь открытых инцидентов.",
-              "location": "tools/devkitctl/duty.py:540",
+              "location": "tools/devkitctl/duty.py:541",
               "result": "checked"
             },
             {
               "word": "root",
               "meaning": "корень проекта",
               "fact": "Отметки и инциденты читаются по переданному корню.",
-              "location": "tools/devkitctl/duty.py:424",
+              "location": "tools/devkitctl/duty.py:425",
               "result": "checked"
             }
           ]
@@ -14050,21 +14064,43 @@
         {
           "object": "tools/dashboard/apptask.go:76#appTaskTurn.note",
           "check": "writes",
-          "location": "tools/dashboard/apptask.go:76",
-          "observation": "Метод меняет last. Синхронный тест читает его у того же объекта после вызова метода. Таймер также читает это поле при пробуждении. Установленный taskctl отклоняет оба перехода.",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Проверка чтения времени активности",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/dashboard/apptask.go:86",
-                "quote": "t.last, t.work = now, t.work || work",
-                "value": "last",
-                "text": "Как подтвердить передачу last к чтению turn.last на tools/dashboard/apptask_timer_test.go:72 после вызова на строке 71, если proof.assignment.use отвергает чтение поля в другом файле?"
+          "location": "tools/dashboard/apptask.go:86",
+          "observation": "Событие своего хода на 25-й минуте изменяет last. Таймер читает последнее время и вызывает проверку на 55-й минуте. Для чужого хода присваивание отсутствует, таймер вызывает проверку на 30-й минуте.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "note"
+            ],
+            "actual": "last",
+            "actual_at": "tools/dashboard/apptask.go:86",
+            "proof": {
+              "expression": "t.last",
+              "words": [
+                {
+                  "word": "note",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Событие своего хода отмечается присваиванием timestamp now полю t.last."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-go-independent-observer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/dashboard/apptask.go:76#appTaskTurn.note\",\n  \"declaration\": \"tools/dashboard/apptask.go:76\",\n  \"actual\": \"last\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n    \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n    \"GOWORK=off\",\n    \"PYTHONDONTWRITEBYTECODE=1\",\n    \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n    \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n    \"go\",\n    \"-C\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n    \"test\",\n    \"-count=1\",\n    \"-timeout=45s\",\n    \"-covermode=count\",\n    \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/timer-positive.cover\",\n    \"-overlay\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n    \"-run\",\n    \"^TestIndependentTimerObservation$/^current_turn$\",\n    \"-v\",\n    \".\"\n  ],\n  \"write\": {\n    \"at\": \"tools/dashboard/apptask.go:86\",\n    \"quote\": \"t.last, t.work = now, t.work || work\",\n    \"expression\": \"t.last\",\n    \"identity\": \"chat/main/ours:last\",\n    \"value\": \"2000-01-01T00:25:00Z\",\n    \"source_value\": \"now\"\n  },\n  \"read\": {\n    \"at\": \"tools/dashboard/apptask.go:162\",\n    \"quote\": \"left, seq := time.Until(t.last.Add(cap)), t.seq\",\n    \"expression\": \"t.last\",\n    \"identity\": \"chat/main/ours:last\",\n    \"value\": \"2000-01-01T00:25:00Z\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n      \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n      \"GOWORK=off\",\n      \"PYTHONDONTWRITEBYTECODE=1\",\n      \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n      \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n      \"go\",\n      \"-C\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n      \"test\",\n      \"-count=1\",\n      \"-timeout=45s\",\n      \"-covermode=count\",\n      \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/timer-control.cover\",\n      \"-overlay\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n      \"-run\",\n      \"^TestIndependentTimerObservation$/^another_turn$\",\n      \"-v\",\n      \".\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/dashboard/apptask.go:162\",\n      \"quote\": \"left, seq := time.Until(t.last.Add(cap)), t.seq\",\n      \"expression\": \"t.last\",\n      \"identity\": \"chat/main/ours:last\",\n      \"value\": \"2000-01-01T00:00:00Z\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg0ttva+YDO1xfMDwYyueE7FGDWG\nqRtWyrtHUWZKRTpbYAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAECbS8pgxnLCckuAdlG6dY65ijbchaDuvih1Nny8bwdRhlz+As\nPaA2Scb+DORDYWvFZWbqNIKOD2wk+0gmJfEV0H\n-----END SSH SIGNATURE-----\n"
               }
-            ]
-          }
+            }
+          },
+          "write_evidence": {
+            "word": "note",
+            "target": "t.last",
+            "value": "now",
+            "write_at": "tools/dashboard/apptask.go:86"
+          },
+          "kind": "runtime"
         },
         {
           "object": "internal/chat/chat.go:164#TransferLines",
@@ -15359,14 +15395,14 @@
               "runs"
             ],
             "actual": "app_runs",
-            "actual_at": "tools/devkitctl/duty.py:431"
+            "actual_at": "tools/devkitctl/duty.py:432"
           },
           "result_evidence": {
             "word": "runs",
             "returned": "confirmed (dict[str, dict], app_runs на стороне потребителя). Ключ — ID задачи, значение — поля Run вместе со stopped и при старом формате с признаками состояния восстановления.",
             "return_at": "tools/devkitctl/taskstate.py:152",
             "consumer": "Перебор app_runs.items() отбирает записи, удерживающие ветку восстановления от общего подъёма.",
-            "consumer_at": "tools/devkitctl/duty.py:432",
+            "consumer_at": "tools/devkitctl/duty.py:433",
             "facts": [
               {
                 "location": "tools/devkitctl/taskstate.py:105",
@@ -15394,12 +15430,12 @@
                 "text": "При отдельном HOME запись удерживает общий подъём, если статус или ошибка журнала это требует."
               },
               {
-                "location": "tools/devkitctl/duty.py:431",
+                "location": "tools/devkitctl/duty.py:432",
                 "quote": "app_runs = taskstate.app_runs(home, root, tasks)",
                 "text": "Присваивание связывает локальный app_runs с результатом одноимённой функции."
               },
               {
-                "location": "tools/devkitctl/duty.py:432",
+                "location": "tools/devkitctl/duty.py:433",
                 "quote": "owned = {task: run for task, run in app_runs.items() if taskstate.app_handles_recovery(run)}",
                 "text": "Потребитель фильтрует именно результаты функции по возможности восстановления."
               }
@@ -15414,9 +15450,9 @@
           "result": "not_applicable"
         },
         {
-          "object": "tools/devkitctl/duty.py:405#duty_root",
+          "object": "tools/devkitctl/duty.py:406#duty_root",
           "check": "result",
-          "location": "tools/devkitctl/duty.py:405",
+          "location": "tools/devkitctl/duty.py:406",
           "observation": "duty обозначает проход дежурного, root — корень из аргумента, общий для отбора отметок и инцидентов. Результат этого прохода документирован как строки отчёта и используется тиком и тестом в этой форме.",
           "result": "checked",
           "object_comparison": {
@@ -15425,33 +15461,33 @@
               "root"
             ],
             "actual": "lines",
-            "actual_at": "tools/devkitctl/duty.py:640",
+            "actual_at": "tools/devkitctl/duty.py:641",
             "equivalent_at": "tools/devkitctl/duty_test.py:359"
           },
           "result_evidence": {
             "word": "root",
             "returned": "lines, список строк отчёта дежурного по переданному корню. При отсутствии отметок и инцидентов этот же список пуст.",
-            "return_at": "tools/devkitctl/duty.py:640",
+            "return_at": "tools/devkitctl/duty.py:641",
             "consumer": "Строки dry-run объединяются в отчёт теста и проверяются на сообщение об ожидающем дежурном.",
             "consumer_at": "tools/devkitctl/duty_test.py:362",
             "facts": [
               {
-                "location": "tools/devkitctl/duty.py:415",
+                "location": "tools/devkitctl/duty.py:416",
                 "quote": "Возврат это строки отчёта, как у пробуждения и страховки. `act` гасит",
                 "text": "Докстрока прямо задаёт результат — строки отчёта."
               },
               {
-                "location": "tools/devkitctl/duty.py:424",
+                "location": "tools/devkitctl/duty.py:425",
                 "quote": "incidents, hook = incident_marks(root, home=home)",
                 "text": "Граница входных данных — переданный корень."
               },
               {
-                "location": "tools/devkitctl/duty.py:428",
+                "location": "tools/devkitctl/duty.py:429",
                 "quote": "return lines",
                 "text": "Пустой проход возвращает тот же список, собранный как отчёт."
               },
               {
-                "location": "tools/devkitctl/duty.py:447",
+                "location": "tools/devkitctl/duty.py:448",
                 "quote": "lines.append(\"корень %s: дежурный по %s ждёт исхода восстановления чата Codex\"",
                 "text": "Сообщение о текущем восстановлении добавляется в строки прохода."
               },
@@ -18653,9 +18689,9 @@
           }
         },
         {
-          "object": "tools/devkitctl/duty.py:406#app_only",
+          "object": "tools/devkitctl/duty.py:407#app_only",
           "check": "meaning",
-          "location": "tools/devkitctl/duty.py:406",
+          "location": "tools/devkitctl/duty.py:407",
           "observation": "Ограничивает проход дежурного только терминальными инцидентами рабочего Codex, минуя общие отметки.",
           "result": "checked",
           "symbol": "app_only",
@@ -18664,29 +18700,29 @@
               "word": "app",
               "meaning": "рабочие app-server инциденты",
               "fact": "Пропускается только причина завершения восстановления Codex.",
-              "location": "tools/devkitctl/duty.py:426",
+              "location": "tools/devkitctl/duty.py:427",
               "result": "checked"
             },
             {
               "word": "only",
               "meaning": "ограничение отбора",
               "fact": "Общие отметки исключены в этом режиме.",
-              "location": "tools/devkitctl/duty.py:423",
+              "location": "tools/devkitctl/duty.py:424",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/devkitctl/duty.py:406#app_only",
+          "object": "tools/devkitctl/duty.py:407#app_only",
           "check": "result",
-          "location": "tools/devkitctl/duty.py:406",
+          "location": "tools/devkitctl/duty.py:407",
           "observation": "Объект не возвращает прикладное значение. Параметр читает duty_root.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/devkitctl/duty.py:406#app_only",
+          "object": "tools/devkitctl/duty.py:407#app_only",
           "check": "writes",
-          "location": "tools/devkitctl/duty.py:406",
+          "location": "tools/devkitctl/duty.py:407",
           "observation": "Параметр app_only читается при фильтрации (:423, :425) и не присваивается заново.",
           "result": "not_applicable"
         },
@@ -18729,9 +18765,9 @@
           "result": "not_applicable"
         },
         {
-          "object": "tools/devkitctl/duty.py:549#legacy_recovery",
+          "object": "tools/devkitctl/duty.py:550#legacy_recovery",
           "check": "meaning",
-          "location": "tools/devkitctl/duty.py:549",
+          "location": "tools/devkitctl/duty.py:550",
           "observation": "Обозначает условие восстановления исчезнувшего обычного запуска через прежний Python путь.",
           "result": "checked",
           "symbol": "legacy_recovery",
@@ -18740,29 +18776,29 @@
               "word": "legacy",
               "meaning": "восстановление без владения app-server",
               "fact": "Условие выбирается после ограждения app-владельца и по старой причине.",
-              "location": "tools/devkitctl/duty.py:549",
+              "location": "tools/devkitctl/duty.py:550",
               "result": "checked"
             },
             {
               "word": "recovery",
               "meaning": "автоматическое восстановление",
               "fact": "Признак ведёт к вызову восстановления.",
-              "location": "tools/devkitctl/duty.py:587",
+              "location": "tools/devkitctl/duty.py:588",
               "result": "checked"
             }
           ]
         },
         {
-          "object": "tools/devkitctl/duty.py:549#legacy_recovery",
+          "object": "tools/devkitctl/duty.py:550#legacy_recovery",
           "check": "result",
-          "location": "tools/devkitctl/duty.py:549",
+          "location": "tools/devkitctl/duty.py:550",
           "observation": "Объект не возвращает прикладное значение. Флаг читают ветки проверки и действия.",
           "result": "not_applicable"
         },
         {
-          "object": "tools/devkitctl/duty.py:549#legacy_recovery",
+          "object": "tools/devkitctl/duty.py:550#legacy_recovery",
           "check": "writes",
-          "location": "tools/devkitctl/duty.py:549",
+          "location": "tools/devkitctl/duty.py:550",
           "observation": "Флаг вычисляется из причины инцидента; ветка :578 пропускает обычный подъём дежурного и вызывает recovery.resume.",
           "result": "checked",
           "object_comparison": {
@@ -18771,13 +18807,13 @@
               "recovery"
             ],
             "actual": "legacy_recovery",
-            "actual_at": "tools/devkitctl/duty.py:549"
+            "actual_at": "tools/devkitctl/duty.py:550"
           },
           "write_evidence": {
             "word": "recovery",
             "target": "legacy_recovery",
             "value": "rec.get(\"reason\") == hook.PROC_GONE",
-            "write_at": "tools/devkitctl/duty.py:549"
+            "write_at": "tools/devkitctl/duty.py:550"
           }
         },
         {
@@ -18957,7 +18993,7 @@
               "word": "app",
               "meaning": "дашборд app-server",
               "fact": "Потребитель берёт только рабочие запуски Codex.",
-              "location": "tools/devkitctl/duty.py:432",
+              "location": "tools/devkitctl/duty.py:433",
               "result": "checked"
             },
             {
@@ -24970,27 +25006,27 @@
             "returned": "Возвращает предикат, который объединяет остановку, принадлежность восстановления дашборду, ошибку, неопределённость и конечный отказ.",
             "return_at": "tools/devkitctl/taskstate.py:156",
             "consumer": "Дежурный применяет предикат для отбора запусков в owned, затем разделяет их по состоянию.",
-            "consumer_at": "tools/devkitctl/duty.py:432",
+            "consumer_at": "tools/devkitctl/duty.py:433",
             "facts": [
               {
-                "location": "tools/devkitctl/duty.py:429",
+                "location": "tools/devkitctl/duty.py:430",
                 "quote": "import taskstate",
                 "text": "Импортируется taskstate."
               },
               {
-                "location": "tools/devkitctl/duty.py:433",
+                "location": "tools/devkitctl/duty.py:434",
                 "quote": "unreadable = {task: run[\"appRecoveryError\"] for task, run in owned.items() if run.get(\"appRecoveryError\")}",
                 "text": "Из уже отобранных запусков выделяются нечитаемые."
               },
               {
-                "location": "tools/devkitctl/duty.py:435",
+                "location": "tools/devkitctl/duty.py:436",
                 "quote": "restoring = {task for task, run in owned.items()",
                 "text": "Отдельно отбираются всё ещё восстанавливаемые запуски."
               }
             ],
             "flow": {
-              "caller": "tools/devkitctl/duty.py:405",
-              "call_at": "tools/devkitctl/duty.py:432",
+              "caller": "tools/devkitctl/duty.py:406",
+              "call_at": "tools/devkitctl/duty.py:433",
               "use_expression": "taskstate.app_handles_recovery(run)"
             }
           }
@@ -26172,23 +26208,120 @@
         {
           "object": "tools/dashboard/apptask_timer_test.go:67#TestAppTaskTurnNoteRecordsConfirmedActivity",
           "check": "writes",
-          "location": "tools/dashboard/apptask_timer_test.go:67",
-          "result": "pending",
-          "observation": "Вызов note записывает last через получатель, затем тест проверяет то же поле методом Equal(now). Не найден поддерживаемый формат доказательства синхронной записи поля через метод в другом файле.",
-          "kind": "flow",
-          "heading": "### Доказательство записи времени активности",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/dashboard/apptask.go:86",
-                "quote": "t.last, t.work = now, t.work || work",
-                "related": "tools/dashboard/apptask_timer_test.go:71",
-                "via": "tools/dashboard/apptask.go:76",
-                "value": "last",
-                "text": "Как в proof.assignment.use указать чтение last на строке apptask_timer_test.go:72 после синхронного вызова turn.note того же экземпляра на строке 71, когда taskctl отвергает этот переход между методами и файлами?"
+          "location": "tools/dashboard/apptask.go:86",
+          "observation": "Штатный тест вызывает note и проверяет last.Equal(now). Тот же запуск отдельно пропускает событие подтверждённого хода через appNote и таймер. Подписанные значения относятся к этой отдельной паре наблюдений. Контроль с другим ходом проходит через тот же таймер.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "App",
+              "Task",
+              "Turn",
+              "Note",
+              "Records",
+              "Confirmed",
+              "Activity"
+            ],
+            "actual": "last",
+            "actual_at": "tools/dashboard/apptask.go:86",
+            "proof": {
+              "expression": "t.last",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Штатный тест проходит вместе со стендом, который измеряет запись в той же реализации note."
+                  }
+                },
+                {
+                  "word": "App",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Запись происходит в состоянии хода рабочего чата Codex."
+                  }
+                },
+                {
+                  "word": "Task",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Получатель appTaskTurn хранит состояние выполняемой задачи."
+                  }
+                },
+                {
+                  "word": "Turn",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Запись относится к объекту appTaskTurn с логическим ID ours."
+                  }
+                },
+                {
+                  "word": "Note",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Запись выполняет note, который вызывает тест."
+                  }
+                },
+                {
+                  "word": "Records",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Присваивание сохраняет время, блок покрытия исполняется в положительном сценарии."
+                  }
+                },
+                {
+                  "word": "Confirmed",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "У события и уже подтверждённого хода ID ours. При ID other присваивания нет."
+                  }
+                },
+                {
+                  "word": "Activity",
+                  "role": "format",
+                  "fact": {
+                    "location": "tools/dashboard/apptask.go:86",
+                    "quote": "t.last, t.work = now, t.work || work",
+                    "value": "t.last",
+                    "text": "Запись хранит время уведомления в поле последней активности."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-go-independent-observer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/dashboard/apptask_timer_test.go:67#TestAppTaskTurnNoteRecordsConfirmedActivity\",\n  \"declaration\": \"tools/dashboard/apptask_timer_test.go:67\",\n  \"actual\": \"last\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n    \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n    \"GOWORK=off\",\n    \"PYTHONDONTWRITEBYTECODE=1\",\n    \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n    \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n    \"go\",\n    \"-C\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n    \"test\",\n    \"-count=1\",\n    \"-timeout=45s\",\n    \"-covermode=count\",\n    \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/timer-test-positive.cover\",\n    \"-overlay\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n    \"-run\",\n    \"^(TestAppTaskTurnNoteRecordsConfirmedActivity|TestIndependentTimerObservation)$/^current_turn$\",\n    \"-v\",\n    \".\"\n  ],\n  \"write\": {\n    \"at\": \"tools/dashboard/apptask.go:86\",\n    \"quote\": \"t.last, t.work = now, t.work || work\",\n    \"expression\": \"t.last\",\n    \"identity\": \"chat/main/ours:last\",\n    \"value\": \"2000-01-01T00:25:00Z\",\n    \"source_value\": \"now\"\n  },\n  \"read\": {\n    \"at\": \"tools/dashboard/apptask.go:162\",\n    \"quote\": \"left, seq := time.Until(t.last.Add(cap)), t.seq\",\n    \"expression\": \"t.last\",\n    \"identity\": \"chat/main/ours:last\",\n    \"value\": \"2000-01-01T00:25:00Z\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n      \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n      \"GOWORK=off\",\n      \"PYTHONDONTWRITEBYTECODE=1\",\n      \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n      \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n      \"go\",\n      \"-C\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n      \"test\",\n      \"-count=1\",\n      \"-timeout=45s\",\n      \"-covermode=count\",\n      \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/timer-control.cover\",\n      \"-overlay\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n      \"-run\",\n      \"^TestIndependentTimerObservation$/^another_turn$\",\n      \"-v\",\n      \".\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/dashboard/apptask.go:162\",\n      \"quote\": \"left, seq := time.Until(t.last.Add(cap)), t.seq\",\n      \"expression\": \"t.last\",\n      \"identity\": \"chat/main/ours:last\",\n      \"value\": \"2000-01-01T00:00:00Z\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg0ttva+YDO1xfMDwYyueE7FGDWG\nqRtWyrtHUWZKRTpbYAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAECLjgAPiagAQ9yp9hTCqwxuPN128DH4HpcHPhO2XKwQqxhLlY\nbENXO1sVJFX/d3mIWkmW6oDuP2+6tSP3csjtwE\n-----END SSH SIGNATURE-----\n"
               }
-            ]
-          }
+            }
+          },
+          "write_evidence": {
+            "word": "Activity",
+            "target": "t.last",
+            "value": "now",
+            "write_at": "tools/dashboard/apptask.go:86"
+          },
+          "kind": "runtime"
         },
         {
           "object": "tools/dashboard/apptask_recovery.go:382#appTaskRecoveryRunAlive",
@@ -26977,21 +27110,120 @@
         {
           "object": "tools/dashboard/apptask_probe_wire_test.go:12#TestAppTaskReadThreadPreservesDecodeError",
           "check": "writes",
-          "location": "tools/dashboard/apptask_probe_wire_test.go:12",
-          "result": "pending",
-          "observation": "Стенд кодирует подставной JSON-RPC ответ в peer net.Pipe, после чего appServer.readOut получает его по ID. Для передачи записи через net.Pipe и Encoder в горутине не найден поддержанный proof.",
-          "heading": "### Доказательство ответа в тестовом канале",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/dashboard/apptask_probe_wire_test.go:27",
-                "quote": "peerErr <- json.NewEncoder(peer).Encode(appMsg{",
-                "value": "Encode",
-                "text": "Как доказать запись Encode в peer net.Pipe, когда она выполняется в горутине, а потребитель читает клиентский конец пары?"
+          "location": "tools/dashboard/apptask_probe_wire_test.go:28",
+          "observation": "Штатный тест проходит проверку ошибки после записи ответа через net.Pipe. Соседний наблюдатель перехватывает один фактически закодированный результат. Контроль подаёт заранее подготовленный валидный результат того же логического запроса в readOut без записи от peer. Оба варианта доходят до json.Unmarshal.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "App",
+              "Task",
+              "Read",
+              "Thread",
+              "Preserves",
+              "Decode",
+              "Error"
+            ],
+            "actual": "Result",
+            "actual_at": "tools/dashboard/apptask_probe_wire_test.go:28",
+            "proof": {
+              "expression": "Result",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_probe_wire_test.go:28",
+                    "quote": "ID: &request.ID, Result: json.RawMessage(`{\"thread\":{\"id\":123}}`),",
+                    "value": "Result",
+                    "text": "Штатный тест пропускает подставной ответ через net.Pipe и проверяет конкретный тип ошибки."
+                  }
+                },
+                {
+                  "word": "App",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_probe_wire_test.go:28",
+                    "quote": "ID: &request.ID, Result: json.RawMessage(`{\"thread\":{\"id\":123}}`),",
+                    "value": "Result",
+                    "text": "Ответ в peer имитирует процесс Codex app-server."
+                  }
+                },
+                {
+                  "word": "Task",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_probe_wire_test.go:28",
+                    "quote": "ID: &request.ID, Result: json.RawMessage(`{\"thread\":{\"id\":123}}`),",
+                    "value": "Result",
+                    "text": "Ответ относится к нити рабочего конвейера задачи."
+                  }
+                },
+                {
+                  "word": "Read",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_queue.go:205",
+                    "quote": "if err := json.Unmarshal(raw, &got); err != nil {",
+                    "value": "raw",
+                    "text": "Декодер потребляет raw из ответа на thread/read."
+                  }
+                },
+                {
+                  "word": "Thread",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_queue.go:205",
+                    "quote": "if err := json.Unmarshal(raw, &got); err != nil {",
+                    "value": "raw",
+                    "text": "Ответ содержит объект thread с проверяемым полем id."
+                  }
+                },
+                {
+                  "word": "Preserves",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_queue.go:205",
+                    "quote": "if err := json.Unmarshal(raw, &got); err != nil {",
+                    "value": "raw",
+                    "text": "При ошибке декодирования вызывающий находит исходный *json.UnmarshalTypeError через errors.As."
+                  }
+                },
+                {
+                  "word": "Decode",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_queue.go:205",
+                    "quote": "if err := json.Unmarshal(raw, &got); err != nil {",
+                    "value": "raw",
+                    "text": "json.Unmarshal разбирает поле id и обнаруживает несовместимый тип."
+                  }
+                },
+                {
+                  "word": "Error",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/dashboard/apptask_queue.go:205",
+                    "quote": "if err := json.Unmarshal(raw, &got); err != nil {",
+                    "value": "raw",
+                    "text": "В положительном входе id числовой, поэтому json.Unmarshal возвращает *json.UnmarshalTypeError."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-go-independent-observer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/dashboard/apptask_probe_wire_test.go:12#TestAppTaskReadThreadPreservesDecodeError\",\n  \"declaration\": \"tools/dashboard/apptask_probe_wire_test.go:12\",\n  \"actual\": \"Result\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n    \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n    \"GOWORK=off\",\n    \"PYTHONDONTWRITEBYTECODE=1\",\n    \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n    \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n    \"go\",\n    \"-C\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n    \"test\",\n    \"-count=1\",\n    \"-timeout=45s\",\n    \"-covermode=count\",\n    \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/wire-positive.cover\",\n    \"-overlay\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n    \"-run\",\n    \"^(TestAppTaskReadThreadPreservesDecodeError|TestIndependentThreadReadObservation)$/^bad_result$\",\n    \"-v\",\n    \".\"\n  ],\n  \"write\": {\n    \"at\": \"tools/dashboard/apptask_probe_wire_test.go:28\",\n    \"quote\": \"ID: &request.ID, Result: json.RawMessage(`{\\\"thread\\\":{\\\"id\\\":123}}`),\",\n    \"expression\": \"Result\",\n    \"identity\": \"thread-1/thread-read/1/result\",\n    \"value\": \"{\\\"thread\\\":{\\\"id\\\":123}}\",\n    \"source_value\": \"json.RawMessage(`{\\\"thread\\\":{\\\"id\\\":123}}`)\"\n  },\n  \"read\": {\n    \"at\": \"tools/dashboard/apptask_queue.go:205\",\n    \"quote\": \"if err := json.Unmarshal(raw, &got); err != nil {\",\n    \"expression\": \"raw\",\n    \"identity\": \"thread-1/thread-read/1/result\",\n    \"value\": \"{\\\"thread\\\":{\\\"id\\\":123}}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n      \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n      \"GOWORK=off\",\n      \"PYTHONDONTWRITEBYTECODE=1\",\n      \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n      \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n      \"go\",\n      \"-C\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n      \"test\",\n      \"-count=1\",\n      \"-timeout=45s\",\n      \"-covermode=count\",\n      \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/wire-control.cover\",\n      \"-overlay\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n      \"-run\",\n      \"^TestIndependentThreadReadObservation$/^preloaded_valid_result$\",\n      \"-v\",\n      \".\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/dashboard/apptask_queue.go:205\",\n      \"quote\": \"if err := json.Unmarshal(raw, &got); err != nil {\",\n      \"expression\": \"raw\",\n      \"identity\": \"thread-1/thread-read/1/result\",\n      \"value\": \"{\\\"thread\\\":{\\\"id\\\":\\\"thread-1\\\",\\\"status\\\":{\\\"type\\\":\\\"idle\\\"},\\\"turns\\\":[]}}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg0ttva+YDO1xfMDwYyueE7FGDWG\nqRtWyrtHUWZKRTpbYAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEAaq+KUL8AfbBN7XNenjq8K48dL1UFgac6gUJ6gZnR13Nd10A\nqot8tnPUQhGKSiBvuxgvUJj6G9up8y5JFKcFUG\n-----END SSH SIGNATURE-----\n"
               }
-            ]
-          }
+            }
+          },
+          "write_evidence": {
+            "word": "Error",
+            "target": "Result",
+            "value": "json.RawMessage(`{\"thread\":{\"id\":123}}`)",
+            "write_at": "tools/dashboard/apptask_probe_wire_test.go:28"
+          },
+          "kind": "runtime"
         },
         {
           "object": "tools/dashboard/apptask_recovery_test.go:26#TestAppTaskRecoveryPreservesWaitAndQuotaDecodeErrors",
@@ -27834,228 +28066,959 @@
         {
           "object": "tools/dashboard/apptask_recovery.go:415#server.appTaskBudgetCommand",
           "check": "writes",
-          "location": "tools/dashboard/apptask_recovery.go:415",
-          "observation": "appTaskRecover вызывает app-reserve и app-finish. Команда запускает recovery.py, а Python дописывает резерв или исход в журнал бюджета.",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Проверка записи бюджета восстановления",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/dashboard/apptask_recovery.go:427",
-                "quote": "raw, err := cmd.CombinedOutput()",
-                "value": "CombinedOutput",
-                "text": "Как подтвердить запись журнала, сделанную в ходе CombinedOutput из recovery.py через app-reserve или app-finish, если proof.cli проверяет литеральные аргументы и чтение каталога в одной функции Go?"
+          "location": "tools/devkitctl/recovery.py:122",
+          "observation": "Go запускает штатную команду app-finish. При допустимом исходе одна запись result появляется в журнале и возвращается штатным _read. При отказе позднее чтение того же журнала и ID попытки находит исходный reserve. Содержимое и mtime журнала сохраняются.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "app",
+              "Task",
+              "Budget",
+              "Command"
+            ],
+            "actual": "rec",
+            "actual_at": "tools/devkitctl/recovery.py:122",
+            "proof": {
+              "expression": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+              "words": [
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "app-finish передаёт в общий журнал итог попытки, созданной в рабочем чате."
+                  }
+                },
+                {
+                  "word": "Task",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "Показанный итог привязан к метке резерва задачи DK-1746."
+                  }
+                },
+                {
+                  "word": "Budget",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "Запись rec дополняет журнал машинного бюджета восстановления."
+                  }
+                },
+                {
+                  "word": "Command",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "Go запускает recovery.py app-finish, Python сериализует и дописывает rec."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-go-independent-observer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/dashboard/apptask_recovery.go:415#server.appTaskBudgetCommand\",\n  \"declaration\": \"tools/dashboard/apptask_recovery.go:415\",\n  \"actual\": \"rec\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n    \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n    \"GOWORK=off\",\n    \"PYTHONDONTWRITEBYTECODE=1\",\n    \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n    \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n    \"go\",\n    \"-C\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n    \"test\",\n    \"-count=1\",\n    \"-timeout=45s\",\n    \"-covermode=count\",\n    \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/budget-positive.cover\",\n    \"-overlay\",\n    \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n    \"-run\",\n    \"^TestIndependentBudgetObservation$/^accepted_outcome$\",\n    \"-v\",\n    \".\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/recovery.py:122\",\n    \"quote\": \"stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode())\",\n    \"expression\": \"stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode())\",\n    \"identity\": \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home/.devkit/recovery.jsonl#RV-0123456789abcdef0123456789abcdef\",\n    \"value\": \"{\\\"attempt\\\":\\\"RV-0123456789abcdef0123456789abcdef\\\",\\\"kind\\\":\\\"result\\\",\\\"outcome\\\":\\\"confirmed\\\",\\\"when\\\":\\\"2026-11-22T22:55:04\\\"}\",\n    \"source_value\": \"(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode()\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/recovery.py:103\",\n    \"quote\": \"rec = json.loads(line)\",\n    \"expression\": \"rec\",\n    \"identity\": \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home/.devkit/recovery.jsonl#RV-0123456789abcdef0123456789abcdef\",\n    \"value\": \"{\\\"attempt\\\":\\\"RV-0123456789abcdef0123456789abcdef\\\",\\\"kind\\\":\\\"result\\\",\\\"outcome\\\":\\\"confirmed\\\",\\\"when\\\":\\\"2026-11-22T22:55:04\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"DEVKIT_STYLE_RUN_ALLOWED_SIGNERS\",\n      \"GOCACHE=/private/tmp/dk1752-timer-review.8GHtpyz6/go-cache\",\n      \"GOWORK=off\",\n      \"PYTHONDONTWRITEBYTECODE=1\",\n      \"DEVKIT_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree\",\n      \"DK1746_PROBE_HOME=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home\",\n      \"go\",\n      \"-C\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/tree/tools/dashboard\",\n      \"test\",\n      \"-count=1\",\n      \"-timeout=45s\",\n      \"-covermode=count\",\n      \"-coverprofile=/private/tmp/dk1746-runtime-go-final.5f6QHuzy/budget-control.cover\",\n      \"-overlay\",\n      \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/overlay.json\",\n      \"-run\",\n      \"^TestIndependentBudgetObservation$/^invalid_outcome$\",\n      \"-v\",\n      \".\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/recovery.py:103\",\n      \"quote\": \"rec = json.loads(line)\",\n      \"expression\": \"rec\",\n      \"identity\": \"/private/tmp/dk1746-runtime-go-final.5f6QHuzy/probe-home/.devkit/recovery.jsonl#RV-0123456789abcdef0123456789abcdef\",\n      \"value\": \"{\\\"at\\\":0,\\\"attempt\\\":\\\"RV-0123456789abcdef0123456789abcdef\\\",\\\"incident\\\":\\\"app:independent\\\",\\\"kind\\\":\\\"reserve\\\",\\\"root\\\":\\\"/tmp/dk1746-budget\\\",\\\"task\\\":\\\"DK-1746\\\",\\\"when\\\":\\\"2026-11-22T00:00:00\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg0ttva+YDO1xfMDwYyueE7FGDWG\nqRtWyrtHUWZKRTpbYAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEDwqX+whuX33RlJq+07gpz2kb+qWgwt5XtN1BRQvStaECwgPH\nYX5MYW79XQw8c71rezXJzPFCRVODf8wKbUtBUC\n-----END SSH SIGNATURE-----\n"
               }
-            ]
-          }
+            }
+          },
+          "write_evidence": {
+            "word": "Command",
+            "target": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+            "value": "(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode()",
+            "write_at": "tools/devkitctl/recovery.py:122"
+          },
+          "kind": "runtime"
         },
         {
           "object": "kit/skills/board-task/task_run_test.py:3318#test_fresh_codex_start_reads_rotation_tail",
           "check": "writes",
           "location": "kit/skills/board-task/task_run_test.py:3318",
-          "observation": "Тест вызывает self.tail(), который открывает путь хвоста ротации встроенным open в режиме w и записывает текст. Свежий Pipeline проверяет, что хвост непустой, и передаёт его путь в заказ. В режиме восстановления тест проверяет исходный заказ.",
-          "result": "pending",
-          "heading": "### Хвост ротации в тесте свежего запуска",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "kit/skills/board-task/task_run_test.py:3306",
-                "value": "write",
-                "related": "kit/skills/board-task/task_run_test.py:3319",
-                "via": "kit/skills/board-task/task_run_test.py:3302",
-                "text": "Как связать запись write через встроенный open с вызовом self.tail(), если проверка Python принимает переходы только к функциям уровня модуля и ограничивает форму записи файла?",
-                "quote": "f.write(\"сохранённый результат и следующий шаг\\n\")"
+          "observation": "Тест записал сводку в .devkit/task-DK-1.tail. Свежий Pipeline прочитал первый символ «с» из этого файла и включил путь в заказ. Без записи первое чтение пустого контрольного хвоста вернуло пустую строку.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "fresh",
+              "codex",
+              "start",
+              "reads",
+              "rotation",
+              "tail"
+            ],
+            "actual": "f",
+            "actual_at": "kit/skills/board-task/task_run_test.py:3306",
+            "proof": {
+              "expression": "f.write(\"сохранённый результат и следующий шаг\\n\")",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "Фикстура записала хвост, а тест вызвал initial_order свежего Pipeline."
+                  }
+                },
+                {
+                  "word": "fresh",
+                  "role": "condition",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "В свежем запуске initial_order прочитал первый символ файла."
+                  }
+                },
+                {
+                  "word": "codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "Проверяемый запуск использует исходный чат Codex из DEVKIT_APP_TASK_CHAT."
+                  }
+                },
+                {
+                  "word": "start",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "Чтение прошло при подготовке начального заказа головы."
+                  }
+                },
+                {
+                  "word": "reads",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "f.read(1) вернул первый символ строки, а на пустом хвосте вернул пустую строку."
+                  }
+                },
+                {
+                  "word": "rotation",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task-run.py:1504",
+                    "quote": "if f.read(1):",
+                    "value": "f.read(1)",
+                    "text": "Фикстура взяла путь из Pipeline.rotate_tail, а подготовка свежего запуска открыла его."
+                  }
+                },
+                {
+                  "word": "tail",
+                  "role": "context",
+                  "fact": {
+                    "location": "kit/skills/board-task/task_run_test.py:3306",
+                    "quote": "f.write(\"сохранённый результат и следующий шаг\\n\")",
+                    "value": "f.write(\"сохранённый результат и следующий шаг\\n\")",
+                    "text": "Записана строка в файле .devkit/task-DK-1.tail. Сравнивается её первый символ, который читает оболочка."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"kit/skills/board-task/task_run_test.py:3318#test_fresh_codex_start_reads_rotation_tail\",\n  \"declaration\": \"kit/skills/board-task/task_run_test.py:3318\",\n  \"actual\": \"f\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"rotation\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/rotation-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"kit/skills/board-task/task_run_test.py:3306\",\n    \"quote\": \"f.write(\\\"сохранённый результат и следующий шаг\\\\n\\\")\",\n    \"expression\": \"f.write(\\\"сохранённый результат и следующий шаг\\\\n\\\")\",\n    \"identity\": \"DK-1:.devkit/task-DK-1.tail#character:0\",\n    \"value\": \"с\",\n    \"source_value\": \"\\\"сохранённый результат и следующий шаг\\\\n\\\"\"\n  },\n  \"read\": {\n    \"at\": \"kit/skills/board-task/task-run.py:1504\",\n    \"quote\": \"if f.read(1):\",\n    \"expression\": \"f.read(1)\",\n    \"identity\": \"DK-1:.devkit/task-DK-1.tail#character:0\",\n    \"value\": \"с\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"rotation\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/rotation-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"kit/skills/board-task/task-run.py:1504\",\n      \"quote\": \"if f.read(1):\",\n      \"expression\": \"f.read(1)\",\n      \"identity\": \"DK-1:.devkit/task-DK-1.tail#character:0\",\n      \"value\": \"\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAED5EIBB6kI18A1CHf6OmNysqSfv6UIXq1DDHthlJXqvR6TGlf\nWzTvd0X4gSM03GVTOPguG1xxCHCXBVzwjsJugH\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "tail",
+            "write_at": "kit/skills/board-task/task_run_test.py:3306",
+            "target": "f.write(\"сохранённый результат и следующий шаг\\n\")",
+            "value": "\"сохранённый результат и следующий шаг\\n\""
           }
         },
         {
           "object": "tools/devkitctl/duty_test.py:417#test_codex_duty_waits_for_recovery_terminal",
           "check": "writes",
           "location": "tools/devkitctl/duty_test.py:417",
-          "observation": "Тест сохраняет Run через taskstate.save, проверяет отсутствие запуска, затем сохраняет appRecoveryTerminal, создаёт терминальный инцидент и проверяет единственный диагностический запуск. taskstate.save сериализует Run и заменяет файл состояния.",
-          "result": "pending",
-          "heading": "### Терминальное состояние Run в тесте дежурного",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/taskstate.py:209",
-                "value": "replace",
-                "related": "tools/devkitctl/duty_test.py:434",
-                "via": "tools/devkitctl/taskstate.py:200",
-                "text": "Как связать replace в taskstate.save с сохранением терминального Run в тесте, если проверка требует, чтобы вызов и запись находились в одном файле?",
-                "quote": "os.replace(tmp, name)"
+          "observation": "Тест заменил файл состояния для run-one, сохранив appRecoveryTerminal=true. Дежурный прочитал это состояние и один раз поднял диагностику. Без терминальной замены он прочитал исходный Run без appRecoveryTerminal и не поднял диагностику.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "codex",
+              "duty",
+              "waits",
+              "for",
+              "recovery",
+              "terminal"
+            ],
+            "actual": "name",
+            "actual_at": "tools/devkitctl/taskstate.py:209",
+            "proof": {
+              "expression": "os.replace(tmp, name)",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "Тест запускает дежурного до и после обновления файла состояния."
+                  }
+                },
+                {
+                  "word": "codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "В прочитанном Run присутствуют appChat as-original и harness codex."
+                  }
+                },
+                {
+                  "word": "duty",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "Дежурный получает обновлённый Run через чтение файла состояния."
+                  }
+                },
+                {
+                  "word": "waits",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "До обновления чтение вернуло Run без appRecoveryTerminal, и дежурный не запускался."
+                  }
+                },
+                {
+                  "word": "for",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "Указывает на условие запуска дежурного после чтения состояния."
+                  }
+                },
+                {
+                  "word": "recovery",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "В прочитанном Run appRecovery установлено в true."
+                  }
+                },
+                {
+                  "word": "terminal",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:29",
+                    "quote": "return json.loads(raw)",
+                    "value": "json.loads(raw)",
+                    "text": "После замены файла прочитано appRecoveryTerminal=true. Контроль прочитал исходный Run без поля."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/duty_test.py:417#test_codex_duty_waits_for_recovery_terminal\",\n  \"declaration\": \"tools/devkitctl/duty_test.py:417\",\n  \"actual\": \"name\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"duty\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/duty-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/taskstate.py:209\",\n    \"quote\": \"os.replace(tmp, name)\",\n    \"expression\": \"os.replace(tmp, name)\",\n    \"identity\": \".devkit/task-state/<fixture-project>/DK-901.json#run-one\",\n    \"value\": \"{\\\"root\\\":\\\"/private/tmp/duty-incident-9264y2vv/proj\\\",\\\"run\\\":{\\\"appChat\\\":\\\"as-original\\\",\\\"appRecovery\\\":true,\\\"appRecoveryTerminal\\\":true,\\\"harness\\\":\\\"codex\\\",\\\"id\\\":\\\"run-one\\\",\\\"model\\\":\\\"sol\\\",\\\"pid\\\":999999},\\\"stopped\\\":false,\\\"task\\\":\\\"DK-901\\\",\\\"version\\\":1}\",\n    \"source_value\": \"tmp\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/taskstate.py:29\",\n    \"quote\": \"return json.loads(raw)\",\n    \"expression\": \"json.loads(raw)\",\n    \"identity\": \".devkit/task-state/<fixture-project>/DK-901.json#run-one\",\n    \"value\": \"{\\\"root\\\":\\\"/private/tmp/duty-incident-9264y2vv/proj\\\",\\\"run\\\":{\\\"appChat\\\":\\\"as-original\\\",\\\"appRecovery\\\":true,\\\"appRecoveryTerminal\\\":true,\\\"harness\\\":\\\"codex\\\",\\\"id\\\":\\\"run-one\\\",\\\"model\\\":\\\"sol\\\",\\\"pid\\\":999999},\\\"stopped\\\":false,\\\"task\\\":\\\"DK-901\\\",\\\"version\\\":1}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"duty\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/duty-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/taskstate.py:29\",\n      \"quote\": \"return json.loads(raw)\",\n      \"expression\": \"json.loads(raw)\",\n      \"identity\": \".devkit/task-state/<fixture-project>/DK-901.json#run-one\",\n      \"value\": \"{\\\"root\\\":\\\"/private/tmp/duty-incident-3hzi87ca/proj\\\",\\\"run\\\":{\\\"appChat\\\":\\\"as-original\\\",\\\"appRecovery\\\":true,\\\"harness\\\":\\\"codex\\\",\\\"id\\\":\\\"run-one\\\",\\\"model\\\":\\\"sol\\\",\\\"pid\\\":999999},\\\"stopped\\\":false,\\\"task\\\":\\\"DK-901\\\",\\\"version\\\":1}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAECni047RxWEFmmXSKspi2mvqCzSHJfpEWc26uRn2YVf5kRbgi\ncOqUYKIaE7od+mGRBeA/9dNcDxbqf9rorY9cQO\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "terminal",
+            "write_at": "tools/devkitctl/taskstate.py:209",
+            "target": "os.replace(tmp, name)",
+            "value": "tmp"
           }
         },
         {
           "object": "tools/devkitctl/lift_test.py:963#test_codex_work_reply_stays_with_dashboard",
           "check": "writes",
           "location": "tools/devkitctl/lift_test.py:963",
-          "observation": "Метод self.lying пишет реплику в .devkit/chat/task-DK-40.in через Path.write_text. Тест проверяет, что вход сохраняется, а lift_root не запускает другой проход в трёх состояниях Run.",
-          "result": "pending",
-          "heading": "### Входящая реплика в тесте подъёма",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/lift_test.py:853",
-                "value": "write_text",
-                "related": "tools/devkitctl/lift_test.py:966",
-                "via": "tools/devkitctl/lift_test.py:846",
-                "text": "Как указать write_text для пути, собранного выражением, и переход от self.lying, если проверка Python требует простой идентификатор пути и помощника уровня модуля?",
-                "quote": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")"
+          "observation": "Фикстура записала входящую реплику DK-40, lift прочитал те же данные из task-DK-40.in. Тест подтвердил сохранение входа и отсутствие общего запуска для прохода, который удерживает дашборд. Без записи прочитана подготовленная контрольная реплика.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "codex",
+              "work",
+              "reply",
+              "stays",
+              "with",
+              "dashboard"
+            ],
+            "actual": "tid",
+            "actual_at": "tools/devkitctl/lift_test.py:853",
+            "proof": {
+              "expression": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift.py:627",
+                    "quote": "lines = [ln.strip() for ln in fh.read().split(\"\\n\") if ln.strip()]",
+                    "value": "fh.read()",
+                    "text": "Тест пишет входящую реплику через фикстуру lying и проверяет решения lift_root."
+                  }
+                },
+                {
+                  "word": "codex",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift.py:627",
+                    "quote": "lines = [ln.strip() for ln in fh.read().split(\"\\n\") if ln.strip()]",
+                    "value": "fh.read()",
+                    "text": "Состояние прохода теста относится к чату Codex as-original."
+                  }
+                },
+                {
+                  "word": "work",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift.py:627",
+                    "quote": "lines = [ln.strip() for ln in fh.read().split(\"\\n\") if ln.strip()]",
+                    "value": "fh.read()",
+                    "text": "Реплика принадлежит рабочей строке DK-40."
+                  }
+                },
+                {
+                  "word": "reply",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift_test.py:853",
+                    "quote": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+                    "value": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+                    "text": "Фикстура пишет содержимое реплики с меткой времени и переводом строки."
+                  }
+                },
+                {
+                  "word": "stays",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift.py:627",
+                    "quote": "lines = [ln.strip() for ln in fh.read().split(\"\\n\") if ln.strip()]",
+                    "value": "fh.read()",
+                    "text": "Подъём прочитал записанную реплику, а тест подтвердил наличие входа после обхода."
+                  }
+                },
+                {
+                  "word": "with",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/lift.py:627",
+                    "quote": "lines = [ln.strip() for ln in fh.read().split(\"\\n\") if ln.strip()]",
+                    "value": "fh.read()",
+                    "text": "Связывает удержание реплики с живым, терминальным или остановленным состоянием прохода."
+                  }
+                },
+                {
+                  "word": "dashboard",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/devkitctl/lift_test.py:853",
+                    "quote": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+                    "value": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+                    "text": "Положительное чтение воспроизвело строку со словами «из дашборда»."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/lift_test.py:963#test_codex_work_reply_stays_with_dashboard\",\n  \"declaration\": \"tools/devkitctl/lift_test.py:963\",\n  \"actual\": \"tid\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"lift\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/lift-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/lift_test.py:853\",\n    \"quote\": \"(d / (\\\"task-%s.in\\\" % tid)).write_text(line + \\\"\\\\n\\\", encoding=\\\"utf-8\\\")\",\n    \"expression\": \"(d / (\\\"task-%s.in\\\" % tid)).write_text(line + \\\"\\\\n\\\", encoding=\\\"utf-8\\\")\",\n    \"identity\": \".devkit/chat/task-DK-40.in#incoming\",\n    \"value\": \"2026-11-22 22:55, из дашборда: продолжай, пожалуйста\\n\",\n    \"source_value\": \"line + \\\"\\\\n\\\"\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/lift.py:627\",\n    \"quote\": \"lines = [ln.strip() for ln in fh.read().split(\\\"\\\\n\\\") if ln.strip()]\",\n    \"expression\": \"fh.read()\",\n    \"identity\": \".devkit/chat/task-DK-40.in#incoming\",\n    \"value\": \"2026-11-22 22:55, из дашборда: продолжай, пожалуйста\\n\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"lift\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/lift-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/lift.py:627\",\n      \"quote\": \"lines = [ln.strip() for ln in fh.read().split(\\\"\\\\n\\\") if ln.strip()]\",\n      \"expression\": \"fh.read()\",\n      \"identity\": \".devkit/chat/task-DK-40.in#incoming\",\n      \"value\": \"контрольная реплика\\n\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEAbBjZrMg2Ise/t5ITFNWxXLFXLlntEJ7PFBMgfGdKJZZXqCy\n6IM77JBE1yauGq7ZAPWKfF9fqyikanT3bjTnwE\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "reply",
+            "write_at": "tools/devkitctl/lift_test.py:853",
+            "target": "(d / (\"task-%s.in\" % tid)).write_text(line + \"\\n\", encoding=\"utf-8\")",
+            "value": "line + \"\\n\""
           }
         },
         {
           "object": "tools/devkitctl/recovery_test.py:384#test_app_bridge_shares_day_budget_and_preserves_receipts",
           "check": "writes",
           "location": "tools/devkitctl/recovery_test.py:384",
-          "observation": "Локальная функция bridge запускает recovery.py с подкомандами app-reserve и app-finish. Дочерний процесс дописывает записи бюджета в JSONL, а тест проверяет повторную выдачу квитанции, единственный исход и общий лимит.",
-          "result": "pending",
-          "heading": "### Записи бюджета из тестовой подкоманды восстановления",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/recovery_test.py:386",
-                "value": "run",
-                "related": "tools/devkitctl/recovery_test.py:393",
-                "via": "tools/devkitctl/recovery_test.py:385",
-                "text": "Как связать subprocess.run и переданные из bridge аргументы с дописью журнала в дочернем Python, если форма cli не разбирает вызовы Python, а файловая форма ограничена одним модулем?",
-                "quote": "return subprocess.run("
+          "observation": "Дочерний процесс app-finish дописал запись результата для app:old-run/1. _read прочитал ту же запись из журнала, повторное завершение не создало вторую. Контроль сохранил резерв и не вызвал app-finish. Считывание журнала не нашло результата этого резерва.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "app",
+              "bridge",
+              "shares",
+              "day",
+              "budget",
+              "and",
+              "preserves",
+              "receipts"
+            ],
+            "actual": "stream",
+            "actual_at": "tools/devkitctl/recovery.py:122",
+            "proof": {
+              "expression": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Тест гоняет команды recovery.py как дочерние процессы и проверяет журнал."
+                  }
+                },
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Резерв с ключом app:old-run/1 идентифицирует прочитанную запись результата."
+                  }
+                },
+                {
+                  "word": "bridge",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "Запись наблюдалась в дочернем вызове recovery.py app-finish."
+                  }
+                },
+                {
+                  "word": "shares",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Тест дополнил тот же журнал обычными резервами и подтвердил общий лимит."
+                  }
+                },
+                {
+                  "word": "day",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Тест проверяет лимит восстановлений за 24 часа."
+                  }
+                },
+                {
+                  "word": "budget",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "text": "Операция дописывает одну строку результата в .devkit/recovery.jsonl."
+                  }
+                },
+                {
+                  "word": "and",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Соединяет две проверки теста на общем журнале."
+                  }
+                },
+                {
+                  "word": "preserves",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "Повторный app-finish с тем же исходом не дописал ещё одну строку результата."
+                  }
+                },
+                {
+                  "word": "receipts",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:113",
+                    "quote": "return out",
+                    "value": "out",
+                    "text": "После чтения журнала по возвращённой квитанции найдена ровно одна строка результата."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/recovery_test.py:384#test_app_bridge_shares_day_budget_and_preserves_receipts\",\n  \"declaration\": \"tools/devkitctl/recovery_test.py:384\",\n  \"actual\": \"stream\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"recovery\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/recovery-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/recovery.py:122\",\n    \"quote\": \"stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode())\",\n    \"expression\": \"stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode())\",\n    \"identity\": \".devkit/recovery.jsonl#app:old-run/1:result\",\n    \"value\": \"{\\\"attempt\\\":\\\"RV-2173159323424517871756cab211290b\\\",\\\"kind\\\":\\\"result\\\",\\\"outcome\\\":\\\"confirmed\\\",\\\"when\\\":\\\"2026-11-22T22:55:05\\\"}\",\n    \"source_value\": \"(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode()\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/recovery.py:113\",\n    \"quote\": \"return out\",\n    \"expression\": \"out\",\n    \"identity\": \".devkit/recovery.jsonl#app:old-run/1:result\",\n    \"value\": \"{\\\"attempt\\\":\\\"RV-2173159323424517871756cab211290b\\\",\\\"kind\\\":\\\"result\\\",\\\"outcome\\\":\\\"confirmed\\\",\\\"when\\\":\\\"2026-11-22T22:55:05\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"recovery\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/recovery-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/recovery.py:113\",\n      \"quote\": \"return out\",\n      \"expression\": \"out\",\n      \"identity\": \".devkit/recovery.jsonl#app:old-run/1:result\",\n      \"value\": \"null\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAECef3/m7Q2814W4u5J7P/gHB73tmJtfWF2JkmMYm9sc1e1tko\nP//LVSs5W7m+UAAwYTd7X/n7R/5bPPu/VyXk8F\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "receipts",
+            "write_at": "tools/devkitctl/recovery.py:122",
+            "target": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+            "value": "(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode()"
           }
         },
         {
           "object": "tools/devkitctl/taskstate_test.py:28#test_legacy_app_run_requires_matching_persisted_identity",
           "check": "writes",
           "location": "tools/devkitctl/taskstate_test.py:28",
-          "observation": "Тест пишет JSON чата через stored.write_text, после чего app_runs узнаёт совпадающую запись. При подмене каждого из реквизитов запуска тест проверяет пустой результат.",
-          "result": "pending",
-          "heading": "### Записанная идентичность старого Run в тесте состояния",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/taskstate_test.py:40",
-                "value": "write_text",
-                "text": "Как указать прямую запись write_text в файл чата, если файловая форма Python принимает замену файла через os.replace либо запись на дескрипторе через os.fdopen?",
-                "quote": "stored.write_text(json.dumps(chat))"
+          "observation": "Тест записал реквизиты as-original.json, app_runs прочитал ту же JSON-запись. В контроле вместо записи теста в файле осталась предподготовленная запись с taskRunSession=other, которую app_runs прочитал и отверг.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "legacy",
+              "app",
+              "run",
+              "requires",
+              "matching",
+              "persisted",
+              "identity"
+            ],
+            "actual": "stored",
+            "actual_at": "tools/devkitctl/taskstate_test.py:40",
+            "proof": {
+              "expression": "stored.write_text(json.dumps(chat))",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "Тест записывает фикстуру чата и проверяет app_runs."
+                  }
+                },
+                {
+                  "word": "legacy",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "Чат читается для прежнего Run, когда appChat в состоянии задачи ещё отсутствует."
+                  }
+                },
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "Прочитанная запись чата использует protocol codex."
+                  }
+                },
+                {
+                  "word": "run",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "В прочитанной записи taskRunID равен run-one."
+                  }
+                },
+                {
+                  "word": "requires",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "Следом за чтением app_runs сверяет реквизиты с состоянием запуска."
+                  }
+                },
+                {
+                  "word": "matching",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate.py:122",
+                    "quote": "chat = json.load(stream)",
+                    "value": "chat = json.load(stream)",
+                    "text": "У положительной записи taskRunSession совпал с именем файла as-original. Контроль прочитал other."
+                  }
+                },
+                {
+                  "word": "persisted",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate_test.py:40",
+                    "quote": "stored.write_text(json.dumps(chat))",
+                    "value": "stored.write_text(json.dumps(chat))",
+                    "text": "Чат прочитан через json.load из уже записанного файла."
+                  }
+                },
+                {
+                  "word": "identity",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/taskstate_test.py:40",
+                    "quote": "stored.write_text(json.dumps(chat))",
+                    "value": "stored.write_text(json.dumps(chat))",
+                    "text": "Фикстура сохраняет taskRunID, taskRunSession, taskRunPID и taskRunRoot."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/taskstate_test.py:28#test_legacy_app_run_requires_matching_persisted_identity\",\n  \"declaration\": \"tools/devkitctl/taskstate_test.py:28\",\n  \"actual\": \"stored\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"legacy\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/legacy-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/taskstate_test.py:40\",\n    \"quote\": \"stored.write_text(json.dumps(chat))\",\n    \"expression\": \"stored.write_text(json.dumps(chat))\",\n    \"identity\": \".devkit/chats/as-original.json#run-one\",\n    \"value\": \"{\\\"harness\\\":\\\"glm-code-2\\\",\\\"model\\\":\\\"glm-5.3\\\",\\\"protocol\\\":\\\"codex\\\",\\\"task\\\":\\\"DK-1\\\",\\\"taskRun\\\":true,\\\"taskRunID\\\":\\\"run-one\\\",\\\"taskRunPID\\\":999999,\\\"taskRunRoot\\\":\\\"/private/tmp/tmptg20njho/root\\\",\\\"taskRunSession\\\":\\\"as-original\\\",\\\"thread\\\":\\\"thread-one\\\"}\",\n    \"source_value\": \"json.dumps(chat)\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/taskstate.py:122\",\n    \"quote\": \"chat = json.load(stream)\",\n    \"expression\": \"chat = json.load(stream)\",\n    \"identity\": \".devkit/chats/as-original.json#run-one\",\n    \"value\": \"{\\\"harness\\\":\\\"glm-code-2\\\",\\\"model\\\":\\\"glm-5.3\\\",\\\"protocol\\\":\\\"codex\\\",\\\"task\\\":\\\"DK-1\\\",\\\"taskRun\\\":true,\\\"taskRunID\\\":\\\"run-one\\\",\\\"taskRunPID\\\":999999,\\\"taskRunRoot\\\":\\\"/private/tmp/tmptg20njho/root\\\",\\\"taskRunSession\\\":\\\"as-original\\\",\\\"thread\\\":\\\"thread-one\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"legacy\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/legacy-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/taskstate.py:122\",\n      \"quote\": \"chat = json.load(stream)\",\n      \"expression\": \"chat = json.load(stream)\",\n      \"identity\": \".devkit/chats/as-original.json#run-one\",\n      \"value\": \"{\\\"harness\\\":\\\"glm-code-2\\\",\\\"model\\\":\\\"glm-5.3\\\",\\\"protocol\\\":\\\"codex\\\",\\\"task\\\":\\\"DK-1\\\",\\\"taskRun\\\":true,\\\"taskRunID\\\":\\\"run-one\\\",\\\"taskRunPID\\\":999999,\\\"taskRunRoot\\\":\\\"/private/tmp/tmp1sahbupx/root\\\",\\\"taskRunSession\\\":\\\"other\\\",\\\"thread\\\":\\\"thread-one\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEBMbNIXOk+1n8eFWRTr3LweCCPuEu/neBMMTaW5C8Jaqoi9/z\nGdUIgME0Oauu98q+gtvwveYQFupWD9kyrUcEoI\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "identity",
+            "write_at": "tools/devkitctl/taskstate_test.py:40",
+            "target": "stored.write_text(json.dumps(chat))",
+            "value": "json.dumps(chat)"
           }
         },
         {
           "object": "tools/devkitctl/watch_test.py:2487#test_tick_signals_dashboard_without_goals",
           "check": "writes",
           "location": "tools/devkitctl/watch_test.py:2487",
-          "observation": "Тест дважды вызывает self.tick. Тот вызывает watch.run, а signal_app_task_tick заменяет app-task-tick новым файлом. После каждого вызова тест читает содержимое и проверяет, что оно обновилось.",
-          "result": "pending",
-          "heading": "### Сигнал дашборду в тесте тика без целей",
-          "kind": "flow",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/watch.py:2421",
-                "value": "replace",
-                "related": "tools/devkitctl/watch.py:2442",
-                "via": "tools/devkitctl/watch.py:2413",
-                "text": "Как связать replace в signal_app_task_tick с вызовом self.tick в другом файле, если форма записи Python принимает прямой os.replace внутри проверяемой функции?",
-                "quote": "os.replace(temporary, path)"
+          "observation": "Два тика без целей заменили app-task-tick разными значениями, каждое прочитано тестом. В контроле обе замены пропущены и чтение вернуло прежний маркер.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "test",
+              "tick",
+              "signals",
+              "dashboard",
+              "without",
+              "goals"
+            ],
+            "actual": "signal",
+            "actual_at": "tools/devkitctl/watch_test.py:2490",
+            "proof": {
+              "expression": "os.replace(temporary, path)",
+              "words": [
+                {
+                  "word": "test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/watch_test.py:2490",
+                    "quote": "first = signal.read_text(encoding=\"utf-8\")",
+                    "value": "signal.read_text(encoding=\"utf-8\")",
+                    "text": "Тест запускает два тика и дважды читает один файл."
+                  }
+                },
+                {
+                  "word": "tick",
+                  "role": "source",
+                  "fact": {
+                    "location": "tools/devkitctl/watch.py:2421",
+                    "quote": "os.replace(temporary, path)",
+                    "value": "os.replace(temporary, path)",
+                    "text": "Каждый тик заменил файл app-task-tick своим содержимым."
+                  }
+                },
+                {
+                  "word": "signals",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/watch_test.py:2490",
+                    "quote": "first = signal.read_text(encoding=\"utf-8\")",
+                    "value": "signal.read_text(encoding=\"utf-8\")",
+                    "text": "Записанный текст маркера прочитан из файла сигнала сразу после тика."
+                  }
+                },
+                {
+                  "word": "dashboard",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/watch_test.py:2490",
+                    "quote": "first = signal.read_text(encoding=\"utf-8\")",
+                    "value": "signal.read_text(encoding=\"utf-8\")",
+                    "text": "Файл app-task-tick является сигналом дашборду из watch.run."
+                  }
+                },
+                {
+                  "word": "without",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/watch_test.py:2490",
+                    "quote": "first = signal.read_text(encoding=\"utf-8\")",
+                    "value": "signal.read_text(encoding=\"utf-8\")",
+                    "text": "Фикстура использует временный HOME без записей наблюдения за целями."
+                  }
+                },
+                {
+                  "word": "goals",
+                  "role": "condition",
+                  "fact": {
+                    "location": "tools/devkitctl/watch_test.py:2490",
+                    "quote": "first = signal.read_text(encoding=\"utf-8\")",
+                    "value": "signal.read_text(encoding=\"utf-8\")",
+                    "text": "Для обеих подтверждённых замен список наблюдаемых целей был пуст."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-review-e97f237b4e8c",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/watch_test.py:2487#test_tick_signals_dashboard_without_goals\",\n  \"declaration\": \"tools/devkitctl/watch_test.py:2487\",\n  \"actual\": \"signal\",\n  \"command\": [\n    \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n    \"-B\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n    \"watch\",\n    \"write\",\n    \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/watch-write.json\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/watch.py:2421\",\n    \"quote\": \"os.replace(temporary, path)\",\n    \"expression\": \"os.replace(temporary, path)\",\n    \"identity\": \".devkit/app-task-tick#notification\",\n    \"value\": \".app-task-tick-y5fzx3uc\\n\",\n    \"source_value\": \"temporary\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/watch_test.py:2490\",\n    \"quote\": \"first = signal.read_text(encoding=\\\"utf-8\\\")\",\n    \"expression\": \"signal.read_text(encoding=\\\"utf-8\\\")\",\n    \"identity\": \".devkit/app-task-tick#notification\",\n    \"value\": \".app-task-tick-y5fzx3uc\\n\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python\",\n      \"-B\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/probe.py\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/checkout-e97f237b\",\n      \"watch\",\n      \"control\",\n      \"/private/tmp/dk1746-runtime-pytest.AECFMN38/e97f237b/watch-control.json\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/watch_test.py:2490\",\n      \"quote\": \"first = signal.read_text(encoding=\\\"utf-8\\\")\",\n      \"expression\": \"signal.read_text(encoding=\\\"utf-8\\\")\",\n      \"identity\": \".devkit/app-task-tick#notification\",\n      \"value\": \"контрольный тик\\n\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgtf9pjpSRPiitUN2B9rePpaz1Lb\nTepyAswHXsFWoifkMAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAECvJ8xX3CFzzB3m71/UZQeCSnwnywu7rC5N3zKIz9NJT5y0qk\n7335CbKcGCpuUtVEkkc2rOUq0XexbpdbSZP7UP\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "signals",
+            "write_at": "tools/devkitctl/watch.py:2421",
+            "target": "os.replace(temporary, path)",
+            "value": "temporary"
           }
         },
         {
           "object": "tools/devkitctl/lift.py:694#report_app_terminal_incidents",
           "check": "writes",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Записи Python, оставшиеся без доказательства в taskctl",
-          "location": "tools/devkitctl/lift.py:694",
-          "observation": "Модуль incidents загружается по пути, его report сохраняет APP_RECOVERY_OUT вместе с ID текущего Run в ~/.devkit/incidents.jsonl. taskctl не принимает переход из lift.py в hooks/incidents.py и встроенный open.",
-          "facts": {
-            "question": [
-              {
-                "location": "hooks/incidents.py:107",
-                "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
-                "value": "write",
-                "text": "Как связать запись write в журнале инцидентов с вызовом hook.report через модуль, загруженный по пути?",
-                "related": "tools/devkitctl/lift.py:718",
-                "via": "hooks/incidents.py:137"
+          "location": "hooks/incidents.py:107",
+          "observation": "Передаёт терминальный исход того же запуска дежурному. При остановленной задаче журнал сохраняет предыдущий исход. Запись прочитана штатным читателем incidents.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "report",
+              "app",
+              "terminal",
+              "incidents"
+            ],
+            "actual": "rec",
+            "actual_at": "hooks/incidents.py:107",
+            "proof": {
+              "expression": "rec",
+              "words": [
+                {
+                  "word": "report",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Передаёт терминальный исход того же запуска дежурному. При остановленной задаче журнал сохраняет предыдущий исход. Запись прочитана штатным читателем incidents."
+                  }
+                },
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Передаёт терминальный исход того же запуска дежурному. При остановленной задаче журнал сохраняет предыдущий исход. Запись прочитана штатным читателем incidents."
+                  }
+                },
+                {
+                  "word": "terminal",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Передаёт терминальный исход того же запуска дежурному. При остановленной задаче журнал сохраняет предыдущий исход. Запись прочитана штатным читателем incidents."
+                  }
+                },
+                {
+                  "word": "incidents",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Передаёт терминальный исход того же запуска дежурному. При остановленной задаче журнал сохраняет предыдущий исход. Запись прочитана штатным читателем incidents."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-reviewer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/lift.py:694#report_app_terminal_incidents\",\n  \"declaration\": \"tools/devkitctl/lift.py:694\",\n  \"actual\": \"rec\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"SSH_AGENT_PID\",\n    \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n    \"-B\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n    \"--repo\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n    \"--case\",\n    \"lift\",\n    \"--taskctl\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n    \"--mode\",\n    \"positive\"\n  ],\n  \"write\": {\n    \"at\": \"hooks/incidents.py:107\",\n    \"quote\": \"f.write(json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\")\",\n    \"expression\": \"rec\",\n    \"identity\": \"incidents.jsonl#INC-20261122-1\",\n    \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-22iwarus/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"исчерпан резерв стенда\\\"}\",\n    \"source_value\": \"json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\"\"\n  },\n  \"read\": {\n    \"at\": \"hooks/incidents.py:93\",\n    \"quote\": \"rec = json.loads(ln)\",\n    \"expression\": \"ln\",\n    \"identity\": \"incidents.jsonl#INC-20261122-1\",\n    \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-22iwarus/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"исчерпан резерв стенда\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"SSH_AGENT_PID\",\n      \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n      \"-B\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n      \"--repo\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n      \"--case\",\n      \"lift\",\n      \"--taskctl\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n      \"--mode\",\n      \"control\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"hooks/incidents.py:93\",\n      \"quote\": \"rec = json.loads(ln)\",\n      \"expression\": \"ln\",\n      \"identity\": \"incidents.jsonl#INC-20261122-1\",\n      \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-ll5a_8s3/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"прежний исход в журнале\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgYoqDq8dlY+wGIUrV/Cb0SoaZaD\n+J3nDN0RyIdZThD6oAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEDJeYfxAs3z0iUAR82A0p5BmF/MAqVKZJzncQz8JvJA5nWQaz\nJrfxXl2wGkoa2/gaSNtbYY2cNCQVhfXx6e33AN\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "incidents",
+            "target": "rec",
+            "value": "json.dumps(rec, ensure_ascii=False) + \"\\n\"",
+            "write_at": "hooks/incidents.py:107"
           }
         },
         {
           "object": "tools/devkitctl/lift.py:725#app_terminal_root",
           "check": "writes",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Записи Python, оставшиеся без доказательства в taskctl",
-          "location": "tools/devkitctl/lift.py:725",
-          "observation": "app_terminal_root передаёт строки доски и Run из состояния проекта в report_app_terminal_incidents, который записывает инцидент. В taskctl цепь записи ограничена одним Python-файлом и прерывается при попытке перейти от обработчика к hooks/incidents.py.",
-          "facts": {
-            "question": [
-              {
-                "location": "hooks/incidents.py:107",
-                "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
-                "value": "write",
-                "text": "Как связать запись write в журнале инцидентов с вызовом report_app_terminal_incidents из app_terminal_root, если обработчик передаёт данные в другой модуль?",
-                "related": "tools/devkitctl/lift.py:732",
-                "via": "tools/devkitctl/lift.py:694"
+          "location": "hooks/incidents.py:107",
+          "observation": "По строке доски читает состояние запуска и передаёт терминальный исход в журнал. У остановленного запуска прежняя запись сохраняется.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "app",
+              "terminal",
+              "root"
+            ],
+            "actual": "rec",
+            "actual_at": "hooks/incidents.py:107",
+            "proof": {
+              "expression": "rec",
+              "words": [
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "По строке доски читает состояние запуска и передаёт терминальный исход в журнал. У остановленного запуска прежняя запись сохраняется."
+                  }
+                },
+                {
+                  "word": "terminal",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "По строке доски читает состояние запуска и передаёт терминальный исход в журнал. У остановленного запуска прежняя запись сохраняется."
+                  }
+                },
+                {
+                  "word": "root",
+                  "role": "context",
+                  "fact": {
+                    "location": "hooks/incidents.py:107",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "По строке доски читает состояние запуска и передаёт терминальный исход в журнал. У остановленного запуска прежняя запись сохраняется."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-reviewer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/lift.py:725#app_terminal_root\",\n  \"declaration\": \"tools/devkitctl/lift.py:725\",\n  \"actual\": \"rec\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"SSH_AGENT_PID\",\n    \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n    \"-B\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n    \"--repo\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n    \"--case\",\n    \"root\",\n    \"--taskctl\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n    \"--mode\",\n    \"positive\"\n  ],\n  \"write\": {\n    \"at\": \"hooks/incidents.py:107\",\n    \"quote\": \"f.write(json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\")\",\n    \"expression\": \"rec\",\n    \"identity\": \"incidents.jsonl#INC-20261122-1\",\n    \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-gs2fsd1u/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"исчерпан резерв стенда\\\"}\",\n    \"source_value\": \"json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\"\"\n  },\n  \"read\": {\n    \"at\": \"hooks/incidents.py:93\",\n    \"quote\": \"rec = json.loads(ln)\",\n    \"expression\": \"ln\",\n    \"identity\": \"incidents.jsonl#INC-20261122-1\",\n    \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-gs2fsd1u/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"исчерпан резерв стенда\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"SSH_AGENT_PID\",\n      \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n      \"-B\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n      \"--repo\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n      \"--case\",\n      \"root\",\n      \"--taskctl\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n      \"--mode\",\n      \"control\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"hooks/incidents.py:93\",\n      \"quote\": \"rec = json.loads(ln)\",\n      \"expression\": \"ln\",\n      \"identity\": \"incidents.jsonl#INC-20261122-1\",\n      \"value\": \"{\\\"id\\\":\\\"INC-20261122-1\\\",\\\"identity\\\":{\\\"id\\\":\\\"run-original\\\"},\\\"logs\\\":[],\\\"notes\\\":[],\\\"outcome\\\":\\\"\\\",\\\"reason\\\":\\\"восстановление рабочего чата Codex исчерпано\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-rh2xlf5e/project\\\",\\\"run\\\":\\\"as-original\\\",\\\"seen\\\":1,\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\",\\\"why\\\":\\\"прежний исход в журнале\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgYoqDq8dlY+wGIUrV/Cb0SoaZaD\n+J3nDN0RyIdZThD6oAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEBJ4o1GQgKdz1OT9riHn7jX0Xk/ZiHFVY3C1xttAmlh7OVbiH\niBdlJNLo6qf5YLKfofJL5AjWgioPiJ2sX3NPUO\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "root",
+            "target": "rec",
+            "value": "json.dumps(rec, ensure_ascii=False) + \"\\n\"",
+            "write_at": "hooks/incidents.py:107"
           }
         },
         {
           "object": "tools/devkitctl/recovery.py:754#main",
           "check": "writes",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Записи Python, оставшиеся без доказательства в taskctl",
-          "location": "tools/devkitctl/recovery.py:754",
-          "observation": "CLI передаёт args[1:] в app_finish и во вложенный в print вызов app_reserve. Обе функции пишут JSONL через _append. taskctl отклоняет обе точки перехода как неподтверждённые прямые вызовы. Даже после проверки ветвей текущий валидатор отклоняет распаковку аргументов.",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/recovery.py:122",
-                "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
-                "value": "write",
-                "text": "Как связать запись write в журнале бюджета с app-reserve и app-finish, когда аргументы штатного CLI передаются через распаковку args[1:]?",
-                "related": "tools/devkitctl/recovery.py:759",
-                "via": "tools/devkitctl/recovery.py:231"
+          "location": "tools/devkitctl/recovery.py:122",
+          "observation": "Вход main с app-reserve сохраняет запись резерва. Повтор того же адреса читает готовый резерв без дописи.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "main"
+            ],
+            "actual": "rec",
+            "actual_at": "tools/devkitctl/recovery.py:122",
+            "proof": {
+              "expression": "rec",
+              "words": [
+                {
+                  "word": "main",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/recovery.py:122",
+                    "quote": "stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode())",
+                    "value": "rec",
+                    "text": "Вход main с app-reserve сохраняет запись резерва. Повтор того же адреса читает готовый резерв без дописи."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-reviewer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/recovery.py:754#main\",\n  \"declaration\": \"tools/devkitctl/recovery.py:754\",\n  \"actual\": \"rec\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"SSH_AGENT_PID\",\n    \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n    \"-B\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n    \"--repo\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n    \"--case\",\n    \"recovery\",\n    \"--taskctl\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n    \"--mode\",\n    \"positive\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/recovery.py:122\",\n    \"quote\": \"stream.write((json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode())\",\n    \"expression\": \"rec\",\n    \"identity\": \"recovery.jsonl#XR-902/app:observe-reserve\",\n    \"value\": \"{\\\"at\\\":1795377331.653753,\\\"attempt\\\":\\\"RV-20ea3c318812451e869701850d5a32a4\\\",\\\"incident\\\":\\\"app:observe-reserve\\\",\\\"kind\\\":\\\"reserve\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-ar7x5amp/project\\\",\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\"}\",\n    \"source_value\": \"(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \\\"\\\\n\\\").encode()\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/recovery.py:103\",\n    \"quote\": \"rec = json.loads(line)\",\n    \"expression\": \"line\",\n    \"identity\": \"recovery.jsonl#XR-902/app:observe-reserve\",\n    \"value\": \"{\\\"at\\\":1795377331.653753,\\\"attempt\\\":\\\"RV-20ea3c318812451e869701850d5a32a4\\\",\\\"incident\\\":\\\"app:observe-reserve\\\",\\\"kind\\\":\\\"reserve\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-ar7x5amp/project\\\",\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"SSH_AGENT_PID\",\n      \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n      \"-B\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n      \"--repo\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n      \"--case\",\n      \"recovery\",\n      \"--taskctl\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n      \"--mode\",\n      \"control\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/recovery.py:103\",\n      \"quote\": \"rec = json.loads(line)\",\n      \"expression\": \"line\",\n      \"identity\": \"recovery.jsonl#XR-902/app:observe-reserve\",\n      \"value\": \"{\\\"at\\\":1795377331.782827,\\\"attempt\\\":\\\"RV-7aaf09aa971840ca868b14090eba02b1\\\",\\\"incident\\\":\\\"app:observe-reserve\\\",\\\"kind\\\":\\\"reserve\\\",\\\"root\\\":\\\"/private/var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/dk1746-product-observe-lzt6rbpp/project\\\",\\\"task\\\":\\\"XR-902\\\",\\\"when\\\":\\\"2026-11-22T22:55:31\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgYoqDq8dlY+wGIUrV/Cb0SoaZaD\n+J3nDN0RyIdZThD6oAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEABbtIEdIHtMvNzNSaB6AolGmpd2uch7SlRzPstwVchDAb6FL\nShA9Dw/QJ1cVN61Gco+kGi+15mCRicn+QCUz8A\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "main",
+            "target": "rec",
+            "value": "(json.dumps(rec, ensure_ascii=False, allow_nan=False) + \"\\n\").encode()",
+            "write_at": "tools/devkitctl/recovery.py:122"
           }
         },
         {
-          "object": "tools/devkitctl/duty.py:405#duty_root",
+          "object": "tools/devkitctl/duty.py:406#duty_root",
           "check": "writes",
-          "result": "pending",
-          "kind": "flow",
-          "heading": "### Записи Python, оставшиеся без доказательства в taskctl",
-          "location": "tools/devkitctl/duty.py:405",
-          "observation": "Строка попытки проходит из duty_root через write_try в ~/.devkit/watch.duty. Рядом _note добавляет строку к текущему инциденту. taskctl не проходит цикл обхода инцидентов и требует os.fdopen для текстового append через встроенный open.",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/duty.py:338",
-                "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
-                "value": "write",
-                "text": "Как связать write в журнале попыток со штатным вызовом write_try внутри цикла duty_root, когда taskctl поддерживает запись через os.fdopen?",
-                "related": "tools/devkitctl/duty.py:627",
-                "via": "tools/devkitctl/duty.py:325"
+          "location": "tools/devkitctl/duty.py:339",
+          "observation": "Код 0 приводит к записи попытки. Код 3 у того же инцидента сохраняет предыдущую попытку. read_tries читает обе формы журнала.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "duty",
+              "root"
+            ],
+            "actual": "rec",
+            "actual_at": "tools/devkitctl/duty.py:339",
+            "proof": {
+              "expression": "rec",
+              "words": [
+                {
+                  "word": "duty",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/duty.py:339",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Код 0 приводит к записи попытки. Код 3 у того же инцидента сохраняет предыдущую попытку. read_tries читает обе формы журнала."
+                  }
+                },
+                {
+                  "word": "root",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/duty.py:339",
+                    "quote": "f.write(json.dumps(rec, ensure_ascii=False) + \"\\n\")",
+                    "value": "rec",
+                    "text": "Код 0 приводит к записи попытки. Код 3 у того же инцидента сохраняет предыдущую попытку. read_tries читает обе формы журнала."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-reviewer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/duty.py:406#duty_root\",\n  \"declaration\": \"tools/devkitctl/duty.py:406\",\n  \"actual\": \"rec\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"SSH_AGENT_PID\",\n    \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n    \"-B\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n    \"--repo\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n    \"--case\",\n    \"duty\",\n    \"--taskctl\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n    \"--mode\",\n    \"positive\"\n  ],\n  \"write\": {\n    \"at\": \"tools/devkitctl/duty.py:339\",\n    \"quote\": \"f.write(json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\")\",\n    \"expression\": \"rec\",\n    \"identity\": \"watch.duty#восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\",\n    \"value\": \"{\\\"drafts\\\":[],\\\"run\\\":true,\\\"sig\\\":\\\"восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\\\",\\\"when\\\":\\\"2026-11-22T22:55:30\\\"}\",\n    \"source_value\": \"json.dumps(rec, ensure_ascii=False) + \\\"\\\\n\\\"\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/duty.py:304\",\n    \"quote\": \"rec = json.loads(ln)\",\n    \"expression\": \"ln\",\n    \"identity\": \"watch.duty#восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\",\n    \"value\": \"{\\\"drafts\\\":[],\\\"run\\\":true,\\\"sig\\\":\\\"восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\\\",\\\"when\\\":\\\"2026-11-22T22:55:30\\\"}\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"SSH_AGENT_PID\",\n      \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n      \"-B\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n      \"--repo\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n      \"--case\",\n      \"duty\",\n      \"--taskctl\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n      \"--mode\",\n      \"control\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/duty.py:304\",\n      \"quote\": \"rec = json.loads(ln)\",\n      \"expression\": \"ln\",\n      \"identity\": \"watch.duty#восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\",\n      \"value\": \"{\\\"fail\\\":true,\\\"sig\\\":\\\"восстановление рабочего чата Codex исчерпано: исчерпан резерв стенда\\\",\\\"when\\\":\\\"2026-11-22T22:55:30\\\"}\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgYoqDq8dlY+wGIUrV/Cb0SoaZaD\n+J3nDN0RyIdZThD6oAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEC1Lu9WD8ESKCtkuNuco+w3yA1YJBdNW1cWraWrHa2LFnyuWB\nMXHRSnIGYrj2P04I6UFrM3qmTy+Des41o89cgB\n-----END SSH SIGNATURE-----\n"
               }
-            ]
+            }
+          },
+          "write_evidence": {
+            "word": "root",
+            "target": "rec",
+            "value": "json.dumps(rec, ensure_ascii=False) + \"\\n\"",
+            "write_at": "tools/devkitctl/duty.py:339"
           }
         },
         {
@@ -28097,63 +29060,6 @@
           "observation": "Объявление строкового поля. runRequest заполняет его при построении заказа на строке 59, Raise читает поле в сравнении на строке 227."
         },
         {
-          "object": "tools/devkitctl/duty.py:659#spawn",
-          "location": "tools/devkitctl/duty.py:659",
-          "check": "meaning",
-          "result": "checked",
-          "observation": "spawn передаёт taskctl заказ на подъём головы дежурного и сворачивает вывод и код завершения. Путь исполнения принадлежит taskctl и допускает отказ.",
-          "symbol": "spawn",
-          "word_checks": [
-            {
-              "word": "spawn",
-              "meaning": "запуск процесса",
-              "fact": "Вызывает taskctl run с ID задачи и заказом, при терминальном инциденте передаёт --diagnostic-run.",
-              "location": "tools/devkitctl/duty.py:674",
-              "result": "checked"
-            }
-          ]
-        },
-        {
-          "object": "tools/devkitctl/duty.py:659#spawn",
-          "location": "tools/devkitctl/duty.py:659",
-          "check": "result",
-          "result": "pending",
-          "observation": "Функция возвращает пару нормализованного stdout и кода процесса. duty_root распаковывает значения и по коду 3 откладывает запуск. Ошибки вызова также дают пару. Проверка результата Python отклоняет возвращаемый кортеж.",
-          "kind": "flow",
-          "heading": "### Запуск дежурного и доказательства его результата",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/duty.py:678",
-                "quote": "return \" \".join((p.stdout or \"\").split()), p.returncode",
-                "value": "p",
-                "text": "Как связать оба значения из p, нормализованный вывод и код завершения, с их распаковкой и потребителями в duty_root?",
-                "related": "tools/devkitctl/duty.py:618"
-              }
-            ]
-          }
-        },
-        {
-          "object": "tools/devkitctl/duty.py:659#spawn",
-          "location": "tools/devkitctl/duty.py:659",
-          "check": "writes",
-          "result": "pending",
-          "observation": "Локальная сборка argv завершается вызовом taskctl run. При успешном терминальном запуске рабочий Run сохраняется, а дочерний процесс запускает голову и пишет журнал. В обычной ветке дочерний процесс также записывает Run. Python-валидатор записи не прослеживает вызов subprocess до артефактов Go CLI.",
-          "kind": "flow",
-          "heading": "### Запуск дежурного и доказательства его результата",
-          "facts": {
-            "question": [
-              {
-                "location": "tools/devkitctl/duty.py:674",
-                "quote": "p = call(args + [\"--order\", duty_order(task, why)],",
-                "value": "call",
-                "text": "Как связать call с журналом диагностической головы и состоянием рабочего запуска, которые меняет дочерняя команда taskctl run?",
-                "related": "tools/taskctl/run.go:134"
-              }
-            ]
-          }
-        },
-        {
           "object": "tools/taskctl/run.go:32#runRequest",
           "location": "tools/taskctl/run.go:32",
           "check": "meaning",
@@ -28182,7 +29088,7 @@
           "location": "tools/taskctl/run.go:32",
           "check": "result",
           "result": "checked",
-          "observation": "При успехе возвращается целая структура taskhead.Request с ID задачи, корнем, рабочим каталогом, профилем, моделью, заказом, режимами запуска, ID запуска для диагностики и отложенным подбором модели. При ошибке возвращаются пустой заказ и error.",
+          "observation": "При успехе возвращается целая структура taskhead.Request с ID задачи, корнем, рабочим каталогом, профилем, моделью, заказом, режимами запуска, ID запуска для диагностики. При ошибке возвращаются пустой заказ и error.",
           "object_comparison": {
             "expected": [
               "run",
@@ -28191,7 +29097,7 @@
             "actual": "Request",
             "actual_at": "tools/taskctl/run.go:57",
             "proof": {
-              "expression": "taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,\n\t\tHarness: harness, Model: o.model, ContinueStopped: o.continueStopped,\n\t\tRecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,\n\t\tOrder: order, Again: o.again, Hidden: o.hidden, Wanted: true,\n\t\tAdopt: adopt, Pick: func() (string, error) { return runPick(root, id, harness) }}",
+              "expression": "taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,\n\t\tHarness: harness, Model: o.model, ContinueStopped: o.continueStopped,\n\t\tRecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,\n\t\tOrder: order, Again: o.again, Hidden: o.hidden, Wanted: true,\n\t\tAdopt: adopt}",
               "type": "taskhead.Request",
               "words": [
                 {
@@ -28219,10 +29125,10 @@
           },
           "result_evidence": {
             "word": "Request",
-            "returned": "taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,\n\t\tHarness: harness, Model: o.model, ContinueStopped: o.continueStopped,\n\t\tRecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,\n\t\tOrder: order, Again: o.again, Hidden: o.hidden, Wanted: true,\n\t\tAdopt: adopt, Pick: func() (string, error) { return runPick(root, id, harness) }}, nil на успешной ветке. При отказе возвращается taskhead.Request{} и error.",
+            "returned": "taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,\n\t\tHarness: harness, Model: o.model, ContinueStopped: o.continueStopped,\n\t\tRecoveryAttempt: o.recoveryAttempt, PreviousRun: o.previousRun, DiagnosticRun: o.diagnosticRun,\n\t\tOrder: order, Again: o.again, Hidden: o.hidden, Wanted: true,\n\t\tAdopt: adopt}, nil на успешной ветке. При отказе возвращается taskhead.Request{} и error.",
             "return_at": "tools/taskctl/run.go:57",
-            "consumer": "cmdRun проверяет error и передаёт тот же заказ q в taskhead.Raise.",
-            "consumer_at": "tools/taskctl/run.go:134",
+            "consumer": "cmdRun проверяет error и передаёт заказ q в taskhead.Raise после установки отложенного подбора модели.",
+            "consumer_at": "tools/taskctl/run.go:137",
             "flow": {
               "caller": "tools/taskctl/run.go:125",
               "call_at": "tools/taskctl/run.go:130",
@@ -28523,19 +29429,369 @@
           "object": "tools/taskctl/run.go:32#runRequest",
           "location": "tools/taskctl/run.go:32",
           "check": "writes",
-          "result": "pending",
+          "result": "not_applicable",
           "kind": "flow",
-          "heading": "### Запуск дежурного и доказательства его результата",
-          "observation": "runRequest возвращает замыкание Pick. Валидатор обходит его тело до вызова, идёт из runPick в logLine и трактует f.Close у *os.File как Close у stagingBoard. RemoveAll из proposalstage.go:85 недостижим в этой операции.",
-          "facts": {
-            "question": [
+          "observation": "Функция собирает заказ, читая окружение и проверяя наличие дерева devkit. Подбор модели подключает cmdRun перед Raise."
+        },
+        {
+          "object": "tools/devkitctl/duty.py:665#spawn",
+          "location": "tools/devkitctl/duty.py:665",
+          "check": "meaning",
+          "result": "checked",
+          "observation": "spawn передаёт taskctl заказ на подъём головы дежурного и сворачивает вывод и код завершения. Путь исполнения принадлежит taskctl и допускает отказ.",
+          "symbol": "spawn",
+          "word_checks": [
+            {
+              "word": "spawn",
+              "meaning": "запуск процесса",
+              "fact": "Вызывает taskctl run с ID задачи и заказом, при терминальном инциденте передаёт --diagnostic-run.",
+              "location": "tools/devkitctl/duty.py:680",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/devkitctl/duty.py:665#spawn",
+          "check": "result",
+          "location": "tools/devkitctl/duty.py:665",
+          "observation": "Дежурный получает нормализованный stdout и код выхода taskctl run. Код 3 откладывает запуск до следующего тика.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "spawn"
+            ],
+            "actual": "DutyLaunchResult",
+            "actual_at": "tools/devkitctl/duty.py:684",
+            "proof": {
+              "expression": "DutyLaunchResult(\" \".join((p.stdout or \"\").split()), p.returncode)",
+              "words": [
+                {
+                  "word": "spawn",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/devkitctl/duty.py:684",
+                    "quote": "return DutyLaunchResult(\" \".join((p.stdout or \"\").split()), p.returncode)",
+                    "value": "DutyLaunchResult(\" \".join((p.stdout or \"\").split()), p.returncode)",
+                    "text": "Тип результата содержит нормализованный вывод и код завершения процесса."
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "spawn",
+            "returned": "DutyLaunchResult(\" \".join((p.stdout or \"\").split()), p.returncode) возвращает нормализованный вывод и код завершения. Если бинарь отсутствует или вызов поднимает OSError, тот же тип возвращает сообщение об отказе и код 2.",
+            "return_at": "tools/devkitctl/duty.py:684",
+            "consumer": "duty_root записывает код завершения в инцидент, затем по коду 3 откладывает запуск, а по другим кодам обновляет счётчик и выводит сообщение.",
+            "consumer_at": "tools/devkitctl/duty.py:622",
+            "flow": {
+              "caller": "tools/devkitctl/duty.py:406",
+              "call_at": "tools/devkitctl/duty.py:619",
+              "value": "launch",
+              "use_expression": "launch.code"
+            }
+          }
+        },
+        {
+          "object": "tools/taskctl/run.go:125#cmdRun",
+          "check": "meaning",
+          "location": "tools/taskctl/run.go:125",
+          "observation": "Имя выражает обработчик команды run. Он готовит заказ с отложенным выбором модели, вызывает Raise и выдаёт текст, код выхода и ошибку.",
+          "result": "checked",
+          "symbol": "cmdRun",
+          "word_checks": [
+            {
+              "word": "cmd",
+              "meaning": "обработчик CLI",
+              "fact": "Ветка run разбирает флаги и передаёт их в cmdRun.",
+              "location": "tools/taskctl/main.go:1075",
+              "result": "checked"
+            },
+            {
+              "word": "Run",
+              "meaning": "запуск головы",
+              "fact": "taskhead.Raise исполняет заказ подъёма и возвращает выбранную ступень.",
+              "location": "tools/taskctl/run.go:137",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/taskctl/run.go:125#cmdRun",
+          "check": "result",
+          "location": "tools/taskctl/run.go:125",
+          "observation": "На завершившейся лестнице результат содержит текст из res.Lines, название ступени, код из res.Code и nil. При ошибке настройки или подъёма команда получает пустой текст, CodeSetup и исходную ошибку.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "cmd",
+              "Run"
+            ],
+            "actual": "Code",
+            "actual_at": "tools/taskctl/run.go:142",
+            "proof": {
+              "expression": "res.Code",
+              "type": "int",
+              "words": [
+                {
+                  "word": "cmd",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/taskctl/main.go:1085",
+                    "quote": "if code == taskhead.CodeBusy {",
+                    "value": "code == taskhead.CodeBusy",
+                    "text": "Ветка CLI проверяет именно код запуска, определяя поток вывода."
+                  }
+                },
+                {
+                  "word": "Run",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/taskctl/run.go:137",
+                    "quote": "res, err := taskhead.Raise(q)",
+                    "value": "taskhead.Raise(q)",
+                    "text": "Код относится к завершившейся лестнице taskhead.Raise."
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "Run",
+            "returned": "Полное выражение возврата out + \"\\n\" + fmt.Sprintf(\"ступень: %s, код %d\", res.Rung, res.Code) + \"\\n\", res.Code, nil. Типы string, int и error. Ошибка возвращает пустой текст и taskhead.CodeSetup.",
+            "return_at": "tools/taskctl/run.go:142",
+            "consumer": "main выводит результат в stderr при CodeBusy, иначе в stdout, и передаёт код в os.Exit. При ошибке main выводит исходное сообщение в stderr.",
+            "consumer_at": "tools/taskctl/main.go:1085",
+            "flow": {
+              "caller": "tools/taskctl/main.go:501",
+              "call_at": "tools/taskctl/main.go:1075",
+              "value": "code",
+              "use_expression": "code == taskhead.CodeBusy"
+            }
+          }
+        },
+        {
+          "object": "tools/taskctl/run.go:125#cmdRun",
+          "check": "writes",
+          "location": "tools/taskctl/run.go:125",
+          "observation": "Команда подъёма передаёт заказ в Raise. При старте нового рабочего клиента и вне диагностического режима Raise сохраняет Run в состоянии задачи. При ошибке подбора модели запускающий callback также ведёт журнал.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "cmd",
+              "Run"
+            ],
+            "actual": "g.path",
+            "actual_at": "internal/taskstate/state.go:176",
+            "proof": {
+              "expression": "os.Rename(name, g.path)",
+              "words": [
+                {
+                  "word": "cmd",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/taskctl/run.go:137",
+                    "quote": "res, err := taskhead.Raise(q)",
+                    "value": "taskhead.Raise(q)",
+                    "text": "Обработчик команды передаёт тот же заказ запуску."
+                  }
+                },
+                {
+                  "word": "Run",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/taskhead/raise.go:342",
+                    "quote": "if err = state.StartRun(run); err != nil {",
+                    "value": "state.StartRun(run)",
+                    "text": "Run сохраняется внутри файла состояния задачи."
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Run",
+            "target": "g.path",
+            "value": "os.Rename(name, g.path)",
+            "write_at": "internal/taskstate/state.go:176",
+            "file": {
+              "path": "g.path",
+              "role": "destination"
+            },
+            "calls": [
               {
-                "location": "tools/taskctl/run.go:61",
-                "related": "tools/taskctl/run.go:134",
-                "value": "runPick",
-                "text": "Как подтвердить отсутствие записи в runRequest, если runPick передаётся как замыкание Pick и выполняется позднее в Raise?"
+                "at": "tools/taskctl/run.go:137",
+                "declaration": "internal/taskhead/raise.go:191",
+                "bindings": [
+                  {
+                    "parameter": "q",
+                    "argument": "q"
+                  }
+                ]
+              },
+              {
+                "at": "internal/taskhead/raise.go:342",
+                "declaration": "internal/taskstate/state.go:204",
+                "bindings": [
+                  {
+                    "parameter": "run",
+                    "argument": "run"
+                  }
+                ]
+              },
+              {
+                "at": "internal/taskstate/state.go:210",
+                "declaration": "internal/taskstate/state.go:151",
+                "bindings": []
               }
             ]
+          }
+        },
+        {
+          "object": "tools/devkitctl/duty.py:660#DutyLaunchResult",
+          "check": "meaning",
+          "location": "tools/devkitctl/duty.py:660",
+          "observation": "Имя описывает два значения, по которым дежурство обрабатывает завершение запуска головы.",
+          "result": "checked",
+          "symbol": "DutyLaunchResult",
+          "word_checks": [
+            {
+              "word": "Duty",
+              "meaning": "дежурство",
+              "fact": "spawn поднимает голову дежурного заказом taskctl run.",
+              "location": "tools/devkitctl/duty.py:666",
+              "result": "checked"
+            },
+            {
+              "word": "Launch",
+              "meaning": "запуск",
+              "fact": "Вызов call получает аргументы дочерней команды.",
+              "location": "tools/devkitctl/duty.py:680",
+              "result": "checked"
+            },
+            {
+              "word": "Result",
+              "meaning": "результат",
+              "fact": "Тип объединяет диагностический вывод и код выхода процесса, доступные вызывающему.",
+              "location": "tools/devkitctl/duty.py:684",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/devkitctl/duty.py:660#DutyLaunchResult",
+          "check": "result",
+          "location": "tools/devkitctl/duty.py:660",
+          "observation": "Объявление именованного кортежа задаёт тип. Прикладной результат запуска возвращается из spawn.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:660#DutyLaunchResult",
+          "check": "writes",
+          "location": "tools/devkitctl/duty.py:660",
+          "observation": "Объявление именованного кортежа описывает поля неизменяемого значения. Внешнюю запись выполняет запуск дочернего процесса из spawn.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:661#message",
+          "check": "meaning",
+          "location": "tools/devkitctl/duty.py:661",
+          "observation": "Поле сохраняет сжатый вывод дочерней команды или сообщение об отказе и подставляется в отчёт дежурства.",
+          "result": "checked",
+          "symbol": "message",
+          "word_checks": [
+            {
+              "word": "message",
+              "meaning": "диагностическое сообщение",
+              "fact": "Отложенный запуск помещает launch.message в строку для пользователя.",
+              "location": "tools/devkitctl/duty.py:625",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/devkitctl/duty.py:661#message",
+          "check": "result",
+          "location": "tools/devkitctl/duty.py:661",
+          "observation": "Аннотация определяет строковое поле. Возвращаемое значение создаётся конструктором DutyLaunchResult из spawn.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:661#message",
+          "check": "writes",
+          "location": "tools/devkitctl/duty.py:661",
+          "observation": "Аннотация определяет формат поля. Поле фиксируется при создании неизменяемого результата.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:662#code",
+          "check": "meaning",
+          "location": "tools/devkitctl/duty.py:662",
+          "observation": "Поле хранит код выхода или код 2 при ошибке подготовки. Код 3 означает отложенную попытку.",
+          "result": "checked",
+          "symbol": "code",
+          "word_checks": [
+            {
+              "word": "code",
+              "meaning": "код завершения запуска",
+              "fact": "Ветка launch.code == 3 откладывает попытку до следующего тика.",
+              "location": "tools/devkitctl/duty.py:623",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/devkitctl/duty.py:662#code",
+          "check": "result",
+          "location": "tools/devkitctl/duty.py:662",
+          "observation": "Аннотация определяет целочисленное поле. Возвращаемое значение создаётся конструктором DutyLaunchResult из spawn.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:662#code",
+          "check": "writes",
+          "location": "tools/devkitctl/duty.py:662",
+          "observation": "Аннотация определяет формат кода. Запись в инцидент выполняется в duty_root после чтения результата.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "tools/devkitctl/duty.py:665#spawn",
+          "check": "writes",
+          "location": "tools/taskctl/runlog.go:42",
+          "observation": "Успешный дочерний taskctl пишет исход run в журнал запусков, а stats читает строку. Отсутствующий бинарь оставляет прежний исход.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "spawn"
+            ],
+            "actual": "f",
+            "actual_at": "tools/taskctl/runlog.go:42",
+            "proof": {
+              "expression": "f",
+              "words": [
+                {
+                  "word": "spawn",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/taskctl/runlog.go:42",
+                    "quote": "fmt.Fprintf(f, \"%s\\ttaskctl\\t%s\\t%d\\t%s\\n\", time.Now().Format(\"2006-01-02T15:04:05\"), cmd, code, taskhead.ExitClass(code))",
+                    "value": "f",
+                    "text": "Успешный дочерний taskctl пишет исход run в журнал запусков, а stats читает строку. Отсутствующий бинарь оставляет прежний исход."
+                  }
+                }
+              ],
+              "runtime": {
+                "runner": "dk1746-python-reviewer",
+                "payload": "{\n  \"version\": 1,\n  \"task\": \"DK-1746\",\n  \"commit\": \"e97f237b4e8cb6396f672bec49bec942bfd95e64\",\n  \"object\": \"tools/devkitctl/duty.py:665#spawn\",\n  \"declaration\": \"tools/devkitctl/duty.py:665\",\n  \"actual\": \"f\",\n  \"command\": [\n    \"env\",\n    \"-u\",\n    \"SSH_AUTH_SOCK\",\n    \"-u\",\n    \"GIT_SSH_COMMAND\",\n    \"-u\",\n    \"SSH_AGENT_PID\",\n    \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n    \"-B\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n    \"--repo\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n    \"--case\",\n    \"spawn\",\n    \"--taskctl\",\n    \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n    \"--mode\",\n    \"positive\"\n  ],\n  \"write\": {\n    \"at\": \"tools/taskctl/runlog.go:42\",\n    \"quote\": \"fmt.Fprintf(f, \\\"%s\\\\ttaskctl\\\\t%s\\\\t%d\\\\t%s\\\\n\\\", time.Now().Format(\\\"2006-01-02T15:04:05\\\"), cmd, code, taskhead.ExitClass(code))\",\n    \"expression\": \"f\",\n    \"identity\": \".devkit/log#taskctl/run/latest\",\n    \"value\": \"2026-11-22T22:55:33\\ttaskctl\\trun\\t0\\tуспех\",\n    \"source_value\": \"fmt.Fprintf(f, \\\"%s\\\\ttaskctl\\\\t%s\\\\t%d\\\\t%s\\\\n\\\", time.Now().Format(\\\"2006-01-02T15:04:05\\\"), cmd, code, taskhead.ExitClass(code))\"\n  },\n  \"read\": {\n    \"at\": \"tools/devkitctl/devkitctl.py:3595\",\n    \"quote\": \"parts = ln.split('\\\\t')\",\n    \"expression\": \"ln\",\n    \"identity\": \".devkit/log#taskctl/run/latest\",\n    \"value\": \"2026-11-22T22:55:33\\ttaskctl\\trun\\t0\\tуспех\"\n  },\n  \"negative\": {\n    \"command\": [\n      \"env\",\n      \"-u\",\n      \"SSH_AUTH_SOCK\",\n      \"-u\",\n      \"GIT_SSH_COMMAND\",\n      \"-u\",\n      \"SSH_AGENT_PID\",\n      \"/opt/homebrew/opt/python@3.14/bin/python3.14\",\n      \"-B\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/observe.py\",\n      \"--repo\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/tree\",\n      \"--case\",\n      \"spawn\",\n      \"--taskctl\",\n      \"/private/tmp/dk1746-product-independent.Du1WIiSJ/run/taskctl\",\n      \"--mode\",\n      \"control\"\n    ],\n    \"target_writes\": 0,\n    \"read\": {\n      \"at\": \"tools/devkitctl/devkitctl.py:3595\",\n      \"quote\": \"parts = ln.split('\\\\t')\",\n      \"expression\": \"ln\",\n      \"identity\": \".devkit/log#taskctl/run/latest\",\n      \"value\": \"2000-01-01T00:00:00\\ttaskctl\\trun\\t3\\tотворот\"\n    }\n  }\n}\n",
+                "signature": "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgYoqDq8dlY+wGIUrV/Cb0SoaZaD\n+J3nDN0RyIdZThD6oAAAAQZGV2a2l0LXN0eWxlLTAwMQAAAAAAAAAGc2hhNTEyAAAAUwAA\nAAtzc2gtZWQyNTUxOQAAAEA1xbjYNPjTNJBZkKNk6MUmxmCVYrBWbV8uWYX5fUozR9zZYH\nQhzS146G7KCZ/bNP+rBfELClJsw4DuY+xGnRwN\n-----END SSH SIGNATURE-----\n"
+              }
+            }
+          },
+          "write_evidence": {
+            "word": "spawn",
+            "target": "f",
+            "value": "fmt.Fprintf(f, \"%s\\ttaskctl\\t%s\\t%d\\t%s\\n\", time.Now().Format(\"2006-01-02T15:04:05\"), cmd, code, taskhead.ExitClass(code))",
+            "write_at": "tools/taskctl/runlog.go:42"
           }
         }
       ]
@@ -28656,7 +29912,7 @@
       "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Штатные потребители используют идентификатор и состояние очереди, ошибку восстановления, контракт результата run и код завершения в обходе дежурного.",
       "evidence": [
         {
           "object": "appTaskQueueNext",
@@ -29682,6 +30938,8 @@
         {
           "path": "tools/taskctl/run.go",
           "objects": [
+            "tools/taskctl/run.go:123",
+            "tools/taskctl/run.go:134",
             "tools/taskctl/run.go:31",
             "tools/taskctl/run.go:55"
           ]
@@ -31122,6 +32380,23 @@
           "comment_fragments": [
             "Метка явного заказа: команду позвали, и headless-спавн без окна ей разрешён даже в голом окружении (DK-1562)."
           ]
+        },
+        {
+          "object": "tools/taskctl/run.go:123",
+          "symbol": "cmdRun",
+          "location": "tools/taskctl/run.go:123",
+          "comment_fragments": [
+            "cmdRun исполняет заказ подъёма и отдаёт отчёт со ступенью и кодом выхода.",
+            "При ошибке команда возвращает taskhead.CodeSetup."
+          ]
+        },
+        {
+          "object": "tools/taskctl/run.go:134",
+          "symbol": "cmdRun",
+          "location": "tools/taskctl/run.go:134",
+          "comment_fragments": [
+            "Подбор модели нужен только при запуске нового клиента."
+          ]
         }
       ],
       "objects": [
@@ -31293,6 +32568,8 @@
         "tools/taskctl/main.go:1437",
         "tools/taskctl/main.go:549",
         "tools/taskctl/main.go:756",
+        "tools/taskctl/run.go:123",
+        "tools/taskctl/run.go:134",
         "tools/taskctl/run.go:31",
         "tools/taskctl/run.go:55"
       ],
@@ -36307,8 +37584,8 @@
               },
               {
                 "quote": "Тик откладывает подъём и обрабатывает этот случай по коду выхода.",
-                "location": "tools/devkitctl/duty.py:622",
-                "value": "code",
+                "location": "tools/devkitctl/duty.py:623",
+                "value": "launch.code",
                 "text": "Дежурный проверяет код 3, записывает отложенный запуск и пропускает учёт попытки на следующих строках.",
                 "verdict": "checked"
               }
@@ -36437,6 +37714,61 @@
               {
                 "location": "tools/taskctl/run.go:60",
                 "text": "Функция проставляет Wanted в Request. q.carried учитывает Wanted при разрешении headless без окна."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/taskctl/run.go:123",
+          "location": "tools/taskctl/run.go:142",
+          "result": "checked",
+          "comment_quote": "cmdRun исполняет заказ подъёма и отдаёт отчёт со ступенью и кодом выхода.",
+          "observation": "Raise возвращает исход лестницы. Успешно выполненный вызов форматирует ступень и код, а отказ с ошибкой передаёт в CLI CodeSetup и причину отказа.",
+          "facts": {
+            "claim": [
+              {
+                "quote": "cmdRun исполняет заказ подъёма и отдаёт отчёт со ступенью и кодом выхода.",
+                "location": "tools/taskctl/run.go:142",
+                "value": "res.Rung, res.Code",
+                "text": "После Raise команда добавляет к строкам результата ступень и код, которыми завершилась лестница.",
+                "verdict": "checked"
+              },
+              {
+                "quote": "При ошибке команда возвращает taskhead.CodeSetup.",
+                "location": "tools/taskctl/run.go:139",
+                "value": "taskhead.CodeSetup",
+                "text": "Отказ Raise, включая явный стоп задачи, сохраняет исходную ошибку и проходит как CodeSetup. CLI возвращает этот код вызывающей стороне.",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/taskctl/main.go:1081",
+                "text": "Комментарий фиксирует контракт между лестницей и CLI. Отказ с ошибкой и завершившаяся ступень имеют разные выходы, которые вызывающая команда различает."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/taskctl/run.go:134",
+          "location": "internal/taskhead/raise.go:322",
+          "result": "checked",
+          "comment_quote": "Подбор модели нужен только при запуске нового клиента.",
+          "observation": "cmdRun передаёт отложенный вызов в Raise. Заказу для preflight он не нужен. Raise завершает обработку занятого замка и живого окна раньше обращения к Pick.",
+          "facts": {
+            "claim": [
+              {
+                "quote": "Подбор модели нужен только при запуске нового клиента.",
+                "location": "internal/taskhead/raise.go:322",
+                "value": "q.pickModel(&res)",
+                "text": "Raise доходит до pickModel после проверки носителя и выхода на ветке живого окна. pickModel пропускает запрос, если модель указана явно.",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/taskctl/wake.go:204",
+                "text": "Подключение сверки модели в cmdRun сохраняет быстрый preflight: имеющийся профиль и клиент проверяются сразу, а вердикт выбирается для нового носителя уже в Raise."
               }
             ]
           }
@@ -36645,7 +37977,7 @@
       "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Изменения поведения сопровождаются сценариями таймера, очереди, восстановления, старого запуска и защиты диагностики. Существующие тесты run и duty проверяют сборку запроса и использование результата после уточнения интерфейса.",
       "evidence": [
         {
           "object": "tools/dashboard/apptask_recovery_test.go:86",
@@ -36667,7 +37999,7 @@
       "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Отдельные прогоны на базе и кандидате различают потерю исходной нити, неверный подъём старого запуска, доставку повторной реплики и гонку дежурного. Причины отказов зафиксированы в соответствующих наблюдениях.",
       "evidence": [
         {
           "object": "tools/devkitctl/watch_test.py:1080",
@@ -38722,7 +40054,7 @@
       "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Таймер проверяется с виртуальным временем. Конкурентные операции запускаются с барьерами. Стенд исчерпания попыток дожидается выхода процесса и группы перед следующим тиком.",
       "evidence": [
         {
           "object": "tools/dashboard/apptask_timer_test.go:12",
@@ -39274,7 +40606,7 @@
         },
         {
           "object": "признак дежурного",
-          "location": "tools/devkitctl/duty.py:542",
+          "location": "tools/devkitctl/duty.py:543",
           "observation": "Дежурный сверяет terminal и ID текущего Run. Его запуск не перезаписывает рабочую привязку.",
           "result": "checked"
         },
@@ -39368,7 +40700,7 @@
       "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Дашборд и Python создают проекты, дома и фиктивные журналы во временных каталогах.",
       "evidence": [
         {
           "object": "tools/dashboard/server_test.go:123",
@@ -39424,7 +40756,7 @@
       "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
       "applicability": "applicable",
       "result": "checked",
-      "reason": "",
+      "reason": "Стенд изолирует дом и переменные сессии, подбирает тестовые утилиты в отдельном PATH и использует локальный клиент Codex.",
       "evidence": [
         {
           "object": "tools/dashboard/tasks_test.go:125",

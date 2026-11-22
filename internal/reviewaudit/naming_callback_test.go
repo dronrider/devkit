@@ -1,6 +1,7 @@
 package reviewaudit
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,69 @@ func TestNameCallbackNoQueueWrite(t *testing.T) {
 			decl := at("func queueNext")
 			e := Evidence{Object: decl + "#queueNext", Check: "writes", Result: "not_applicable", Location: decl}
 			assertTargetCheck(t, checkNameEntry(e, decl, identifierWords("queueNext"), source), tc.want)
+		})
+	}
+}
+
+func TestNameCallbackSliceElementWrite(t *testing.T) {
+	const code = guardedQueue + `
+type item struct { Text string; Flag bool }
+func queueClear() error {
+  return update(func(entries *[]item) bool {
+    for i := range *entries {
+      entry := &(*entries)[i]
+      if i == 0 {
+        if ready {
+          entry.Text = ""
+        }
+        return true
+      }
+    }
+    return false
+  })
+}
+`
+	for _, tc := range []struct{ name, old, replacement, declaration string }{
+		{name: "accepts the address of an element"},
+		{name: "distinct fields", old: `entry.Text = ""`, replacement: `entry.Text, entry.Flag = "", true`},
+		{name: "concurrent slice replacement", old: "entry := &(*entries)[i]", replacement: "go func() { *entries = nil }(); entry := &(*entries)[i]"},
+		{name: "deferred slice replacement", old: "entry := &(*entries)[i]", replacement: "defer func() { *entries = nil }(); entry := &(*entries)[i]"},
+		{name: "duplicate field overwritten", old: `entry.Text = ""`, replacement: `entry.Text, entry.Text = "", "other"`},
+		{name: "unrelated element", old: "&(*entries)[i]", replacement: "&other[i]"},
+		{name: "alias rebound", old: "if ready {", replacement: "entry = &other[i]; if ready {"},
+		{name: "slice replaced", old: "if ready {", replacement: "*entries = nil; if ready {"},
+		{name: "slice escapes", old: "if ready {", replacement: "replace(entries); if ready {"},
+		{name: "dead branch", old: "if ready {", replacement: "if false {"},
+		{name: "constant comparison", old: "if ready {", replacement: "if 1 == 0 {"},
+		{name: "false after initializer", old: "if ready {\n          entry.Text = \"\"\n        }", replacement: "if _ = 1; 1 == 0 { entry.Text = \"\"; return true }"},
+		{name: "flag is shadowed", old: "if ready {", replacement: "true := false; if ready {"},
+		{name: "package shadows true", declaration: "package sample\nconst true = false\n"},
+		{name: "mutation not persisted", old: "return true", replacement: "return false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code := strings.ReplaceAll(code, "[]int", "[]item")
+			source, at := nameProofFixture(t, strings.Replace(code, tc.old, tc.replacement, 1))
+			if tc.declaration != "" {
+				write(t, filepath.Join(source.root, "shadow.go"), tc.declaration)
+			}
+			wire := `{
+                "object":"@func queueClear","check":"writes","result":"checked",
+                "object_comparison":{"expected":["queue","Clear"],"actual":"entry","actual_at":"@entry.Text",
+                    "proof":{"words":[
+                        {"word":"queue","role":"object","fact":{"location":"@entry :=","quote":"entry :=","value":"entry","text":"Элемент очереди."}},
+                        {"word":"Clear","role":"context","fact":{"location":"@entry.Text","quote":"entry.Text =","value":"entry.Text","text":"Удалён текст."}}]}},
+                "write_evidence":{"word":"Clear","target":"entry.Text","value":"\"\"","write_at":"@entry.Text",
+                    "callback":{"call_at":"@return update(","helper":"@func update","invoke_at":"@if !change",
+                    "use":{"declaration":"@func update","at":"@persist(","expression":"persist(items)"}}}}`
+			if tc.name == "distinct fields" {
+				wire = strings.Replace(wire, "entry.Text =", "entry.Text,", 1)
+			}
+			e := namingWire(t, wire, at)
+			want := ""
+			if tc.declaration != "" || tc.old != "" && tc.name != "distinct fields" {
+				want = "следующий return true"
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func queueClear"), identifierWords("queueClear"), source), want)
 		})
 	}
 }

@@ -80,11 +80,52 @@ var handlers = map[string]func() int{
   return readValue()
  },
 }
+
 `)
 	e := namingWire(t, `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"return","consumer_at":"@return readValue()","flow":{"caller":"@\"value\": func","call_at":"@return readValue()","value":"","use_expression":"readValue()"}}}`, at)
 	assertTargetCheck(t, checkNameEntry(e, at("func readValue"), identifierWords("readValue"), source), "")
 	e.ResultEvidence.Flow.Caller = at("return readValue()")
 	assertTargetCheck(t, checkNameEntry(e, at("func readValue"), identifierWords("readValue"), source), "строку объявления")
+}
+
+func TestNameChainDeferredParallelAssignment(t *testing.T) {
+	const code = `package sample
+func readValue() string { value := "problem"; return value }
+func use(ready bool) {
+ defer func() {
+  code, value := 0, ""
+  if ready {
+   code, value = 75, readValue()
+  }
+  consume(code, value)
+ }()
+}
+`
+	for _, tc := range []struct{ name, old, replacement string }{
+		{name: "correct slot"},
+		{name: "alias value target", old: "code, value = 75, readValue()", replacement: "value, *(&value) = readValue(), \"other\""},
+		{name: "duplicate value target", old: "code, value = 75, readValue()", replacement: "value, value = readValue(), \"other\""},
+		{name: "other slot", old: "75, readValue()", replacement: "readValue(), \"other\""},
+		{name: "shadowed value", old: "code, value = 75", replacement: "code, value := 75"},
+		{name: "unreachable assignment", old: "if ready {", replacement: "if false {"},
+		{name: "value overwritten", old: "consume(code, value)", replacement: "value = \"other\"; consume(code, value)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, at := nameProofFixture(t, strings.Replace(code, tc.old, tc.replacement, 1))
+			wire := `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"use","consumer_at":"@consume(code, value)","flow":{"caller":"@defer func","call_at":"@   code, value","value":"value","use_expression":"consume(code, value)"}}}`
+			if tc.name == "duplicate value target" {
+				wire = strings.Replace(wire, "@   code, value", "@   value, value", 1)
+			} else if tc.name == "alias value target" {
+				wire = strings.Replace(wire, "@   code, value", "@   value, *(&value)", 1)
+			}
+			e := namingWire(t, wire, at)
+			want := ""
+			if tc.old != "" {
+				want = "use_expression"
+			}
+			assertTargetCheck(t, checkNameEntry(e, at("func readValue"), identifierWords("readValue"), source), want)
+		})
+	}
 }
 
 func TestNameChainContextFileAndBindings(t *testing.T) {

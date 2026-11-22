@@ -316,3 +316,69 @@ func resolve() string {
 		})
 	}
 }
+
+func TestNameAssignmentFieldInNestedBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, condition, middle, consumer string
+		want                                      string
+	}{
+		{"same_instance", "", "confirm", "", "turn.work", ""},
+		{"unreachable_body", "", "false", "", "turn.work", "выражение, которое читает work"},
+		{"shadowed_instance", "", "confirm", "turn := &activity{}", "turn.work", "выражение, которое читает work"},
+		{"unrelated_instance", "", "confirm", "", "other.work", "выражение, которое читает work"},
+		{"overwritten_field", "", "confirm", "turn.work = false", "turn.work", "выражение, которое читает work"},
+		{"potential_alias_write", "", "confirm", "other.work = false", "turn.work", "выражение, которое читает work"},
+		{"potential_whole_alias_write", "", "confirm", "*other = activity{}", "turn.work", "выражение, которое читает work"},
+		{"potential_alias_method", "", "confirm", "other.reset()", "turn.work", "выражение, которое читает work"},
+		{"local_false_constant", "const never = false", "never", "", "turn.work", "выражение, которое читает work"},
+		{"receiver_escape", "alias := turn; _ = alias", "confirm", "", "turn.work", "выражение, которое читает work"},
+		{"field_address", "alias := &turn.work; _ = alias", "confirm", "", "turn.work", "выражение, которое читает work"},
+		{"receiver_method", "", "confirm", "turn.reset()", "turn.work", "выражение, которое читает work"},
+		{"receiver_method_value", "reset := turn.reset", "confirm", "reset()", "turn.work", "выражение, которое читает work"},
+		{"continue_before_read", "", "confirm", "continue", "turn.work", "выражение, которое читает work"},
+		{"goto_before_read", "", "confirm", "{ goto done }", "turn.work", "выражение, которое читает work"},
+		{"return_before_write", "return false", "confirm", "", "turn.work", "выражение, которое читает work"},
+		{"nested_return_before_read", "", "confirm", "{ return false }", "turn.work", "выражение, которое читает work"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			read := "observed := " + tc.consumer
+			tail := ""
+			if tc.name == "goto_before_read" {
+				tail = "done:\n return false"
+			}
+			source, at := nameCurrentProofFixture(t, `package sample
+type activity struct { work bool; last int }
+func (a *activity) reset() { a.work = false }
+func wait(turn, other *activity, confirm bool) bool {
+ `+tc.before+`
+ turn.work = true
+ remaining := func() int { return turn.last }
+ _ = remaining()
+ for {
+  if `+tc.condition+` {
+   `+tc.middle+"\n"+read+`
+   return observed
+  }
+  return false
+ }
+`+tail+`
+}
+`)
+			g := newQueryGoSource(source)
+			fn, err := g.declaration(at("func wait"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeAt := at("turn.work = true")
+			proof := &NameObjectProof{Expression: "turn.work", Assignment: &NameAssignmentWrite{
+				Writes: []NameAssignmentSite{{At: writeAt, Target: "turn.work", Value: "true"}},
+				Use:    NameCodeUse{Declaration: at("func wait"), At: at(read), Expression: tc.consumer},
+			}}
+			e := Evidence{
+				ObjectComparison: &NameObjectComparison{Actual: "work", ActualAt: writeAt, Proof: proof},
+				WriteEvidence:    &WriteEvidence{WriteAt: writeAt},
+			}
+			assertTargetCheck(t, g.checkNameAssignment(e, fn, fn), tc.want)
+		})
+	}
+}

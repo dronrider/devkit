@@ -1677,6 +1677,12 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 случаях укажите полный вызов в `value` и роль `destination`.
 В этой форме укажите вызов вне литерала функции.
 
+В Python эта форма принимает прямой вызов `os.replace` в проверяемой
+функции. В `file.path`, `target` и `actual` укажите идентификатор
+второго аргумента, в `actual_at` и `write_at` строку вызова, в `value`
+полный вызов. Для составного имени укажите факты о словах в `proof.words`.
+Проверка использует AST из стандартной библиотеки `python3`.
+
 Для `os.Unsetenv` и `syscall.Kill` используйте
 `audit-template STYLE-001 --check writes --kind effect`. В
 `proof.expression` укажите полный вызов, а в `actual_at` и `write_at`

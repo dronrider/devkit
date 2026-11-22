@@ -128,19 +128,23 @@ func Path(root, id string, board bool) (string, error) {
 }
 
 func readReport(path string) (Report, error) {
-	var r Report
 	f, e := os.Open(path)
 	if e != nil {
-		return r, e
+		return Report{}, e
 	}
 	defer f.Close()
-	d := json.NewDecoder(f)
+	return decodeReport(f)
+}
+
+func decodeReport(input io.Reader) (Report, error) {
+	var r Report
+	d := json.NewDecoder(input)
 	d.DisallowUnknownFields()
-	if e = d.Decode(&r); e != nil {
+	if e := d.Decode(&r); e != nil {
 		return r, e
 	}
 	var extra any
-	if e = d.Decode(&extra); e != io.EOF {
+	if e := d.Decode(&extra); e != io.EOF {
 		return r, fmt.Errorf("после отчёта есть лишние данные")
 	}
 	return r, nil

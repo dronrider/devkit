@@ -25,6 +25,7 @@ type NameObjectProof struct {
 	Effect     *NameSystemWrite     `json:"effect,omitempty"`
 	SQL        *NameSQLWrite        `json:"sql,omitempty"`
 	CLI        *NameCLIWrite        `json:"cli,omitempty"`
+	Runtime    *NameRuntimeProof    `json:"runtime,omitempty"`
 }
 
 type NameProofWord struct {

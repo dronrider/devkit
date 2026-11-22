@@ -314,7 +314,7 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 		if entry.Check != "meaning" {
 			entry.ObjectComparison = &NameObjectComparison{Expected: []string{}, NoExpectationReason: "основание пустого expected, если применимо"}
 			if (entry.Check == "result" && slices.Contains([]string{"proof", "use", "guard", "implementation", "source", "boolean"}, kind)) ||
-				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "effect", "destination", "content", "callback"}, kind)) {
+				(entry.Check == "writes" && slices.Contains([]string{"reference", "assignment", "api", "cli", "sql", "setting", "effect", "destination", "content", "callback", "runtime"}, kind)) {
 				entry.ObjectComparison.Proof = &NameObjectProof{Words: []NameProofWord{{Word: "слово из expected", Role: "object", Fact: ReviewFact{Value: "выражение из цитаты"}}}}
 				p := entry.ObjectComparison.Proof
 				switch kind {
@@ -338,6 +338,8 @@ func fillEvidenceTemplate(id string, entry *Evidence, kind string) {
 					p.Assignment = &NameAssignmentWrite{Writes: []NameAssignmentSite{{}}}
 				case "api":
 					p.API = &NameAPIWrite{}
+				case "runtime":
+					p.Runtime = &NameRuntimeProof{}
 				case "cli":
 					p.CLI = &NameCLIWrite{
 						Command:       []string{"буквальное слово подкоманды"},

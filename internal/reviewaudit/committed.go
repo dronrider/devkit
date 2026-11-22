@@ -1,9 +1,11 @@
 package reviewaudit
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/taskhead"
@@ -47,9 +49,73 @@ func ValidateAt(root, path, id, sha string) error {
 	if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		metadata = filepath.Join(tree, rel)
 	}
+	r, e = runtimeReportAtCommit(root, tree, path, id, r)
+	if e != nil {
+		return e
+	}
+	if containsRuntimeProof(r) {
+		if _, e = nameRuntimeAllowedSigners(root); e != nil {
+			return e
+		}
+		metadata, e = Path(tree, id, true)
+		if e != nil {
+			return e
+		}
+	}
 	now, e := snapshot(tree, metadata, id, r.BaseSHA, standards, r.RequestPath)
 	if e != nil {
 		return e
 	}
 	return validateSnapshot(tree, metadata, path, r, now, id)
+}
+
+func containsRuntimeProof(report Report) bool {
+	return slices.ContainsFunc(report.Rules, func(rule Rule) bool {
+		return rule.ID == namingRule && slices.ContainsFunc(rule.Evidence, func(entry Evidence) bool {
+			return entry.ObjectComparison != nil && entry.ObjectComparison.Proof != nil && entry.ObjectComparison.Proof.Runtime != nil
+		})
+	})
+}
+
+func runtimeReportAtCommit(root, tree, livePath, id string, live Report) (Report, error) {
+	expected, err := Path(root, id, true)
+	if err != nil || filepath.Base(livePath) != filepath.Base(expected) ||
+		canonicalPath(filepath.Dir(livePath)) != canonicalPath(filepath.Dir(expected)) {
+		if containsRuntimeProof(live) {
+			return Report{}, fmt.Errorf("proof.runtime: укажите штатный файл аудита задачи доски")
+		}
+		return live, nil
+	}
+	relative, err := filepath.Rel(root, expected)
+	if err != nil {
+		return Report{}, err
+	}
+	hasRuntime := containsRuntimeProof(live)
+	name := filepath.ToSlash(relative)
+	entry, err := gitRaw(tree, "--no-replace-objects", "ls-tree", "--full-tree", "HEAD", "--", ":(literal)"+name)
+	if err != nil || (!strings.HasPrefix(entry, "100644 blob ") && !strings.HasPrefix(entry, "100755 blob ")) {
+		if hasRuntime {
+			return Report{}, fmt.Errorf("proof.runtime: файл аудита должен быть обычным файлом в выпускаемом коммите")
+		}
+		return live, nil
+	}
+	blob, err := gitRaw(tree, "--no-replace-objects", "cat-file", "blob", "HEAD:"+name)
+	if err != nil {
+		return Report{}, err
+	}
+	committed, err := decodeReport(strings.NewReader(blob))
+	if !hasRuntime && !containsRuntimeProof(committed) {
+		return live, nil
+	}
+	if err != nil {
+		return Report{}, fmt.Errorf("proof.runtime: отчёт должен быть в выпускаемом коммите: %w", err)
+	}
+	liveBytes, err := os.ReadFile(livePath)
+	if err != nil {
+		return Report{}, err
+	}
+	if !bytes.Equal(liveBytes, []byte(blob)) {
+		return Report{}, fmt.Errorf("proof.runtime: рабочий отчёт отличается от отчёта в выпускаемом коммите")
+	}
+	return committed, nil
 }

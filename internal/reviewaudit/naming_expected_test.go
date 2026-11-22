@@ -108,7 +108,7 @@ func readLimitValue(item Item) int { return item.Value }
 			ObjectComparison: &NameObjectComparison{Expected: []string{"Value"}, Actual: "Value", ActualAt: location},
 			ResultEvidence:   &ResultEvidence{Word: &word, Returned: "item.Value", ReturnAt: location, Consumer: "caller", ConsumerAt: location}},
 	}}
-	assertTargetCheck(t, checkNameEvidence(source.root, source.reportPath, "", "", rule), "полный состав \"Limit Value\"")
+	assertTargetCheck(t, checkNameEvidence(source.root, source.reportPath, "", "", "", rule), "полный состав \"Limit Value\"")
 }
 
 func TestNameExpectationAllowsInputRoleAndActionOnlyName(t *testing.T) {

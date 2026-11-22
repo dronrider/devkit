@@ -105,19 +105,19 @@ type NameFileWrite struct {
 func checkNames(root, reportPath, output string, report Report) error {
 	for _, rule := range report.Rules {
 		if rule.ID == namingRule && len(rule.Objects) != 0 {
-			return checkNameEvidence(root, reportPath, output, report.BaseSHA, rule)
+			return checkNameEvidence(root, reportPath, output, report.BaseSHA, report.ID, rule)
 		}
 	}
 	return nil
 }
 
-func checkNameEvidence(root, reportPath, output, base string, rule Rule) error {
+func checkNameEvidence(root, reportPath, output, base, id string, rule Rule) error {
 	files, err := os.OpenRoot(root)
 	if err != nil {
 		return err
 	}
 	defer files.Close()
-	source := evidenceSource{root: root, reportPath: reportPath, output: output, base: base, files: files, cache: make(map[string][]string)}
+	source := evidenceSource{root: root, reportPath: reportPath, output: output, base: base, taskID: id, files: files, cache: make(map[string][]string)}
 	targets := make(map[string]Target, len(rule.Targets))
 	for _, target := range rule.Targets {
 		targets[target.Object] = target
@@ -171,6 +171,24 @@ func checkNameEvidence(root, reportPath, output, base string, rule Rule) error {
 }
 
 func checkNameEntry(e Evidence, declaration string, words []string, source *evidenceSource) error {
+	if pair := e.ObjectComparison; pair != nil && pair.Proof != nil && pair.Proof.Runtime != nil {
+		p, w := pair.Proof, e.WriteEvidence
+		if e.Check != "writes" || e.Result != "checked" || w == nil || e.ResultEvidence != nil {
+			return fmt.Errorf("proof.runtime: укажите checked для writes и заполните write_evidence")
+		}
+		if w.Callback != nil || w.File != nil || len(w.Calls) != 0 || p.Assignment != nil || p.Reference != nil ||
+			p.API != nil || p.CLI != nil || p.Effect != nil || p.Setting != nil || p.SQL != nil || len(p.Guards) != 0 ||
+			p.Type != "" || pair.EquivalentAt != "" || pair.EquivalentFlow != nil {
+			return fmt.Errorf("proof.runtime: используйте одну форму доказательства записи")
+		}
+		if err := checkNameWord(w.Word, words); err != nil {
+			return err
+		}
+		if err := checkExpectedObject(pair.Expected, *w.Word, words); err != nil {
+			return err
+		}
+		return checkNameRuntimeWrite(e, declaration, source)
+	}
 	if e.ResultEvidence != nil && e.ResultEvidence.Implementation != "" {
 		var err error
 		if e.Kind == "source" {
@@ -1042,6 +1060,7 @@ type evidenceSource struct {
 	reportPath string
 	output     string
 	base       string
+	taskID     string
 	taskText   string
 	files      *os.Root
 	cache      map[string][]string

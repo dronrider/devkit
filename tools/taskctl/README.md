@@ -1707,6 +1707,54 @@ taskctl review audit-repair <ID> --targets --request /путь/к/REQUEST.md
 `use_expression`. Межмодульный вызов связывается через обычный
 импорт Python из того же каталога.
 
+#### Доказательство записи из независимого прогона
+
+Список доверенных проверяющих хранится на машине, где идут ревью и слияние.
+Укажите открытый ключ проверяющего в `$HOME/.devkit/style-runtime.allowed_signers`
+в формате OpenSSH `principal ssh-ed25519 AAAA...`. Другой абсолютный путь
+можно задать через `DEVKIT_STYLE_RUN_ALLOWED_SIGNERS` в окружении `taskctl`
+и `shipctl`. Ключ подписи остаётся у проверяющего. Код под проверкой
+запускается без доступа к ключу и сокету SSH-агента.
+
+Проверяющий берёт полный SHA из `git rev-parse HEAD` в чистом чекауте.
+Он отдельно запускает сценарий записи и контрольный сценарий. В первом
+он наблюдает запись и последующее чтение того же значения у того же объекта.
+В контрольном сценарии чтение даёт другое значение, а целевая запись
+отсутствует. Для каждой операции указываются ссылка `at`, цитата `quote`,
+выражение `expression`, идентичность объекта `identity` и значение `value`.
+Идентичность должна совпадать между сценариями. Задайте одинаковый логический
+ID экземпляру в обоих запусках. Для файла укажите путь и ID записи.
+В `write.source_value` укажите выражение, переданное в запись в исходнике.
+
+Подготовьте `receipt.json`. Укажите `version: 1`, `task`, `commit`, `object`,
+`declaration`, `actual`, аргументы запуска `command`, наблюдения `write` и
+`read`. В `negative` укажите аргументы контрольного запуска `command`,
+`target_writes: 0` и контрольное наблюдение `read`.
+
+```sh
+ssh-keygen -Y sign -f "$reviewer_key" -n devkit-style-001 receipt.json
+taskctl review audit-template STYLE-001 --check writes --kind runtime \
+  --object 'example.go:13#save_state' > draft.json
+jq --rawfile payload receipt.json --rawfile signature receipt.json.sig \
+  --arg runner "$reviewer_principal" \
+  '.[0].object_comparison.proof.runtime = {$runner, $payload, $signature}' \
+  draft.json > evidence.json
+```
+
+Команда `jq --rawfile` сохраняет подписанное содержимое и подпись строками.
+Укажите в `reviewer_principal` имя из списка доверенных проверяющих. В `write_evidence` и
+`object_comparison` укажите те же объект, выражение значения и строки кода.
+Для каждого слова из `expected` сохраните его роль и факт из подписанного
+наблюдения. Передайте запись в `audit-record` и выполните `audit-progress`.
+
+При слиянии команда сверяет подписанный коммит с выпускаемым деревом.
+После прогона отдельным коммитом можно добавить или обновить файл аудита
+этой задачи. Все прочие изменения, включая запись нового вердикта в карточку,
+требуют прогона на обновлённом коммите. Обычные статические доказательства
+читаются с прежними настройками.
+
+#### Системные операции
+
 Для `os.Unsetenv` и `syscall.Kill` используйте
 `audit-template STYLE-001 --check writes --kind effect`. В
 `proof.expression` укажите полный вызов, а в `actual_at` и `write_at`

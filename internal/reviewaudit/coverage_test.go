@@ -121,7 +121,7 @@ func TestNamingRejectsNotApplicableForPromisedObject(t *testing.T) {
 				Targets:  []Target{{Object: tc.name, Symbol: tc.name, Location: location}},
 				Evidence: []Evidence{{Object: tc.name, Check: tc.check, Result: "not_applicable", Location: location}},
 			}
-			assertTargetCheck(t, checkNameEvidence(root, path, "", "", rule), tc.want)
+			assertTargetCheck(t, checkNameEvidence(root, path, "", "", "", rule), tc.want)
 		})
 	}
 }

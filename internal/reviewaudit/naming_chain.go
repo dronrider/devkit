@@ -206,7 +206,7 @@ func nameValueUnchangedWithin(block ast.Node, from, to ast.Node, value string) b
 		}
 		switch x := n.(type) {
 		case *ast.AssignStmt:
-			if slices.ContainsFunc(x.Lhs, func(v ast.Expr) bool { return nameIdentifier(v) == value }) {
+			if slices.ContainsFunc(x.Lhs, func(v ast.Expr) bool { return nameIdentifier(ast.Unparen(v)) == value }) {
 				valid = false
 			}
 		case *ast.ValueSpec:
@@ -214,15 +214,15 @@ func nameValueUnchangedWithin(block ast.Node, from, to ast.Node, value string) b
 				valid = false
 			}
 		case *ast.RangeStmt:
-			if nameIdentifier(x.Key) == value || nameIdentifier(x.Value) == value {
+			if nameIdentifier(ast.Unparen(x.Key)) == value || nameIdentifier(ast.Unparen(x.Value)) == value {
 				valid = false
 			}
 		case *ast.IncDecStmt:
-			if nameIdentifier(x.X) == value {
+			if nameIdentifier(ast.Unparen(x.X)) == value {
 				valid = false
 			}
 		case *ast.UnaryExpr:
-			if x.Op == token.AND && nameIdentifier(x.X) == value {
+			if x.Op == token.AND && nameIdentifier(ast.Unparen(x.X)) == value {
 				valid = false
 			}
 		}

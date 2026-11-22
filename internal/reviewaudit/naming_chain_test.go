@@ -130,24 +130,32 @@ func use(ready bool) {
 
 func TestNameChainParallelAssignmentUse(t *testing.T) {
 	for _, tc := range []struct {
-		name, between, want string
+		name, before, between, after, want string
 	}{
 		{name: "unchanged value"},
 		{name: "incremented value", between: "value++", want: "должен однозначно указывать использование"},
 		{name: "range overwrites value", between: "for _, value = range []int{7} {}", want: "должен однозначно указывать использование"},
 		{name: "return before use", between: "return", want: "должен однозначно указывать использование"},
+		{name: "parenthesized overwrite", between: "(value) = 7", want: "должен однозначно указывать использование"},
+		{name: "parenthesized address", between: "*(&(value)) = 7", want: "должен однозначно указывать использование"},
+		{name: "alias created before assignment", before: "var value int; saved := &value", between: "*saved = 7", want: "должен однозначно указывать использование"},
+		{name: "unconditional branch before use", between: "if true { return }", want: "должен однозначно указывать использование"},
+		{name: "goto skips use", between: "goto done", after: "done:", want: "должен однозначно указывать использование"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source, at := nameCurrentProofFixture(t, `package sample
 func readValue() int { value := 3; return value }
 func use() {
+ var observed int
+ `+tc.before+`
  code, value := 75, readValue()
  `+tc.between+`
- observed := value
+ observed = value
+ `+tc.after+`
  _, _ = code, observed
 }
 `)
-			entry := namingWire(t, `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"use","consumer_at":"@observed := value","flow":{"caller":"@func use","call_at":"@code, value :=","value":"value","use_kind":"assignment"}}}`, at)
+			entry := namingWire(t, `{"check":"result","result":"checked","object_comparison":{"expected":["Value"],"actual":"value","actual_at":"@func readValue"},"result_evidence":{"word":"Value","returned":"value","return_at":"@func readValue","consumer":"use","consumer_at":"@observed = value","flow":{"caller":"@func use","call_at":"@code, value :=","value":"value","use_kind":"assignment"}}}`, at)
 			assertTargetCheck(t, checkNameEntry(entry, at("func readValue"), identifierWords("readValue"), source), tc.want)
 		})
 	}

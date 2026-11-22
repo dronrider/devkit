@@ -1,0 +1,2820 @@
+{
+  "architecture": {
+    "goal": "Сохранить свежесть обкатки при последующей фиксации аудита текущей задачи, не пропуская изменение кода и защищая достоверность аудита.",
+    "decision": "Общий ворот Fresh отдельно допускает точный путь отчёта текущего ID наряду с прежними записями доски; сценарий сверяется по отпечатку до проверки путей.",
+    "boundaries": "internal/rehearsal проверяет свежесть отметки для shipctl и taskctl; shipctl отдельно проверяет содержимое и подписи аудита на выпускаемом SHA до и после ребейза. Git хранит путь отчёта и историю после отметки.",
+    "alternative": "Повторять обкатку после аудита нельзя без повторной записи карточки и рассогласования подписей; более широкое исключение всех JSON пропускало бы чужой отчёт и фикстуры.",
+    "justification": "Точный путь добавляет минимальное исключение для артефакта без изменений логики проверки аудита. С базы сохранены допускаемые записи доски и отказ при коде; ограничения Markdown-классификатора унаследованы.",
+    "result": "checked",
+    "evidence": [
+      "internal/rehearsal/rehearsal.go:37. сначала сверка отпечатка, затем HEAD и пути",
+      "internal/rehearsal/rehearsal.go:76. точное сравнение пути отчёта и прежний boardDoc",
+      "tools/shipctl/ops.go:1246. отдельный audit gate до обкатки",
+      "tools/shipctl/ops.go:1302. audit gate после ребейза",
+      "internal/rehearsal/rehearsal_test.go:123. свой отчёт и JSON-фикстура",
+      "internal/rehearsal/rehearsal_test.go:138. чужой отчёт отклоняется"
+    ]
+  },
+  "base_sha": "0fbed8ab0b1dd716f75e4687677fda140c34a59c",
+  "code_hash": "c7428167589c942631bd5dbd7a9e70451574983a4a2e8db74d7939ce95643553",
+  "head_sha": "301e27bcf3f4c11bedb953081603cbc6d4c855b2",
+  "id": "DK-1753",
+  "rules": [
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Ворот обкатки",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Общая операция Fresh отвечает за свежесть сценария и коммита; проверка путей остаётся внутри пакета rehearsal.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-001",
+      "reason": "Общая операция Fresh отвечает за свежесть сценария и коммита; проверка путей остаётся внутри пакета rehearsal.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Вызов shipctl",
+          "location": "tools/shipctl/advice.go:249",
+          "observation": "Шлюз слияния вызывает экспортированную Fresh с ID и содержимым карточки; сигнатура не меняется.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-002",
+      "reason": "Шлюз слияния вызывает экспортированную Fresh с ID и содержимым карточки; сигнатура не меняется.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Проверка свежести принадлежит общему доменному пакету; реализации не дублируются.",
+          "result": "checked",
+          "symbol": "Fresh",
+          "facts": {
+            "implementation": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:37",
+                "text": "Публичная сигнатура.",
+                "quote": "func Fresh(root, id, doc, again string) error {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/shipctl/advice.go:249",
+                "text": "Слияние вызывает общий пакет."
+              },
+              {
+                "location": "internal/trace/check.go:269",
+                "text": "Переход в Check вызывает тот же пакет."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "Проверка предметной отметки и отпечатка.",
+                "verdict": "domain"
+              }
+            ],
+            "change": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:59",
+                "text": "Передаёт ID в помощник."
+              }
+            ],
+            "placement": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:37",
+                "text": "Общий код обоих потребителей.",
+                "value": "internal/rehearsal"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "common-architecture:ARCH-003",
+      "reason": "Вызовы и расположение проверки сверены.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "objects": [
+        "Fresh"
+      ]
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-004",
+      "reason": "Новый слой, интерфейс или зависимость не добавлены; изменено условие существующего пакета.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются."
+    },
+    {
+      "applicability": "applicable",
+      "checks": [
+        "schema",
+        "output",
+        "consumer"
+      ],
+      "evidence": [
+        {
+          "object": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Сигнатура возвращает ошибку при недействительной отметке.",
+          "result": "checked",
+          "facts": {
+            "schema": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:37",
+                "text": "Сигнатура.",
+                "quote": "func Fresh(root, id, doc, again string) error {",
+                "case": "отчёт текущей задачи после отметки",
+                "forms": [
+                  "error"
+                ]
+              }
+            ]
+          },
+          "check": "schema"
+        },
+        {
+          "object": "Fresh",
+          "location": "internal/rehearsal/rehearsal_test.go:129",
+          "observation": "Отчёт этой задачи оставляет отметку свежей.",
+          "result": "checked",
+          "facts": {
+            "input": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:128",
+                "text": "После отметки коммитится отчёт этого ID.",
+                "case": "отчёт текущей задачи после отметки"
+              }
+            ],
+            "output": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:129",
+                "text": "Fresh возвращает nil.",
+                "case": "отчёт текущей задачи после отметки",
+                "forms": [
+                  "error"
+                ]
+              }
+            ]
+          },
+          "check": "output"
+        },
+        {
+          "object": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:59",
+          "observation": "Основание исключения задано задачей.",
+          "result": "checked",
+          "facts": {
+            "contract": [
+              {
+                "location": "task:9",
+                "text": "Требование задачи.",
+                "quote": "Отчёт аудита текущей задачи можно зафиксировать после обкатки.",
+                "case": "отчёт текущей задачи после отметки"
+              }
+            ]
+          },
+          "check": "consumer"
+        }
+      ],
+      "id": "common-architecture:ARCH-005",
+      "reason": "Контракт и наблюдение проверены на конкретном входе.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа.",
+      "objects": [
+        "Fresh"
+      ]
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Условие свежести",
+          "location": "internal/rehearsal/rehearsal.go:59",
+          "observation": "Оба потребителя используют общую реализацию; исключение точного пути проверяется в общем вороте.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-006",
+      "reason": "Оба потребителя используют общую реализацию; исключение точного пути проверяется в общем вороте.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Совместимость",
+          "location": "internal/rehearsal/rehearsal.go:91",
+          "observation": "Прежние boardDoc остаются допустимы, код и иной JSON не проходят. Добавлен только отчёт текущего ID.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-007",
+      "reason": "Прежние boardDoc остаются допустимы, код и иной JSON не проходят. Добавлен только отчёт текущего ID.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "История и отметка",
+          "location": "internal/rehearsal/rehearsal.go:77",
+          "observation": "Источником списка изменений служит история Git после mark; отпечаток сценария взят из отметки карточки.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-008",
+      "reason": "Источником списка изменений служит история Git после mark; отпечаток сценария взят из отметки карточки.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-009",
+      "reason": "Изменение не создаёт управляемые ресурсы; тестовые каталоги принадлежат t.TempDir.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-010",
+      "reason": "Код не выполняет запись общего состояния; читает историю Git как существующий ворот.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-011",
+      "reason": "Новой границы доверия или прав операции нет; ID поступает от существующего потребителя доски.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Отказ git",
+          "location": "internal/rehearsal/rehearsal.go:77",
+          "observation": "При ошибке log или show помощник возвращает false, Fresh возвращает отказ свежести. Исключение вне git сохранено из базы.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-architecture:ARCH-012",
+      "reason": "При ошибке log или show помощник возвращает false, Fresh возвращает отказ свежести. Исключение вне git сохранено из базы.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-013",
+      "reason": "Повторы внешних вызовов или новая очередь не добавлены; прежний gitLine выполняет чтение.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "internal/rehearsal/rehearsal.go:59",
+          "location": "internal/rehearsal/rehearsal.go:59",
+          "observation": "Ошибочный путь возвращает предметный отказ с повторной командой.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:59",
+                "text": "Fresh получает bool от проверки истории."
+              }
+            ],
+            "classification": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:62",
+                "text": "Устаревшая отметка получает диагностическую ошибку.",
+                "quote": "return fmt.Errorf(\"%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить %s\",",
+                "verdict": "forwarded"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:62",
+                "text": "Текст отказа.",
+                "quote": "return fmt.Errorf(\"%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить %s\","
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/shipctl/advice.go:249",
+                "text": "Слияние получает error.",
+                "value": "error"
+              }
+            ],
+            "cause": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:62",
+                "text": "Указаны mark и текущий HEAD.",
+                "verdict": "preserved"
+              }
+            ],
+            "message": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:62",
+                "text": "Сообщение формируется один раз.",
+                "verdict": "once"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:49",
+          "location": "internal/rehearsal/rehearsal.go:49",
+          "observation": "Изменённый отпечаток получает отказ, который называет сценарий и команду повторения.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "Сравнение отпечатка сценария."
+              }
+            ],
+            "classification": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:50",
+                "text": "При изменении отпечатка создаётся отказ сценария.",
+                "quote": "return fmt.Errorf(\"%s: сценарий менялся после обкатки (отпечаток отметки %s, у нынешнего текста %s): прогнать «taskctl rehearse %s» заново и повторить %s\",",
+                "verdict": "forwarded"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:50",
+                "text": "Сообщение об изменившемся сценарии.",
+                "quote": "return fmt.Errorf(\"%s: сценарий менялся после обкатки (отпечаток отметки %s, у нынешнего текста %s): прогнать «taskctl rehearse %s» заново и повторить %s\","
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/shipctl/advice.go:249",
+                "text": "Слияние получает error.",
+                "value": "error"
+              }
+            ],
+            "cause": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:50",
+                "text": "Ошибка содержит прошлый и текущий отпечатки.",
+                "verdict": "preserved"
+              }
+            ],
+            "message": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:50",
+                "text": "Причина формируется один раз.",
+                "verdict": "once"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "common-architecture:ARCH-014",
+      "reason": "Исходы и сообщение сверены на границе вызывающего.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "objects": [
+        "internal/rehearsal/rehearsal.go:59",
+        "internal/rehearsal/rehearsal.go:49"
+      ]
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "usage",
+        "order"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-015",
+      "reason": "Запросы к базе, SQL и транзакции не участвуют: ворот читает локальную историю через git (internal/rehearsal/rehearsal.go:77–85).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "with_consumer",
+        "without_consumer"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-016",
+      "reason": "Запросы к базе, SQL и транзакции не участвуют: ворот читает локальную историю через git (internal/rehearsal/rehearsal.go:77–85).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-017",
+      "reason": "Запросы к базе, SQL и транзакции не участвуют: ворот читает локальную историю через git (internal/rehearsal/rehearsal.go:77–85).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "calls",
+        "inputs",
+        "batch"
+      ],
+      "evidence": [],
+      "files": [
+        {
+          "path": "internal/rehearsal/rehearsal.go",
+          "reason": "Нет запросов к базе или вызовов драйвера; этот файл содержит проверку истории git, тесты либо описание."
+        },
+        {
+          "path": "internal/rehearsal/rehearsal_test.go",
+          "reason": "Нет запросов к базе или вызовов драйвера; этот файл содержит проверку истории git, тесты либо описание."
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "Нет запросов к базе или вызовов драйвера; этот файл содержит проверку истории git, тесты либо описание."
+        },
+        {
+          "path": "tools/shipctl/rehearsegate_test.go",
+          "reason": "Нет запросов к базе или вызовов драйвера; этот файл содержит проверку истории git, тесты либо описание."
+        }
+      ],
+      "id": "common-architecture:ARCH-018",
+      "reason": "Запросы к базе, SQL и транзакции не участвуют: ворот читает локальную историю через git (internal/rehearsal/rehearsal.go:77–85).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "boundaries",
+        "parameters",
+        "binding",
+        "proposed_binding"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-019",
+      "reason": "Запросы к базе, SQL и транзакции не участвуют: ворот читает локальную историю через git (internal/rehearsal/rehearsal.go:77–85).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-020",
+      "reason": "Ворот не объявлен legacy или deprecated; это действующий общий вызов taskctl и shipctl.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-021",
+      "reason": "Отключаемая замена старого механизма не добавлена, изменён действующий ворот.",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-022",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной."
+    },
+    {
+      "applicability": "not_applicable",
+      "checks": [
+        "behavior",
+        "basis"
+      ],
+      "evidence": [],
+      "id": "common-architecture:ARCH-023",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-024",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-025",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-026",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-027",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-architecture:ARCH-028",
+      "reason": "Изменение не добавляет и не меняет настройку: ID задачи передаётся непосредственно в существующий ворот (internal/rehearsal/rehearsal.go:37,76).",
+      "result": "checked",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность."
+    },
+    {
+      "applicability": "applicable",
+      "checks": [
+        "meaning",
+        "result",
+        "writes"
+      ],
+      "evidence": [
+        {
+          "object": "internal/rehearsal/rehearsal.go:37#Fresh",
+          "check": "meaning",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "symbol": "Fresh",
+          "observation": "Fresh проверяет свежесть отметки обкатки и возвращает ошибку при устаревшем сценарии или недопустимых коммитах. Имя Fresh называет проверяемое свойство в пакете rehearsal и соответствует операции.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Fresh",
+              "meaning": "свежая обкатка",
+              "fact": "функция сравнивает отпечаток сценария и коммиты с отметкой и возвращает ошибку при устаревании",
+              "location": "internal/rehearsal/rehearsal.go:43",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:37#Fresh",
+          "check": "result",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Функция возвращает только error как исход проверки; прикладного объекта ни сигнатура, ни имя не обещают.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:37#Fresh",
+          "check": "writes",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Проверяет отпечаток и историю git, изменений файлов и других данных не производит; имя записи не обещает.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince",
+          "check": "meaning",
+          "location": "internal/rehearsal/rehearsal.go:76",
+          "symbol": "onlyBoardRecordsSince",
+          "observation": "Возвращает признак того, что после отметки менялись лишь записи доски и собственный отчёт ревью; имя выражает условие и временную границу.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "only",
+              "meaning": "только",
+              "fact": "любой путь вне допустимых приводит к false",
+              "location": "internal/rehearsal/rehearsal.go:91",
+              "result": "checked"
+            },
+            {
+              "word": "Board",
+              "meaning": "доска",
+              "fact": "boardDoc допускает документы доски и задач. Точный путь позволяет принять отчёт текущей задачи",
+              "location": "internal/rehearsal/rehearsal.go:89",
+              "result": "checked"
+            },
+            {
+              "word": "Records",
+              "meaning": "записи",
+              "fact": "сравниваются пути изменённых документов и отчёта",
+              "location": "internal/rehearsal/rehearsal.go:90",
+              "result": "checked"
+            },
+            {
+              "word": "Since",
+              "meaning": "после отметки",
+              "fact": "диапазон git log начинается с mark до HEAD",
+              "location": "internal/rehearsal/rehearsal.go:77",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince",
+          "check": "writes",
+          "location": "internal/rehearsal/rehearsal.go:76",
+          "observation": "Читает историю Git и вычисляет bool; не меняет данные и не обещает запись.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince",
+          "check": "result",
+          "location": "internal/rehearsal/rehearsal.go:76",
+          "observation": "true означает отсутствие запрещённых путей в диапазоне после отметки; false означает ошибку git или чужой путь.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "only",
+              "Board",
+              "Records",
+              "Since"
+            ],
+            "actual": "true",
+            "actual_at": "internal/rehearsal/rehearsal.go:95",
+            "proof": {
+              "expression": "true",
+              "type": "bool",
+              "words": [
+                {
+                  "word": "only",
+                  "role": "condition",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal.go:95",
+                    "quote": "return true",
+                    "value": "true",
+                    "text": "Флаг подтверждает only после проверки диапазона и каждого пути."
+                  }
+                },
+                {
+                  "word": "Board",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal.go:95",
+                    "quote": "return true",
+                    "value": "true",
+                    "text": "Флаг подтверждает Board после проверки диапазона и каждого пути."
+                  }
+                },
+                {
+                  "word": "Records",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal.go:95",
+                    "quote": "return true",
+                    "value": "true",
+                    "text": "Флаг подтверждает Records после проверки диапазона и каждого пути."
+                  }
+                },
+                {
+                  "word": "Since",
+                  "role": "condition",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal.go:95",
+                    "quote": "return true",
+                    "value": "true",
+                    "text": "Флаг подтверждает Since после проверки диапазона и каждого пути."
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "Since",
+            "returned": "true, bool, когда среди путей после mark нет недопустимых; в остальных случаях false",
+            "return_at": "internal/rehearsal/rehearsal.go:95",
+            "consumer": "Fresh допускает отметку при true",
+            "consumer_at": "internal/rehearsal/rehearsal.go:59",
+            "flow": {
+              "caller": "internal/rehearsal/rehearsal.go:37",
+              "call_at": "internal/rehearsal/rehearsal.go:59",
+              "value": "",
+              "use_expression": "strings.HasPrefix(head, mark) || onlyBoardRecordsSince(root, id, mark)"
+            },
+            "facts": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:91",
+                "text": "Чужой путь останавливает проверку до true.",
+                "quote": "if p != report && !boardDoc(p) {"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:91",
+                "text": "Допускаются записи доски и точный отчёт этой задачи.",
+                "quote": "if p != report && !boardDoc(p) {"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:89",
+                "text": "Отчёт этой задачи это запись доски.",
+                "quote": "report := \"docs/tasks/\" + id + \".review-audit.json\""
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:77",
+                "text": "Диапазон начинается после mark.",
+                "quote": "out, err := gitLine(root, \"log\", \"--format=%H\", mark+\"..HEAD\")"
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+          "check": "meaning",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "symbol": "TestFreshSurvivesOwnReviewReport",
+          "observation": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            },
+            {
+              "word": "Fresh",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            },
+            {
+              "word": "Survives",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            },
+            {
+              "word": "Own",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            },
+            {
+              "word": "Review",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            },
+            {
+              "word": "Report",
+              "meaning": "Отметка остаётся свежей при отчёте текущего ID.",
+              "fact": "Проверяет, что Fresh допускает свой отчёт после отметки; затем проверяет отказ JSON-фикстуры.",
+              "location": "internal/rehearsal/rehearsal_test.go:129",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+          "check": "result",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Тест не возвращает прикладной результат; ошибка проявляется через testing.T.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport",
+          "check": "meaning",
+          "location": "internal/rehearsal/rehearsal_test.go:138",
+          "symbol": "TestFreshCatchesOtherReviewReport",
+          "observation": "Проверяет отказ Fresh при отчёте другой задачи.",
+          "result": "checked",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            },
+            {
+              "word": "Fresh",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            },
+            {
+              "word": "Catches",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            },
+            {
+              "word": "Other",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            },
+            {
+              "word": "Review",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            },
+            {
+              "word": "Report",
+              "meaning": "Отчёт XR-002 отвергается при проверке XR-001.",
+              "fact": "Проверяет отказ Fresh при отчёте другой задачи.",
+              "location": "internal/rehearsal/rehearsal_test.go:143",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport",
+          "check": "result",
+          "location": "internal/rehearsal/rehearsal_test.go:138",
+          "observation": "Тест не возвращает прикладной результат; ошибка проявляется через testing.T.",
+          "result": "not_applicable"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+          "check": "writes",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Тест сохраняет отчёт аудита временной задачи. Затем проверяет реакцию шлюза на этот отчёт.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Fresh",
+              "Survives",
+              "Own",
+              "Review",
+              "Report"
+            ],
+            "actual": "full",
+            "actual_at": "internal/rehearsal/rehearsal_test.go:94",
+            "proof": {
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Fresh",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Survives",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Own",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Review",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Report",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:128",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-001.review-audit.json\", \"{\\\"id\\\":\\\"XR-001\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Report",
+            "target": "full",
+            "value": "[]byte(body)",
+            "write_at": "internal/rehearsal/rehearsal_test.go:94",
+            "file": {
+              "role": "destination",
+              "path": "full"
+            },
+            "calls": [
+              {
+                "at": "internal/rehearsal/rehearsal_test.go:128",
+                "declaration": "internal/rehearsal/rehearsal_test.go:88",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "dir",
+                    "argument": "dir"
+                  },
+                  {
+                    "parameter": "rel",
+                    "argument": "\"docs/tasks/XR-001.review-audit.json\""
+                  },
+                  {
+                    "parameter": "body",
+                    "argument": "\"{\\\"id\\\":\\\"XR-001\\\"}\\n\""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport",
+          "check": "writes",
+          "location": "internal/rehearsal/rehearsal_test.go:138",
+          "observation": "Тест сохраняет отчёт аудита временной задачи. Затем проверяет реакцию шлюза на этот отчёт.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Fresh",
+              "Catches",
+              "Other",
+              "Review",
+              "Report"
+            ],
+            "actual": "full",
+            "actual_at": "internal/rehearsal/rehearsal_test.go:94",
+            "proof": {
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Fresh",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Catches",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Other",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Review",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Report",
+                  "role": "context",
+                  "fact": {
+                    "location": "internal/rehearsal/rehearsal_test.go:142",
+                    "quote": "commit(t, dir, \"docs/tasks/XR-002.review-audit.json\", \"{\\\"id\\\":\\\"XR-002\\\"}\\n\")",
+                    "value": "commit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Report",
+            "target": "full",
+            "value": "[]byte(body)",
+            "write_at": "internal/rehearsal/rehearsal_test.go:94",
+            "file": {
+              "role": "destination",
+              "path": "full"
+            },
+            "calls": [
+              {
+                "at": "internal/rehearsal/rehearsal_test.go:142",
+                "declaration": "internal/rehearsal/rehearsal_test.go:88",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "dir",
+                    "argument": "dir"
+                  },
+                  {
+                    "parameter": "rel",
+                    "argument": "\"docs/tasks/XR-002.review-audit.json\""
+                  },
+                  {
+                    "parameter": "body",
+                    "argument": "\"{\\\"id\\\":\\\"XR-002\\\"}\\n\""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal",
+          "check": "writes",
+          "location": "tools/shipctl/rehearsegate_test.go:50",
+          "observation": "Тест сохраняет отчёт аудита временной задачи. Затем проверяет реакцию шлюза на этот отчёт.",
+          "result": "checked",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Merge",
+              "Passes",
+              "After",
+              "Rehearsal"
+            ],
+            "actual": "path",
+            "actual_at": "tools/shipctl/ops_test.go:360",
+            "proof": {
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/rehearsegate_test.go:66",
+                    "quote": "report := writeReviewAudit(t, root, \"XR-003\", true, false)",
+                    "value": "writeReviewAudit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Merge",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/rehearsegate_test.go:66",
+                    "quote": "report := writeReviewAudit(t, root, \"XR-003\", true, false)",
+                    "value": "writeReviewAudit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Passes",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/rehearsegate_test.go:66",
+                    "quote": "report := writeReviewAudit(t, root, \"XR-003\", true, false)",
+                    "value": "writeReviewAudit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "After",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/rehearsegate_test.go:66",
+                    "quote": "report := writeReviewAudit(t, root, \"XR-003\", true, false)",
+                    "value": "writeReviewAudit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                },
+                {
+                  "word": "Rehearsal",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/shipctl/rehearsegate_test.go:66",
+                    "quote": "report := writeReviewAudit(t, root, \"XR-003\", true, false)",
+                    "value": "writeReviewAudit",
+                    "text": "Этот вызов записывает отчёт, который используется как вход сценария проверки."
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Rehearsal",
+            "target": "path",
+            "value": "append(data, '\\n')",
+            "write_at": "tools/shipctl/ops_test.go:360",
+            "file": {
+              "role": "destination",
+              "path": "path"
+            },
+            "calls": [
+              {
+                "at": "tools/shipctl/rehearsegate_test.go:66",
+                "declaration": "tools/shipctl/ops_test.go:317",
+                "bindings": [
+                  {
+                    "parameter": "t",
+                    "argument": "t"
+                  },
+                  {
+                    "parameter": "root",
+                    "argument": "root"
+                  },
+                  {
+                    "parameter": "id",
+                    "argument": "\"XR-003\""
+                  },
+                  {
+                    "parameter": "board",
+                    "argument": "true"
+                  },
+                  {
+                    "parameter": "commit",
+                    "argument": "false"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal",
+          "location": "tools/shipctl/rehearsegate_test.go:50",
+          "symbol": "TestMergePassesAfterRehearsal",
+          "check": "meaning",
+          "result": "checked",
+          "observation": "Проверяет ход от обкатки до слияния. При отсутствии отчёта шлюз отказывает. После отдельного коммита отчёта слияние проходит.",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "интеграционный тест",
+              "fact": "Подготавливает отдельный репозиторий.",
+              "location": "tools/shipctl/rehearsegate_test.go:30",
+              "result": "checked"
+            },
+            {
+              "word": "Merge",
+              "meaning": "слияние",
+              "fact": "Вызывает обычную операцию cmdMerge.",
+              "location": "tools/shipctl/rehearsegate_test.go:69",
+              "result": "checked"
+            },
+            {
+              "word": "Passes",
+              "meaning": "успешно проходит",
+              "fact": "После коммита отчёта проверяет отсутствие ошибки.",
+              "location": "tools/shipctl/rehearsegate_test.go:69",
+              "result": "checked"
+            },
+            {
+              "word": "After",
+              "meaning": "после фиксации отметки",
+              "fact": "Отчёт записывается и коммитится после коммита отметки.",
+              "location": "tools/shipctl/rehearsegate_test.go:66",
+              "result": "checked"
+            },
+            {
+              "word": "Rehearsal",
+              "meaning": "обкатка",
+              "fact": "В карточку вписывает отметку с SHA и отпечатком сценария.",
+              "location": "tools/shipctl/rehearsegate_test.go:59",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal",
+          "location": "tools/shipctl/rehearsegate_test.go:50",
+          "check": "result",
+          "result": "not_applicable",
+          "observation": "Результат теста сообщает testing.T."
+        }
+      ],
+      "files": [
+        {
+          "path": "internal/rehearsal/rehearsal.go",
+          "objects": [
+            "internal/rehearsal/rehearsal.go:37#Fresh",
+            "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince"
+          ]
+        },
+        {
+          "path": "internal/rehearsal/rehearsal_test.go",
+          "objects": [
+            "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+            "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport"
+          ]
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "Документ описывает существующие операции и не объявляет имён."
+        },
+        {
+          "path": "tools/shipctl/rehearsegate_test.go",
+          "objects": [
+            "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal"
+          ]
+        }
+      ],
+      "id": "common-style:STYLE-001",
+      "objects": [
+        "internal/rehearsal/rehearsal.go:37#Fresh",
+        "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince",
+        "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+        "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport",
+        "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal"
+      ],
+      "reason": "Проверены все пять объявлений, их смысл, результат и записи; README объявлений не содержит.",
+      "result": "checked",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "internal/rehearsal/rehearsal.go:37#Fresh",
+          "symbol": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:37"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:76#onlyBoardRecordsSince",
+          "symbol": "onlyBoardRecordsSince",
+          "location": "internal/rehearsal/rehearsal.go:76"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:123#TestFreshSurvivesOwnReviewReport",
+          "symbol": "TestFreshSurvivesOwnReviewReport",
+          "location": "internal/rehearsal/rehearsal_test.go:123"
+        },
+        {
+          "object": "internal/rehearsal/rehearsal_test.go:138#TestFreshCatchesOtherReviewReport",
+          "symbol": "TestFreshCatchesOtherReviewReport",
+          "location": "internal/rehearsal/rehearsal_test.go:138"
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:50#TestMergePassesAfterRehearsal",
+          "symbol": "TestMergePassesAfterRehearsal",
+          "location": "tools/shipctl/rehearsegate_test.go:50"
+        }
+      ],
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Свежесть",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Fresh читает отметку и историю, возвращает ошибку проверки и не изменяет данные.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-002",
+      "reason": "Fresh читает отметку и историю, возвращает ошибку проверки и не изменяет данные.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Отчёт ревью",
+          "location": "internal/rehearsal/rehearsal.go:89",
+          "observation": "Путь review-audit.json использует идентификатор той же задачи, что Fresh передаёт в помощник.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-003",
+      "reason": "Путь review-audit.json использует идентификатор той же задачи, что Fresh передаёт в помощник.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-style:STYLE-004",
+      "reason": "Новых единиц измерения и систем отсчёта нет: добавлены ID и путь.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Локальные имена",
+          "location": "internal/rehearsal/rehearsal.go:89",
+          "observation": "report описывает точный путь аудита; p используется как краткий локальный путь в цикле.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-005",
+      "reason": "report описывает точный путь аудита; p используется как краткий локальный путь в цикле.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "ID в вороте",
+          "location": "internal/rehearsal/rehearsal.go:89",
+          "observation": "Новый параметр id формирует путь отчёта конкретной задачи и влияет на исход проверки.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-006",
+      "reason": "Новый параметр id формирует путь отчёта конкретной задачи и влияет на исход проверки.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Результат проверки",
+          "location": "internal/rehearsal/rehearsal.go:59",
+          "observation": "Fresh использует bool помощника для решения, вернуть ли успех.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-007",
+      "reason": "Fresh использует bool помощника для решения, вернуть ли успех.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-style:STYLE-008",
+      "reason": "Параметры и результаты не удалялись; id добавлен к внутреннему вызову.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Проверка истории",
+          "location": "internal/rehearsal/rehearsal.go:76",
+          "observation": "Помощник читает коммиты и пути, проверяет каждый и возвращает признак допустимости; посторонних изменений нет.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-009",
+      "reason": "Помощник читает коммиты и пути, проверяет каждый и возвращает признак допустимости; посторонних изменений нет.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Путь отчёта",
+          "location": "internal/rehearsal/rehearsal.go:89",
+          "observation": "Путь вынесен в report и явно построен из ID, каталог и расширение видны.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-010",
+      "reason": "Путь вынесен в report и явно построен из ID, каталог и расширение видны.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:37",
+          "observation": "Сначала отпечаток затем история; отказ каждого шага останавливает проверку.",
+          "result": "checked",
+          "facts": {
+            "entry": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:37",
+                "text": "Вход ворот."
+              }
+            ],
+            "condition": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "Проверка отпечатка до чтения git."
+              }
+            ],
+            "step": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "Расхождение сценария возвращает ошибку.",
+                "failure": true
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:59",
+                "text": "Недопустимая история приводит к отказу.",
+                "failure": true
+              }
+            ],
+            "use": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:50",
+                "text": "Расхождение использовано для ошибки.",
+                "related": "internal/rehearsal/rehearsal.go:49",
+                "value": "error",
+                "verdict": "used"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:60",
+                "text": "Допустимая история возвращает nil.",
+                "related": "internal/rehearsal/rehearsal.go:59",
+                "value": "nil",
+                "verdict": "used"
+              }
+            ],
+            "outcome": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:60",
+                "text": "Успех при совпадении mark или допустимых путях."
+              }
+            ],
+            "control": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:59",
+                "text": "Условие проверяется до отказа."
+              }
+            ],
+            "return_value": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:60",
+                "text": "Успех.",
+                "value": "nil"
+              }
+            ],
+            "return_error": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:62",
+                "text": "Устаревший mark.",
+                "value": "error"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "common-style:STYLE-011",
+      "reason": "Последовательность и отказы видны в коде.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему.",
+      "objects": [
+        "Fresh"
+      ]
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Форма Go",
+          "location": "internal/rehearsal/rehearsal.go:91",
+          "observation": "Условие исключения записано через обычное сравнение и вызов функции; исходники проходят gofmt.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-012",
+      "reason": "Условие исключения записано через обычное сравнение и вызов функции; исходники проходят gofmt.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Отказ свежести",
+          "location": "internal/rehearsal/rehearsal.go:62",
+          "observation": "Недопустимый путь даёт отказ с ID и командами повторения; этот текст остался от базы.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-013",
+      "reason": "Недопустимый путь даёт отказ с ID и командами повторения; этот текст остался от базы.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Диагностика",
+          "location": "internal/rehearsal/rehearsal.go:62",
+          "observation": "Отказ называет коммит отметки и HEAD, повторный прогон и действие, которое надо повторить.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-style:STYLE-014",
+      "reason": "Отказ называет коммит отметки и HEAD, повторный прогон и действие, которое надо повторить.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "internal/rehearsal/rehearsal.go:32",
+          "location": "internal/rehearsal/rehearsal.go:42",
+          "observation": "Объясняет границу общей проверки и работу вне Git.",
+          "result": "checked",
+          "comment_quote": "Fresh это тот же ворот со сверкой свежести: отпечаток обкатанного сценария и коммит прогона. Стоит он там, где задача переходит рубеж впервые, на слиянии и на переводе в Check. Вне git сверять не с чем, и ворот довольствуется самой отметкой: доска живёт и в корп-контуре, где код лежит отдельно от неё.",
+          "facts": {
+            "claim": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:42",
+                "text": "считывается отметка",
+                "quote": "Fresh это тот же ворот со сверкой свежести: отпечаток обкатанного сценария и коммит прогона.",
+                "verdict": "checked",
+                "value": "if !ok {"
+              },
+              {
+                "location": "tools/shipctl/advice.go:249",
+                "text": "слияние вызывает Fresh",
+                "quote": "Стоит он там, где задача переходит рубеж впервые, на слиянии и на переводе в Check.",
+                "verdict": "checked",
+                "value": "return rehearsal.Fresh(root, id, doc, \"слияние\")"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:56",
+                "text": "недоступность git сохраняет отметку",
+                "quote": "Вне git сверять не с чем, и ворот довольствуется самой отметкой: доска живёт и в корп-контуре, где код лежит отдельно от неё.",
+                "verdict": "checked",
+                "value": "if err != nil || head == \"\" {"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:32",
+                "text": "Объясняет границу общей проверки и работу вне Git."
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:45",
+          "location": "internal/rehearsal/rehearsal.go:49",
+          "observation": "Объясняет необходимость отпечатка при неизменном имени файла.",
+          "result": "checked",
+          "comment_quote": "Отпечаток сценария сверяется первым. Правка шагов лежит в том же файле задачи, что и запись прогона, и по именам файлов эти коммиты неразличимы: подменённый шаг проезжал бы под отметкой прогона, который его не видел.",
+          "facts": {
+            "claim": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "отпечаток сверяется до истории",
+                "quote": "Отпечаток сценария сверяется первым.",
+                "verdict": "checked",
+                "value": "if now := taskform.ScenarioPrint(doc); now != print {"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:49",
+                "text": "защищает шаги, общие с записью обкатки",
+                "quote": "Правка шагов лежит в том же файле задачи, что и запись прогона, и по именам файлов эти коммиты неразличимы: подменённый шаг проезжал бы под отметкой прогона, который его не видел.",
+                "verdict": "checked",
+                "value": "if now := taskform.ScenarioPrint(doc); now != print {"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:45",
+                "text": "Объясняет необходимость отпечатка при неизменном имени файла."
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:53",
+          "location": "internal/rehearsal/rehearsal.go:42",
+          "observation": "Объясняет риск изменения кода после отметки.",
+          "result": "checked",
+          "comment_quote": "Отметка привязана к коммиту, на котором шёл прогон. После обкатки ветка уезжает вперёд, и вчерашняя отметка ручалась бы за сегодняшний код.",
+          "facts": {
+            "claim": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:42",
+                "text": "mark берётся из отметки",
+                "quote": "Отметка привязана к коммиту, на котором шёл прогон.",
+                "verdict": "checked",
+                "value": "if !ok {"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:59",
+                "text": "HEAD сравнивается с mark",
+                "quote": "После обкатки ветка уезжает вперёд, и вчерашняя отметка ручалась бы за сегодняшний код.",
+                "verdict": "checked",
+                "value": "if strings.HasPrefix(head, mark) || onlyBoardRecordsSince(root, id, mark) {"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:53",
+                "text": "Объясняет риск изменения кода после отметки."
+              }
+            ]
+          }
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:73",
+          "location": "internal/rehearsal/rehearsal.go:91",
+          "observation": "Объясняет, почему отчёт допускается и где он проверяется отдельно.",
+          "result": "checked",
+          "comment_quote": "onlyBoardRecordsSince допускает после обкатки записи доски и отчёт о ревью этой задачи. Подписанные доказательства появляются после записи обкатки и проходят отдельную проверку. Остальные пути классифицирует boardDoc.",
+          "facts": {
+            "claim": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:91",
+                "text": "разрешён точный отчёт и boardDoc",
+                "quote": "onlyBoardRecordsSince допускает после обкатки записи доски и отчёт о ревью этой задачи.",
+                "verdict": "checked",
+                "value": "if p != report && !boardDoc(p) {"
+              },
+              {
+                "location": "tools/shipctl/ops.go:1246",
+                "text": "отдельный audit gate обязателен",
+                "quote": "Подписанные доказательства появляются после записи обкатки и проходят отдельную проверку.",
+                "verdict": "checked",
+                "value": "if err := reviewAuditGate(reviewRoot, p.ID, true, \"\"); err != nil {"
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:91",
+                "text": "остальные пути передаются в boardDoc",
+                "quote": "Остальные пути классифицирует boardDoc.",
+                "verdict": "checked",
+                "value": "if p != report && !boardDoc(p) {"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:73",
+                "text": "Объясняет, почему отчёт допускается и где он проверяется отдельно."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:48",
+          "location": "tools/shipctl/rehearsegate_test.go:68",
+          "observation": "Указывает порядок независимых ворот, который должен сохранить стыковой тест.",
+          "result": "checked",
+          "comment_quote": "TestMergePassesAfterRehearsal проверяет слияние с отдельным коммитом аудита после обкатки. Саму запись обкатки шлюз аудита считает недостаточной.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:68",
+                "text": "отчёт коммитится после отметки и запускается слияние",
+                "quote": "TestMergePassesAfterRehearsal проверяет слияние с отдельным коммитом аудита после обкатки.",
+                "verdict": "checked",
+                "value": "gitT(t, root, \"commit\", \"-qm\", \"docs(tasks): XR-003 отчёт аудита\")"
+              },
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:64",
+                "text": "отсутствующий отчёт останавливает слияние",
+                "quote": "Саму запись обкатки шлюз аудита считает недостаточной.",
+                "verdict": "checked",
+                "value": "t.Fatalf(\"отсутствующий отчёт должен остановить слияние: %v\", err)"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:48",
+                "text": "Указывает порядок независимых ворот, который должен сохранить стыковой тест."
+              }
+            ]
+          }
+        }
+      ],
+      "files": [
+        {
+          "path": "internal/rehearsal/rehearsal.go",
+          "objects": [
+            "internal/rehearsal/rehearsal.go:32",
+            "internal/rehearsal/rehearsal.go:45",
+            "internal/rehearsal/rehearsal.go:53",
+            "internal/rehearsal/rehearsal.go:73"
+          ]
+        },
+        {
+          "path": "internal/rehearsal/rehearsal_test.go",
+          "reason": "В изменённом фрагменте файла нет комментариев исходного кода."
+        },
+        {
+          "path": "tools/shipctl/README.md",
+          "reason": "В изменённом фрагменте файла нет комментариев исходного кода."
+        },
+        {
+          "path": "tools/shipctl/rehearsegate_test.go",
+          "objects": [
+            "tools/shipctl/rehearsegate_test.go:48"
+          ]
+        }
+      ],
+      "id": "common-style:STYLE-015",
+      "objects": [
+        "internal/rehearsal/rehearsal.go:32",
+        "internal/rehearsal/rehearsal.go:45",
+        "internal/rehearsal/rehearsal.go:53",
+        "internal/rehearsal/rehearsal.go:73",
+        "tools/shipctl/rehearsegate_test.go:48"
+      ],
+      "reason": "Каждое утверждение сопоставлено с реализацией и ролью комментария.",
+      "result": "checked",
+      "source": "common-style",
+      "targets": [
+        {
+          "object": "internal/rehearsal/rehearsal.go:32",
+          "symbol": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:32",
+          "comment_fragments": [
+            "Fresh это тот же ворот со сверкой свежести: отпечаток обкатанного сценария и коммит прогона.",
+            "Стоит он там, где задача переходит рубеж впервые, на слиянии и на переводе в Check.",
+            "Вне git сверять не с чем, и ворот довольствуется самой отметкой: доска живёт и в корп-контуре, где код лежит отдельно от неё."
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:45",
+          "symbol": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:45",
+          "comment_fragments": [
+            "Отпечаток сценария сверяется первым.",
+            "Правка шагов лежит в том же файле задачи, что и запись прогона, и по именам файлов эти коммиты неразличимы: подменённый шаг проезжал бы под отметкой прогона, который его не видел."
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:53",
+          "symbol": "Fresh",
+          "location": "internal/rehearsal/rehearsal.go:53",
+          "comment_fragments": [
+            "Отметка привязана к коммиту, на котором шёл прогон.",
+            "После обкатки ветка уезжает вперёд, и вчерашняя отметка ручалась бы за сегодняшний код."
+          ]
+        },
+        {
+          "object": "internal/rehearsal/rehearsal.go:73",
+          "symbol": "onlyBoardRecordsSince",
+          "location": "internal/rehearsal/rehearsal.go:73",
+          "comment_fragments": [
+            "onlyBoardRecordsSince допускает после обкатки записи доски и отчёт о ревью этой задачи.",
+            "Подписанные доказательства появляются после записи обкатки и проходят отдельную проверку.",
+            "Остальные пути классифицирует boardDoc."
+          ]
+        },
+        {
+          "object": "tools/shipctl/rehearsegate_test.go:48",
+          "symbol": "TestMergePassesAfterRehearsal",
+          "location": "tools/shipctl/rehearsegate_test.go:48",
+          "comment_fragments": [
+            "TestMergePassesAfterRehearsal проверяет слияние с отдельным коммитом аудита после обкатки.",
+            "Саму запись обкатки шлюз аудита считает недостаточной."
+          ]
+        }
+      ],
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Допустимый отчёт",
+          "location": "tools/shipctl/README.md:858",
+          "observation": "Описание соответствует точному сравнению пути.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "tools/shipctl/README.md:858",
+                "text": "Документирует отчёт текущего ID.",
+                "quote": "Отчёт `docs/tasks/<ID>.review-audit.json` этой задачи можно зафиксировать"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "internal/rehearsal/rehearsal.go:89",
+                "text": "Путь формируется по ID.",
+                "quote": "report := \"docs/tasks/\" + id + \".review-audit.json\""
+              },
+              {
+                "location": "internal/rehearsal/rehearsal.go:91",
+                "text": "Только этот путь принят наряду с boardDoc.",
+                "quote": "if p != report && !boardDoc(p) {"
+              }
+            ]
+          }
+        },
+        {
+          "object": "Отдельный аудит",
+          "location": "tools/shipctl/README.md:859",
+          "observation": "Merge вызывает независимый audit gate.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "tools/shipctl/README.md:859",
+                "text": "Описание отдельного шлюза.",
+                "quote": "после обкатки. Шлюз слияния отдельно проверяет актуальность отчёта"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "tools/shipctl/ops.go:1246",
+                "text": "Отдельная проверка до слияния.",
+                "quote": "if err := reviewAuditGate(reviewRoot, p.ID, true, \"\"); err != nil {"
+              }
+            ]
+          }
+        }
+      ],
+      "id": "common-style:STYLE-016",
+      "reason": "Описание проверено по коду и потребителю.",
+      "result": "checked",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях.",
+      "objects": [
+        "Допустимый отчёт",
+        "Отдельный аудит"
+      ]
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Покрытие поведения",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Тесты включают собственный отчёт, чужой отчёт и JSON-фикстуру; стык слияния дополнен отдельным сценарием.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-tests:TEST-001",
+      "reason": "Тесты включают собственный отчёт, чужой отчёт и JSON-фикстуру; стык слияния дополнен отдельным сценарием.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Красная база",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Regcheck воспроизвёл отказ теста на базе и успех на исправлении: /private/tmp/dk1746-audit-rehearsal-regcheck.log; второй прогон стыка /private/tmp/dk1753-integration-regcheck.log.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-tests:TEST-002",
+      "reason": "Regcheck воспроизвёл отказ теста на базе и успех на исправлении: /private/tmp/dk1746-audit-rehearsal-regcheck.log; второй прогон стыка /private/tmp/dk1753-integration-regcheck.log.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Логика и стык",
+          "location": "tools/shipctl/rehearsegate_test.go:50",
+          "observation": "Fresh проверяется локальными Git-фикстурами; cmdMerge отдельно проверяет отказ отсутствующего аудита и успех после коммита отчёта.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-tests:TEST-003",
+      "reason": "Fresh проверяется локальными Git-фикстурами; cmdMerge отдельно проверяет отказ отсутствующего аудита и успех после коммита отчёта.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Свой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "компонент: настоящий временный Git",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "Объявление теста."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:128",
+                "text": "компонент: настоящий временный Git"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "go test ./internal/rehearsal -run TestFresh выбирает."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "go test ./internal/rehearsal -run TestFresh проверяет компонентный тест с реальным Git."
+              }
+            ]
+          }
+        },
+        {
+          "object": "Чужой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:138",
+          "observation": "компонент: настоящий временный Git",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "Объявление теста."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:142",
+                "text": "компонент: настоящий временный Git"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "go test ./internal/rehearsal -run TestFresh выбирает."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "go test ./internal/rehearsal -run TestFresh проверяет компонентный тест с реальным Git."
+              }
+            ]
+          }
+        },
+        {
+          "object": "Слияние",
+          "location": "tools/shipctl/rehearsegate_test.go:50",
+          "observation": "интеграция: реальный Git и cmdMerge",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "Объявление теста."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:63",
+                "text": "интеграция: реальный Git и cmdMerge"
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "go test ./internal/rehearsal -run TestFresh не выбирает."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "go test ./tools/shipctl -run TestMergePassesAfterRehearsal выбирает."
+              }
+            ]
+          }
+        }
+      ],
+      "id": "common-tests:TEST-004",
+      "reason": "Проверены реальные зависимости и селекторы.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск.",
+      "objects": [
+        "Свой отчёт",
+        "Чужой отчёт",
+        "Слияние"
+      ]
+    },
+    {
+      "applicability": "applicable",
+      "checks": [
+        "strength",
+        "overlap"
+      ],
+      "evidence": [
+        {
+          "object": "Свой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:129",
+          "observation": "Свой отчёт после отметки пропускается; стык дополнительно проверяет отдельный audit gate.",
+          "result": "checked",
+          "facts": {
+            "assertion": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:129",
+                "text": "Проверка результата.",
+                "quote": "if err := Fresh(dir, \"XR-001\", d+stamp(d, head), \"слияние\"); err != nil {"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "Fresh вызывается с настоящей историей временного Git."
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:129",
+                "text": "Инвертированный результат ворот завершает тест ошибкой."
+              }
+            ]
+          },
+          "check": "strength"
+        },
+        {
+          "object": "Свой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:129",
+          "observation": "Свой отчёт после отметки пропускается; стык дополнительно проверяет отдельный audit gate.",
+          "result": "checked",
+          "kind": "cross_level",
+          "facts": {
+            "first": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:129",
+                "text": "Проверка первого результата.",
+                "quote": "if err := Fresh(dir, \"XR-001\", d+stamp(d, head), \"слияние\"); err != nil {",
+                "related": "internal/rehearsal/rehearsal_test.go:123"
+              }
+            ],
+            "second": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:69",
+                "text": "Проверка второго результата.",
+                "quote": "if _, err := cmdMerge(root, params); err != nil {",
+                "related": "tools/shipctl/rehearsegate_test.go:50"
+              }
+            ],
+            "first_input": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "Отчёт после отметки."
+              }
+            ],
+            "second_input": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "Полный путь слияния."
+              }
+            ],
+            "first_command": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "go test ./internal/rehearsal -run TestFresh"
+              }
+            ],
+            "second_command": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "go test ./tools/shipctl -run TestMergePassesAfterRehearsal"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:123",
+                "text": "Настоящий git.",
+                "value": "component"
+              }
+            ],
+            "second_level": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "Зависимости стыка.",
+                "value": "integration"
+              }
+            ],
+            "common_failure": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:129",
+                "text": "Ошибочный исход Fresh на изменениях после отметки."
+              }
+            ],
+            "guarantees": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:69",
+                "text": "Свой отчёт после отметки пропускается; стык дополнительно проверяет отдельный audit gate."
+              }
+            ]
+          },
+          "check": "overlap"
+        },
+        {
+          "object": "Чужой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:143",
+          "observation": "Чужой отчёт и изменение кода имеют разные входы и оба должны отклоняться.",
+          "result": "checked",
+          "facts": {
+            "assertion": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:143",
+                "text": "Проверка результата.",
+                "quote": "if err := Fresh(dir, \"XR-001\", d+stamp(d, head), \"слияние\"); err == nil {"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "Fresh вызывается с настоящей историей временного Git."
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:143",
+                "text": "Инвертированный результат ворот завершает тест ошибкой."
+              }
+            ]
+          },
+          "check": "strength"
+        },
+        {
+          "object": "Чужой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:143",
+          "observation": "Чужой отчёт и изменение кода имеют разные входы и оба должны отклоняться.",
+          "result": "checked",
+          "kind": "pair",
+          "facts": {
+            "first": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:143",
+                "text": "Проверка первого результата.",
+                "quote": "if err := Fresh(dir, \"XR-001\", d+stamp(d, head), \"слияние\"); err == nil {",
+                "related": "internal/rehearsal/rehearsal_test.go:138"
+              }
+            ],
+            "second": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:155",
+                "text": "Проверка второго результата.",
+                "quote": "err := Fresh(dir, \"XR-001\", d+stamp(d, head), \"слияние\")",
+                "related": "internal/rehearsal/rehearsal_test.go:150"
+              }
+            ],
+            "first_input": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "Отчёт другой задачи после отметки."
+              }
+            ],
+            "second_input": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:150",
+                "text": "Изменение кода после отметки."
+              }
+            ],
+            "first_command": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "go test ./internal/rehearsal -run TestFresh"
+              }
+            ],
+            "second_command": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:150",
+                "text": "go test ./internal/rehearsal -run TestFresh"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:138",
+                "text": "Настоящий git.",
+                "value": "component"
+              }
+            ],
+            "second_level": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:150",
+                "text": "Зависимости стыка.",
+                "value": "component"
+              }
+            ],
+            "common_failure": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:143",
+                "text": "Ошибочный исход Fresh на изменениях после отметки."
+              }
+            ],
+            "guarantees": [
+              {
+                "location": "internal/rehearsal/rehearsal_test.go:155",
+                "text": "Чужой отчёт и изменение кода имеют разные входы и оба должны отклоняться."
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/shipctl/rehearsegate_test.go:50",
+                "text": "Интеграционная проверка слияния не проверяет чужой отчёт.",
+                "value": "integration"
+              }
+            ]
+          },
+          "check": "overlap"
+        }
+      ],
+      "id": "common-tests:TEST-005",
+      "reason": "Сопоставлены проверки результата и уровни.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию.",
+      "objects": [
+        "Свой отчёт",
+        "Чужой отчёт"
+      ]
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Чужой отчёт",
+          "location": "internal/rehearsal/rehearsal_test.go:143",
+          "observation": "Расширение допусков на чужой отчёт вызвало падение теста на строке 144; /private/tmp/dk1753-mutation-foreign.log.",
+          "result": "checked"
+        },
+        {
+          "object": "Отдельный audit gate",
+          "location": "tools/shipctl/rehearsegate_test.go:63",
+          "observation": "Снятие обоих вызовов audit gate вызвало падение на строке 64: ошибка отсутствующего отчёта стала nil; /private/tmp/dk1753-mutation-audit.log.",
+          "result": "checked"
+        }
+      ],
+      "id": "common-tests:TEST-006",
+      "reason": "Две мутации изменённого поведения выполнены на одноразовых копиях; тесты обе обнаружили.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-tests:TEST-007",
+      "reason": "Изменённая проверка не опирается на часы, отмену или конкурентную последовательность.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-tests:TEST-008",
+      "reason": "Исключения слоя из тестирования не заявляются; добавлены тест логики и стыка.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "common-tests:TEST-009",
+      "reason": "Изменение не меняет TestMain или общий setup и не добавляет фикстуры в боевой каталог.",
+      "result": "checked",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "reason": "Заголовок группирует проектные правила; отдельного проверяемого условия не содержит.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "reason": "Общий архитектурный стандарт проверяется в строках common-architecture отчёта.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-927d754447cbe51a",
+      "reason": "Заголовок группирует проектные правила; отдельного проверяемого условия не содержит.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Границы"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "reason": "Новых файлов и каталогов нет; изменение остаётся в существующем Go-пакете internal/rehearsal и shipctl.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-3795ec1243732caa",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-feefa59680bc01df",
+      "reason": "Заголовок группирует проектные правила; отдельного проверяемого условия не содержит.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Инварианты"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "reason": "Пункт относится к содержимому и работе дашборда; изменены только ворот обкатки и shipctl.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-746f66466c253955",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "reason": "Пункт относится к содержимому и работе дашборда; изменены только ворот обкатки и shipctl.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "reason": "Пункт относится к содержимому и работе дашборда; изменены только ворот обкатки и shipctl.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-c8be7a833c89c0e8",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-26e0e04a23f2e549",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Ход помечается занятым до отправки реплики. Уведомление о его\n  завершении снимает занятость. Смерть процесса записывается в ленту."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-3380b0e14dbf5e5c",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. После 30 минут без\n  событий текущего хода дашборд запрашивает состояние нити через\n  `thread/read`. Если Codex подтвердил завершение этого хода, дашборд\n  снимает занятость и принимает исход из ответа. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-9c814a6998496b37",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "reason": "Заголовок группирует проектные правила; отдельного проверяемого условия не содержит.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "reason": "Новых файлов и каталогов нет; изменение остаётся в существующем Go-пакете internal/rehearsal и shipctl.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-414cfee6ece27659",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-2896dde8774e1968",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "reason": "Изменены только общий ворот обкатки, его тесты и руководство shipctl; этот пункт относится к дашборду или восстановлению запуска, которые не затронуты.",
+      "result": "checked",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления)."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-8bfebc193cc45790",
+      "reason": "Заголовок группирует правила; самостоятельного условия не содержит.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "# Стиль devkit"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-2f21840e1463a01e",
+      "reason": "Общий стандарт стиля проверяется по строкам common-style этого отчёта.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-9c4dd47968139c01",
+      "reason": "Заголовок группирует правила; самостоятельного условия не содержит.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Ошибки и отказы"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-88e50c4f780c246c",
+      "reason": "Пункт относится к хукам, дашборду или созданию нового инструмента; эти области не меняются.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-2212761035e243fb",
+      "reason": "Пункт относится к хукам, дашборду или созданию нового инструмента; эти области не меняются.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-41b95475184c2aef",
+      "reason": "Заголовок группирует правила; самостоятельного условия не содержит.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Раскладка тестов"
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Тесты ворот",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Тесты лежат рядом с кодом: internal/rehearsal/rehearsal_test.go и tools/shipctl/rehearsegate_test.go.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-519646d7d9f951be",
+      "reason": "Тесты лежат рядом с кодом: internal/rehearsal/rehearsal_test.go и tools/shipctl/rehearsegate_test.go.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Тесты ворот",
+          "location": "internal/rehearsal/rehearsal_test.go:74",
+          "observation": "Репозитории тестов создаются в t.TempDir: internal/rehearsal/rehearsal_test.go:74 и tools/shipctl тестовый setup.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-9573ef33db114342",
+      "reason": "Репозитории тестов создаются в t.TempDir: internal/rehearsal/rehearsal_test.go:74 и tools/shipctl тестовый setup.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает."
+    },
+    {
+      "applicability": "applicable",
+      "evidence": [
+        {
+          "object": "Тесты ворот",
+          "location": "internal/rehearsal/rehearsal_test.go:123",
+          "observation": "Регрессионные прогоны на базе и исправлении сохранены в /private/tmp/dk1746-audit-rehearsal-regcheck.log и /private/tmp/dk1753-integration-regcheck.log.",
+          "result": "checked"
+        }
+      ],
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "reason": "Регрессионные прогоны на базе и исправлении сохранены в /private/tmp/dk1746-audit-rehearsal-regcheck.log и /private/tmp/dk1753-integration-regcheck.log.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "reason": "Пункт относится к хукам, дашборду или созданию нового инструмента; эти области не меняются.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-b03ef741121d44a0",
+      "reason": "Пункт относится к хукам, дашборду или созданию нового инструмента; эти области не меняются.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-a969903cd6ddc137",
+      "reason": "Заголовок группирует правила; самостоятельного условия не содержит.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "## Имена"
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-c785ad31965daade",
+      "reason": "Пункт относится к хукам, дашборду или созданию нового инструмента; эти области не меняются.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`."
+    },
+    {
+      "applicability": "not_applicable",
+      "evidence": [],
+      "id": "project-style:block-b3298c360a523f07",
+      "reason": "Имена и тексты разобраны в common-style и по целям STYLE-001.",
+      "result": "checked",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется."
+    }
+  ],
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "db5798bb65fe4c35c2867b0f4d81b49d087ae87c35ac85f20483c63004f43956"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "2096a3b68b867b7f40f6e76610a2054c95637b333dcd6970591b6f4a57eb8ca1"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "dd65fbb7edf8754ffaafded6d5d7c896effabc130db5bdf3de939a9f608a82da"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "41436a656891bc3205ff207fd3806002a51c1fac4a7375c36e766f127de21d0d"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "task_hash": "98123f92c42c5d6102f77feb304f8ca5453daf5ee4cfcaf0f713c02b1942da6b",
+  "version": 1
+}

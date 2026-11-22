@@ -1080,8 +1080,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "ошибка:", rerr)
 			os.Exit(code)
 		}
-		// Отказ занятого замка уходит в stderr: тик читает его кодом и
-		// молчит, а stdout остаётся тем, кто голову поднял.
+		// При CodeBusy причина идёт в stderr. Тик откладывает подъём
+		// и обрабатывает этот случай по коду выхода.
 		if code == taskhead.CodeBusy {
 			fmt.Fprint(os.Stderr, out)
 		} else {

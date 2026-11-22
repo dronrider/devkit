@@ -838,3 +838,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1749 | Аудит учитывает присваивания внутри synctest | bug | P2 | 2026-11-21 | [tasks/archive/2026/DK-1749.md](tasks/archive/2026/DK-1749.md) |
 | DK-1750 | shipctl check-run запускает отдельную приёмку в Codex | bug | P1 | 2026-11-21 | [tasks/archive/2026/DK-1750.md](tasks/archive/2026/DK-1750.md) |
 | DK-1751 | taskctl отклоняет доказательства операций Go и Python | bug | P1 | 2026-11-22 | [tasks/archive/2026/DK-1751.md](tasks/archive/2026/DK-1751.md) |
+| DK-1752 | STYLE-001 принимает доказательство из независимого прогона | task | P1 | 2026-11-22 | [tasks/archive/2026/DK-1752.md](tasks/archive/2026/DK-1752.md), `a6f222f7c`, `ba57b9f50`, `364bc2032`, `8ccc7534b`, `f6ca02b0e` |

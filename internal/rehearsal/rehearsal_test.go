@@ -120,6 +120,31 @@ func TestFreshSurvivesNeighbourTaskDoc(t *testing.T) {
 	}
 }
 
+func TestFreshSurvivesOwnReviewReport(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "docs/tasks/XR-001.md", "вердикт ревью\n")
+	commit(t, dir, "docs/tasks/XR-001.review-audit.json", "{\"id\":\"XR-001\"}\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err != nil {
+		t.Fatalf("отчёт о ревью погасил обкатку: %v", err)
+	}
+	commit(t, dir, "docs/tasks/XR-001-fixture.json", "{}\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err == nil {
+		t.Fatal("изменилась фикстура сценария, обкатка должна устареть")
+	}
+}
+
+func TestFreshCatchesOtherReviewReport(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "docs/tasks/XR-002.review-audit.json", "{\"id\":\"XR-002\"}\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err == nil {
+		t.Fatal("отчёт другой задачи не относится к обкатке XR-001")
+	}
+}
+
 // TestFreshCatchesCodeAfterMark: код, приехавший после обкатки, ворот отбивает
 // по-прежнему. Послабление про записи доски кода не касается.
 func TestFreshCatchesCodeAfterMark(t *testing.T) {

@@ -45,8 +45,8 @@ func TestMergeNeedsRehearsal(t *testing.T) {
 	}
 }
 
-// TestMergePassesAfterRehearsal: отметка обкатки под вершиной ветки ворот
-// открывает, и задача сливается целиком.
+// TestMergePassesAfterRehearsal проверяет слияние с отдельным коммитом аудита
+// после обкатки. Саму запись обкатки шлюз аудита считает недостаточной.
 func TestMergePassesAfterRehearsal(t *testing.T) {
 	t.Parallel()
 	root, _ := setup(t, rowInProg3, "")
@@ -54,12 +54,19 @@ func TestMergePassesAfterRehearsal(t *testing.T) {
 	doc := taskScenarioDoc("XR-003")
 	write(t, root, "docs/tasks/XR-003.md", doc)
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
-	completeReviewAudit(t, root, "XR-003", true)
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 сценарий")
 	head := strings.TrimSpace(gitT(t, root, "rev-parse", "--short=12", "HEAD"))
 	write(t, root, "docs/tasks/XR-003.md", doc+rehearsalLine(doc, head))
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 запись обкатки")
-	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
+	params := MergeParams{ID: "XR-003", Test: "true", Train: true}
+	if _, err := cmdMerge(root, params); err == nil || !strings.Contains(err.Error(), "отчёт ревью") {
+		t.Fatalf("отсутствующий отчёт должен остановить слияние: %v", err)
+	}
+	report := writeReviewAudit(t, root, "XR-003", true, false)
+	gitT(t, root, "add", report)
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 отчёт аудита")
+	if _, err := cmdMerge(root, params); err != nil {
 		t.Fatalf("обкатанная задача должна сливаться: %v", err)
 	}
 }

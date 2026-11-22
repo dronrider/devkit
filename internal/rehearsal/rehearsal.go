@@ -56,7 +56,7 @@ func Fresh(root, id, doc, again string) error {
 	if err != nil || head == "" {
 		return nil
 	}
-	if strings.HasPrefix(head, mark) || onlyTaskDocSince(root, mark) {
+	if strings.HasPrefix(head, mark) || onlyBoardRecordsSince(root, id, mark) {
 		return nil
 	}
 	return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить %s",
@@ -70,12 +70,10 @@ func missing(id, again string) error {
 		id, id, again, id)
 }
 
-// onlyTaskDocSince отвечает, что после обкатки в ветку приехали одни правки
-// файла самой задачи. Сама запись прогона это такой коммит: обкатка пишет
-// вывод и отметку в файл задачи, коммит с ними уезжает следом, и отметка
-// устаревала бы ровно в ту минуту, когда её положили. Правку кода такой разбор
-// не прощает: там в диффе коммита стоят чужие пути.
-func onlyTaskDocSince(root, mark string) bool {
+// onlyBoardRecordsSince допускает после обкатки записи доски и отчёт о ревью
+// этой задачи. Подписанные доказательства появляются после записи обкатки
+// и проходят отдельную проверку. Остальные пути классифицирует boardDoc.
+func onlyBoardRecordsSince(root, id, mark string) bool {
 	out, err := gitLine(root, "log", "--format=%H", mark+"..HEAD")
 	if err != nil {
 		return false
@@ -88,8 +86,9 @@ func onlyTaskDocSince(root, mark string) bool {
 	if err != nil {
 		return false
 	}
+	report := "docs/tasks/" + id + ".review-audit.json"
 	for _, p := range strings.Fields(files) {
-		if !boardDoc(p) {
+		if p != report && !boardDoc(p) {
 			return false
 		}
 	}

@@ -10,7 +10,7 @@ import (
 
 func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
 	for _, test := range []struct {
-		name, before, argument, writer, between, condition, observed, want string
+		name, before, argument, writer, store, initial, between, condition, observed, want string
 	}{
 		{name: "same cross-file instance"},
 		{name: "different argument", argument: "&other", want: "покажите выражение"},
@@ -23,6 +23,10 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
 		{name: "early successful return always taken", writer: `if st.Value == "" { return true, nil }`, want: "покажите выражение"},
 		{name: "consumer accepts a failed write", condition: "valid", want: "покажите выражение"},
 		{name: "unreachable when the condition initializer panics", condition: `panic("stop"); written`, want: "покажите выражение"},
+		{name: "initial zero field stops writer", writer: `if st.Value == "" { return false, nil }`, want: "покажите выражение"},
+		{name: "initial field permits writer", initial: `Value: "ready"`, writer: `if "" == st.Value { return false, nil }`},
+		{name: "field overwritten in the same statement", store: `st.Value, (st.Value) = "written", "other"`, want: "присваивается повторно"},
+		{name: "other object in parallel statement", writer: "other := &store{}", store: `st.Value, other.Value = "written", "other"`, want: "покажите выражение"},
 		{name: "writer not reached", writer: "if true { return false, nil }", want: "покажите выражение"},
 		{name: "unreachable read", condition: "false", want: "покажите выражение"},
 		{name: "opposite return", condition: "!written", want: "покажите выражение"},
@@ -31,6 +35,10 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			argument, condition, observed := test.argument, test.condition, test.observed
+			writeLine := test.store
+			if writeLine == "" {
+				writeLine = `st.Value, st.Other = "written", ""`
+			}
 			if argument == "" {
 				argument = "&st"
 			}
@@ -48,13 +56,13 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
  }
  func (s *server) write(st *store) (bool, error) {
  `+test.writer+`
- st.Value, st.Other = "written", ""
+ `+writeLine+`
  return true, nil
  }
  `)
 			write(t, filepath.Join(source.root, "reader.go"), `package sample
  func (s *server) read(valid bool) string {
- st := store{}
+ st := store{`+test.initial+`}
  other := store{}
  _ = other
  `+test.before+`
@@ -84,10 +92,10 @@ func TestNameAssignmentThroughAddressOfLocal(t *testing.T) {
 				return fmt.Sprintf("reader.go:%d", 1+strings.Count(body[:index], "\n"))
 			}
 			proof := &NameObjectProof{Expression: "st.Value", Assignment: &NameAssignmentWrite{
-				Writes: []NameAssignmentSite{{At: at("st.Value, st.Other"), Target: "st.Value", Value: `"written"`}},
+				Writes: []NameAssignmentSite{{At: at(writeLine), Target: "st.Value", Value: `"written"`}},
 				Use:    NameCodeUse{Declaration: readerAt("func (s *server) read"), At: readerAt("{ return " + observed), Expression: observed},
 			}}
-			e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "Value", ActualAt: at("Value string"), Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: at("st.Value, st.Other")}}
+			e := Evidence{ObjectComparison: &NameObjectComparison{Actual: "Value", ActualAt: at("Value string"), Proof: proof}, WriteEvidence: &WriteEvidence{WriteAt: at(writeLine)}}
 			if err := json.Unmarshal(fmt.Appendf(nil, `{"pointer_call_at":%q}`, readerAt("written, err :=")), proof.Assignment); err != nil {
 				t.Fatal(err)
 			}

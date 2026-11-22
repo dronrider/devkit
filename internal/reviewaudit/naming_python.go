@@ -29,6 +29,14 @@ type pythonFileWriteCall struct {
 	Bindings    []NameCallBinding `json:"bindings"`
 }
 
+type pythonFileWriteReply struct {
+	Error       string  `json:"error"`
+	Binding     int     `json:"binding"`
+	Destination *string `json:"destination"`
+	Links       []int   `json:"links"`
+	RecordKind  string  `json:"record_kind"`
+}
+
 func checkNamePythonFileWrite(e Evidence, declaration string, source *evidenceSource) error {
 	w, pair := e.WriteEvidence, e.ObjectComparison
 	f := w.File
@@ -81,14 +89,8 @@ func checkNamePythonFileWrite(e Evidence, declaration string, source *evidenceSo
 		return err
 	}
 	request.Source = body
-	var verified struct {
-		Error       string  `json:"error"`
-		Binding     int     `json:"binding"`
-		Destination *string `json:"destination"`
-		Links       []int   `json:"links"`
-		RecordKind  string  `json:"record_kind"`
-	}
-	if err := readNamePythonAST(pythonFileWriteAST, request, &verified); err != nil {
+	verified, err := runNamePythonVerifier[pythonFileWriteReply](pythonFileWriteAST, request)
+	if err != nil {
 		return fmt.Errorf("write_evidence.file: %w", err)
 	}
 	if verified.Error != "" {
@@ -167,6 +169,9 @@ import ast
 import json
 import sys
 
+MATCH = (ast.Match,) if hasattr(ast, "Match") else ()
+PATTERN_BINDINGS = (ast.MatchAs, ast.MatchStar, ast.MatchMapping) if MATCH else ()
+
 def constant_truth(expr):
     if isinstance(expr, ast.Constant):
         return bool(expr.value)
@@ -209,7 +214,7 @@ def reachable(statements, calls, effects=None, finite=None):
             origin = finite.get(statement.iter.id)
             if origin not in effects or not reachable(statement.body, []):
                 return False
-        elif isinstance(statement, (ast.For, ast.While, ast.AsyncFor, ast.AsyncWith, ast.Match, ast.ClassDef, getattr(ast, "TryStar", ast.Try))):
+        elif isinstance(statement, (ast.For, ast.While, ast.AsyncFor, ast.AsyncWith, *MATCH, ast.ClassDef, getattr(ast, "TryStar", ast.Try))):
             return False
         elif isinstance(statement, ast.Assert) and constant_truth(statement.test) is False:
             return False
@@ -247,7 +252,7 @@ def stable_binding(module, name, origin):
             return False
         if isinstance(node, ast.arg) and node.arg == name:
             return False
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar, ast.MatchMapping)) and (getattr(node, "name", None) == name or getattr(node, "rest", None) == name):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler, *PATTERN_BINDINGS)) and (getattr(node, "name", None) == name or getattr(node, "rest", None) == name):
             return False
     return True
 

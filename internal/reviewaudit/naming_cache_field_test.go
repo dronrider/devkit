@@ -8,7 +8,7 @@ import (
 
 func TestNameAssignmentReadsCacheOnNextCall(t *testing.T) {
 	for _, tc := range []struct {
-		name, receiver, params, arguments, read, guard, before, store, mutex, returned, want string
+		name, receiver, params, arguments, read, guard, before, write, store, mutex, returned, want string
 	}{
 		{name: "same cache on same receiver"},
 		{name: "different entry receiver", receiver: "other", want: "покажите выражение"},
@@ -20,11 +20,14 @@ func TestNameAssignmentReadsCacheOnNextCall(t *testing.T) {
 		{name: "cache read before impossible guard", guard: "v != nil && v == nil", want: "покажите выражение"},
 		{name: "cache guard symmetric contradiction", guard: "v != nil && nil == v", want: "покажите выражение"},
 		{name: "entry prevents store and read", params: "valid bool", arguments: "false", guard: "v != nil && valid", store: "valid", want: "покажите выражение"},
+		{name: "same cache in a parallel assignment", write: `s.harn, s.stamp = &fresh, "now"`},
+		{name: "cache overwritten in the same statement", write: "s.harn, s.harn = &fresh, nil", want: "присваивается повторно"},
+		{name: "other receiver in parallel statement", write: "s.harn, other.harn = &fresh, nil", want: "покажите выражение"},
 		{name: "unreachable cache refresh", store: "false", want: "покажите выражение"},
 		{name: "cached value ignored", returned: "view{}", want: "покажите выражение"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			defaults := map[*string]string{&tc.receiver: "s", &tc.read: "s.harn", &tc.guard: "v != nil && true", &tc.store: "len(fresh.values) > 0", &tc.mutex: "mu", &tc.returned: "*v"}
+			defaults := map[*string]string{&tc.receiver: "s", &tc.read: "s.harn", &tc.guard: "v != nil && true", &tc.store: "len(fresh.values) > 0", &tc.mutex: "mu", &tc.returned: "*v", &tc.write: "s.harn = &fresh"}
 			for expression, fallback := range defaults {
 				if *expression == "" {
 					*expression = fallback
@@ -36,6 +39,7 @@ type view struct { values []string }
 type server struct {
  mu, backup sync.Mutex
  harn *view
+ stamp string
 }
 func (s *server) cached(`+tc.params+`) view {
  other := &server{}
@@ -50,7 +54,7 @@ func (s *server) cached(`+tc.params+`) view {
  `+tc.before+`
  if `+tc.store+` {
   s.`+tc.mutex+`.Lock()
-  s.harn = &fresh
+  `+tc.write+`
   s.`+tc.mutex+`.Unlock()
  }
  return fresh
@@ -68,7 +72,7 @@ func (s *server) choose(other *server) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeAt := at("s.harn = &fresh")
+			writeAt := at(tc.write)
 			proof := &NameObjectProof{Expression: "s.harn", Assignment: &NameAssignmentWrite{
 				Writes: []NameAssignmentSite{{At: writeAt, Target: "s.harn", Value: "&fresh"}},
 				Use:    NameCodeUse{Declaration: at("func (s *server) cached"), At: at("v := "), Expression: tc.read},

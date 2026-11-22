@@ -17,7 +17,7 @@ func (g *queryGoSource) nameCacheFieldUse(entry, writer, reader queryFunc, write
 	}
 	fields := g.namePointerFieldDeclaration(writer, src, field.Sel.Name, fieldAt)
 	body := writer.node.Body
-	if fields == nil || !namePointerFieldSafe(body, receiver, fields, field.Sel.Name, nil, write, body.End()) ||
+	if fields == nil || !nameDistinctDirectFields(write, receiver, fields) || !namePointerFieldSafe(body, receiver, fields, field.Sel.Name, nil, write, body.End()) ||
 		!g.nameCacheEntry(entry, writer, calls) {
 		return false
 	}

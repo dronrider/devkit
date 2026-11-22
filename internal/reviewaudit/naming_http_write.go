@@ -25,11 +25,35 @@ func (g *queryGoSource) checkNameHTTPJSONWrite(e Evidence, entry, helper queryFu
 	if !g.nameHTTPJSONSite(entry, send, pair.Actual) {
 		return fmt.Errorf("proof.effect: покажите статус и поле %q в ответе на том же http.ResponseWriter", pair.Actual)
 	}
+	responses := map[*ast.CallExpr]bool{send: true}
 	for node := range ast.Preorder(entry.node.Body) {
 		call, ok := node.(*ast.CallExpr)
-		if ok && call != send && nameHTTPJSONHelper(call.Fun, helper) && !g.nameHTTPJSONSite(entry, call, pair.Actual) {
+		if !ok || call == send || !nameHTTPJSONHelper(call.Fun, helper) {
+			continue
+		}
+		if !g.nameHTTPJSONSite(entry, call, pair.Actual) {
 			return fmt.Errorf("proof.effect: выход %s записывает другой HTTP-ответ", nameRef(entry, g.fset.Position(call.Pos()).Line))
 		}
+		responses[call] = true
+	}
+	writer := send.Args[0].(*ast.Ident).Obj
+	var otherUse *ast.Ident
+	ast.PreorderStack(entry.node.Body, nil, func(node ast.Node, parents []ast.Node) bool {
+		if otherUse != nil {
+			return false
+		}
+		id, ok := node.(*ast.Ident)
+		if !ok || id.Obj != writer {
+			return true
+		}
+		call, ok := parents[len(parents)-1].(*ast.CallExpr)
+		if !ok || !responses[call] || call.Args[0] != id {
+			otherUse = id
+		}
+		return false
+	})
+	if otherUse != nil {
+		return fmt.Errorf("proof.effect: %s использует http.ResponseWriter вне проверенных вызовов записи JSON", nameRef(entry, g.fset.Position(otherUse.Pos()).Line))
 	}
 	if objects := nameProofObjects(pair); e.Result == "checked" && len(objects) != 0 && !sameObjectName(objects, identifierWords(pair.Actual)) {
 		return fmt.Errorf("proof.effect: поле HTTP-ответа не соответствует объекту в имени")
@@ -120,14 +144,24 @@ func (g *queryGoSource) nameHTTPJSONSite(entry queryFunc, call *ast.CallExpr, fi
 		return false
 	}
 	var statement *ast.ExprStmt
+	var block *ast.BlockStmt
 	ast.PreorderStack(entry.node.Body, nil, func(node ast.Node, parents []ast.Node) bool {
 		if node == call {
 			statement, _ = parents[len(parents)-1].(*ast.ExprStmt)
+			block, _ = parents[len(parents)-2].(*ast.BlockStmt)
 			return false
 		}
 		return nameNodeContains(node, call)
 	})
-	return statement != nil && g.namePointerPath(entry, entry.node.Body, statement, nil)
+	if statement == nil || block == nil || !g.namePointerPath(entry, entry.node.Body, statement, nil) {
+		return false
+	}
+	last := len(block.List) - 1
+	if block == entry.node.Body && block.List[last] == statement {
+		return true
+	}
+	result, ok := block.List[last].(*ast.ReturnStmt)
+	return ok && len(result.Results) == 0 && last > 0 && block.List[last-1] == statement
 }
 
 func (g *queryGoSource) nameHTTPParam(fn queryFunc, ref *ast.Ident, slot int) bool {

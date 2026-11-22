@@ -10,10 +10,11 @@ import (
 	"time"
 )
 
-func readNamePythonAST(program string, request, reply any) error {
+func runNamePythonVerifier[T any](program string, request any) (T, error) {
+	var reply T
 	input, err := json.Marshal(request)
 	if err != nil {
-		return err
+		return reply, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -22,13 +23,13 @@ func readNamePythonAST(program string, request, reply any) error {
 	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return fmt.Errorf("истёк срок разбора Python")
+		return reply, fmt.Errorf("истёк срок разбора Python")
 	}
 	if err != nil {
-		return fmt.Errorf("разбор Python: %w %s", err, strings.TrimSpace(string(out)))
+		return reply, fmt.Errorf("разбор Python: %w %s", err, strings.TrimSpace(string(out)))
 	}
-	if err := json.Unmarshal(out, reply); err != nil {
-		return fmt.Errorf("ответ разбора Python: %w", err)
+	if err := json.Unmarshal(out, &reply); err != nil {
+		return reply, fmt.Errorf("ответ разбора Python: %w", err)
 	}
-	return nil
+	return reply, nil
 }

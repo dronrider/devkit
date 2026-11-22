@@ -11,6 +11,7 @@ func TestNameHTTPJSONResponseWritesStatusAndPayload(t *testing.T) {
 		{name: "same response branch falls through", additional: `if condition { writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict"}) }`, want: "записывает другой HTTP-ответ"},
 		{name: "status already written", before: "w.WriteHeader(http.StatusOK)", want: "вне проверенных вызовов"},
 		{name: "alternative http error", additional: `if condition { http.Error(w, "oops", http.StatusConflict); return }`, want: "вне проверенных вызовов"},
+		{name: "encoding at the wrong line"},
 		{name: "different response body", encoder: "other", want: "запись статуса и JSON"},
 		{name: "different response status", statusWriter: "other", want: "запись статуса и JSON"},
 		{name: "response replaced", before: "w = other", want: "на том же http.ResponseWriter"},
@@ -53,6 +54,10 @@ func writeQueueError(w http.ResponseWriter, condition bool) {
 						{"w", "w"}, {"code", "http.StatusBadGateway"}, {"v", `map[string]string{"error": "missing"}`},
 					}}},
 				},
+			}
+			if tc.name == "encoding at the wrong line" {
+				e.WriteEvidence.WriteAt = at("w.Header().Set")
+				tc.want = e.WriteEvidence.WriteAt + ":"
 			}
 			assertTargetCheck(t, g.checkNameWriteProof(e, entry), tc.want)
 		})

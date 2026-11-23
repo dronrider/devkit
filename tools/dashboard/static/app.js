@@ -1938,12 +1938,10 @@ function runPickBody(into, opts) {
   }
   into.append(head);
   into.classList.toggle("is-auto", auto);
-  // Лестница пуста, когда подписок на машине нет или список не прочитан:
-  // молчать значило бы показать меню с одинокой шапкой, и причина стоит в
-  // самом меню словами из того же ответа.
+  // При пустой лестнице в меню видна причина отсутствия вариантов.
   if (!ladder.length) {
     into.append(el("span", "mwhy",
-      (harnessView && harnessView.note) || "подписок на машине нет"));
+      opts.emptyNote || (harnessView && harnessView.note) || "подписок на машине нет"));
   }
   // Строка моделей не запускает работу, а называет подписку с моделью, которыми
   // она поедет. Запускают широкой половиной кнопки, и меню от выбора строки не
@@ -10288,35 +10286,60 @@ async function archiveChat(project, sid, on) {
 // Выбор модели хранится парой «модель+подписка»: одно имя у двух подписок
 // ничего не выбирает, и квота едет с именем от списка до подъёма (DK-1281).
 // Прежняя запись была голым именем, и она читается как выбор без подписки.
-function chatModelPref(models) {
+function chatModelStored() {
   let raw = "";
   try {
     raw = localStorage.getItem(CHAT_MODEL_KEY);
   } catch (err) {
     raw = "";
   }
-  let pick = { model: raw || "opus", harness: "" };
   try {
-    const v = JSON.parse(raw);
-    if (v && typeof v.model === "string") {
-      pick = { model: v.model, harness: typeof v.harness === "string" ? v.harness : "" };
+    const pick = JSON.parse(raw);
+    if (pick && typeof pick.model === "string") {
+      return {
+        model: pick.model,
+        harness: typeof pick.harness === "string" ? pick.harness : "",
+        revision: Number.isFinite(pick.revision) ? pick.revision : 0,
+      };
     }
   } catch (err) {
-    // голое имя из прежней записи: читается ниже как выбор без подписки
+    // Голое имя из прежней записи читается как выбор без подписки.
   }
+  return { model: raw || "opus", harness: "", revision: 0 };
+}
+
+function chatModelPref(models) {
+  const { model, harness } = chatModelStored();
   if (models && models.length) {
     const available = models.find((m) =>
-      (m.model === pick.model || (m.replaces || []).includes(pick.model)) &&
-      (!pick.harness || m.harness === pick.harness)) ||
+      (m.model === model || (m.replaces || []).includes(model)) &&
+      (!harness || m.harness === harness)) ||
       models.find((m) => m.default) || models[0];
     return { model: available.model, harness: available.harness || "" };
   }
-  return pick;
+  return { model, harness };
 }
 
-function chatModelSet(model, harness) {
+let chatModelRevision = 0;
+let chatModelAccepted = 0;
+
+function chatModelNextRevision() {
+  // Начала отсчёта разные у вкладок, вместе с timeOrigin время сравнимо.
+  const now = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
+    && typeof performance.now === "function" ? performance.timeOrigin + performance.now() : Date.now();
+  // Часы могут вернуть тот же отсчёт. Следующий выбор старше уже
+  // прочитанного даже при равном времени.
+  const previous = Math.max(chatModelRevision, chatModelStored().revision);
+  chatModelRevision = now > previous ? now : previous + 0.001;
+  return chatModelRevision;
+}
+
+function chatModelSet(model, harness, revision) {
+  // Пока ждали ответ /model, другая вкладка могла сохранить более свежую пару.
+  if (revision <= chatModelAccepted || revision <= chatModelStored().revision) return;
+  chatModelAccepted = revision;
   try {
-    localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify({ model, harness }));
+    localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify({ model, harness, revision }));
   } catch (err) {
     // см. chatFilterSet
   }
@@ -11366,7 +11389,13 @@ function modelPick(project, st, draftAddr = () => st.addr) {
   // она платится. Своего перечня имён у панели нет, иначе новая подписка на
   // машине не появилась бы тут вовсе.
   const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
-  const opts = (st.models || []).slice();
+  const workProtocol = st.entry?.taskRun && st.entry.protocol;
+  const opts = (st.models || []).map((m) => {
+    if (workProtocol && (m.harness !== st.entry.harness || m.protocol !== workProtocol)) {
+      return { ...m, disabled: true };
+    }
+    return m;
+  });
   for (const pick of [cur, shown]) {
     if (!pick.model || opts.some((m) => same(m, pick))) continue;
     // Строка без квоты приезжает только для имени, которого в лестнице нет:
@@ -11382,6 +11411,8 @@ function modelPick(project, st, draftAddr = () => st.addr) {
   if (chosen < 0 && shown.model && !shown.harness) {
     chosen = opts.findIndex((m) => m.model === shown.model);
   }
+  let selected = opts[chosen] || shown;
+  let accepted = 0;
   for (const [i, m] of opts.entries()) {
     const o = el("option", "", chatModelName(m.model, m.harness));
     o.value = m.model;
@@ -11432,14 +11463,16 @@ function modelPick(project, st, draftAddr = () => st.addr) {
     }
   };
   const applyPick = (pick) => {
-    if (same(pick, shown)) return;
-    chatModelSet(pick.model, pick.harness);
-    showOnSelect(pick);
+    if (same(pick, selected)) return;
+    const revision = chatModelNextRevision();
     // Про удачную смену карточка не всплывает: выбранное имя стоит в самом
     // списке, а у заведённого разговора про смену говорит разделитель ленты.
     // Карточка поверх экрана повторяла это третий раз (замечание
     // пользователя). Отказ карточкой остаётся: он ничем больше не виден.
     if (!st.sid) {
+      selected = pick;
+      showOnSelect(pick);
+      chatModelSet(pick.model, pick.harness, revision);
       if (st.blank) {
         chatModelKeep(project, st.blank, pick.model, pick.harness);
         // Выбранная пара нужна тут же и подъёму: он читает выбор из записи
@@ -11451,7 +11484,14 @@ function modelPick(project, st, draftAddr = () => st.addr) {
       }
       return;
     }
-    modelSwitch(project, st, pick, isLive && !alien).catch(console.error);
+    showOnSelect(selected);
+    modelSwitch(project, st, pick, isLive && !alien, revision).then((saved) => {
+      if (saved && revision > accepted) {
+        accepted = revision;
+        selected = pick;
+        showOnSelect(pick);
+      }
+    }).catch(console.error);
   };
   // Мини-полоска глубины в самом поле подписки (DK-1570, макет показа уровня):
   // ручной уровень виден без открытия меню. Без ручного выбора полоски нет,
@@ -11473,6 +11513,7 @@ function modelPick(project, st, draftAddr = () => st.addr) {
   // моделью и ярусом, ползунок глубину на один запуск.
   const pickMenu = runPickBody(menu, {
     ladder: opts.filter((m) => !m.disabled),
+    emptyNote: workProtocol ? "В исходной подписке нет доступных моделей" : "",
     now: opts.find((m) => same(m, shown)) || null,
     onModel: (m) => applyPick({ model: m.model, harness: m.harness || "" }),
     getEffort: () => chatEffortOf(project, armKey()),
@@ -11532,28 +11573,30 @@ function modelPick(project, st, draftAddr = () => st.addr) {
 // поверх экрана говорила то же самое вторым голосом. Отказ карточкой остаётся:
 // разделителя на него не будет, и без карточки человек читал бы ленту старой
 // модели, думая, что сменил её.
-async function modelSwitch(project, st, pick, live) {
+async function modelSwitch(project, st, pick, live, revision) {
   const at = chatsURL(project) + "/" + encodeURIComponent(st.sid);
   const set = await api(at + "/model", { method: "POST", body: { model: pick.model, harness: pick.harness } });
   if (!set.ok) {
     sayResult(apiSaid(set), true);
     await repaintChat();
-    return;
+    return false;
   }
+  chatModelSet(pick.model, pick.harness, revision);
   if (!live || (st.entry && st.entry.protocol)) {
     await repaintChat();
-    return;
+    return true;
   }
   const drop = await api(at + "/stop", { method: "POST", body: { drop: true } });
   if (!drop.ok) {
     sayResult(drop.body.error || "сессия не снялась", true);
     await repaintChat();
-    return;
+    return true;
   }
   const r = await api(at + "/say", { method: "POST", body: { text: chatRemodelSay(pick.model) } });
   if (!r.ok) sayResult(apiSaid(r), true);
   if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
   await repaintChat();
+  return true;
 }
 
 // Заказ продолжения после смены модели. Своих слов человек тут не говорил, и

@@ -481,6 +481,49 @@ func TestAppTaskFirstAttachmentInHistory(t *testing.T) {
 }
 
 func TestAppTaskModelChoicePreservesRun(t *testing.T) {
+	appTaskModelChoice(t, func(e *testEnv, c *http.Client, sid string) {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+			`{"model":"модель-next","harness":"codextest"}`)
+		if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
+		}
+	})
+}
+
+func TestAppTaskModelMenuBrowser(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Fatal("для меню рабочего чата нужен Chromium")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needPlaywright(t, node) {
+		t.Fatal("для меню рабочего чата нужен playwright")
+	}
+	for _, mode := range []string{"menu", "ordered", "refused", "new-chat", "new-chat-other-tab"} {
+		t.Run(mode, func(t *testing.T) {
+			appTaskModelChoice(t, func(e *testEnv, _ *http.Client, sid string) {
+				if err := e.s.chatStoreUpdate(sid, func(st chatStore) chatStore {
+					st.CxModel = "прежняя-модель"
+					return st
+				}); err != nil {
+					t.Fatal(err)
+				}
+				out, err := exec.Command(node, "testdata/apptask_model_browser.mjs",
+					e.srv.URL, chrome, e.cfg.Token, sid, mode).CombinedOutput()
+				if err != nil {
+					t.Fatalf("меню рабочего чата: %v\n%s", err, out)
+				}
+				t.Log(string(out))
+			})
+		})
+	}
+}
+
+func appTaskModelChoice(t *testing.T, choose func(*testEnv, *http.Client, string)) {
+	t.Helper()
 	e, c := appTaskEnv(t, "mute")
 	appTaskRecoveryFixture(t, e)
 	catalog := strings.Replace(appHarnessJSON, `"model": "модель-codex"}]`, `"model": "модель-codex"},{"tier":"base","model":"модель-next"}]`, 1)
@@ -500,18 +543,14 @@ esac`)
 	initial := e.s.chatStoreRead(sid)
 	logPath := filepath.Join(e.proj, "fake-app-log")
 	initialLog := readFile(t, logPath)
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
-		`{"model":"модель-next","harness":"codextest"}`)
-	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
-		t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
-	}
+	choose(e, c, sid)
 	if e.s.appLive(sid) != live || !live.busyNow() || readFile(t, logPath) != initialLog {
 		t.Fatal("выбор запустил новый ход или прервал первый")
 	}
 	if current := e.s.chatStoreRead(sid); current.Model != initial.Model || current.TaskRunID != initial.TaskRunID {
 		t.Fatalf("выбор изменил происхождение запуска: %+v", current)
 	}
-	resp = doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
 	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
 		t.Fatalf("остановка между ходами: %d %s", resp.StatusCode, raw)
 	}

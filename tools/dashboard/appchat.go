@@ -1196,7 +1196,7 @@ func (s *server) appListRows(proj string) []chatEntry {
 			continue
 		}
 		e := chatEntry{ID: sid, Model: st.appModel(), PickHarness: st.Harness,
-			Archived: st.Archived}
+			Archived: st.Archived, TaskRun: st.appTaskRecorded()}
 		e.State = chatDead
 		if s.appLive(sid) != nil {
 			e.State = chatLive

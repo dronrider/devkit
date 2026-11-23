@@ -47,6 +47,7 @@ type chatModelOpt struct {
 	Model    string   `json:"model"`
 	Tier     string   `json:"tier"`
 	Harness  string   `json:"harness"`
+	Protocol string   `json:"protocol,omitempty"`
 	Default  bool     `json:"default,omitempty"`
 	Replaces []string `json:"replaces,omitempty"`
 	// Levels это набор ступеней глубины подписки на этом ярусе (DK-1570,
@@ -93,7 +94,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 			}
 			seen[m.Model] = true
 			out = append(out, chatModelOpt{Model: m.Model, Tier: m.Tier,
-				Harness: h.Name, Default: h.Default && m.Tier == "pro", Levels: m.Levels,
+				Harness: h.Name, Protocol: h.Protocol, Default: h.Default && m.Tier == "pro", Levels: m.Levels,
 				Replaces: modelcatalog.Replaces(m.Model)})
 		}
 		// Модели чата сверх лестницы идут следом строками без яруса. Свод с
@@ -106,7 +107,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 				continue
 			}
 			seen[model] = true
-			out = append(out, chatModelOpt{Model: model, Harness: h.Name, Replaces: modelcatalog.Replaces(model)})
+			out = append(out, chatModelOpt{Model: model, Harness: h.Name, Protocol: h.Protocol, Replaces: modelcatalog.Replaces(model)})
 		}
 	}
 	return out
@@ -251,6 +252,8 @@ type chatEntry struct {
 	// Protocol это протокол клиента дороги app-server: поле стоит только у
 	// чужого протокола, по нему экран выбирает свою дорогу реплики и ленты.
 	Protocol string `json:"protocol,omitempty"`
+	// TaskRun связывает чат с сохранённым рабочим запуском и после остановки.
+	TaskRun bool `json:"taskRun,omitempty"`
 	// Живая сессия из реестра клиента: сокет канала, pid, слово про то, где она
 	// идёт, и её состояние (idle значит «ждёт ввода»). Пусто значит, что
 	// процесса у диалога нет вовсе.

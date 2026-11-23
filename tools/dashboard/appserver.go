@@ -47,13 +47,13 @@ func (e *appError) Error() string {
 	return fmt.Sprintf("код %v", e.Code)
 }
 
-// appServer это поднятый процесс сервера приложения. Горутина чтения разбирает
-// stdout построчно: ответы уходят ждущим по карте, уведомления зовут note.
 type appRequest struct {
 	done   chan *appMsg
 	result func(json.RawMessage)
 }
 
+// appServer это поднятый процесс сервера приложения. Горутина чтения разбирает
+// stdout построчно: ответы уходят ждущим по карте, уведомления зовут note.
 type appServer struct {
 	cmd  *exec.Cmd
 	in   io.WriteCloser

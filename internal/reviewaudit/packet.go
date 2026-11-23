@@ -73,9 +73,10 @@ func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (
 	}
 	var notes string
 	if card := taskPath(path); card != "" {
-		rel, err := filepath.Rel(root, card)
-		if err != nil {
-			return VerdictPacket{}, err
+		card = filepath.Join(canonicalPath(filepath.Dir(card)), filepath.Base(card))
+		rel, err := filepath.Rel(canonicalPath(root), card)
+		if err != nil || !filepath.IsLocal(rel) {
+			return VerdictPacket{}, fmt.Errorf("карточка пакета должна находиться в проверяемом репозитории")
 		}
 		rel = filepath.ToSlash(rel)
 		_, body, err := nameRuntimeBlob(root, now.HeadSHA, rel)

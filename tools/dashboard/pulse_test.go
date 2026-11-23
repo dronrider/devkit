@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -824,6 +827,123 @@ func TestPulseRejectsInvalidChatKey(t *testing.T) {
 		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/pulse"+tc.query, "")
 		if raw := body(t, resp); resp.StatusCode != tc.code {
 			t.Errorf("pulse %q: %d %s, жду %d", tc.query, resp.StatusCode, raw, tc.code)
+		}
+	}
+}
+
+func TestPulseReadsRegistryOnce(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	e, _ := pulseEnv(t, now)
+	machine := t.TempDir()
+	originalHome := realHomeFn
+	realHomeFn = func() string { return machine }
+	t.Cleanup(func() { realHomeFn = originalHome })
+
+	for i, sid := range []string{"aaa-1", "bbb-2"} {
+		at := now.Add(-time.Duration(5+i) * time.Second)
+		writeSession(t, e.home, e.proj, "", sid, pulseTranscript(at, "Read", "app.js"), at)
+	}
+	// При равном времени нужен первый заказ и последняя ручная привязка.
+	const first, manual = "2026-08-20T11:56:00", "2026-08-20T11:59:00"
+	log := bindRecord(e.home, first, "aaa-1", "XR-1", bindOrder) +
+		bindRecord(e.home, first, "aaa-1", "XR-3", bindOrder) +
+		bindRecord(e.home, first, "bbb-2", "XR-1", bindOrder) +
+		bindRecord(t.TempDir(), manual, "aaa-1", "XR-8", bindHand)
+	path := writeBinds(t, e.home)
+	logs := map[string]string{
+		path: log,
+		writeBinds(t, machine): bindRecord(machine, manual, "bbb-2", "XR-8", bindHand) +
+			bindRecord(machine, manual, "bbb-2", "XR-3", bindHand) +
+			bindRecord(machine, first, "bbb-2", "XR-8", bindHand),
+	}
+	writeAskFor(t, e.proj, "XR-1", "", now.Add(20*time.Minute))
+
+	p := pulseWithRegistry(t, e, "task=XR-1", logs)
+	if len(p.Agents) != 2 || p.Agents[0].Session != "aaa-1" || p.Agents[0].Task != "XR-1" ||
+		p.Agents[1].Session != "bbb-2" || p.Agents[1].Task != "XR-3" {
+		t.Fatalf("ожидались агенты задачи в порядке последнего хода с прежними привязками, получено %+v", p.Agents)
+	}
+	p = pulseWithRegistry(t, e, "sid=aaa-1", logs)
+	if p.Own == nil || p.Own.Task != "XR-1" || p.Own.State != pulseWait ||
+		len(p.Asks) != 1 || p.Asks[0].Task != "XR-1" {
+		t.Fatalf("пульс сессии не показал ожидание по первой привязке, получено %+v", p)
+	}
+	logs[path] += bindRecord(e.home, manual, "aaa-1", "XR-3", bindHand)
+	p = pulseWithRegistry(t, e, "task=XR-3&sid=aaa-1", logs)
+	if p.Own == nil || p.Own.Task != "XR-3" || p.Own.State != pulseWork || len(p.Asks) != 0 {
+		t.Fatalf("следующий запрос не увидел ручную привязку, получено %+v", p)
+	}
+	logs[path] += bindRecord(e.home, manual, "aaa-1", "-", bindOff)
+	p = pulseWithRegistry(t, e, "sid=aaa-1", logs)
+	if p.Own == nil || p.Own.Task != "" || len(p.Asks) != 0 {
+		t.Fatalf("следующий запрос не увидел ручную отвязку, получено %+v", p)
+	}
+}
+
+// pulseWithRegistry отдаёт один и тот же журнал каждому чтению запроса.
+// Новый FIFO ставится на его место до EOF, пока первое чтение ещё открыто.
+func pulseWithRegistry(t *testing.T, e *testEnv, query string, logs map[string]string) Pulse {
+	t.Helper()
+	const mode = 0o600
+	replace := func(path string) {
+		t.Helper()
+		next := path + ".next"
+		if err := syscall.Mkfifo(next, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(next, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path := range logs {
+		replace(path)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/demo/pulse?"+query, nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: cookieValue(e.cfg.Token, e.s.now().Add(time.Hour))})
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.s.handler().ServeHTTP(rec, req)
+	}()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	timeout := time.NewTimer(15 * time.Second)
+	defer timeout.Stop()
+	reads := map[string]int{}
+	for {
+		select {
+		case <-done:
+			for path := range logs {
+				if reads[path] != 1 {
+					t.Errorf("%s: реестр %s прочитан %d раз, ожидалось одно чтение", query, path, reads[path])
+				}
+			}
+			var p Pulse
+			if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &p) != nil {
+				t.Fatalf("пульс %s: %d %s", query, rec.Code, rec.Body)
+			}
+			return p
+		case <-timeout.C:
+			t.Fatalf("запрос пульса %s не завершился", query)
+		case <-poll.C:
+			for path, log := range logs {
+				fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+				if errors.Is(err, syscall.ENXIO) {
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				reads[path]++
+				replace(path)
+				f := os.NewFile(uintptr(fd), path)
+				_, err = f.WriteString(log)
+				closeErr := f.Close()
+				if err != nil || closeErr != nil {
+					t.Fatal(errors.Join(err, closeErr))
+				}
+			}
 		}
 	}
 }

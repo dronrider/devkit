@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -99,10 +98,7 @@ func (s *server) bindHomes() []string {
 // нельзя. Боевой сервер зовёт realHome.
 var realHomeFn = realHome
 
-// bindsData склеивает журналы всех домов. Свёртку делает разбор: у записи есть
-// время, и свежая выигрывает независимо от того, из какого файла приехала.
-// Тут же стоит рубеж на чтении: строка от прогона до читателей не доезжает
-// (bindsOwn).
+// bindsData читает по одному журналу на дом и соединяет их в порядке bindHomes.
 func (s *server) bindsData() []byte {
 	var out []byte
 	for _, home := range s.bindHomes() {
@@ -114,26 +110,6 @@ func (s *server) bindsData() []byte {
 		if len(data) > 0 && data[len(data)-1] != '\n' {
 			out = append(out, '\n')
 		}
-	}
-	return s.bindsOwn(out)
-}
-
-// bindsOwn просеивает журнал построчно. Рубеж один на всех читателей реестра:
-// хозяин имени tmux, чипы задач, дорога реплики клавишами и счёт работы за
-// строкой судят по одним и тем же записям. Непонятая строка проходит как была,
-// её отсеет разбор.
-func (s *server) bindsOwn(data []byte) []byte {
-	if len(data) == 0 {
-		return data
-	}
-	roots := s.bindRoots()
-	var out []byte
-	for _, ln := range strings.SplitAfter(string(data), "\n") {
-		if _, b, ok := parseBindLine(ln); ok && !bindOwn(b, roots) {
-			s.bindAlienLog(ln)
-			continue
-		}
-		out = append(out, ln...)
 	}
 	return out
 }
@@ -198,38 +174,65 @@ func (s *server) bindAlienLog(line string) {
 	s.logf("запись реестра мимо каталогов сессий, в счёт не идёт: %s", line)
 }
 
-// binds читает реестр целиком. Файл капается по длине самим писателем
-// (hookio.append_capped), и памяти процесса тут не заводится: строка ложится
-// на каждом старте сессии, а устаревшая привязка врёт дороже, чем стоит чтение
-// сотни килобайт. Основная привязка берётся из первого заказа. Работа над
-// соседней задачей её не меняет, а ручная привязка и отвязка переживают compact.
+// binds читает текущий реестр и сворачивает основную привязку каждой сессии.
 func (s *server) binds() sessionBinds {
-	data := s.bindsData()
-	out := sessions.Parse(data)
-	for sid, records := range sessions.All(data) {
-		sort.SliceStable(records, func(i, j int) bool { return records[i].Time < records[j].Time })
-		b := out[sid]
-		ordered, manual := false, false
-		for _, r := range records {
-			if r.Source == bindOff && r.Task == "" {
-				b.Task, b.Source = "", bindOff
-				manual = true
-			} else if r.Source == bindHand {
-				b.Task, b.Source = r.Task, r.Source
-				manual = true
-			} else if r.Source == bindOrder && r.Task != "" && !ordered && !manual {
-				ordered = true
-				b.Task, b.Source = r.Task, r.Source
+	return primaryBinds(s.bindsAll())
+}
+
+// primaryBinds берёт остальные поля в порядке журнала (sessions.Last).
+// Основную задачу задаёт последняя ручная привязка или отвязка, а в их
+// отсутствие первый заказ. При равном времени действует порядок строк.
+func primaryBinds(recs map[string][]sessionBind) sessionBinds {
+	out := make(sessionBinds, len(recs))
+	for sid, records := range recs {
+		b := sessions.Last(records)
+		firstOrder, lastManual := -1, -1
+		for i, r := range records {
+			switch {
+			case r.Source == bindHand || (r.Source == bindOff && r.Task == ""):
+				if lastManual < 0 || r.Time >= records[lastManual].Time {
+					lastManual = i
+				}
+			case r.Source == bindOrder && r.Task != "":
+				if firstOrder < 0 || r.Time < records[firstOrder].Time {
+					firstOrder = i
+				}
 			}
+		}
+		if lastManual >= 0 {
+			b.Task, b.Source = records[lastManual].Task, records[lastManual].Source
+		} else if firstOrder >= 0 {
+			b.Task, b.Source = records[firstOrder].Task, records[firstOrder].Source
 		}
 		out[sid] = b
 	}
 	return out
 }
 
-// bindsAll это тот же склеенный журнал списком записей на сессию.
+// bindsAll разбирает журналы всех домов и отсеивает чужие записи при разборе.
 func (s *server) bindsAll() map[string][]sessionBind {
-	return sessions.All(s.bindsData())
+	data := s.bindsData()
+	if len(data) == 0 {
+		return map[string][]sessionBind{}
+	}
+	roots := s.bindRoots()
+	return sessions.AllFiltered(data, func(line string, b sessionBind) bool {
+		if bindOwn(b, roots) {
+			return true
+		}
+		s.bindAlienLog(line)
+		return false
+	})
+}
+
+type sessionRegistry struct {
+	records map[string][]sessionBind
+	primary sessionBinds
+}
+
+func (s *server) sessionRegistry() sessionRegistry {
+	recs := s.bindsAll()
+	return sessionRegistry{records: recs, primary: primaryBinds(recs)}
 }
 
 // headTasks называет задачи, чей разговор принадлежит сессии, свежими первыми.

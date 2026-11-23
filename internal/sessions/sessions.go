@@ -328,12 +328,22 @@ func WorksOn(recs []Bind, task string) bool {
 
 // All сворачивает журнал в список записей на сессию, порядком записи.
 func All(data []byte) map[string][]Bind {
+	return AllFiltered(data, nil)
+}
+
+// AllFiltered группирует разобранные записи, которые прошли keep.
+// Порядок строк сохраняется для выбора хозяина tmux при равных отметках времени.
+func AllFiltered(data []byte, keep func(string, Bind) bool) map[string][]Bind {
 	out := map[string][]Bind{}
-	for n, ln := range strings.Split(string(data), "\n") {
-		if sid, b, ok := ParseLine(ln); ok {
-			b.lineOrder = n + 1
-			out[sid] = append(out[sid], b)
+	n := 0
+	for ln := range strings.SplitSeq(string(data), "\n") {
+		n++
+		sid, b, ok := ParseLine(ln)
+		if !ok || (keep != nil && !keep(ln, b)) {
+			continue
 		}
+		b.lineOrder = n
+		out[sid] = append(out[sid], b)
 	}
 	return out
 }

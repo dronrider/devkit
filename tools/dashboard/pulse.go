@@ -596,13 +596,16 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	}
 	ask, asking := s.pulseAsking(found.Path, id, sect, block)
 
-	paths := map[string]string{}
-	for _, f := range sessionFiles(s.transcriptRoots(), found.Path) {
+	reg := s.sessionRegistry()
+	files := sessionFiles(s.transcriptRoots(), found.Path)
+	paths := make(map[string]string, len(files))
+	for _, f := range files {
 		paths[f.ID] = f.path
 	}
+	entries, _ := s.chatEntriesWithRegistry(chatFilesOf(files, "", found.Path), chatListLimit, chatWindow{}, reg)
 	last := time.Time{}
 	testing := false
-	for _, e := range s.chatEntries(found.Path, chatListLimit) {
+	for _, e := range entries {
 		// Кольцо считает агентов задачи, а без задачи в адресе один открытый
 		// разговор: чужие чаты к нему отношения не имеют.
 		if id != "" {
@@ -718,7 +721,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	// вопрос находится тем же сканом, потому что сессией в признаке названа эта
 	// же сессия, и приезжает на экран с вариантами.
 	if sid != "" {
-		for _, h := range s.handedAsks(sid, s.binds(), now) {
+		for _, h := range s.handedAsks(sid, reg.primary, now) {
 			out.Asks = append(out.Asks, handedWaiting(h))
 		}
 	}

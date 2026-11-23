@@ -29,6 +29,26 @@ func line(when, sid, task string) string {
 	return fmt.Sprintf(record, when, sid, task, sid, task)
 }
 
+func TestAllFilteredKeepsOrderOfAcceptedRecords(t *testing.T) {
+	const stamp = "2026-08-18T12:00:00"
+	first := line(stamp, "first", "DK-1")
+	second := line(stamp, "second", "DK-1")
+	alien := line(stamp, "alien", "DK-1")
+	data := []byte(first + "битая строка\n" + second + alien)
+	var visited []string
+	records := AllFiltered(data, func(raw string, b Bind) bool {
+		visited = append(visited, raw)
+		return !strings.HasSuffix(b.Transcript, "/alien.jsonl")
+	})
+	want := []string{strings.TrimSpace(first), strings.TrimSpace(second), strings.TrimSpace(alien)}
+	if !reflect.DeepEqual(visited, want) || len(records) != 2 {
+		t.Fatalf("отобранные записи %v после обхода %v, ожидался обход %v", records, visited, want)
+	}
+	if owner := TmuxOwner(records, "task-DK-1"); owner != "second" {
+		t.Fatalf("хозяин tmux при равном времени %q, ожидался second", owner)
+	}
+}
+
 // Строка реестра разбирается по ключевым словам, а не по позициям: значение
 // поля собирается до следующего слова, поэтому путь с пробелом строку не
 // рассыпает.

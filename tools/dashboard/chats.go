@@ -1162,7 +1162,11 @@ type chatWindow struct {
 // подписок) считается один раз, сколько бы проектов ни легло в обход, а
 // префикс доски берётся по проекту файла и помнится на заход.
 func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([]chatEntry, bool) {
-	recs := s.bindsAll()
+	return s.chatEntriesWithRegistry(files, limit, win, s.sessionRegistry())
+}
+
+func (s *server) chatEntriesWithRegistry(files []chatFile, limit int, win chatWindow, reg sessionRegistry) ([]chatEntry, bool) {
+	recs := reg.records
 	// Имя tmux сворачивается по последней записи всего реестра: клиент за
 	// диалогами доверия и импортов пересоздаёт сессию, и одно имя носят
 	// несколько записей подряд, а поверх этого имя переиспользуется между
@@ -1289,7 +1293,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// сверяется по записям журнала, а память окна в них не пишется, и её
 		// имя сверки не проходит.
 		winName, winSrc := s.chatWinOf(f.ID, recs, live, winMem)
-		task, note, bound := bindTask(s.binds(), f.ID, f.suffix, head)
+		task, note, bound := bindTask(reg.primary, f.ID, f.suffix, head)
 		tasks := ownTasks(sessions.Touched(recs[f.ID]), prefix)
 		// Привязка запуска идёт первым чипом: это задача, под которой дашборд
 		// сам поднял сессию (bindTask), и у неё чип стоит с первой секунды, до

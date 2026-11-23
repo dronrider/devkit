@@ -53,14 +53,8 @@ if (byClass(panel, "cnosess")) fail("строка «сессии нет» всё
 if (deepBtn(panel, "Поднять")) fail("кнопка «Поднять» всё ещё на панели");
 const busyDead = byClass(panel, "busyrow");
 if (!busyDead) fail("индикатора работы на панели нет");
-if (busyDead.hidden) fail("индикатор остановки спрятан: работу не видно без реплики");
-if (!String(busyDead.className || "").split(" ").includes("stop")) {
-  fail("индикатор остановки не покрашен: класса stop нет");
-}
-const stoppedSaid = dump(busyDead);
-if (!stoppedSaid.includes("реплика") || !stoppedSaid.includes("поднимет")) {
-  fail("индикатор не говорит, что реплика поднимет разговор: " + stoppedSaid);
-}
+if (!busyDead.hidden) fail("предупреждение об остановке видно до отправки");
+if (String(busyDead.className || "").split(" ").includes("stop")) fail("разговор покрашен остановкой");
 
 // Живой разговор ни кнопки, ни красной остановки не показывает: индикатор
 // стоит спрятанным, пока по чату не идёт работа.

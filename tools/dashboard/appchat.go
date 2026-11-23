@@ -42,6 +42,7 @@ type appChat struct {
 
 	mu       sync.Mutex
 	busy     bool
+	turn     string
 	turnAt   time.Time
 	taskTurn *appTaskTurn
 }
@@ -487,7 +488,7 @@ func (s *server) appSpawn(sid string, h *Harness, model, dir, project, thread st
 	if err := proc.notify("initialized", map[string]any{}); err != nil {
 		return fail(fmt.Errorf("клиент не принял приветствие: %w", err))
 	}
-	config := map[string]any{}
+	config := map[string]any{"tools.update_plan.enabled": true}
 	for key, value := range toolEnv {
 		config["shell_environment_policy.set."+key] = value
 	}
@@ -570,12 +571,28 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 		c.mu.Unlock()
 		return errAppTurnBusy
 	}
-	c.busy, c.turnAt = true, s.now()
+	c.busy, c.turnAt, c.turn = true, s.now(), ""
 	c.mu.Unlock()
 	if record {
 		s.appSayRecord(c.sid, text)
 	}
-	_, err := c.proc.call("turn/start", s.appTurnParams(c, text, c.effortNow()))
+	params := s.appTurnParams(c, text, c.effortNow())
+	if model := s.chatStoreRead(c.sid).appModel(); model != "" {
+		params["model"] = model
+	}
+	raw, err := c.proc.call("turn/start", params)
+	if err == nil {
+		var result struct {
+			Turn struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if json.Unmarshal(raw, &result) == nil && result.Turn.ID != "" {
+			c.mu.Lock()
+			c.turn = result.Turn.ID
+			c.mu.Unlock()
+		}
+	}
 	if err != nil {
 		c.mu.Lock()
 		c.busy = false
@@ -594,9 +611,20 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		if c.taskTurn != nil {
 			c.taskTurn.note(method, params, time.Now())
 		}
+		if method == "turn/started" {
+			if turn := appTaskTurnID(method, params, c.thread); turn != "" {
+				c.turn = turn
+			}
+		}
 		c.mu.Unlock()
 	}
 	s.appMu.Unlock()
+	if method == "turn/plan/updated" {
+		if err := s.appPlanUpdate(sid, params); err != nil {
+			s.logf("план разговора %s не записался: %v", sid, err)
+		}
+		return
+	}
 	if method != "item/started" && method != "item/completed" && method != "turn/completed" {
 		return
 	}
@@ -846,7 +874,12 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		return
 	}
 	if wasTaskRun && !st.TaskRun {
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+			if current.TaskRunID == st.TaskRunID && current.TaskRunPID == st.TaskRunPID {
+				current.TaskRun = false
+			}
+			return current
+		}); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "состояние завершённого запуска не записалось: " + err.Error()})
 			return
 		}
@@ -863,6 +896,14 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		dir = st.GroomTree
 	}
 	c := s.appLive(sid)
+	if c != nil && c.h.Name != h.Name {
+		if c.busyNow() {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": errAppTurnBusy.Error()})
+			return
+		}
+		s.appDrop(sid, "следующий ход выбранной подписки")
+		c, st.Thread = nil, ""
+	}
 	if c == nil {
 		var err error
 		c, err = s.appSpawn(sid, h, model, dir, found.Name, st.Thread)
@@ -883,9 +924,17 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		}
 	}
 	c.setEffort(st.CxEffort)
-	if st.Model != model || st.Harness != harness || st.Thread != c.thread || effortSet {
-		st.Model, st.Harness, st.Protocol = model, harness, h.Protocol
-		if err := s.chatStoreWrite(sid, st); err != nil {
+	if st.Model == "" || st.Thread != c.thread || effortSet {
+		if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+			if current.Model == "" {
+				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol
+			}
+			current.Thread = c.thread
+			if effortSet {
+				current.CxEffort = st.CxEffort
+			}
+			return current
+		}); err != nil {
 			s.logf("настройки разговора %s не записались: %v", sid, err)
 		}
 	}
@@ -1099,7 +1148,7 @@ func (s *server) appListRows(proj string) []chatEntry {
 		if err != nil {
 			continue
 		}
-		e := chatEntry{ID: sid, Model: st.Model, PickHarness: st.Harness,
+		e := chatEntry{ID: sid, Model: st.appModel(), PickHarness: st.Harness,
 			Archived: st.Archived}
 		e.State = chatDead
 		if s.appLive(sid) != nil {
@@ -1237,8 +1286,10 @@ func (s *server) appCarrierTurn(p *Project, sid, text string) error {
 		if err != nil {
 			return err
 		}
-		st.Thread = c.thread
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+			current.Thread = c.thread
+			return current
+		}); err != nil {
 			return err
 		}
 	}

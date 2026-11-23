@@ -686,10 +686,19 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
 		// agentctl pick с учётом строки «Эффорт:» файла задачи.
 		Effort string `json:"effort"`
+		Text   string `json:"text"`
+		// "chat" просит начать разговор. Пустое намерение сохраняет
+		// действие кнопки карточки, в том числе приёмку в Check.
+		Intent string `json:"intent"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"id\": \"DK-NNN\"}"})
+		return
+	}
+	if body.Intent != "" && body.Intent != "chat" {
+		s.logf("запуск %s отклонён: неизвестное намерение %q", body.ID, body.Intent)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неизвестное действие запуска"})
 		return
 	}
 	if msg := effortBad(body.Effort); msg != "" {
@@ -710,12 +719,26 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": s.rowGone(found, id)})
 		return
 	}
+	// Разбор ленты читает вложения в начале реплики. Заказ конвейера
+	// добавляется после их префиксов, а слова человека остаются в заказе.
+	var clips wraps
+	text := cutClipWraps(body.Text, &clips)
+	order := body.Text[:len(body.Text)-len(text)] + runPrompt(row.Sect, id)
+	if strings.TrimSpace(text) != "" {
+		order += "\n\nРеплика человека:\n" + text
+	}
 	// Проверенная задача с пользовательской приёмкой закрывается тут же, своей
 	// командой: кнопка «Закрыть» у неё это подтверждение принятого глазами, а не
 	// заказ работы, и сессия агента ради taskctl close стоила бы минут ожидания
 	// и квоты (DK-289). Вид приёмки приезжает суффиксом строки доски, читать его
 	// больше неоткуда, и решается всё до проверок tmux: закрытие ими не связано.
 	if row.Sect == "check" && row.Accept == acceptUser {
+		if body.Intent == "chat" {
+			msg := "Задачу с пользовательской приёмкой принимают с карточки задачи"
+			s.logf("запуск из чата %s в %s отклонён: %s", id, found.Name, msg)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": msg})
+			return
+		}
 		if body.Harness != "" {
 			// Подписка тут ни при чём: закрытие идёт командой taskctl, сессии
 			// агента за ним нет, и квоты оно не тратит. В журнале это сказано,
@@ -820,7 +843,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "живой исполнитель задачи")})
 			return
 		}
-		s.startAppTask(w, found, id, own, tier, body.Effort, runPrompt(row.Sect, id))
+		s.startAppTask(w, found, id, own, tier, body.Effort, order)
 		return
 	}
 	// Лестница носителей цели, как у задачи (DK-1009). Ступень чата поднимает
@@ -961,7 +984,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort, false)
+		order, runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что
@@ -985,7 +1008,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// Если подписка задана явно или вердиктом, ответ называет её,
 	// чтобы было видно, чья квота пошла на запуск.
 	where := headWhere(res, sess)
-	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier,
+	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier, "wire": order,
 		"message": fmt.Sprintf("конвейер задачи %s поднят %s", id, where)}
 	if harness != nil {
 		resp["harness"] = harness.Name

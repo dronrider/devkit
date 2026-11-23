@@ -8750,11 +8750,11 @@ function fragShut() {
   else if (document.body.removeChild) document.body.removeChild(box);
 }
 
-function shotURL(path) {
+function shotURL(path, project = chatShotProject) {
   const parts = String(path || "").split("/").filter(Boolean);
   const name = parts[parts.length - 1] || "";
   const owner = parts.length > 1 ? parts[parts.length - 2] : chatShotSid;
-  return chatsURL(chatShotProject) + "/" + encodeURIComponent(owner) +
+  return chatsURL(project) + "/" + encodeURIComponent(owner) +
     "/shot?name=" + encodeURIComponent(name);
 }
 
@@ -9214,7 +9214,7 @@ function saveChatWidth(w) {
 const TA_MIN = 44;
 const TA_MAX = 420;
 
-function wireTaGrip(grip, ta, done) {
+function wireTaGrip(grip, ta, done, cap) {
   let from = 0;
   let base = 0;
   let held = false;
@@ -9223,7 +9223,7 @@ function wireTaGrip(grip, ta, done) {
     return box && box.height ? box.height : ta.offsetHeight || TA_MIN;
   };
   const set = (h) => {
-    ta.style.height = Math.max(TA_MIN, Math.min(TA_MAX, Math.round(h))) + "px";
+    ta.style.height = Math.max(TA_MIN, Math.min(cap ? cap() : TA_MAX, Math.round(h))) + "px";
   };
   grip.addEventListener("pointerdown", (ev) => {
     if (ev.button !== undefined && ev.button !== 0) return;
@@ -9251,6 +9251,53 @@ function wireTaGrip(grip, ta, done) {
   grip.addEventListener("pointercancel", release);
   grip.addEventListener("lostpointercapture", release);
   window.addEventListener("pointerup", release);
+}
+
+function chatInputSize(wrap, ta, manual) {
+  const limit = () => {
+    const view = window.visualViewport;
+    const vh = view && view.height || window.innerHeight || TA_MAX * 2;
+    const r = wrap.getBoundingClientRect();
+    const top = view && view.offsetTop || 0;
+    const visible = r.height > 0 ? Math.min(r.bottom, top + vh) - Math.max(r.top, top) : vh;
+    return Math.max(TA_MIN, Math.min(TA_MAX, Math.floor(visible / 2)));
+  };
+  const resize = () => {
+    const panel = wrap.closest && wrap.closest(".cpanel");
+    const view = window.visualViewport;
+    if (panel && view) {
+      panel.style.maxHeight = Math.max(TA_MIN, view.height + view.offsetTop - panel.getBoundingClientRect().top) + "px";
+    }
+    const cap = limit();
+    ta.style.height = "auto";
+    const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
+    ta.style.height = Math.min(cap, Math.max(TA_MIN, manual || 0, (ta.scrollHeight || 0) + border)) + "px";
+    ta.style.overflowY = ta.scrollHeight > cap ? "auto" : "hidden";
+  };
+  return {
+    resize, limit,
+    minimum(h) { manual = h; resize(); },
+    arm() {
+      resize();
+      const view = window.visualViewport;
+      window.addEventListener("resize", resize);
+      if (view) {
+        view.addEventListener("resize", resize);
+        view.addEventListener("scroll", resize);
+      }
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+      if (observer) observer.observe(wrap);
+      chatLive.push(() => {
+        window.removeEventListener("resize", resize);
+        if (view) {
+          view.removeEventListener("resize", resize);
+          view.removeEventListener("scroll", resize);
+        }
+        if (observer) observer.disconnect();
+      });
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(resize);
+    },
+  };
 }
 
 function wireChatGrab(grab) {
@@ -9513,6 +9560,35 @@ function chatDraftWrite(addr, text) {
 
 // Задержка записи черновика: набор идёт быстрее, чем стоит трогать диск.
 const CHAT_DRAFT_WAIT = 400;
+
+// Черновик остаётся у видимого поля до готовности нового слота. При
+// пришивании у того же объекта меняется адрес записи, поэтому поздний ввод
+// и ответ на загрузку вложения сразу попадают в родившийся разговор.
+const chatDraftOwners = new Map();
+let chatDraftView = null;
+
+function chatDraftOwner(st) {
+  let draft = chatDraftOwners.get(st.addr);
+  if (!draft) {
+    const entry = st.blank && st.entry;
+    draft = {
+      addr: st.addr, blank: st.blank,
+      text: chatDraftRead(st.addr) || (entry && entry.draft) || "",
+      height: chatDraftHeight(st.addr),
+      clips: chatClipsRead(st.addr) || chatClipsStoredRead(st.addr) || (entry && entry.files) || [],
+      revision: 0, heightRevision: 0,
+    };
+    chatDraftOwners.set(st.addr, draft);
+  }
+  return draft;
+}
+
+function chatDraftStore(draft) {
+  chatDraftWrite(draft.addr, draft.text);
+  chatDraftHeightWrite(draft.addr, draft.height);
+  chatClipsWrite(draft.addr, draft.clips);
+  if (!draft.blank) chatClipsStoredWrite(draft.addr, draft.clips);
+}
 
 function chatLastSet(addr) {
   try {
@@ -9779,7 +9855,12 @@ function chatSlotFace(node, on) {
 // chatSlotShow показывает слот ключа и прячет остальные. Пустой ключ прячет
 // все: так уходит закрытая панель, не теряя готовых узлов.
 function chatSlotShow(key) {
-  for (const [k, node] of chatPool) chatSlotFace(node, k === key);
+  for (const [k, node] of chatPool) {
+    if (node.moved && k !== key) {
+      chatPool.delete(k);
+      node.remove();
+    } else chatSlotFace(node, k === key);
+  }
 }
 
 // chatSlotPut кладёт свежесобранный разговор в слот и показывает его. Слот с
@@ -9791,6 +9872,7 @@ function chatSlotPut(pin, key, kids) {
     pin.append(node);
   }
   node.replaceChildren(...kids);
+  node.moved = false;
   chatPool.delete(key);
   chatPool.set(key, node);
   // Вытеснение по давности: узел сносится совсем, и такой чат вернётся
@@ -10240,34 +10322,56 @@ function chatModelSet(model, harness) {
   }
 }
 
-// Выбор глубины для разговора: уровень из меню модели живёт до ближайшего
-// подъёма, первая реплика, резюм или продолжение. Память в памяти панели, а не
-// в накопителе браузера: выбор действует на один запуск и настройки на экране
-// не образует. Ключом служит задача разговора, а без задачи его адрес: у
-// разговора задачи подъёмы ходят по её имени.
+// Выбор глубины переживает перезагрузку вкладки и расходуется успешным ходом.
 const chatEffortArm = new Map();
+const chatEffortRevision = new Map();
+const CHAT_EFFORT_KEY = "devkit.chat.effort.";
 
 function chatEffortKey(project, addr) {
   return String(project || "") + "/" + String(addr || "");
 }
 
 function chatEffortOf(project, addr) {
-  return chatEffortArm.get(chatEffortKey(project, addr)) || "";
+  const key = chatEffortKey(project, addr);
+  if (chatEffortArm.has(key)) return chatEffortArm.get(key);
+  try { return sessionStorage.getItem(CHAT_EFFORT_KEY + key) || ""; }
+  catch (err) { return ""; }
 }
 
 function chatEffortSet(project, addr, lv) {
-  const key = chatEffortKey(project, addr);
-  if (lv) chatEffortArm.set(key, lv);
-  else chatEffortArm.delete(key);
+  chatEffortStore(project, addr, {
+    value: lv || "", revision: String(Date.now()) + "/" + String(Math.random()),
+  });
 }
 
-// Подъём тратит выбор: дальше разговор идёт своей дорогой, и следующий подъём
-// без нового выбора едет вердиктом.
-function chatEffortSpend(project, addr) {
+function chatEffortStore(project, addr, { value, revision }) {
   const key = chatEffortKey(project, addr);
-  const lv = chatEffortArm.get(key) || "";
-  chatEffortArm.delete(key);
-  return lv;
+  chatEffortArm.set(key, value);
+  chatEffortRevision.set(key, revision);
+  try {
+    sessionStorage.setItem(CHAT_EFFORT_KEY + key + ".revision", revision);
+    if (value) sessionStorage.setItem(CHAT_EFFORT_KEY + key, value);
+    else sessionStorage.removeItem(CHAT_EFFORT_KEY + key);
+  } catch (err) { /* Выбор работает и при запрете хранилища. */ }
+}
+
+function chatEffortSnapshot(project, addr) {
+  const key = chatEffortKey(project, addr);
+  let revision = chatEffortRevision.get(key) || "";
+  if (!revision) {
+    try { revision = sessionStorage.getItem(CHAT_EFFORT_KEY + key + ".revision") || ""; }
+    catch (err) { /* Без хранилища ревизия живёт в памяти страницы. */ }
+  }
+  return { value: chatEffortOf(project, addr), revision };
+}
+
+// Ответ расходует только свой выбор: даже повторный выбор того же уровня
+// во время запроса уже принадлежит следующей реплике.
+function chatEffortSpend(project, addr, sent) {
+  const current = chatEffortSnapshot(project, addr);
+  if (sent && sent.value && current.value === sent.value && current.revision === sent.revision) {
+    chatEffortSet(project, addr, "");
+  }
 }
 
 function chatsURL(project) {
@@ -10386,7 +10490,7 @@ async function chatState(project, addr, board, works) {
     if (!sewn && lift) st.lift = lift;
     if (sewn) {
       chatLiftDrop(project, addr);
-      echoMove(project, addr, sewn);
+      chatMove(project, addr, sewn);
       chatLastSet(sewn);
       history.replaceState({ chat: sewn }, "", "#" + chatBase() + "/chat/" + sewn);
       st.addr = sewn;
@@ -11236,7 +11340,7 @@ function chatModelName(model, harness) {
 // было незачем (замечание 8 четырнадцатого круга POC). Ключ выбора двухчастный
 // «модель+подписка», и квота названа текстом самой строки: имя одно у двух
 // подписок, и без квоты выбор неразличим (DK-1281). Ярус остался в подсказке.
-function modelPick(project, st) {
+function modelPick(project, st, draftAddr = () => st.addr) {
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
   const live = st.entry ? st.entry.liveModel : "";
@@ -11249,7 +11353,7 @@ function modelPick(project, st) {
   const isLive = Boolean(st.entry && st.entry.state === "live");
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
-  const alien = Boolean(isLive && !st.entry.own);
+  const alien = Boolean(isLive && !st.entry.own && !st.entry.protocol);
   // Живая сессия показывается своей настоящей моделью: молча показывать выбор
   // поверх работающей модели значило бы врать (замечание пользователя: выбран
   // opus, работает fable). Своя живая сессия называет модель записью подъёма,
@@ -11308,9 +11412,8 @@ function modelPick(project, st) {
       ? shown.model + ": ярус " + why.tier + ", подписка " + why.harness
       : shown.model + ": сверх лестницы, подписка " + why.harness)
     : (st.modelsNote || "Модель агента");
-  // Смена модели живого разговора идёт на любую подписку: резюм поднимается
-  // целевой подпиской, а сервер перед подъёмом переносит транскрипт и
-  // сайдкары в её каталог (DK-1455), история продолжается целиком.
+  // Между подписками tmux сервер переносит транскрипт и сайдкары для резюма
+  // (DK-1455). Управляемый Codex применяет модель на следующем ходе своей нити.
   if (alien) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
@@ -11318,7 +11421,7 @@ function modelPick(project, st) {
   const box = el("div", "cmodel cselwrap");
   const menu = el("div", "menu");
   menu.hidden = true;
-  const armKey = st.task || st.addr;
+  const armKey = () => st.task || draftAddr();
   const showOnSelect = (pick) => {
     for (const o of model.children) {
       if (o.tagName !== "OPTION") continue;
@@ -11356,7 +11459,7 @@ function modelPick(project, st) {
   const mbar = el("span", "mbar");
   mbar.hidden = true;
   const mbarPaint = () => {
-    const lv = chatEffortOf(project, armKey);
+    const lv = chatEffortOf(project, armKey());
     mbar.hidden = !lv;
     if (!lv) return;
     mbar.replaceChildren(el("i", "mbar-dot"), lv);
@@ -11372,9 +11475,9 @@ function modelPick(project, st) {
     ladder: opts.filter((m) => !m.disabled),
     now: opts.find((m) => same(m, shown)) || null,
     onModel: (m) => applyPick({ model: m.model, harness: m.harness || "" }),
-    getEffort: () => chatEffortOf(project, armKey),
+    getEffort: () => chatEffortOf(project, armKey()),
     onEffort: (lv) => {
-      chatEffortSet(project, armKey, lv);
+      chatEffortSet(project, armKey(), lv);
       mbarPaint();
     },
   });
@@ -11419,10 +11522,10 @@ function modelPick(project, st) {
 // modelSwitch меняет модель диалога прямо выбором в списке, без единого
 // подтверждения: человек уже сказал, чего хочет, а плашка «перезапустить?»
 // была вторым нажатием на ту же мысль (замечание пользователя). Выбор
-// записывается в память диалога, и живой разговор тут же снимается и
-// поднимается резюмом новой моделью: контекст резюм сохраняет, а на ходу
-// модель клиенту не подменить. Мёртвому разговору хватает записи: его поднимет
-// ближайший резюм.
+// записывается в память диалога. Разговор в tmux снимается и поднимается
+// резюмом новой моделью: его модель задана запуском процесса. Дорога
+// app-server передаёт новую модель следующим turn/start в прежней нити,
+// сохраняя текущий ход. Мёртвому разговору хватает записи до резюма.
 //
 // Удача идёт молча: про смену говорит разделитель в ленте («модель изменена:
 // fable -> opus»), его пишет в журнал разговора сама ручка модели, и карточка
@@ -11434,9 +11537,10 @@ async function modelSwitch(project, st, pick, live) {
   const set = await api(at + "/model", { method: "POST", body: { model: pick.model, harness: pick.harness } });
   if (!set.ok) {
     sayResult(apiSaid(set), true);
+    await repaintChat();
     return;
   }
-  if (!live) {
+  if (!live || (st.entry && st.entry.protocol)) {
     await repaintChat();
     return;
   }
@@ -11965,6 +12069,8 @@ function fillPop(pop, project, p) {
     const tpl = planTpl(p && p.plan_template);
     if (tpl) pop.append(el("div", "prow pempty", tpl));
     pop.append(planList(plan));
+  } else {
+    pop.append(el("div", "prow pempty", "Плана пока нет"));
   }
   const list = (p && p.agents) || [];
   const now = Date.now();
@@ -12498,10 +12604,8 @@ function chatWay(st) {
     return { kind: "lift", off: true,
       hint: "сессия поднимается, ответить можно будет через несколько секунд", why: "" };
   }
-  // Записи без назначенного разговора: панель не заводит разговор первой
-  // репликой, а показывает состояние и отдельное действие запуска (LLD DK-1422,
-  // решение 2). История при этом не пропадает: прежние беседы задачи остаются
-  // в списке шапки панели.
+  // Без назначенного разговора кнопка под полем запускает работу с текстом
+  // из поля. Прежние беседы задачи доступны в списке шапки панели.
   // Спорный разбор миграции гасит ввод до выбора: реплика случайному
   // кандидату не уходит, разговор становится основным действием человека,
   // а не первой строкой в запертое поле (LLD DK-1422, решение 7).
@@ -12517,10 +12621,7 @@ function chatWay(st) {
         "Основной чат записи выбирается из прежних разговоров." };
   }
   if (st.unassigned) {
-    return { kind: "unassigned", off: true,
-      hint: "у записи нет разговора, работа начинается кнопкой",
-      why: "У записи нет основного разговора: начните работу, и он появится " +
-        "здесь сам. Прежние беседы открывает список в шапке панели." };
+    return { kind: "unassigned", off: false, why: "" };
   }
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   // Носитель записи без головы: ключ носителя разговором не разрешается, а
@@ -13108,7 +13209,9 @@ async function chatRaise(project, st, text, pick, onTmux) {
   // Ручная глубина едет подъёмом, а тратится его успехом: неудачный подъём
   // запуска не поднял, и выбор человека ждёт следующей попытки. Слова уровня
   // в самой реплике сильнее меню, и их разбирает уже сам агент.
-  const armEffort = Object.prototype.hasOwnProperty.call(pick, "effort") ? pick.effort : chatEffortOf(project, st.task || st.addr);
+  const effortAddr = st.task || st.addr;
+  const effortSnapshot = pick.effortSnapshot || chatEffortSnapshot(project, effortAddr);
+  const armEffort = Object.prototype.hasOwnProperty.call(pick, "effort") ? pick.effort : effortSnapshot.value;
   if (armEffort) body.effort = armEffort;
   // Подъём из записи пришивается к ней: разговор останется той же строкой
   // списка, на которой он начался, и адрес панели переедет на живую сессию сам.
@@ -13116,22 +13219,20 @@ async function chatRaise(project, st, text, pick, onTmux) {
   const r = await api(chatsURL(project), { method: "POST", body });
   if (!r.ok) {
     if (r.body.unknown) return { held: r.body.error || "исход запуска не подтверждён" };
-    sayResult(r.body.error || "чат не поднялся", true);
-    return false;
+    return { failed: r.body.error || "чат не поднялся" };
   }
   // Слово way из ответа говорит, доехал ли выбор до агента: только тогда
   // ручная глубина считается потраченной, тем же правилом, что у реплики
   // и продолжения работы.
   const liftWay = String(r.body.way || "");
   if (liftWay === "start" || liftWay === "new" || liftWay === "resume" ||
-      liftWay === "fresh" || liftWay === "appserver") chatEffortSpend(project, st.task || st.addr);
+      liftWay === "fresh" || liftWay === "appserver") chatEffortSpend(project, effortAddr,
+        effortSnapshot.value === armEffort ? effortSnapshot : null);
   // Повтор уже выросшей записи и разговор чужого протокола называют адрес
   // сразу: панель открывает эту ленту без ожидания нового окна.
   if ((liftWay === "appserver" || liftWay === "new") && r.body.session) {
     chatLiftDrop(project, st.addr);
-    echoMove(project, st.addr, r.body.session);
-    switchChat(r.body.session);
-    return true;
+    return { session: r.body.session };
   }
   // Имя tmux уезжает вызвавшему сразу: он кладёт его в персист реплики, и
   // дорога к родившемуся диалогу переживает закрытие вкладки.
@@ -13219,7 +13320,7 @@ async function chatSewLoop(project, name, addr, step, tries) {
     const hit = look.hit;
     if (hit) {
       chatLiftDrop(project, addr);
-      echoMove(project, addr, hit.id);
+      chatMove(project, addr, hit.id);
       switchChat(hit.id);
       return true;
     }
@@ -13252,7 +13353,7 @@ async function chatWait(project, name, addr) {
     if (hit) {
       // Память адреса подъёма переезжает к найденному диалогу: пузырь первой
       // реплики стоит, пока его не снимет эхо из ленты.
-      if (addr) echoMove(project, addr, hit.id);
+      if (addr) chatMove(project, addr, hit.id);
       switchChat(hit.id);
       return true;
     }
@@ -13927,8 +14028,12 @@ function echoRead(project, addr) {
     // отправки срок, и считает его makeEcho от born из персиста.
     // tmux это имя сессии, которую подняла эта реплика: по нему панель,
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
-    return raw.filter((m) => m && (m.text || m.selection || m.proposal)).map((m) => ({
-      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null, launch: m.launch || null, unknown: Boolean(m.unknown),
+    return raw.filter((m) => m && (m.text || m.wire || m.clips?.length || m.selection || m.proposal)).map((m) => ({
+      text: String(m.text || ""), wire: String(m.wire || m.text || ""),
+      clips: Array.isArray(m.clips) ? m.clips : [],
+      wireReady: m.wireReady ?? Boolean(m.wire || m.text),
+      effortSnapshot: m.effortSnapshot || { value: "", revision: "" },
+      born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null, launch: m.launch || null, unknown: Boolean(m.unknown),
       state: m.state === "held" || m.state === "wait" || m.state === "sent" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
@@ -13987,7 +14092,9 @@ function echoWrite(project, addr, list) {
     // разговору: без него реплика в чат с умершей сессией пропадала с экрана
     // на всё ожидание транскрипта.
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection, launch: m.launch, unknown: m.unknown,
+      .map((m) => ({ text: m.text, wire: m.wire, wireReady: m.wireReady,
+        clips: (m.clips || []).map(clipLean), effortSnapshot: m.effortSnapshot,
+        born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection, launch: m.launch, unknown: m.unknown,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), refused: Boolean(m.refused), task: m.task || "",
         appMessageID: m.appMessageID || "", since: m.since || m.born }));
@@ -14001,17 +14108,46 @@ function echoWrite(project, addr, list) {
   }
 }
 
-// Пришивание переносит память адреса подъёма к родившемуся диалогу, а не
-// стирает её: пузырь первой реплики обязан пережить переезд панели и уйти
-// только своим эхом из ленты. Чистка на месте оставляла промежуток без единой
-// копии реплики, пока лента нового sid ехала с сервера, и человек видел
-// мигание (снимок пользователя). Старый ключ снимается, чтобы пузырь не
-// воскресал при следующем нажатии «+».
-function echoMove(project, from, to) {
+function chatDraftMove(from, to) {
+  const open = chatDraftOwners.get(from);
+  const draft = open || chatDraftOwner({ addr: from });
+  chatDraftOwners.delete(from);
+  // Пришивание может найти тот же sid несколькими опросами. Пустой ключ
+  // предыдущего переезда не должен сменить владельца ещё раз.
+  if (!open && !draft.text && !draft.height && !draft.clips.length) return;
+
+  const dest = chatDraftOwner({ addr: to });
+  draft.text = dest.text || draft.text;
+  draft.height = dest.height || draft.height;
+  if (dest.clips.length) draft.clips = dest.clips;
+  draft.addr = to;
+  draft.blank = "";
+  chatDraftOwners.set(to, draft);
+  chatDraftStore(draft);
+  chatDraftStore({ addr: from, text: "", height: 0, clips: [] });
+  if (chatDraftView?.draft === draft) chatDraftView.moving();
+}
+
+// Переезд при пришивании переносит черновик и исходящие реплики. Пузырь
+// первой реплики остаётся в ленте до её прихода из транскрипта.
+function chatMove(project, from, to) {
+  if (!from || !to || from === to) return;
+  chatDraftMove(from, to);
+  for (const slot of chatPool.values()) {
+    if (slot.st?.addr === from && slot.st.project === project) slot.moved = true;
+  }
+  // Привязанный к задаче выбор и в новом разговоре берётся по ID задачи.
+  if (!chatIsTask(from) && !chatNewTask(from)) {
+    const effort = chatEffortSnapshot(project, from);
+    if (effort.value) {
+      if (!chatEffortOf(project, to)) chatEffortStore(project, to, effort);
+      chatEffortSet(project, from, "");
+    }
+  }
   try {
     const key = ECHO_KEY + project + "/";
     const raw = localStorage.getItem(key + from);
-    if (raw && from !== to) {
+    if (raw) {
       let add = [];
       let was = [];
       try { add = JSON.parse(raw); } catch (err) { add = []; }
@@ -14052,13 +14188,7 @@ function echoSweep(project, door, chats) {
         } else rest.push(rec);
         continue;
       }
-      let was = [];
-      try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
-      if (!Array.isArray(was)) was = [];
-      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown,
-        why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
-        queue: Boolean(rec.queue), refused: Boolean(rec.refused), task: rec.task || "", since: rec.since || rec.born });
-      localStorage.setItem(key + hit.id, JSON.stringify(was));
+      echoWrite(project, hit.id, echoRead(project, hit.id).concat(rec));
     }
     localStorage.removeItem(key + door);
   } catch (err) {
@@ -14066,6 +14196,37 @@ function echoSweep(project, door, chats) {
     // двери, показывать пустоту вместо панели из-за него не стоит.
   }
   return rest;
+}
+
+function echoMatches(item, message) {
+  if (message.appMessageID) {
+    return item.app?.method === "devkit/appTaskMessage" && item.app?.item?.id === message.appMessageID;
+  }
+  const clips = message.clips || [];
+  const shots = item.shots || [];
+  const frags = item.frags || [];
+  if (clips.length || shots.length || frags.length) {
+    if (!message.wireReady) return false;
+    const wire = sayNorm(message.wire);
+    if (wire && (clips.length || wire !== sayNorm(message.text)) && sayNorm(item.wire).endsWith(wire)) return true;
+    const pathsMatch = (kind, paths) => {
+      const expected = clips.filter((clip) => clip.kind === kind).map((clip) => clip.path);
+      return expected.length === paths.length && expected.every((path, i) => path && path === paths[i]);
+    };
+    if (!pathsMatch("image", shots) || !pathsMatch("frag", frags)) return false;
+    const prefix = attachPrefix(clips);
+    // У запуска работы к реплике добавлен заказ конвейера. Сервер называет
+    // полный провод запуска, а история tmux хранит его слова без префиксов.
+    const sent = prefix && message.wire.startsWith(prefix) ? message.wire.slice(prefix.length) : message.text;
+    const shown = sayNorm(item.text);
+    return shown === sayNorm(message.text) || shown === sayNorm(sent);
+  }
+  if (message.selection) {
+    return sameSay(item.wire || item.text, message.wire) ||
+      sameSelection(item.selection, message.selection) && item.text === message.text;
+  }
+  return sameSay(item.wire || item.text, message.wire) ||
+    !item.selection && sameSay(item.text, message.text);
 }
 
 // once это записи, снятые с дверного ключа разбором echoSweep: показываются
@@ -14086,7 +14247,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   const save = () => {
     if (!addr) return;
     // Панель после ушедшей реплики сменила адрес: писать в персист старого
-    // адреса значило бы воскресить пузыри, которые echoMove уже перевёз к
+    // адреса значило бы воскресить пузыри, которые chatMove уже перевёз к
     // родившемуся разговору.
     if (stopped) return;
     echoWrite(project, addr, mine.filter((m) => !m.once));
@@ -14137,6 +14298,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         why = m.why || "агенту её не отдали";
       } else if (m.state === "bad") {
         mark = stateMark("fail", stopped ? "не ушло" : "не ушло, дожимаю");
+        why = m.why || "";
       } else if (m.state === "sent") {
         mark = stateMark("done", "доставлено");
       } else {
@@ -14161,7 +14323,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       const wrap = chatBubble("вы", selectionWords(m.text, m.selection), m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
-      if (m.unknown && m.state === "held") wrap.append(el("div", "mwhy", why));
+      if (((m.state === "held" && !m.queue) || m.state === "bad") && why) wrap.append(el("div", "mwhy", why));
       if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       for (const c of m.clips || []) {
@@ -14228,7 +14390,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // реплику, а не следующую.
       if (m.flying) continue;
       drop(m);
-      again(m.text, m.id);
+      again(m);
     }
   };
   const plan = () => {
@@ -14285,10 +14447,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
       sinceOf.set(rec.id, rec.since);
-      mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID,
-        scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, launch: rec.launch, unknown: rec.unknown, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection, rec.launch) });
+      mine.push({ ...rec, key: "local-" + seq });
     }
     // echoSweep возвращает нераспознанные записи со старого адреса для
     // показа до следующей пересборки. Сверка может снять такую запись
@@ -14296,9 +14455,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // Сверка не снимает записи с явным отказом.
     for (const rec of once || []) {
       seq += 1;
-      mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, since: rec.since,
-        tmux: rec.tmux, queue: rec.queue, refused: rec.refused, task: rec.task, appMessageID: rec.appMessageID, launch: rec.launch, unknown: rec.unknown, once: true });
+      mine.push({ ...rec, key: "local-" + seq, once: true });
     }
     if (mine.length) {
       draw();
@@ -14336,15 +14493,16 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // wire это то, что ушло агенту (с префиксами вложений и выделения), и
     // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
     // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
-    add(text, retry, wire, sel, clips, id, scenario, proposal, selection, launch) {
+    add(text, retry, wire, sel, clips, id, scenario, proposal, selection, launch, effortSnapshot) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
       // берётся от первой попытки с этим ключом: дожим это та же реплика, а не
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
-      const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
-        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal, selection, launch };
+      const m = { key: "local-" + seq, id: key, text, wire, wireReady: false, sel, clips,
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(),
+        retry, scenario, proposal, selection, launch, effortSnapshot };
       sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -14352,6 +14510,14 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       save();
       draw();
       return m;
+    },
+    // Записать собранный запрос до отправки: попытка продолжится с ним же
+    // после перезагрузки или переезда к родившемуся sid.
+    wire(m, wire) {
+      if (!mine.includes(m)) return;
+      m.wire = wire;
+      m.wireReady = true;
+      save();
     },
     // Ручка ответила удачей: реплика ушла, но эха из транскрипта ещё нет.
     // Снятия по слепому сроку больше нет: пузырь живёт до эха, а стареет тем
@@ -14366,9 +14532,10 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       draw();
       ripen(m);
     },
-    bad(m) {
+    bad(m, why) {
       if (!mine.includes(m)) return;
       m.state = "bad";
+      if (why) m.why = why;
       save();
       draw();
       plan();
@@ -14446,16 +14613,8 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
         if (m.refused) continue;
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
-        const hit = list.find((it) => {
-          if (!it || it.role !== "user" || it.who || claimed.has(itemKey(it))) return false;
-          if (m.appMessageID) {
-            return it.app?.method === "devkit/appTaskMessage" && it.app?.item?.id === m.appMessageID;
-          }
-          if (!it.text && !it.selection && !it.proposal) return false;
-          if (sameSay(it.wire || it.text, m.wire)) return true;
-          return m.selection ? sameSelection(it.selection, m.selection) && it.text === m.text :
-            !it.selection && sameSay(it.text, m.text);
-        });
+        const hit = list.find((it) => it && it.role === "user" && !it.who &&
+          !claimed.has(itemKey(it)) && echoMatches(it, m));
         if (!hit) continue;
         claimed.add(itemKey(hit));
         const at = mine.indexOf(m);
@@ -14591,24 +14750,6 @@ function chatPanel(project, st) {
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
     note.append(el("span", "", way.why));
-    // Действие запуска стоит в самой плашке: разговор записи заводит работа, а
-    // не реплика в запертое поле (LLD DK-1422). После запуска панель
-    // собирается заново: адрес тот же, состояние уже другое, и слот со старой
-    // плашкой пережил бы нажатие, спрятав начавшуюся работу.
-    if (way.kind === "unassigned" && st.task) {
-      const go = el("button", "btn btn-sm btn-acc", "Начать работу");
-      go.addEventListener("click", async () => {
-        go.disabled = true;
-        try {
-          await startRun(project, st.task);
-        } finally {
-          go.disabled = false;
-          chatPool.delete(chatOpen);
-          await repaintChat();
-        }
-      });
-      note.append(go);
-    }
     wrap.append(note);
   }
   // Служебных ручек записи в чате нет: решение цели задачам и строку
@@ -14652,12 +14793,6 @@ function chatPanel(project, st) {
   // ответа надо не только собрать, но и убрать со снятой отметки.
   const askPick = Object.assign({ on: false, put: "", ask: null }, askPickRead(st.addr));
   askPick.addr = st.addr;
-  // Разговор без процесса красит общий индикатор остановкой вместо отдельной
-  // строки с кнопкой (DK-701). Кнопки «Поднять» тут больше нет: молчание не
-  // отличалось от живого разговора, и человек нажимал её не зная, поднимется
-  // чат или нет (замечание пользователя про разговор из архива). Первая же
-  // реплика поднимает разговор сама, а состояние видно цветом и словами.
-  if (way.kind === "resume") busy.stopped();
 
   const box = el("div", "cbox");
   // Поле ввода тянется за верхний край, а не за нижний: снизу у него кнопка
@@ -14690,33 +14825,39 @@ function chatPanel(project, st) {
     ta.title = waitTip;
     ta.setAttribute("aria-label", "Реплика в чат. " + waitTip);
   }
-  // Высота поля возвращается вместе с черновиком: растянутое поле переживает
-  // перезагрузку ровно пока в нём лежит ненаписанное.
-  wireTaGrip(grip, ta, (h) => { chatDraftHeightWrite(st.addr, h); });
-  // Черновик возвращается при открытии разговора и пишется по ходу набора.
-  // Черновик незачатого разговора приезжает от него самого, когда вкладка про
-  // него не знает: разговор ждёт с набранным текстом и в другом браузере.
-  ta.value = chatDraftRead(st.addr) ||
-    (st.blank && st.entry ? st.entry.draft || "" : "");
-  const draftSave = (text) => {
-    chatDraftWrite(st.addr, text);
-    if (st.blank) chatDraftPush(project, st.blank, text, attach.map(clipLean));
-  };
-  const savedHeight = chatDraftHeight(st.addr);
-  if (savedHeight > 0) ta.style.height = savedHeight + "px";
+  let draft = chatDraftOwner(st);
+  ta.value = draft.text;
+  const grow = chatInputSize(wrap, ta, draft.height);
+  wireTaGrip(grip, ta, (h) => {
+    draft.height = h;
+    draft.heightRevision += 1;
+    grow.minimum(h);
+    chatDraftStore(draft);
+  }, grow.limit);
+  grow.resize();
   let draftTimer = null;
+  const draftPush = () => {
+    if (draft.blank) chatDraftPush(project, draft.blank, draft.text, draft.clips.map(clipLean));
+  };
+  const flushDraft = () => {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    draftPush();
+  };
+  const keepText = () => {
+    draft.text = ta.value;
+    chatDraftStore(draft);
+    if (draft.blank) {
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(flushDraft, CHAT_DRAFT_WAIT);
+    }
+  };
   ta.addEventListener("input", () => {
+    draft.revision += 1;
+    grow.resize();
     askPickInput(askPick, ta.value);
     askPickSave(st.addr, askPick);
-    chatDraftWrite(st.addr, ta.value);
-    if (draftTimer) clearTimeout(draftTimer);
-    draftTimer = setTimeout(() => { draftSave(ta.value); }, CHAT_DRAFT_WAIT);
-  });
-  chatLive.push(() => {
-    // Уход с разговора дописывает черновик немедленно: отложенная запись до
-    // закрытия вкладки могла не успеть.
-    if (draftTimer) clearTimeout(draftTimer);
-    draftSave(ta.value);
+    keepText();
   });
   const row = el("div", "crow");
   // Приложенное к реплике видно до отправки, а не только после: слева от края
@@ -14726,36 +14867,16 @@ function chatPanel(project, st) {
   const clips = el("div", "cclips");
   row.append(clips);
   let pinnedSel = null;
-  // Вложения реплики лежат списком: снимков и фрагментов бывает по несколько,
-  // и каждое добавляется и снимается само по себе. После отправки список
-  // пустеет, и та же вставка в следующей реплике не считается повтором.
-  let attach = chatClipsRead(st.addr) || chatClipsStoredRead(st.addr) ||
-    (st.blank && st.entry ? st.entry.files || [] : []);
   // Места экрана, выбранные пикером: описатели, снятые в момент нажатия.
   let picks = [];
-  // Ссылки на вложения лежат рядом с черновиком: начатому разговору их держит
-  // вкладка, а незачатому сам сервер своей записью. Отправленное пустеет в
-  // обоих местах сразу, чтобы повторная вставка не находила старого.
-  let attachPushed = "";
-  const attachKeep = () => {
-    const lean = JSON.stringify(attach.map(clipLean));
-    chatClipsWrite(st.addr, attach);
-    if (lean === attachPushed) return;
-    // Пустой список на первом касании панели никуда не пишется: своей правды
-    // о вложениях у свежей вкладки ещё нет, а запись незачатого разговора
-    // держит их сама, и пустой черновик стёр бы их с сервера до показа.
-    if (lean === "[]" && !attachPushed) {
-      attachPushed = lean;
-      return;
-    }
-    attachPushed = lean;
-    if (st.sid) chatClipsStoredWrite(st.addr, attach);
-    else if (st.blank) chatDraftPush(project, st.blank, ta.value, attach.map(clipLean));
+  const keepClips = (list) => {
+    draft.clips = list;
+    draft.revision += 1;
+    chatDraftStore(draft);
+    if (draft.blank) flushDraft();
+    drawClips();
   };
   const drawClips = () => {
-    // Отрисовка блоков заодно и запоминает вложения: меняют их только тут же
-    // рядом, и держать запись в нескольких местах незачем.
-    attachKeep();
     clips.replaceChildren();
     if (pinnedSel) {
       const chip = el("div", "cclip");
@@ -14783,7 +14904,7 @@ function chatPanel(project, st) {
       chip.append(off);
       clips.append(chip);
     }
-    for (const clip of attach) {
+    for (const clip of draft.clips) {
       const chip = el("div", "cclip cfrag" + (clip.hi ? " hi" : ""));
       const off = el("button", "cclipx");
       if (clip.kind === "image") {
@@ -14795,7 +14916,11 @@ function chatPanel(project, st) {
           thumb.hidden = true;
           chip.append(el("span", "bad", "картинка не показалась"));
         });
-        thumb.src = clip.data || (clip.path ? shotURL(clip.path) : "");
+        thumb.src = clip.data || (clip.path ? shotURL(clip.path, project) : "");
+        thumb.addEventListener("click", () => {
+          const src = clip.data || (clip.path ? shotURL(clip.path, project) : "");
+          if (src) shotOpen(src, clip.name || "снимок");
+        });
         chip.append(thumb);
         chip.append(el("span", "", clip.name || "снимок"));
         chip.classList.remove("cfrag");
@@ -14820,8 +14945,7 @@ function chatPanel(project, st) {
       off.setAttribute("aria-label", off.title);
       off.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        attach = attach.filter((c) => c !== clip);
-        drawClips();
+        keepClips(draft.clips.filter((c) => c !== clip));
       });
       chip.append(off);
       clips.append(chip);
@@ -14897,7 +15021,7 @@ function chatPanel(project, st) {
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
   row.append(pickBtn);
-  row.append(modelPick(project, st));
+  row.append(modelPick(project, st, () => draft.addr));
   // Неразобранные мысли записи разбираются прямо из её чата: вход в разговор
   // сам ходку не поднимает, а эта кнопка поднимает, не отходя от ленты
   // (DK-1564, утверждённая поправка). Под идущим разбором кнопки нет: работы
@@ -14923,17 +15047,19 @@ function chatPanel(project, st) {
       // применяет её только на подъём, будильник живой сессии её не заметит.
       // Слово way из ответа говорит, доехал ли выбор до агента: только тогда
       // ручная глубина считается потраченной.
-      continueTask(project, st.task, chatEffortOf(project, st.task || st.addr))
+      const effortSnapshot = chatEffortSnapshot(project, st.task || st.addr);
+      continueTask(project, st.task, effortSnapshot.value)
         .then((way) => {
           if (way === "start" || way === "new" || way === "resume" ||
-              way === "fresh") chatEffortSpend(project, st.task || st.addr);
+              way === "fresh") chatEffortSpend(project, st.task || st.addr, effortSnapshot);
         })
         .catch(console.error).finally(() => { go.disabled = false; });
     });
     row.append(go);
   }
-  const send = el("button", "btn btn-acc csend", "Отправить");
+  const send = el("button", "btn btn-acc csend", way.kind === "unassigned" ? "Начать работу" : "Отправить");
   askPick.send = send;
+  askPick.start = way.kind === "unassigned";
   askPick.draft = ta.value;
   askPickRender(askPick);
   send.disabled = Boolean(way.off);
@@ -14944,13 +15070,29 @@ function chatPanel(project, st) {
   // человек узнавал об этом только от агента (жалоба на чат DK-460). Ключом
   // незачатого разговора стоит его запись на сервере, а не свежая: файл,
   // положенный мимо записи, не стирался бы вместе с ней.
-  const shotKey = () => st.sid || st.blank || "new-" + Date.now();
+  const shotKey = () => draft.addr !== st.addr ? draft.addr : st.sid || st.blank || "new-" + Date.now();
 
   // putClip кладёт одно вложение на сервер и приписывает ему путь. Вложение,
   // уже лежащее или едущее, обходит попытку: повторная кладка тех же данных
   // плодила бы файлы.
-  const putClip = async (clip) => {
-    if (!clip || clip.path || clip.busy) return;
+  const putClip = (clip) => {
+    if (clip.path) return;
+    if (clip.upload) return clip.upload;
+    const owner = draft;
+    clip.upload = uploadClip(clip).finally(() => {
+      clip.upload = null;
+      // Ссылка принадлежит тому же черновику, даже если за время загрузки
+      // он сменил адрес или уже открыт другой слот.
+      const current = chatDraftOwners.get(owner.addr);
+      if (!current?.clips.includes(clip)) return;
+      chatDraftStore(current);
+      if (current.blank) chatDraftPush(project, current.blank, current.text, current.clips.map(clipLean));
+      if (chatDraftView?.draft === current) chatDraftView.draw();
+    });
+    return clip.upload;
+  };
+
+  const uploadClip = async (clip) => {
     // Восстановленная ссылка без пути едет без данных: сама вставка умерла
     // вместе с вкладкой, и повторить её может только человек новой вставкой.
     if (clip.kind === "image" && !clip.data) {
@@ -15010,24 +15152,40 @@ function chatPanel(project, st) {
   // видит, что вставка уже при деле.
   const addClip = (clip) => {
     const body = clip.data || clip.text || "";
-    const was = attach.find((c) => c.kind === clip.kind && (c.data || c.text) === body);
-    if (was) {
-      was.hi = true;
-      drawClips();
-      setTimeout(() => { was.hi = false; drawClips(); }, 1200);
-      return;
+    const was = draft.clips.find((c) => c.kind === clip.kind && (c.data || c.text) === body);
+    const shown = was || clip;
+    shown.hi = true;
+    if (was) drawClips();
+    else {
+      putClip(clip);
+      keepClips(draft.clips.concat([clip]));
     }
-    clip.hi = true;
-    attach = attach.concat([clip]);
-    drawClips();
-    setTimeout(() => { clip.hi = false; drawClips(); }, 1200);
-    putClip(clip).then(drawClips);
+    setTimeout(() => {
+      shown.hi = false;
+      if (chatDraftView?.draft.clips.includes(shown)) chatDraftView.draw();
+    }, 1200);
   };
 
-  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal, selection, launchHint) => {
-    const launch = launchHint || (way.kind === "new" ? {
+  const readySend = () => { send.disabled = Boolean(way.off || draft.addr !== st.addr); };
+  const takeDraft = () => {
+    const sent = { clips: draft.clips, height: draft.height,
+      revision: draft.revision, heightRevision: draft.heightRevision };
+    ta.value = draft.text = "";
+    draft.clips = [];
+    draft.height = 0;
+    grow.minimum(0);
+    chatDraftStore(draft);
+    if (draft.blank) flushDraft();
+    drawClips();
+    return sent;
+  };
+
+  const post = (text, sel, withClips, took, scenario, proposal, selection, retry) => {
+    const effortAddr = st.task || draft.addr;
+    const effortSnapshot = retry ? retry.effortSnapshot : chatEffortSnapshot(project, effortAddr);
+    const launch = retry?.launch || (way.kind === "new" ? {
       ...(st.entry && st.entry.model ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(st.models)),
-      effort: chatEffortOf(project, st.task || st.addr), chat: st.blank || "", id: st.task || ""
+      effort: effortSnapshot.value, effortSnapshot, chat: st.blank || "", id: st.task || ""
     } : null);
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
@@ -15035,14 +15193,10 @@ function chatPanel(project, st) {
     // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
     // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
     const spots = took && took.length ? pickPrefix(took) : "";
-    const wire0 = wireHint || (spots + (sel ? selPrefix(sel) + text : text));
-    // Повтор восстановленной записи едет с тем же проводом: вложения той
-    // реплики уже лежат на сервере, и строить провод заново значило бы
-    // перечитать их в панель, которой их уже не принадлежит.
-    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal, selection, launch),
-      wire0, sel, withClips, key, scenario, proposal, selection, launch);
+    const wire0 = spots + (sel ? selPrefix(sel) + text : text);
+    const m = echo.add(text, (again) => post(text, sel, withClips, took, scenario, proposal, selection, again),
+      retry?.wire || wire0, sel, withClips, retry?.id, scenario, proposal, selection, launch, effortSnapshot);
     send.disabled = true;
-    const done = () => { send.disabled = Boolean(way.off); };
     // Первая реплика поднимает сессию, а повтор после смерти уточняет исход
     // по квитанции. Доказанный отказ допускает новый запуск. Неизвестный
     // исход удерживает пузырь с причиной, второй процесс не поднимается.
@@ -15051,8 +15205,8 @@ function chatPanel(project, st) {
         (name) => echo.mark(m, name))
         .then((got) => {
           if (got && got.held) { echo.held(m, got.held, undefined, true); busy.off(); return; }
-          if (got === false) {
-            echo.bad(m);
+          if (got === false || (got && got.failed)) {
+            echo.bad(m, got && got.failed || "чат не поднялся");
             busy.off();
             return;
           }
@@ -15069,21 +15223,27 @@ function chatPanel(project, st) {
             echo.held(m, (dead && dead.why) || CHAT_LIFT_DEAD_WHY);
             busy.off();
           } else if (got === "waiting") echo.held(m, CHAT_WAIT_WHY);
-          else echo.sent(m);
+          else {
+            echo.sent(m);
+            if (got?.session) {
+              chatMove(project, st.addr, got.session);
+              switchChat(got.session);
+            }
+          }
         })
         .catch((err) => { echo.bad(m); busy.off(); console.error(err); })
-        .finally(done);
+        .finally(readySend);
     };
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
     // первой строкой: у всех дорог он один и тот же.
     const go = (wire) => {
+      echo.wire(m, wire);
       if (selection || scenario || proposal) {
-        if (selection) m.wire = wire;
         api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say", {
           method: "POST", body: { text: selection ? wire : text, msg_id: m.id, ...(selection ? { selection } : scenario ? { scenario } : { proposal }) },
         }).then((r) => {
           if (!r.ok) {
-            if (r.status >= 500) echo.bad(m);
+            if (r.status >= 500) echo.bad(m, r.body.error || "реплика не ушла");
             else echo.held(m, r.body.error || "ответ не принят");
             sayResult(r.body.error || "ответ не принят", true);
           } else {
@@ -15095,7 +15255,7 @@ function chatPanel(project, st) {
             }
             if (r.body.message) sayResult(r.body.message, false);
           }
-        }).catch((err) => { echo.bad(m); console.error(err); }).finally(done);
+        }).catch((err) => { echo.bad(m); console.error(err); }).finally(readySend);
         return;
       }
       if (way.kind === "task") {
@@ -15119,13 +15279,10 @@ function chatPanel(project, st) {
             else echo.sent(m);
           })
           .catch((err) => { echo.bad(m); console.error(err); })
-          .finally(done);
+          .finally(readySend);
         return;
       }
       if (launch) {
-        // Плашка о подъёме встаёт сразу: между отправкой и пришиванием ленты
-        // проходят секунды, и пустота под пузырём читалась как зависание.
-        busy.raise();
         lift(wire, 1);
         return;
       }
@@ -15135,7 +15292,7 @@ function chatPanel(project, st) {
       // её в следующем ходе, в том числе после восстановления. Терминальный
       // клиент получает её при подъёме процесса.
       m.flying = true;
-      const armEffort = chatEffortOf(project, st.task || st.addr);
+      const armEffort = effortSnapshot.value;
       const sayBody = { text: wire, msg_id: m.id };
       if (armEffort) sayBody.effort = armEffort;
       api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
@@ -15151,7 +15308,7 @@ function chatPanel(project, st) {
               sayResult(r.body.refused, true);
               return;
             }
-            echo.bad(m);
+            echo.bad(m, r.body.error || "реплика не ушла");
             // Отказ с именем клина (клиент не подтвердил доставку) перечитывает
             // панель сразу: сервер уже запомнил молчащий канал, и плашка клина
             // с кнопкой выхода обязана встать здесь, а не при следующем заходе.
@@ -15171,6 +15328,11 @@ function chatPanel(project, st) {
           // Реплика ушла, значит связь есть: счёт отказов обнуляется тем же
           // местом, что и у экрана.
           lostGone();
+          const delivery = r.body.way === "dup" ? r.body.was : r.body.way;
+          if (r.body.way === "dup" && !delivery) {
+            echo.bad(m, r.body.message);
+            return;
+          }
           // Слова дороги (DK-480): ответ отпустил запертый вопрос, строка с !
           // уехала текстом мимо терминала. Удача обычной доставки молчит.
           if (r.body.note) sayResult(r.body.note);
@@ -15196,20 +15358,14 @@ function chatPanel(project, st) {
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else if (r.body.way === "queued") echo.queued(m, r.body.message);
           else echo.sent(m);
-          // Дорога сервера приложения отвечает словами сразу, а ответ клиента
-          // приходит в ленту ходом: слово уходит в панель, чтобы отправка не
-          // читалась молчанием до первого хода.
-          if (r.body.way === "appserver" && r.body.message) {
-            sayResult(r.body.message, false);
-          }
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
-          // Подъём тратит и ручную глубину: она уехала с этим подъёмом.
-          if (r.body.way === "start" || r.body.way === "resume" || r.body.way === "fresh") {
-            chatEffortSpend(project, st.task || st.addr);
+          // Успех расходует глубину, отправленную этим запросом.
+          if (delivery === "start" || delivery === "resume" || delivery === "fresh" || delivery === "appserver") {
+            chatEffortSpend(project, st.task || draft.addr, effortSnapshot);
           }
           if (r.body.way === "start") {
-            // Адрес едет с вызовом: echoMove перевезёт персист отправки к
+            // Адрес едет с вызовом: chatMove перевезёт персист отправки к
             // родившемуся разговору, и пузырь встанет в ленту нового sid
             // раньше транскрипта, а не исчезнет вместе с переездом.
             chatWait(project, r.body.tmux, st.sid).catch(console.error);
@@ -15222,12 +15378,12 @@ function chatPanel(project, st) {
         })
         .catch((err) => {
           busy.off();
-          echo.bad(m);
+          echo.bad(m, String(err.message || err));
           console.error(err);
         })
         .finally(() => {
           m.flying = false;
-          done();
+          readySend();
         });
     };
     // Не легло вложение, значит реплика не уходит вовсе: агент ответил бы на
@@ -15235,8 +15391,8 @@ function chatPanel(project, st) {
     // видит. Причина сказана словами, пузырь остаётся с пометкой и повтором.
     // Провод восстановленной записи уже несёт свои префиксы, и догружать
     // ничего не надо: ключ тот же, и кладка была бы второй.
-    if (wireHint) {
-      go(wireHint);
+    if (retry?.wireReady) {
+      go(retry.wire);
       return;
     }
     Promise.all((withClips || []).map((c) => putClip(c)))
@@ -15246,7 +15402,7 @@ function chatPanel(project, st) {
           echo.bad(m);
           sayResult("вложение не ушло: " + (bad.bad || "без причины"), true);
           drawClips();
-          done();
+          readySend();
           return;
         }
         go(attachPrefix(withClips) + wire0);
@@ -15255,12 +15411,13 @@ function chatPanel(project, st) {
         echo.bad(m);
         sayResult("вложение не ушло: " + err, true);
         drawClips();
-        done();
+        readySend();
         console.error(err);
       });
   };
 
   const fire = () => {
+    if (send.disabled || draft.addr !== st.addr) return;
     const scenario = null;
     const selection = askPick.selection || null;
     let proposal = null;
@@ -15269,13 +15426,68 @@ function chatPanel(project, st) {
       catch (err) { sayResult(err.message, true); return; }
     }
     const text = ta.value;
-    if ((!text.trim() && !(attach.length && !goalOut) && !selection && !(proposal && proposal.mode !== "comment")) || send.disabled) return;
-    ta.value = "";
+    if (way.kind === "unassigned") {
+      send.disabled = true;
+      const pick = st.entry && st.entry.model
+        ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(st.models);
+      const option = (st.models || []).find((m) => m.model === pick.model && m.harness === pick.harness);
+      const effortSnapshot = chatEffortSnapshot(project, st.task);
+      // Отправленное отделяется до запроса. Поле уже держит следующий черновик.
+      const sent = takeDraft();
+      const sentClips = sent.clips;
+      const launch = async () => {
+        const m = text.trim() || sentClips.length ? echo.add(text, null, text, null, sentClips) : null;
+        try {
+          await Promise.all(sentClips.map(putClip));
+          const bad = sentClips.find((c) => !c.path);
+          if (bad) throw new Error(bad.bad || "вложение не ушло");
+          const wire = attachPrefix(sentClips) + text;
+          if (m) echo.wire(m, wire);
+          const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs", {
+            method: "POST", body: { id: st.task, intent: "chat", text: wire, harness: pick.harness,
+              tier: option && option.tier || "", effort: effortSnapshot.value }
+          });
+          if (!r.ok) throw new Error(apiSaid(r));
+          if (!r.body.session) throw new Error("Запуск не открыл разговор");
+          if (m) {
+            m.wire = r.body.wire || wire;
+            echo.sent(m);
+          }
+          chatEffortSpend(project, st.task, effortSnapshot);
+          askPick.start = false;
+          askPickRender(askPick);
+          if (r.body.way === "appserver" && r.body.session) {
+            chatMove(project, st.sid || st.addr, r.body.session);
+            switchChat(r.body.session);
+          } else if (r.body.session) {
+            chatWait(project, r.body.session, st.addr).catch(console.error);
+          }
+        } catch (err) {
+          if (draft.revision === sent.revision) {
+            ta.value = draft.text = text;
+            draft.clips = sentClips;
+          }
+          if (draft.heightRevision === sent.heightRevision) {
+            draft.height = sent.height;
+            grow.minimum(draft.height);
+          }
+          chatDraftStore(draft);
+          drawClips();
+          grow.resize();
+          if (m) echo.held(m, String(err.message || err));
+          else sayResult(String(err.message || err), true);
+        } finally { readySend(); }
+      };
+      launch().catch(console.error);
+      return;
+    }
+    if (!text.trim() && !(draft.clips.length && !goalOut) && !selection && !(proposal && proposal.mode !== "comment")) return;
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
     // очередь. Эхо транскрипта ей не положено: в ленту витка она попадёт
     // только подхватом, а не записью клиента.
     if (goalOut) {
-      chatDraftWrite(st.addr, "");
+      ta.value = "";
+      keepText();
       goalOut.send(text).catch(console.error);
       return;
     }
@@ -15292,19 +15504,11 @@ function chatPanel(project, st) {
     askPick.touched = false;
     askPickSave(st.addr, askPick);
     askPickRender(askPick);
-    if (draftTimer) clearTimeout(draftTimer);
-    chatDraftWrite(st.addr, "");
-    // Отправка уносит и высоту: поле возвращается к своему обычному росту,
-    // растянутым его держало ненаписанное.
-    chatDraftHeightWrite(st.addr, 0);
-    ta.style.height = "";
-    // Выделенный в постановке кусок уезжает вместе с репликой: человек
-    // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
-    // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
-    // снимки и фрагменты одной реплики едут вместе, сколько бы их ни было.
-    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario, proposal, selection);
+    // Вложения и высота относятся к отправленной реплике. Выделение и
+    // выбранные места едут тем же запросом.
+    const sent = takeDraft();
+    post(text, pinnedSel || grabSelection(), sent.clips, picks, scenario, proposal, selection);
     pinnedSel = null;
-    attach = [];
     picks = [];
     // Выбор кончился вместе с репликой: места уехали, и держать экран в режиме
     // выбора незачем.
@@ -15377,6 +15581,14 @@ function chatPanel(project, st) {
   // слова пустой ленты) при нём не повторяется, оно уже сделано и стоит на
   // экране.
   const arm = (again) => {
+    draft = chatDraftOwner(st);
+    chatDraftView = { draft, draw: drawClips, moving: readySend };
+    if (again) {
+      ta.value = draft.text;
+      grow.minimum(draft.height);
+      drawClips();
+    }
+    chatLive.push(() => { if (draftTimer) flushDraft(); });
     // Переход по цитате ищет исходную реплику в ленте этого разговора: панель
     // на экране одна, и ссылка на её ленту живёт тут.
     chatFeedBox = feed;
@@ -15398,8 +15610,9 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id, wire, scenario, proposal, selection, launch) => post(more, null, null, id, null, wire, scenario, proposal, selection, launch), legacy);
-    chatLive.push(echo.clear, echo.stop);
+      (rec) => post(rec.text, null, rec.clips, null, rec.scenario, rec.proposal, rec.selection, rec), legacy);
+    chatLive.push(echo.stop);
+    grow.arm();
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать. Гашение явное (halt): занятость,
     // которую сервер ещё видит по хвосту транскрипта, плашку обратно не
@@ -15408,7 +15621,7 @@ function chatPanel(project, st) {
     chatLive.push(busy.shut);
     // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
     // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-    if (!st.dead && (chatIsNew(st.addr) ? (echo.waiting() || st.lift) : (!st.sid && st.lift))) busy.raise();
+    if (!st.dead && !chatIsNew(st.addr) && !st.blank && !st.sid && st.lift) busy.raise();
     // Слежение за состоянием чата (DK-893). Плашка встаёт по ответу сервера, а
     // не по нажатию «Отправить»: открытие чата, перезагрузка страницы и заход с
     // другого устройства посреди чужого хода показывают её сразу. Слежение
@@ -15458,7 +15671,7 @@ function chatPanel(project, st) {
           : st.unassigned
           // Слова плашки над лентой уже назвали действие, и лента добавляет
           // только про историю: у записи без назначения беседы не пропадают.
-          ? "у записи нет назначенного разговора, прежние беседы открывает список в шапке"
+          ? ""
           : st.fresh
           ? "новый чат: напишите первую реплику, она и поднимет сессию"
           // Про пустоту говорит либо заголовок панели, либо лента, но не оба
@@ -16105,7 +16318,7 @@ function askPickRender(pick) {
     caption = el("span", "choice-caption");
     pick.send.replaceChildren(caption);
   }
-  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : "Отправить";
+  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : pick.start ? "Начать работу" : "Отправить";
   const border = pick.send.querySelector(".choice-border");
   if (choosing && !border) {
     const ring = el("span", "choice-border");
@@ -16268,7 +16481,7 @@ async function paintChat(project, addr, board, works) {
   // тем же ходом, без похода в сеть за состоянием. Свежесть догоняет ниже,
   // обычной сборкой, и меняет начинку того же слота.
   const kept = chatPool.get(key);
-  if (kept) {
+  if (kept && !kept.moved) {
     // Возврат в открытый разговор окончателен: готовый узел показывается тем
     // же ходом, и пересборки за ним не идёт. Заново поднимаются только живые
     // потоки панели, а дельта ленты дописывается в тот же список по ключам.

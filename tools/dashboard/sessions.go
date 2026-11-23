@@ -2566,8 +2566,7 @@ type wraps struct {
 	rest   string
 }
 
-func cutWraps(text string) wraps {
-	var w wraps
+func cutClipWraps(text string, w *wraps) string {
 	for {
 		if m := shotWrapRe.FindStringSubmatch(text); m != nil {
 			w.shots = append(w.shots, m[1])
@@ -2581,6 +2580,12 @@ func cutWraps(text string) wraps {
 		}
 		break
 	}
+	return text
+}
+
+func cutWraps(text string) wraps {
+	var w wraps
+	text = cutClipWraps(text, &w)
 	w.pick, w.screen, text = cutPicked(text)
 	w.sel, w.file, w.rest = cutSelection(text)
 	w.rest = strings.TrimSpace(w.rest)

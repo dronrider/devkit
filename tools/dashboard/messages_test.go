@@ -755,8 +755,8 @@ func TestStaticChatSendGuard(t *testing.T) {
 	}
 	// Возврат кнопки собран отдельным замыканием: дорог у реплики две (подъём
 	// нового чата и ручка живого), и обе кончаются одним и тем же хвостом.
-	if !strings.Contains(body, "const done = () => { send.disabled") ||
-		!strings.Contains(body, ".finally(done)") {
+	if !strings.Contains(body, "const readySend = () => { send.disabled") ||
+		!strings.Contains(body, ".finally(readySend)") {
 		t.Error("кнопка отправки не загорается назад: после первой реплики писать станет нечем")
 	}
 }

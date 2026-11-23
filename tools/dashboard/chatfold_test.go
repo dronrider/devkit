@@ -61,7 +61,8 @@ func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 		t.Fatal("вставка из буфера не кладёт вложения списком")
 	}
 	add := funcBody(t, text, "const addClip")
-	if !strings.Contains(add, "c.kind === clip.kind") || !strings.Contains(add, "was.hi") {
+	if !strings.Contains(add, "c.kind === clip.kind") || !strings.Contains(add, "const shown = was || clip") ||
+		!strings.Contains(add, "shown.hi = true") {
 		t.Fatal("дубликат вставки не подсвечивает стоящий блок")
 	}
 	if !strings.Contains(funcBody(t, text, "const post = (text, sel, withClips"), "attachPrefix(withClips) + wire0") {
@@ -80,9 +81,9 @@ func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 	}
 	// Первое касание панели не пишет пустой список на сервер: он стёр бы
 	// вложения черновика раньше, чем вкладка их показала.
-	keep := funcBody(t, text, "const attachKeep")
-	if !strings.Contains(keep, `lean === "[]" && !attachPushed`) {
-		t.Fatal("первое касание панели проталкивает пустой список вложений на сервер")
+	draw, _, _ := strings.Cut(funcBody(t, text, "const drawClips"), "\n  };")
+	if strings.Contains(draw, "chatDraftStore") || strings.Contains(draw, "flushDraft") {
+		t.Fatal("отрисовка вложений меняет сохранённый черновик")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {

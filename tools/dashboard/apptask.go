@@ -455,7 +455,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		return errAppTurnBusy
 	}
 	c.taskTurn = turn
-	c.busy, c.turnAt = true, s.now()
+	c.busy, c.turnAt, c.turn = true, s.now(), ""
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); c.taskTurn = nil; c.mu.Unlock() }()
 	params := s.appTurnParams(c, order, st.CxEffort)
@@ -463,6 +463,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		params["model"] = st.Model
 	}
 	if queued.ID != "" {
+		params["model"] = s.chatStoreRead(a.sid).appModel()
 		if err = s.appTaskQueueMark(a.sid, queued.ID, appTaskDelivery{sent: true}); err != nil {
 			return err
 		}
@@ -486,6 +487,9 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	if json.Unmarshal(raw, &started) != nil || started.Turn.ID == "" {
 		return errors.New("клиент не назвал ID хода конвейера")
 	}
+	c.mu.Lock()
+	c.turn = started.Turn.ID
+	c.mu.Unlock()
 	if queued.ID != "" {
 		if err = s.appTaskQueueFeed(a.sid, queued); err != nil {
 			return err
@@ -702,6 +706,9 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 		s.chatSayDone(sid, message.Claim, "appserver")
 	}
 	body := map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort}
+	if !recover && !replyOnce {
+		body["wire"] = order
+	}
 	if message.ID != "" {
 		body["app_message_id"] = message.ID
 	}
@@ -768,7 +775,7 @@ func (s *server) appTaskOwns(sid string, st chatStore) bool {
 // Старые записи сохраняли только PID; сверка состояния и назначения отличает
 // прежний запуск с формы от чата, которому вручную приписали ID задачи.
 func (s *server) appTaskContinuation(p *Project, sid string, st *chatStore) (bool, error) {
-	if st.TaskRunPID <= 0 && st.TaskRunID == "" && !st.TaskRun {
+	if !st.appTaskRecorded() {
 		return false, nil
 	}
 	if st.Task == "" || st.Thread == "" || st.Project != p.Name {

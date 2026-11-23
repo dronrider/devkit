@@ -275,7 +275,7 @@ function ringOf(head) {
   // Слова про вопрос несёт список кольца: строки состояния под заголовком
   // больше нет вовсе, она повторяла ленту (замечание пользователя).
   if (byClass(head, "cts")) fail("строка состояния вернулась в шапку");
-  const waitRow = allByClass(byClass(wrap, "pop"), "prow")[0];
+  const waitRow = allByClass(byClass(wrap, "pop"), "prow").filter(row => byClass(row, "pwho"))[0];
   if (!dump(waitRow).includes("ждёт ответа")) fail("в списке не сказано про вопрос: " + dump(waitRow));
 }
 
@@ -289,7 +289,7 @@ function ringOf(head) {
   if (!String(wrap.attrs["aria-label"] || "").includes("1 простаивает")) {
     fail("подпись молчащего кольца не назвала простой: " + wrap.attrs["aria-label"]);
   }
-  const idleRow = allByClass(byClass(wrap, "pop"), "prow")[0];
+  const idleRow = allByClass(byClass(wrap, "pop"), "prow").filter(row => byClass(row, "pwho"))[0];
   if (!dump(idleRow).includes("простаивает") || !dump(idleRow).includes("14 мин")) {
     fail("в списке простой без срока: " + dump(idleRow));
   }
@@ -316,7 +316,7 @@ function ringOf(head) {
   const wrap = ringOf(head);
   const pop = byClass(wrap, "pop");
   if (!pop) fail("списка агентов нет");
-  const rows = allByClass(pop, "prow");
+  const rows = allByClass(pop, "prow").filter(row => byClass(row, "pwho"));
   if (rows.length !== 2) fail("в списке не те строки: " + rows.length);
   if (!byClass(rows[0], "p-working")) fail("у работающего агента точка не того состояния");
   if (!byClass(rows[1], "p-idle")) fail("у простаивающего агента точка не того состояния");
@@ -363,7 +363,7 @@ function ringOf(head) {
   };
   pulses.held = held;
   const head = await headOf("held");
-  const rows = allByClass(byClass(ringOf(head), "pop"), "prow");
+  const rows = allByClass(byClass(ringOf(head), "pop"), "prow").filter(row => byClass(row, "pwho"));
   if (!dump(rows[0]).includes("идёт 2 мин")) fail("в списке долгий ход не назван ходом: " + dump(rows[0]));
 }
 
@@ -376,7 +376,7 @@ function ringOf(head) {
   }
   const num = byClass(wrap, "rnum");
   if (!num || num.textContent !== "1") fail("число ждущих не то: " + (num && num.textContent));
-  const rows = allByClass(byClass(wrap, "pop"), "prow");
+  const rows = allByClass(byClass(wrap, "pop"), "prow").filter(row => byClass(row, "pwho"));
   if (!dump(rows[1]).includes("ждёт ответа") || !dump(rows[1]).includes("2 ч 2 мин без ответа")) {
     fail("ждущий сосед без срока: " + dump(rows[1]));
   }

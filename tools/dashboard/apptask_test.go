@@ -404,3 +404,140 @@ esac`)
 	}
 	waitTaskStopped(t, e, got["session"])
 }
+
+func TestAppTaskFirstTextDeliveredOnce(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"codextest","tier":"pro","text":"Различимая первая фраза"}`)
+	raw := body(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("start: %d %s", resp.StatusCode, raw)
+	}
+	var result map[string]string
+	json.Unmarshal([]byte(raw), &result)
+	if !strings.Contains(result["wire"], "Различимая первая фраза") {
+		t.Fatalf("нет провода первой реплики: %s", raw)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	orders := 0
+	for _, line := range strings.Split(log, "\n") {
+		if !strings.HasPrefix(line, "input ") {
+			continue
+		}
+		var input []map[string]string
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "input ")), &input); err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range input {
+			orders += strings.Count(part["text"], "Различимая первая фраза")
+		}
+	}
+	if orders != 1 {
+		t.Fatalf("первая фраза не в единственном заказе: %s", log)
+	}
+	count := 0
+	for _, item := range e.s.appFeedRead(result["session"]) {
+		if item.Role == "user" && strings.Contains(item.Text, "Различимая первая фраза") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("экземпляров первой реплики: %d", count)
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id":"XR-002","harness":"codextest","text":"Различимая первая фраза"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("второй запуск: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+}
+
+// Префикс вложения перед общим заказом позволяет ленте конвейера показать
+// файл после исчезновения локального пузыря первой реплики.
+func TestAppTaskFirstAttachmentInHistory(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+		`{"id":"XR-002","intent":"chat","harness":"codextest","tier":"pro","text":"<fragment file=\"/stand/first.txt\">\nвставлен фрагмент 8 КБ\n</fragment>\n"}`)
+	raw := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск: %d %s", resp.StatusCode, raw)
+	}
+	var result map[string]string
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, item := range e.s.appFeedRead(result["session"]) {
+		if item.Role != "user" {
+			continue
+		}
+		n++
+		if len(item.Frags) != 1 || item.Frags[0] != "/stand/first.txt" ||
+			strings.Contains(item.Text, "<fragment") || item.Wire != result["wire"] {
+			t.Errorf("вложение в истории: %+v", item)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("экземпляров первой реплики: %d", n)
+	}
+}
+
+func TestAppTaskModelChoicePreservesRun(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	catalog := strings.Replace(appHarnessJSON, `"model": "модель-codex"}]`, `"model": "модель-codex"},{"tier":"base","model":"модель-next"}]`, 1)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+ exec) shift 4; exec "$@" ;;
+ *) printf '%s' '`+catalog+`' ;;
+esac`)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("запуск: %d %+v", code, first)
+	}
+	sid := first["session"]
+	live := e.s.appLive(sid)
+	if live == nil || !live.busyNow() {
+		t.Fatal("первый ход не начался")
+	}
+	initial := e.s.chatStoreRead(sid)
+	logPath := filepath.Join(e.proj, "fake-app-log")
+	initialLog := readFile(t, logPath)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+		`{"model":"модель-next","harness":"codextest"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
+	}
+	if e.s.appLive(sid) != live || !live.busyNow() || readFile(t, logPath) != initialLog {
+		t.Fatal("выбор запустил новый ход или прервал первый")
+	}
+	if current := e.s.chatStoreRead(sid); current.Model != initial.Model || current.TaskRunID != initial.TaskRunID {
+		t.Fatalf("выбор изменил происхождение запуска: %+v", current)
+	}
+	resp = doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("остановка между ходами: %d %s", resp.StatusCode, raw)
+	}
+	waitTaskStopped(t, e, sid)
+	putDoc(t, e.proj, "fake-app-mode", "reply-open")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text":"реплика с новым выбором","msg_id":"model-choice","effort":"low"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика: %d %s", resp.StatusCode, raw)
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику: реплика с новым выбором")
+	var params map[string]any
+	log := readFile(t, logPath)
+	for _, line := range strings.Split(log, "\n") {
+		if raw, ok := strings.CutPrefix(line, "params "); ok {
+			params = nil
+			if err := json.Unmarshal([]byte(raw), &params); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if strings.Count(log, "input ") != 2 || params["model"] != "модель-next" ||
+		params["threadId"] != initial.Thread || params["effort"] != "low" {
+		t.Fatalf("следующая реплика потеряла модель, нить или глубину: %s", log)
+	}
+	if current := e.s.chatStoreRead(sid); current.Model != initial.Model || current.Thread != initial.Thread {
+		t.Fatalf("реплика изменила исходную модель или нить: %+v", current)
+	}
+}

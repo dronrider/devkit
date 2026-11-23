@@ -840,6 +840,9 @@ type chatStore struct {
 	// CxEffort это уровень глубины клиента чужого протокола: у него нет
 	// окружения сессии, и выбор меню модели живёт записью разговора.
 	CxEffort string `json:"cxEffort,omitempty"`
+	// CxModel хранит выбор для реплик человека в рабочем чате.
+	// Model и Harness принадлежат исходному запуску и нужны при восстановлении.
+	CxModel string `json:"cxModel,omitempty"`
 	// ProposalContexts stores delivery addresses and shown source IDs, while
 	// decisions and results remain in the source records.
 	SelectionContexts []selectionDeliveryContext `json:"selectionContexts,omitempty"`
@@ -847,6 +850,17 @@ type chatStore struct {
 	GroomSource       string                     `json:"groomSource,omitempty"`
 	GroomMode         string                     `json:"groomMode,omitempty"`
 	GroomTree         string                     `json:"groomTree,omitempty"`
+}
+
+func (st chatStore) appModel() string {
+	if st.CxModel != "" {
+		return st.CxModel
+	}
+	return st.Model
+}
+
+func (st chatStore) appTaskRecorded() bool {
+	return st.TaskRun || st.TaskRunPID > 0 || st.TaskRunID != ""
 }
 
 // chatUpload это ссылка на вложение черновика: вид, имя и путь файла в каталоге
@@ -4485,9 +4499,8 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	return archDone{dropped: true, tmux: name, message: "разговор убран в архив, сессия снята"}, nil
 }
 
-// handleChatModel сохраняет выбор модели и подписки.
-// Для начатого разговора разрешена совместимая пара, которая сохраняет
-// клиентский протокол.
+// handleChatModel сохраняет совместимую модель и подписку разговора.
+// Codex получает выбор на следующем ходе, а tmux при подъёме или резюме.
 func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -4539,20 +4552,26 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// При смене модели или подписки app-чата сбрасывается нить и снимается
-	// живой процесс. Лента хранится по адресу разговора.
-	// Продолжение рабочего чата требует сохранённой исходной нити.
+	// Выбор применяется следующим turn/start. Текущий ход продолжает работу.
 	if st := s.chatStoreRead(sid); st.Protocol != "" {
-		wasModel, wasHarness := st.Model, st.Harness
-		st.Model, st.Harness = model, harness
-		if h := s.chatHarnessOf(model, harness); h != nil {
-			st.Protocol = h.Protocol
+		h := s.chatHarnessOf(model, harness)
+		if !h.foreign() || h.Protocol != st.Protocol {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "Подписка выбранной модели недоступна для этого разговора"})
+			return
 		}
-		if wasModel != model || wasHarness != harness {
-			st.Thread = ""
-			s.appDrop(sid, "смена модели")
+		if st.appTaskRecorded() && h.Name != st.Harness {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "Модель рабочего чата выбирается в подписке исходного запуска"})
+			return
 		}
-		if err := s.chatStoreWrite(sid, st); err != nil {
+		wasModel, wasHarness := st.appModel(), st.Harness
+		if err := s.chatStoreUpdate(sid, func(current chatStore) chatStore {
+			if current.appTaskRecorded() {
+				current.CxModel = model
+			} else {
+				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol
+			}
+			return current
+		}); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
 			return
 		}

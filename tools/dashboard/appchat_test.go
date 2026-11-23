@@ -551,8 +551,8 @@ func TestAppChatStopKillsDeafClient(t *testing.T) {
 	appWaitBusy(t, e, c, sid, false)
 }
 
-// Смена модели снимает живой процесс и чистит нить: модель зашита в нить
-// клиента, и новая заводится следующим ходом, а лента сохраняется.
+// Смена подписки сохраняет работающий клиент до следующей реплики.
+// Следующая реплика поднимает клиент выбранной подписки в том же чате.
 func TestAppChatModelSwitch(t *testing.T) {
 	e, c := appEnv(t)
 	sid := appStartChat(t, e, c, "первый вопрос")
@@ -564,8 +564,8 @@ func TestAppChatModelSwitch(t *testing.T) {
 		t.Fatalf("смена модели не записалась: %d %s", resp.StatusCode, body(t, resp))
 	}
 	st := e.s.chatStoreRead(sid)
-	if st.Model != "модель-codex2" || st.Harness != "codex2test" || st.Thread != "" || st.Protocol != "codex" {
-		t.Fatalf("смена модели не почистила запись разговора: %+v", st)
+	if st.Model != "модель-codex2" || st.Harness != "codex2test" || st.Thread != "th-1" || st.Protocol != "codex" {
+		t.Fatalf("смена модели изменила нить до следующего хода: %+v", st)
 	}
 
 	// Следующая реплика заводит свежую нить уже новой моделью.
@@ -797,11 +797,14 @@ func TestAppChatApprovalPolicy(t *testing.T) {
 				if grooming {
 					count = 5
 				}
-				if !ok || len(config) != count {
+				if !ok || len(config) != count+1 || config["tools.update_plan.enabled"] != true {
 					t.Fatalf("не узкая конфигурация окружения: %v", p)
 				}
 				toolEnv := map[string]any{}
 				for key, value := range config {
+					if key == "tools.update_plan.enabled" {
+						continue
+					}
 					if !strings.HasPrefix(key, "shell_environment_policy.set.") {
 						t.Fatalf("лишняя настройка окружения: %s", key)
 					}
@@ -1427,5 +1430,61 @@ func TestAppNonAutonomousChatKeepsClientInstructions(t *testing.T) {
 				t.Fatalf("режим не выключен: %q", got)
 			}
 		})
+	}
+}
+
+func TestAppChatChoiceWaitsForNextTurn(t *testing.T) {
+	e, c := appEnv(t)
+	// В одной подписке доступны две модели, чтобы проверить замену в той же нити.
+	catalog := strings.Replace(appHarnessJSON, `"model": "модель-codex"}]`, `"model": "модель-codex"},{"tier":"base","model":"модель-next"}]`, 1)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+ exec) shift 4; exec "$@" ;;
+ *) printf '%s' '`+catalog+`' ;;
+esac`)
+	appMode(t, e, "mute")
+	sid := appStartChat(t, e, c, "первый ход")
+	live := e.s.appLive(sid)
+	before := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model", `{"model":"модель-next","harness":"codextest"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("выбор: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	if e.s.appLive(sid) != live || !live.busyNow() || live.proc.gone() {
+		t.Fatal("выбор прервал текущий ход")
+	}
+	if log := readFile(t, filepath.Join(e.proj, "fake-app-log")); log != before {
+		t.Fatalf("выбор отправил заказ клиенту: %s", log)
+	}
+	if _, err := live.proc.call("test/finish", map[string]any{"keepOpen": true}); err != nil {
+		t.Fatal(err)
+	}
+	appWaitBusy(t, e, c, sid, false)
+	appMode(t, e, "")
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"второй ход","effort":"high"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("следующий ход: %d %s", resp.StatusCode, body(t, resp))
+	}
+	resp.Body.Close()
+	appWaitBusy(t, e, c, sid, false)
+	raw := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	lines := strings.Split(raw, "\n")
+	var params map[string]any
+	for _, line := range lines {
+		if strings.HasPrefix(line, "params ") {
+			json.Unmarshal([]byte(strings.TrimPrefix(line, "params ")), &params)
+		}
+	}
+	if params["model"] != "модель-next" || params["effort"] != "high" || params["threadId"] != "th-1" {
+		t.Fatalf("параметры следующего хода: %+v", params)
+	}
+	if e.s.appLive(sid) != live {
+		t.Fatal("сменился процесс той же подписки")
+	}
+	if st := e.s.chatStoreRead(sid); st.CxEffort != "high" {
+		t.Fatalf("глубина не сохранена: %+v", st)
+	}
+	if strings.Count(raw, "input ") != 2 {
+		t.Fatalf("лишняя служебная реплика: %s", raw)
 	}
 }

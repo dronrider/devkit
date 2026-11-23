@@ -2020,3 +2020,58 @@ func TestStaticRunButtonsEmptyHarness(t *testing.T) {
 		}
 	}
 }
+
+// Настоящий обработчик и taskctl получают запуск из браузера для задачи,
+// которая к моменту запроса уже стоит в Check с пользовательской приёмкой.
+func TestRunStartUserAcceptRejectsChatBrowser(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Fatal("для проверки запуска из чата нужен Chromium")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needPlaywright(t, node) {
+		t.Fatal("для проверки запуска из чата нужен playwright")
+	}
+
+	for _, mode := range []string{"без-текста", "с-текстом"} {
+		t.Run(mode, func(t *testing.T) {
+			e, _, gitLog := tasksEnv(t)
+			writeScript(t, e.bin, "git", gitFakeMoving(gitLog))
+			tmuxLog := filepath.Join(e.home, "tmux.log")
+			writeTmuxFake(t, e.bin, tmuxLog, "")
+			writeScript(t, e.bin, "claude", "exit 0")
+			const id = "XR-004"
+			runTaskctl(t, e.proj, "set", id, "--accept", "user")
+			goalDoc(t, e, id, userAcceptDoc)
+			runTaskctl(t, e.proj, "move", id, "check")
+			runTaskctl(t, e.proj, "debt-done", id, "пересечений нет")
+
+			text := ""
+			if mode == "с-текстом" {
+				text = "Реплика для агента"
+			}
+			out, err := exec.Command(node, "testdata/chatcomposer_check_browser.mjs",
+				e.srv.URL, chrome, e.cfg.Token, id, text).CombinedOutput()
+			if err != nil {
+				t.Errorf("запуск Chromium: %v\n%s", err, out)
+			}
+			raw := runTaskctl(t, e.proj, "list", "--json")
+			row, found := findRow([]byte(raw), id)
+			if !found || row.Sect != "check" || row.Accept != acceptUser {
+				t.Errorf("вызов из чата сменил строку Check: %+v", row)
+			}
+			if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", id+".md")); err != nil {
+				t.Errorf("вызов из чата переместил файл задачи: %v", err)
+			}
+			if strings.Contains(readFile(t, filepath.Join(e.proj, "docs", "TASKS-archive.md")), id) {
+				t.Errorf("вызов из чата архивировал %s", id)
+			}
+			if log, _ := os.ReadFile(tmuxLog); strings.Contains(string(log), "new-session") {
+				t.Errorf("вызов из чата поднял сессию: %s", log)
+			}
+		})
+	}
+}

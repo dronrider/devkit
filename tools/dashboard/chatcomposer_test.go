@@ -19,3 +19,76 @@ func TestStaticChatAttachmentOnlyComposer(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+func TestChatComposerBrowser(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Fatal("для DK-1741 нужен браузер стенда")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needPlaywright(t, node) {
+		t.Fatal("для DK-1741 нужен playwright")
+	}
+	e, _ := chatEnv(t)
+	out, err := exec.Command(node, "testdata/chatcomposer_browser.mjs", e.srv.URL, chrome, e.cfg.Token).CombinedOutput()
+	if err != nil {
+		t.Fatalf("поле чата в Chromium: %v\n%s", err, out)
+	}
+	t.Log(string(out))
+}
+
+// Барьеры HTTP держат ответ старой отправки, пока человек меняет черновик
+// и глубину следующей. Проверяется настоящий compose и переезд к новому sid.
+func TestChatComposerPendingSnapshotBrowser(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Fatal("для проверки границы отправки нужен браузер стенда")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needPlaywright(t, node) {
+		t.Fatal("для проверки границы отправки нужен playwright")
+	}
+	e, _ := chatEnv(t)
+	out, err := exec.Command(node, "testdata/chatcomposer_pending_browser.mjs", e.srv.URL, chrome, e.cfg.Token).CombinedOutput()
+	if err != nil {
+		t.Fatalf("граница отправки в Chromium: %v\n%s", err, out)
+	}
+	t.Log(string(out))
+}
+
+// Пришивание меняет адрес до готовности нового DOM. Ответы /say могут
+// запаздывать ещё дольше и относятся к исходной реплике.
+func TestChatComposerHandoffBrowser(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Fatal("для проверки пришивания нужен Chromium")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needPlaywright(t, node) {
+		t.Fatal("для проверки пришивания нужен playwright")
+	}
+	e, _ := chatEnv(t)
+	for _, mode := range []string{
+		"runs-handoff", "raise-handoff", "raise-upload", "raise-upload-image",
+		"retry-after-refusal", "retry-after-reload", "retry-after-lost-answer",
+		"runs-fragment", "raise-image", "runs-height",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			out, err := exec.Command(node, "testdata/chatcomposer_handoff_browser.mjs",
+				e.srv.URL, chrome, e.cfg.Token, mode).CombinedOutput()
+			if err != nil {
+				t.Fatalf("поле чата в Chromium: %v\n%s", err, out)
+			}
+			t.Log(string(out))
+		})
+	}
+}

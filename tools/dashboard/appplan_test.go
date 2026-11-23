@@ -107,13 +107,18 @@ func TestAppPlanWaitsForConfirmedTurn(t *testing.T) {
 		t.Run(order, func(t *testing.T) {
 			e, client := appEnv(t)
 			const fixture = `
+        if mode() == "plan-second":
+            turn = {"id": "turn-2", "status": "completed"}
+            emit({"id": mid, "result": {"turn": turn}})
+            note("turn/completed", {"threadId": "th-1", "turn": turn})
+            continue
         if mode() in ("notice-first", "response-first"):
             open("plan-turn-requested", "w").close()
             while not os.path.exists("plan-turn-release"): time.sleep(0.01)
-            turn = {"id": "turn-2"}
+            turn = {"id": "turn-3"}
             result = {"id": mid, "result": {"turn": turn}}
             started = {"threadId": "th-1", "turn": turn}
-            plan = {"threadId": "th-1", "turnId": "turn-2", "plan": [{"step": "new plan", "status": "completed"}]}
+            plan = {"threadId": "th-1", "turnId": "turn-3", "plan": [{"step": "new plan", "status": "completed"}]}
             if mode() == "notice-first":
                 note("turn/started", started)
                 note("turn/plan/updated", plan)
@@ -122,7 +127,7 @@ func TestAppPlanWaitsForConfirmedTurn(t *testing.T) {
                 emit(result)
                 note("turn/plan/updated", plan)
                 note("turn/started", started)
-            note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-2", "status": "completed"}})
+            note("turn/completed", {"threadId": "th-1", "turn": {"id": "turn-3", "status": "completed"}})
             continue
 `
 			anchor := `        if mode() == "rejected-model":`
@@ -146,9 +151,16 @@ func TestAppPlanWaitsForConfirmedTurn(t *testing.T) {
 			}
 			notePlan("turn-1", "first plan")
 			assertPlan("first plan")
+			appMode(t, e, "plan-second")
+			if err := e.s.appTurn(live, "second turn", false); err != nil {
+				t.Fatal(err)
+			}
+			appWaitBusy(t, e, client, sid, false)
+			notePlan("turn-2", "second plan")
+			assertPlan("second plan")
 			appMode(t, e, order)
 			done := make(chan error, 1)
-			go func() { done <- e.s.appTurn(live, "second turn", false) }()
+			go func() { done <- e.s.appTurn(live, "third turn", false) }()
 			release := func() { putDoc(t, e.proj, "plan-turn-release", "") }
 			t.Cleanup(release)
 			request := filepath.Join(e.proj, "plan-turn-requested")
@@ -159,14 +171,15 @@ func TestAppPlanWaitsForConfirmedTurn(t *testing.T) {
 				select {
 				case <-tick.C:
 				case <-deadline:
-					t.Fatal("клиент не получил второй turn/start")
+					t.Fatal("клиент не получил третий turn/start")
 				}
 			}
 			e.s.appNote(sid, "turn/started", json.RawMessage(`{"threadId":"th-1","turn":{"id":"turn-1"}}`))
-			e.s.appNote(sid, "turn/started", json.RawMessage(`{"threadId":"other","turn":{"id":"turn-2"}}`))
+			e.s.appNote(sid, "turn/started", json.RawMessage(`{"threadId":"other","turn":{"id":"turn-3"}}`))
 			notePlan("turn-1", "late old plan")
-			notePlan("turn-2", "not confirmed")
-			assertPlan("first plan")
+			notePlan("turn-2", "late second plan")
+			notePlan("turn-3", "not confirmed")
+			assertPlan("second plan")
 			release()
 			if err := <-done; err != nil {
 				t.Fatal(err)

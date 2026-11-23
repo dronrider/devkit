@@ -24,6 +24,12 @@ func (s *server) appPlanPath(sid string) string {
 	return filepath.Join(appFeedDir(s.cfg.Home), sid+".plan.json")
 }
 
+func (s *server) appPlanNote(sid string, raw json.RawMessage) {
+	if err := s.appPlanUpdate(sid, raw); err != nil {
+		s.logf("план разговора %s не записался: %v", sid, err)
+	}
+}
+
 func (s *server) appPlanUpdate(sid string, raw json.RawMessage) error {
 	var p appPlan
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -46,6 +52,14 @@ func (s *server) appPlanUpdate(sid string, raw json.RawMessage) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.turn != p.Turn {
+		// План может прийти раньше ответа turn/start. Только этот ответ
+		// подтверждает ход, которому принадлежит очередной снимок.
+		if start := c.starting; c.turn == "" && start != nil && p.Turn != start.previous {
+			if start.plans == nil {
+				start.plans = make(map[string]json.RawMessage)
+			}
+			start.plans[p.Turn] = raw
+		}
 		return nil
 	}
 	file := s.appPlanPath(sid)

@@ -476,7 +476,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	} else {
 		s.appSayRecord(a.sid, order)
 	}
-	turnID, err := c.requestTurn(start, params)
+	turnID, err := s.appRequestTurn(c, start, params)
 	if err != nil {
 		var rejected *appError
 		if queued.ID != "" && errors.As(err, &rejected) && appTaskRecoveryPermanent(err) {

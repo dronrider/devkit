@@ -51,6 +51,7 @@ type appChat struct {
 
 type appTurnStart struct {
 	previous string
+	plans    map[string]json.RawMessage
 }
 
 func (c *appChat) beginTurn(at time.Time, task *appTaskTurn) (*appTurnStart, error) {
@@ -88,15 +89,21 @@ func appTurnResultID(raw json.RawMessage) string {
 	return result.Turn.ID
 }
 
-func (c *appChat) requestTurn(start *appTurnStart, params map[string]any) (string, error) {
+func (s *server) appRequestTurn(c *appChat, start *appTurnStart, params map[string]any) (string, error) {
 	defer c.finishTurnStart(start)
 	raw, err := c.proc.callResult("turn/start", params, func(raw json.RawMessage) {
 		if turn := appTurnResultID(raw); turn != "" {
+			var plan json.RawMessage
 			c.mu.Lock()
 			if c.starting == start {
 				c.turn = turn
+				plan = start.plans[turn]
+				start.plans = nil
 			}
 			c.mu.Unlock()
+			if plan != nil {
+				s.appPlanNote(c.sid, plan)
+			}
 		}
 	})
 	return appTurnResultID(raw), err
@@ -637,7 +644,7 @@ func (s *server) appTurn(c *appChat, text string, record bool) error {
 	if model != "" {
 		params["model"] = model
 	}
-	_, err = c.requestTurn(start, params)
+	_, err = s.appRequestTurn(c, start, params)
 	if err != nil {
 		c.mu.Lock()
 		c.busy = false
@@ -656,18 +663,11 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		if c.taskTurn != nil {
 			c.taskTurn.note(method, params, time.Now())
 		}
-		if method == "turn/started" && c.starting != nil && c.turn == "" {
-			if turn := appTaskTurnID(method, params, c.thread); turn != "" && turn != c.starting.previous {
-				c.turn = turn
-			}
-		}
 		c.mu.Unlock()
 	}
 	s.appMu.Unlock()
 	if method == "turn/plan/updated" {
-		if err := s.appPlanUpdate(sid, params); err != nil {
-			s.logf("план разговора %s не записался: %v", sid, err)
-		}
+		s.appPlanNote(sid, params)
 		return
 	}
 	if method != "item/started" && method != "item/completed" && method != "turn/completed" {

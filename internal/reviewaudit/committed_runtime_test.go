@@ -38,15 +38,16 @@ func TestRuntimeReportIntegrationUsesCommittedAudit(t *testing.T) {
 	}
 }
 
-func TestRuntimeProofTemplateIsLimitedToWrites(t *testing.T) {
+func TestRuntimeProofTemplate(t *testing.T) {
 	for _, tc := range []struct {
 		check, result string
 		wantRuntime   bool
 	}{
 		{"writes", "checked", true},
-		{"result", "checked", false},
+		{"result", "checked", true},
 		{"meaning", "checked", false},
 		{"writes", "pending", false},
+		{"result", "pending", false},
 	} {
 		entries, err := EvidenceTemplates("", "STYLE-001", tc.check, "code.go:1#writeClock", tc.result, "runtime")
 		if err != nil || len(entries) != 1 {
@@ -56,6 +57,12 @@ func TestRuntimeProofTemplateIsLimitedToWrites(t *testing.T) {
 		hasRuntime := pair != nil && pair.Proof != nil && pair.Proof.Runtime != nil
 		if hasRuntime != tc.wantRuntime {
 			t.Errorf("template %s/%s: runtime = %t, want %t", tc.check, tc.result, hasRuntime, tc.wantRuntime)
+		}
+		if tc.check == "result" && tc.wantRuntime {
+			result := entries[0].ResultEvidence
+			if result == nil || result.Flow != nil || entries[0].WriteEvidence != nil {
+				t.Fatalf("template result: %+v", entries[0])
+			}
 		}
 	}
 }

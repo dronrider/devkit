@@ -324,7 +324,7 @@ func writeNameRuntimeAllowed(t *testing.T, allowed, key string) {
 	write(t, allowed, "independent-reviewer namespaces=\"devkit-style-001\" "+string(pub))
 }
 
-func signNameRuntimeRecord(t *testing.T, key string, record nameRuntimeRecord) *NameRuntimeProof {
+func signNameRuntimeRecord(t *testing.T, key string, record any) *NameRuntimeProof {
 	t.Helper()
 	payload, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

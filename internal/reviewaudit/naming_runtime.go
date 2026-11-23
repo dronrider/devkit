@@ -162,6 +162,10 @@ type nameRuntimeSource struct {
 }
 
 func (s *nameRuntimeSource) line(ref string) (string, error) {
+	return s.lines(ref, 1)
+}
+
+func (s *nameRuntimeSource) lines(ref string, count int) (string, error) {
 	path, line, base, err := evidenceLocation(ref)
 	if err != nil {
 		return "", err
@@ -192,26 +196,36 @@ func (s *nameRuntimeSource) line(ref string) (string, error) {
 	if body == "" || line > len(lines) {
 		return "", fmt.Errorf("строка %d отсутствует в %s", line, path)
 	}
-	return lines[line-1], nil
+	if count > len(lines)-line+1 {
+		return "", fmt.Errorf("цитата выходит за конец %s", path)
+	}
+	return strings.Join(lines[line-1:line-1+count], "\n"), nil
 }
 
 func readNameRuntimeRecord(payload string) (nameRuntimeRecord, error) {
 	var run nameRuntimeRecord
-	if !utf8.ValidString(payload) {
-		return run, fmt.Errorf("ожидается JSON в UTF-8")
-	}
-	d := json.NewDecoder(strings.NewReader(payload))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&run); err != nil {
+	if err := decodeNameRuntimePayload(payload, &run); err != nil {
 		return run, err
-	}
-	if _, err := d.Token(); err != io.EOF {
-		return run, fmt.Errorf("ожидается один объект JSON")
 	}
 	if run.Version != 1 {
 		return run, fmt.Errorf("ожидается version 1")
 	}
 	return run, nil
+}
+
+func decodeNameRuntimePayload(payload string, record any) error {
+	if !utf8.ValidString(payload) {
+		return fmt.Errorf("ожидается JSON в UTF-8")
+	}
+	d := json.NewDecoder(strings.NewReader(payload))
+	d.DisallowUnknownFields()
+	if err := d.Decode(record); err != nil {
+		return err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return fmt.Errorf("ожидается один объект JSON")
+	}
+	return nil
 }
 
 type nameRuntimeCommand []*string

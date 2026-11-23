@@ -67,6 +67,11 @@ async function composer(context) {
     }
     if (method === "POST" && path === state.launch?.url) return state.launch.gate.hold(route);
     if (method === "POST" && suffix === "draft") return route.fulfill({ json: {} });
+    if (method === "POST" && suffix === "drop") {
+      const id = path.split("/").at(-2);
+      state.chats = state.chats.filter(chat => chat.id !== id);
+      return route.fulfill({ json: { ok: true } });
+    }
     if (suffix === "clip" || suffix === "shot") {
       if (method === "POST") {
         if (state.clip.gate) return state.clip.gate.hold(route);
@@ -538,6 +543,50 @@ async function height(s) {
   assert.equal(Math.round((await s.ta.boundingBox()).height), pendingHeight);
 }
 
+async function draftLifecycle(s) {
+  const id = "blank-lifecycle";
+  const otherChats = Array.from({ length: 6 }, (_, n) => fresh("blank-neighbor-" + n));
+  s.state.chats = [fresh(id), ...otherChats];
+  const upload = barrier("загрузка вложения черновика");
+  const path = "/stand/draft-to-keep.png";
+  s.state.clip = { gate: upload };
+  await s.open(id);
+  await s.ta.fill(firstText);
+  await s.paste("image");
+  await upload.request();
+
+  const held = addr => s.page.evaluate(addr => ({
+    owner: chatDraftOwners.has(addr), clips: chatClips.has(addr),
+    view: chatDraftView?.draft.addr === addr,
+  }), addr);
+
+  if (mode === "draft-removal") {
+    assert.equal(await s.page.evaluate(id => dropChat("demo", id), id), true);
+    assert.deepEqual(await held(id), { owner: false, clips: false, view: false });
+    const reply = s.page.waitForResponse(response => response.url().endsWith("/" + id + "/shot"));
+    upload.reply({ json: { path, bytes: png.length } });
+    await reply;
+    assert.deepEqual(await held(id), { owner: false, clips: false, view: false });
+    assert.equal((await s.read(id)).text, "");
+    assert.deepEqual((await s.read(id)).files, []);
+    return;
+  }
+
+  for (const chat of otherChats) {
+    await s.open(chat.id);
+    await s.page.waitForFunction(addr => chatDraftView?.draft.addr === addr, chat.id);
+  }
+  assert.equal(await s.page.evaluate(id => chatSlotKeys().includes("sid|" + id), id), false);
+  upload.reply({ json: { path, bytes: png.length } });
+  await s.page.waitForFunction(({ id, path }) => (chatClipsStoredRead(id) || [])[0]?.path === path, { id, path });
+  assert.deepEqual(await held(id), { owner: false, clips: false, view: false });
+  await s.open(id);
+  await s.page.waitForFunction(addr => chatDraftView?.draft.addr === addr, id);
+  assert.equal(await s.ta.inputValue(), firstText);
+  assert.equal(await s.chips.count(), 1);
+  assert.deepEqual((await s.read(id)).files, [path]);
+}
+
 const scenarios = {
   "runs-handoff": handoff, "raise-handoff": handoff, "raise-upload": lateUpload, "raise-upload-image": lateUpload,
   "retry-after-refusal": retry, "retry-after-reload": retry, "retry-after-lost-answer": retry,
@@ -546,6 +595,7 @@ const scenarios = {
   "crash-task-before-queue": crashBeforeQueue, "crash-task-feed-during-receipt": crashBeforeQueue,
   "crash-task-feed-receipt-503": crashBeforeQueue, "crash-task-feed-receipt-exhausted": crashBeforeQueue,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
+  "draft-eviction": draftLifecycle, "draft-removal": draftLifecycle,
 };
 const browser = await chromium.launch({ executablePath, headless: true });
 try {

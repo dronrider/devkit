@@ -9582,10 +9582,43 @@ function chatDraftOwner(st) {
 }
 
 function chatDraftStore(draft) {
+  if (draft.discarded) return;
   chatDraftWrite(draft.addr, draft.text);
   chatDraftHeightWrite(draft.addr, draft.height);
   chatClipsWrite(draft.addr, draft.clips);
-  if (!draft.blank) chatClipsStoredWrite(draft.addr, draft.clips);
+  chatClipsStoredWrite(draft.addr, draft.clips);
+}
+
+// Вытесненный слот восстанавливает черновик из хранилища. Пока идёт
+// запись вложения или запуск, ответ ещё может изменить тот же черновик.
+// При недоступном хранилище или неудачной загрузке данные остаются в памяти.
+function chatDraftEvict(addr) {
+  const draft = chatDraftOwners.get(addr);
+  if (!draft) return;
+  draft.parked = true;
+  if (draft.work || chatDraftRead(addr) !== draft.text ||
+      chatDraftHeight(addr) !== Math.max(0, Math.round(draft.height))) return;
+  const files = chatClipsStoredRead(addr) || [];
+  if (files.length !== draft.clips.length || draft.clips.some((clip, i) =>
+    !clip.path || clip.path !== files[i].path || clip.kind !== files[i].kind)) return;
+  chatDraftOwners.delete(addr);
+  chatClipsWrite(addr, []);
+}
+
+function chatDraftWorkDone(draft) {
+  draft.work -= 1;
+  if (draft.parked && !draft.discarded) chatDraftEvict(draft.addr);
+}
+
+function chatDraftDiscard(addr) {
+  const draft = chatDraftOwners.get(addr);
+  if (draft) {
+    draft.discarded = true;
+    draft.text = "";
+    draft.clips = [];
+  }
+  chatDraftOwners.delete(addr);
+  chatDraftStore({ addr, text: "", height: 0, clips: [] });
 }
 
 function chatLastSet(addr) {
@@ -9880,6 +9913,8 @@ function chatSlotPut(pin, key, kids) {
     const dead = chatPool.get(old);
     chatPool.delete(old);
     if (dead && dead.remove) dead.remove();
+    const addr = dead?.st?.addr;
+    if (addr && !Array.from(chatPool.values()).some(slot => slot.st?.addr === addr)) chatDraftEvict(addr);
   }
   // Плашки ожидания в контейнере панели живут до готового разговора: с приходом
   // слота им там делать нечего.
@@ -10270,7 +10305,16 @@ function chatArchShown(list, mode) {
 async function dropChat(project, sid) {
   const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/drop",
     { method: "POST", body: {} });
-  if (!r.ok) sayResult(r.body.error || "запись не закрылась", true);
+  if (!r.ok) {
+    sayResult(r.body.error || "запись не закрылась", true);
+    return false;
+  }
+  chatDraftDiscard(sid);
+  const key = "sid|" + sid;
+  if (chatOpen === key) closeChatLive();
+  const slot = chatPool.get(key);
+  chatPool.delete(key);
+  slot?.remove();
   return r.ok;
 }
 
@@ -11298,7 +11342,9 @@ function chatDropOpen(project, st, anchor, again) {
     } else if (id && (kind === "archived" || kind === "restored")) {
       justToggled.set(id, kind === "archived");
     }
-    if (kind === "archived" && id === st.sid) switchChat(chatPanelNext(project, st, id));
+    if ((kind === "archived" && id === st.sid) || (kind === "dropped" && id === st.blank)) {
+      switchChat(chatPanelNext(project, st, id));
+    }
     refresh();
     draw();
   }
@@ -14935,7 +14981,7 @@ function chatPanel(project, st) {
   grow.resize();
   let draftTimer = null;
   const draftPush = () => {
-    if (draft.blank) chatDraftPush(project, draft.blank, draft.text, draft.clips.map(clipLean));
+    if (draft.blank && !draft.discarded) chatDraftPush(project, draft.blank, draft.text, draft.clips.map(clipLean));
   };
   const flushDraft = () => {
     clearTimeout(draftTimer);
@@ -15177,15 +15223,18 @@ function chatPanel(project, st) {
     if (clip.path) return;
     if (clip.upload) return clip.upload;
     const owner = draft;
+    owner.work = (owner.work || 0) + 1;
     clip.upload = uploadClip(clip).finally(() => {
       clip.upload = null;
       // Ссылка принадлежит тому же черновику, даже если за время загрузки
       // он сменил адрес или уже открыт другой слот.
       const current = chatDraftOwners.get(owner.addr);
-      if (!current?.clips.includes(clip)) return;
-      chatDraftStore(current);
-      if (current.blank) chatDraftPush(project, current.blank, current.text, current.clips.map(clipLean));
-      if (chatDraftView?.draft === current) chatDraftView.draw();
+      if (current?.clips.includes(clip)) {
+        chatDraftStore(current);
+        if (current.blank) chatDraftPush(project, current.blank, current.text, current.clips.map(clipLean));
+        if (chatDraftView?.draft === current) chatDraftView.draw();
+      }
+      chatDraftWorkDone(owner);
     });
     return clip.upload;
   };
@@ -15249,6 +15298,7 @@ function chatPanel(project, st) {
   // лежащего не добавляется второй раз: существующий блок мигает, и человек
   // видит, что вставка уже при деле.
   const addClip = (clip) => {
+    if (draft.discarded) return;
     const body = clip.data || clip.text || "";
     const was = draft.clips.find((c) => c.kind === clip.kind && (c.data || c.text) === body);
     const shown = was || clip;
@@ -15534,6 +15584,8 @@ function chatPanel(project, st) {
       // Отправленное отделяется до запроса. Поле уже держит следующий черновик.
       const sent = takeDraft();
       const sentClips = sent.clips;
+      const owner = draft;
+      owner.work = (owner.work || 0) + 1;
       const launch = async () => {
         const m = text.trim() || sentClips.length ? echo.add(text, null, text, null, sentClips) : null;
         try {
@@ -15575,7 +15627,10 @@ function chatPanel(project, st) {
           grow.resize();
           if (m) echo.held(m, String(err.message || err));
           else sayResult(String(err.message || err), true);
-        } finally { readySend(); }
+        } finally {
+          readySend();
+          chatDraftWorkDone(owner);
+        }
       };
       launch().catch(console.error);
       return;
@@ -15629,6 +15684,9 @@ function chatPanel(project, st) {
       if (!file) continue;
       if (ev.preventDefault) ev.preventDefault();
       const reader = new FileReader();
+      const owner = draft;
+      owner.work = (owner.work || 0) + 1;
+      reader.onloadend = () => chatDraftWorkDone(owner);
       reader.onload = () => {
         addClip({ kind: "image", data: String(reader.result || ""), name: "снимок" });
       };
@@ -15681,13 +15739,18 @@ function chatPanel(project, st) {
   // экране.
   const arm = (again) => {
     draft = chatDraftOwner(st);
-    chatDraftView = { draft, draw: drawClips, moving: readySend };
+    draft.parked = false;
+    const view = { draft, draw: drawClips, moving: readySend };
+    chatDraftView = view;
     if (again) {
       ta.value = draft.text;
       grow.minimum(draft.height);
       drawClips();
     }
-    chatLive.push(() => { if (draftTimer) flushDraft(); });
+    chatLive.push(() => {
+      if (draftTimer) flushDraft();
+      if (chatDraftView === view) chatDraftView = null;
+    });
     // Переход по цитате ищет исходную реплику в ленте этого разговора: панель
     // на экране одна, и ссылка на её ленту живёт тут.
     chatFeedBox = feed;

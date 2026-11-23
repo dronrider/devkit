@@ -172,6 +172,9 @@ func checkNameEvidence(root, reportPath, output, base, id string, rule Rule) err
 
 func checkNameEntry(e Evidence, declaration string, words []string, source *evidenceSource) error {
 	if pair := e.ObjectComparison; pair != nil && pair.Proof != nil && pair.Proof.Runtime != nil {
+		if e.Check == "result" {
+			return checkNameRuntimeResult(e, declaration, words, source)
+		}
 		p, w := pair.Proof, e.WriteEvidence
 		if e.Check != "writes" || e.Result != "checked" || w == nil || e.ResultEvidence != nil {
 			return fmt.Errorf("proof.runtime: укажите checked для writes и заполните write_evidence")

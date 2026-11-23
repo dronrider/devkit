@@ -57,6 +57,8 @@ missing_facts и перечисли также уже установленные
 
 `
 
+const reviewVerdictNoCodeMode = "Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."
+
 type reviewVerdictIssue struct {
 	Object   string `json:"object"`
 	Finding  string `json:"finding"`
@@ -104,7 +106,7 @@ func runReviewVerdict(ctx context.Context, packet []byte, model, effort string) 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "agentctl", reviewVerdictArgs(dir, schemaPath, model, effort)...)
 	cmd.Stdin = io.MultiReader(strings.NewReader(reviewVerdictPrompt), bytes.NewReader(packet))
-	var diagnostics bytes.Buffer
+	diagnostics := reviewVerdictTrace{cancel: cancel}
 	cmd.Stderr = &diagnostics
 	// agentctl поднимает Codex дочерним процессом. Отмена останавливает оба.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -113,7 +115,10 @@ func runReviewVerdict(ctx context.Context, packet []byte, model, effort string) 
 	}
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
-	requests := countReviewVerdictRequests(diagnostics.String())
+	requests := diagnostics.requests
+	if diagnostics.stopReason != "" {
+		return "", fmt.Errorf("вердикт Codex остановлен, зафиксировано %d запросов: %s", requests, diagnostics.stopReason)
+	}
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("вердикт Codex, зафиксировано запросов %d: %w", requests, ctx.Err())
 	}
@@ -124,7 +129,7 @@ func runReviewVerdict(ctx context.Context, packet []byte, model, effort string) 
 				return "", fmt.Errorf("вердикт Codex, зафиксировано запросов %d: %w", requests, eventErr)
 			}
 		}
-		return "", fmt.Errorf("запуск вердикта Codex, зафиксировано запросов %d: %w\n%s", requests, err, strings.TrimSpace(diagnostics.String()))
+		return "", fmt.Errorf("запуск вердикта Codex, зафиксировано запросов %d: %w\n%s", requests, err, strings.TrimSpace(diagnostics.buffer.String()))
 	}
 	if requests != 1 {
 		return "", fmt.Errorf("для вердикта Codex нужен один запрос к модели, зафиксировано %d", requests)
@@ -159,7 +164,7 @@ func reviewVerdictArgs(dir, schemaPath, model, effort string) []string {
 	}
 	for _, feature := range []string{
 		"shell_tool", "shell_snapshot", "multi_agent", "multi_agent_v2", "apps",
-		"goals", "hooks", "code_mode", "code_mode_only", "code_mode_prewarm", "tool_suggest", "skill_search",
+		"goals", "hooks", "code_mode", "code_mode_host", "code_mode_only", "code_mode_prewarm", "tool_suggest", "skill_search",
 		"browser_use", "browser_use_external", "in_app_browser", "image_generation",
 		"sleep_tool", "view_image",
 	} {
@@ -174,13 +179,43 @@ func reviewVerdictArgs(dir, schemaPath, model, effort string) []string {
 	return append(args, "-")
 }
 
+type reviewVerdictTrace struct {
+	buffer     bytes.Buffer
+	readAt     int
+	requests   int
+	stopReason string
+	cancel     context.CancelFunc
+}
+
+func (trace *reviewVerdictTrace) Write(data []byte) (int, error) {
+	n, err := trace.buffer.Write(data)
+	for trace.stopReason == "" {
+		pending := trace.buffer.Bytes()[trace.readAt:]
+		end := bytes.IndexByte(pending, '\n')
+		if end < 0 {
+			break
+		}
+		trace.readAt += end + 1
+		if countReviewVerdictRequests(string(pending[:end])) > 0 {
+			trace.requests++
+		}
+		switch {
+		case trace.requests > 1:
+			trace.stopReason = "появился повторный запрос к модели"
+		case bytes.Contains(pending[:end], []byte(` codex_otel.trace_safe: event.name="codex.tool_call_received"`)):
+			trace.stopReason = "модель запросила инструмент"
+		}
+		if trace.stopReason != "" {
+			trace.cancel()
+		}
+	}
+	return n, err
+}
+
 func countReviewVerdictRequests(diagnostics string) int {
 	var requests int
 	for line := range strings.SplitSeq(diagnostics, "\n") {
-		_, event, found := strings.Cut(line, ` codex_otel.trace_safe: event.name="`)
-		if !found {
-			continue
-		}
+		_, event, _ := strings.Cut(line, ` codex_otel.trace_safe: event.name="`)
 		if strings.HasPrefix(event, `codex.websocket_request" `) ||
 			(strings.HasPrefix(event, `codex.api_request" `) &&
 				(strings.Contains(event, ` endpoint="/responses"`) || strings.Contains(event, ` endpoint="/responses/`))) {
@@ -200,8 +235,9 @@ func parseReviewVerdictEvents(events io.Reader) (reviewVerdictResult, error) {
 		var event struct {
 			Type string `json:"type"`
 			Item struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Message string `json:"message"`
 			} `json:"item"`
 			Usage *struct {
 				InputTokens       *int64 `json:"input_tokens"`
@@ -227,6 +263,10 @@ func parseReviewVerdictEvents(events io.Reader) (reviewVerdictResult, error) {
 				if event.Type == "item.completed" {
 					result.ModelResponses++
 					answer = event.Item.Text
+				}
+			case "error":
+				if starts != 0 || event.Item.Message != reviewVerdictNoCodeMode {
+					return result, fmt.Errorf("сообщение Codex: %s", event.Item.Message)
 				}
 			default:
 				return result, fmt.Errorf("в запуске вердикта Codex появилось действие %q", event.Item.Type)

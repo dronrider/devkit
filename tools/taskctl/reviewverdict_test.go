@@ -25,7 +25,9 @@ func TestParseReviewVerdictEvents(t *testing.T) {
 	answer := `{"status":"missing_facts","issues":[{"object":"task.go","finding":"лишний вызов","evidence":"diff:22"}],"missing_facts":[{"object":"TestRound","fact":"исход прогона"}]}`
 	reasoning := "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"reasoning\",\"text\":\"summary\"}}\n"
 	message := verdictTestReply(answer)
-	result, err := parseReviewVerdictEvents(strings.NewReader(reviewVerdictTestStart + reasoning + message + reviewVerdictTestEnd))
+	warning := fmt.Sprintf("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":%q}}\n", reviewVerdictNoCodeMode)
+	start := strings.Replace(reviewVerdictTestStart, "{\"type\":\"turn.started\"}", warning+"{\"type\":\"turn.started\"}", 1)
+	result, err := parseReviewVerdictEvents(strings.NewReader(start + reasoning + message + reviewVerdictTestEnd))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +108,7 @@ cat <<'EVENTS'
 		"--ignore-user-config\n", "--ephemeral\n", "--json\n",
 		"--sandbox\nread-only\n", "--disable\nshell_tool\n",
 		"--disable\nmulti_agent\n", "--disable\napps\n", "--disable\nhooks\n",
+		"--disable\ncode_mode_host\n",
 		"web_search=\"disabled\"\n", "--model=gpt-6.2-sol\n",
 		"request_max_retries=0,stream_max_retries=0,supports_websockets=false",
 		"model_reasoning_effort=\"high\"\n-\n",
@@ -126,6 +129,11 @@ cat <<'EVENTS'
 	out, err = runReviewVerdict(context.Background(), []byte(packet), "gpt-6.2-sol", "high")
 	if out != "" || err == nil || !strings.Contains(err.Error(), "зафиксировано 2") {
 		t.Fatalf("вердикт при двух запросах %q, ошибка %v", out, err)
+	}
+	t.Setenv("REVIEW_VERDICT_TEST_EXTRA_TRACE", `codex codex_otel.trace_safe: event.name="codex.tool_call_received" tool_name="exec"`)
+	out, err = runReviewVerdict(context.Background(), []byte(packet), "gpt-6.2-sol", "high")
+	if out != "" || err == nil || !strings.Contains(err.Error(), "модель запросила инструмент") {
+		t.Fatalf("вердикт после попытки инструмента %q, ошибка %v", out, err)
 	}
 }
 

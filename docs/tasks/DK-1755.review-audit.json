@@ -1,0 +1,3205 @@
+{
+  "version": 1,
+  "id": "DK-1755",
+  "base_sha": "ab0f865b3b23ead49425bd00c6c9e9cfbdf9945c",
+  "head_sha": "a02d5acb3472ffdfb079db1f452894f2fcfb4feb",
+  "code_hash": "f6ac31ffbdc6d42b18dc022db335dff55bfd6b9115e2b124fc42b2172ef10713",
+  "task_hash": "44fa48a7aaab2fb9458b834f7f888b28957f23f9644021853600a0daaca4cd48",
+  "sources": [
+    {
+      "name": "common-architecture",
+      "path": "common:RULES.architecture.md",
+      "status": "present",
+      "hash": "db5798bb65fe4c35c2867b0f4d81b49d087ae87c35ac85f20483c63004f43956"
+    },
+    {
+      "name": "common-style",
+      "path": "common:RULES.style.md",
+      "status": "present",
+      "hash": "2096a3b68b867b7f40f6e76610a2054c95637b333dcd6970591b6f4a57eb8ca1"
+    },
+    {
+      "name": "common-tests",
+      "path": "common:RULES.md",
+      "status": "present",
+      "hash": "dd65fbb7edf8754ffaafded6d5d7c896effabc130db5bdf3de939a9f608a82da"
+    },
+    {
+      "name": "project-architecture",
+      "path": "project:docs/ARCHITECTURE.md",
+      "status": "present",
+      "hash": "9a1bdafe01c229b0b920d98169355470da239bafdb365039de60f48f69f26870"
+    },
+    {
+      "name": "project-style",
+      "path": "project:docs/STYLEGUIDE.md",
+      "status": "present",
+      "hash": "9873f938a552cfe9d712717d5d91d4084ef10bb1ef16d42c38c748437e81f028"
+    }
+  ],
+  "architecture": {
+    "goal": "Доска и список проектов показывают живые работы app-server с прежними полями и не открывают файлы реплик при обновлении.",
+    "decision": "Операция appWorks строит совмещённый снимок зарегистрированных task- и chat-процессов по ID разговора, отбирает живую работу по замку конвейера или занятому живому чату и читает запись разговора. Lstat удостоверяет существование ленты без открытия.",
+    "boundaries": "Регистрация и завершение процессов принадлежат appTaskClose, appSpawn и appDead. Они меняют реестры под appMu; занятость чат-процесса берётся под его собственным замком. Снимок указателей держит appMu один раз и освобождает до проверок файлов. Метаданные принадлежат chatStore, свежесть замка taskhead, состояние процесса закрываемому каналу dead. Ответ отражает состояние, видимое за один опрос, без обещания транзакционного снимка файлов и процессов.",
+    "alternative": "Обход каталога лент без ReadFile убрал бы размер реплик из стоимости запроса, но продолжил бы обход истории и чтение её метаданных. Существующий реестр ограничивает обход зарегистрированными процессами, а точечный Lstat сохраняет признак существования, который раньше давал ReadDir.",
+    "justification": "На базе список appListRows читает каждую ленту после проверки метаданных. Начав с реестров, доска освобождает запрос от объёма лент, сохраняя выбор проекта, приоритет живого конвейера над грумингом, порядок SID и точный состав Work. Буфер живых работ по-прежнему заполняет busy перед sessionWorks.",
+    "result": "checked",
+    "evidence": [
+      "tools/dashboard/board.go:576–615: чтение состояния, метаданных и проверка существования ленты.",
+      "tools/dashboard/board.go:558–562: приложение к общему списку и занятость перед sessionWorks.",
+      "tools/dashboard/server.go:733: сводка каждого проекта использует тот же сборщик; tools/dashboard/server.go:817: сборщик доски; tools/dashboard/server.go:793: отдельный опрос работ.",
+      "base@tools/dashboard/board.go:556: исходный цикл appListRows; tools/dashboard/appchat.go:1224: appFeedRead внутри списка разговоров.",
+      "tools/dashboard/appchat.go:602–610: процесс публикуется под appMu и имеет наблюдателя завершения.",
+      "tools/dashboard/board_test.go:3388–3413: штатный запрос, состав, поля и порядок результата. regcheck красный на ab0f865b3, зелёный на a02d5acb3.",
+      "docs/tasks/DK-1755.md:64–81: один набор лент и процедура замеров."
+    ]
+  },
+  "rules": [
+    {
+      "id": "common-architecture:ARCH-001",
+      "source": "common-architecture",
+      "text": "- **ARCH-001.** У модуля должна быть понятна ответственность. Операции, объединённые в\n  нём, работают с одной областью задачи; несвязанная логика не добавляется\n  туда только потому, что файл уже существует.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Агрегация работ остаётся в домене board, обработка ленты остаётся в appchat.",
+      "evidence": [
+        {
+          "object": "Активные работы",
+          "location": "tools/dashboard/board.go:558",
+          "observation": "liveWorks объединяет источники, appWorks даёт представление работ для потребителей доски.",
+          "result": "checked"
+        },
+        {
+          "object": "Лента",
+          "location": "tools/dashboard/appchat.go:306",
+          "observation": "Операция чтения разговора сохраняет ответственность за чтение и разбор.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-002",
+      "source": "common-architecture",
+      "text": "- **ARCH-002.** Обращение к другому модулю идёт через его контракт. Правка внутренних\n  деталей не должна требовать изменений у потребителей, если контракт\n  сохранился.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Три HTTP-входа сохраняют общий тип Work и вызов liveWorks.",
+      "evidence": [
+        {
+          "object": "Доска",
+          "location": "tools/dashboard/server.go:817",
+          "observation": "Передаёт работы в boardRuns и поле works.",
+          "result": "checked"
+        },
+        {
+          "object": "Список проектов",
+          "location": "tools/dashboard/server.go:733",
+          "observation": "Записывает список живых работ в projectInfo.",
+          "result": "checked"
+        },
+        {
+          "object": "Опрос работ",
+          "location": "tools/dashboard/server.go:793",
+          "observation": "Передаёт результаты напрямую в JSON.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-003",
+      "source": "common-architecture",
+      "text": "- **ARCH-003.** Переиспользуемый код без доменной специфики выделяй в отдельный\n  модуль с понятным назначением. Место модуля выбирай по правилам проекта.\n  Общая логика имеет одного владельца. Перед добавлением копии проверь\n  существующую реализацию. Совпадение нескольких строк само по себе ещё\n  не делает разные предметные операции одной абстракцией.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Доменный сбор не создаёт общей операции и использует имеющуюся проверку замка.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Владелец выбора формы Work — board; проверка замка делегирована taskhead.",
+          "result": "checked",
+          "symbol": "appWorks",
+          "facts": {
+            "implementation": [
+              {
+                "location": "tools/dashboard/board.go:576",
+                "text": "Доменная точка сборки Work.",
+                "quote": "func (s *server) appWorks(projectPath string) []Work {"
+              }
+            ],
+            "caller": [
+              {
+                "location": "tools/dashboard/board.go:558",
+                "text": "Сборщик проектного списка добавляет полученные работы."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/board.go:609",
+                "text": "Переиспользован общий механизм живого замка.",
+                "verdict": "shared"
+              }
+            ],
+            "change": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Выборка обращается к признаку наличия конкретной ленты."
+              }
+            ],
+            "placement": [
+              {
+                "location": "tools/dashboard/board.go:576",
+                "text": "Сборка состава и вида карточки Work остаётся в домене доски.",
+                "value": "tools/dashboard/board.go"
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "appWorks"
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-004",
+      "source": "common-architecture",
+      "text": "- **ARCH-004.** Новый слой, интерфейс или зависимость решает конкретную задачу текущего\n  изменения. Причина должна объяснять, что усложнится или сломается без\n  него. Число слоёв и выбор шаблона проектирования заранее не задаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "В board.go:576 добавлена операция существующего пакета; maps и slices входят в стандартную библиотеку.",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-005",
+      "source": "common-architecture",
+      "text": "- **ARCH-005.** Контракт операции явно и однозначно задаёт допустимые входы,\n  результат, ошибки и побочные эффекты. Для существенных пограничных состояний\n  и исключений укажи, при каких условиях они возникают и что получит вызывающий.\n  Если поле допускает разные типы, пустое значение, `null` или отсутствие,\n  укажи допустимые формы в описании поля или дай из него явную ссылку на эти\n  условия. Если состав результата задаётся конфигурацией, контракт явно\n  задаёт разрешённые для выдачи поля или однозначное правило их отбора.\n  Схема, описание и примеры должны согласовываться. Из контракта должно\n  быть ясно, можно ли повторить вызов и какое состояние останется после отказа.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "HTTP-контракт по форме и значениям на штатном входе сохраняется. Добавлен внутренний сборщик без изменения полей, схемы, статусов или входов API (server.go:817–830).",
+      "checks": [
+        "schema",
+        "output",
+        "consumer"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-006",
+      "source": "common-architecture",
+      "text": "- **ARCH-006.** Инвариант защищается там, где меняется соответствующее состояние.\n  Проверка только в одном клиенте недостаточна, если есть другие входы.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Инварианты живых реестров поддерживают существующие владельцы, доска только читает.",
+      "evidence": [
+        {
+          "object": "Конвейер",
+          "location": "tools/dashboard/apptask.go:308",
+          "observation": "appTaskClose удаляет ожидаемую запись под mutex.",
+          "result": "checked"
+        },
+        {
+          "object": "Чат",
+          "location": "tools/dashboard/appchat.go:602",
+          "observation": "appSpawn публикует запись под mutex и наблюдает dead до appDead.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-007",
+      "source": "common-architecture",
+      "text": "- **ARCH-007.** Изменение публичного контракта учитывает существующих потребителей и\n  сохранённые данные. Несовместимое изменение требует явного перехода\n  для них, например миграции или новой версии контракта.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Нового публичного контракта или хранимого формата нет; точный ответ Work сопоставлен в board_test.go:3408–3413.",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-008",
+      "source": "common-architecture",
+      "text": "- **ARCH-008.** Для данных определены источник истины и право записи. У копий и кешей\n  известны способ обновления и допустимое устаревание.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "У каждой составляющей отдельный существующий источник истины.",
+      "evidence": [
+        {
+          "object": "Кандидаты",
+          "location": "tools/dashboard/board.go:581",
+          "observation": "Копируются ссылки в пределах запроса; запись appTasks/appChats принадлежит владельцам под appMu.",
+          "result": "checked"
+        },
+        {
+          "object": "Чат",
+          "location": "tools/dashboard/board.go:600",
+          "observation": "Канал dead и busyNow задают живость и занятость.",
+          "result": "checked"
+        },
+        {
+          "object": "Рабочая запись",
+          "location": "tools/dashboard/board.go:604",
+          "observation": "Хранилище chatStore задаёт поля; существование файла подтверждается Lstat.",
+          "result": "checked"
+        },
+        {
+          "object": "Замок",
+          "location": "tools/dashboard/board.go:609",
+          "observation": "Свежесть замка и живого владельца определяет taskhead.Working.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-009",
+      "source": "common-architecture",
+      "text": "- **ARCH-009.** У ресурса есть владелец, который отвечает за освобождение при успехе,\n  ошибке и отмене. У фоновой работы определены завершение и наблюдение\n  результата.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Доска не открывает дескриптор ленты и не меняет жизненный цикл; тест закрывает наблюдающий дескриптор.",
+      "evidence": [
+        {
+          "object": "Снимок",
+          "location": "tools/dashboard/board.go:593",
+          "observation": "Освобождение mutex до чтения ФС.",
+          "result": "checked"
+        },
+        {
+          "object": "Фоновая очистка",
+          "location": "tools/dashboard/appchat.go:607",
+          "observation": "Наблюдатель appSpawn ждёт dead, затем appDead удаляет только ожидаемый экземпляр.",
+          "result": "checked"
+        },
+        {
+          "object": "FIFO",
+          "location": "tools/dashboard/board_test.go:3440",
+          "observation": "Вспомогательный дескриптор закрывается после успешного open.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-010",
+      "source": "common-architecture",
+      "text": "- **ARCH-010.** Для конкурентных изменений определено, как сохраняется инвариант.\n  Чтение с последующей записью не считается атомарным без механизма,\n  который это обеспечивает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Два списка читаются в одной критической секции, дальнейшая валидация выполняется вне общего mutex.",
+      "evidence": [
+        {
+          "object": "appMu",
+          "location": "tools/dashboard/board.go:581",
+          "observation": "Обе map только копируются в локальную map, все блокирующие I/O после unlock.",
+          "result": "checked"
+        },
+        {
+          "object": "c.mu",
+          "location": "tools/dashboard/appchat.go:112",
+          "observation": "Занятость синхронизирована внутри busyNow; канал завершения безопасен для чтения.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-011",
+      "source": "common-architecture",
+      "text": "- **ARCH-011.** Внешние данные проверяются на границе доверия. Право на операцию\n  проверяется для фактического субъекта и ресурса на каждом доступном входе.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Живые работы отбираются применительно к фактическому проекту; закрытый или скрытый объект не выдаётся.",
+      "evidence": [
+        {
+          "object": "Активная задача",
+          "location": "tools/dashboard/board.go:584",
+          "observation": "Корень процесса совпадает с корнем опрашиваемого проекта.",
+          "result": "checked"
+        },
+        {
+          "object": "Груминг",
+          "location": "tools/dashboard/board.go:610",
+          "observation": "Груминг требует совпадения корня через sameGroomTree и живого работающего процесса.",
+          "result": "checked"
+        },
+        {
+          "object": "Видимость",
+          "location": "tools/dashboard/board.go:605",
+          "observation": "Отсутствующий протокол и скрытая запись не допускаются.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-012",
+      "source": "common-architecture",
+      "text": "- **ARCH-012.** Частичный отказ не выдаётся за успех. Для последовательности действий\n  определено, что уже произошло и как продолжить, повторить или отменить её.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Операция только формирует снимок на опрос и не выполняет последовательность изменений внешнего состояния, board.go:595–621.",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-013",
+      "source": "common-architecture",
+      "text": "- **ARCH-013.** Повтор внешнего вызова учитывает его побочные эффекты. Ожидание и\n  накопление работы ограничиваются условиями эксплуатации; конкретные\n  таймауты, очереди и лимиты задаёт проект.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Повторный опрос не возобновляет процессы и не трогает реплики.",
+      "evidence": [
+        {
+          "object": "Нагрузка опроса",
+          "location": "tools/dashboard/board.go:596",
+          "observation": "Сортируются ID зарегистрированных чатов и своих task-процессов, чтение JSON ограничено этим множеством, число и размер файлов истории не участвуют.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-014",
+      "source": "common-architecture",
+      "text": "- **ARCH-014.** Ошибку можно отличить от штатного результата и связать с операцией.\n  Диагностика не раскрывает секреты и данные, не нужные получателю.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Существующее отсутствие ленты ведёт к пропуску кандидата. Таймаут и неожиданный системный отказ различаются в тесте.",
+      "evidence": [
+        {
+          "object": "tools/dashboard/board.go:615",
+          "location": "tools/dashboard/board.go:615",
+          "observation": "Файл отсутствует или недоступен; та же политика до правки выбирала только существующую доступную ленту. Лента-каталог также не считается беседой.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Начало соответствующей ветки отказа."
+              }
+            ],
+            "classification": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Файл отсутствует или недоступен; та же политика до правки выбирала только существующую доступную ленту. Лента-каталог также не считается беседой.",
+                "quote": "if info, err := os.Lstat(s.appFeedFile(sid)); err != nil || info.IsDir() {",
+                "verdict": "forwarded",
+                "value": "исход ветки"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "tools/dashboard/board.go:616",
+                "text": "Актуальная ветка признака и исхода.",
+                "quote": "continue"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "кандидат исключён из работ",
+                "value": "кандидат исключён из работ"
+              }
+            ],
+            "cause": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Файл отсутствует или недоступен; та же политика до правки выбирала только существующую доступную ленту. Лента-каталог также не считается беседой.",
+                "verdict": "absent"
+              }
+            ],
+            "message": [
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "HTTP продолжает выдачу остальных Work; для отсутствия ленты отдельного сообщения по контракту нет.",
+                "verdict": "once"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3427",
+          "location": "tools/dashboard/board_test.go:3427",
+          "observation": "Таймер ограничивает ожидание HTTP-запроса; явный таймаут фиксируется через t.Fatal.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "tools/dashboard/board_test.go:3427",
+                "text": "Начало соответствующей ветки отказа."
+              }
+            ],
+            "classification": [
+              {
+                "location": "tools/dashboard/board_test.go:3428",
+                "text": "Таймер ограничивает ожидание HTTP-запроса; явный таймаут фиксируется через t.Fatal.",
+                "quote": "t.Fatal(\"запрос доски не завершился\")",
+                "verdict": "forwarded",
+                "value": "исход ветки"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "tools/dashboard/board_test.go:3421",
+                "text": "Актуальная ветка признака и исхода.",
+                "quote": "timeout := time.NewTimer(15 * time.Second)"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/dashboard/board_test.go:3428",
+                "text": "тест краснеет «запрос доски не завершился»",
+                "value": "тест краснеет «запрос доски не завершился»"
+              }
+            ],
+            "cause": [
+              {
+                "location": "tools/dashboard/board_test.go:3428",
+                "text": "Таймер ограничивает ожидание HTTP-запроса; явный таймаут фиксируется через t.Fatal.",
+                "verdict": "absent"
+              }
+            ],
+            "message": [
+              {
+                "location": "tools/dashboard/board_test.go:3428",
+                "text": "Готовое сообщение передаётся только один раз в t.Fatal.",
+                "verdict": "once"
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3433",
+          "location": "tools/dashboard/board_test.go:3433",
+          "observation": "ENXIO значит отсутствие читающего конца и не является ошибкой проверки. Любая другая ошибка передана в t.Fatal исходным значением.",
+          "result": "checked",
+          "facts": {
+            "origin": [
+              {
+                "location": "tools/dashboard/board_test.go:3433",
+                "text": "Начало соответствующей ветки отказа."
+              }
+            ],
+            "classification": [
+              {
+                "location": "tools/dashboard/board_test.go:3438",
+                "text": "ENXIO значит отсутствие читающего конца и не является ошибкой проверки. Любая другая ошибка передана в t.Fatal исходным значением.",
+                "quote": "t.Fatal(err)",
+                "verdict": "forwarded",
+                "value": "исход ветки"
+              }
+            ],
+            "classification_definition": [
+              {
+                "location": "tools/dashboard/board_test.go:3433",
+                "text": "Актуальная ветка признака и исхода.",
+                "quote": "fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/dashboard/board_test.go:3438",
+                "text": "ошибка операции показана тестраннером",
+                "value": "ошибка операции показана тестраннером"
+              }
+            ],
+            "cause": [
+              {
+                "location": "tools/dashboard/board_test.go:3438",
+                "text": "ENXIO значит отсутствие читающего конца и не является ошибкой проверки. Любая другая ошибка передана в t.Fatal исходным значением.",
+                "verdict": "preserved"
+              }
+            ],
+            "message": [
+              {
+                "location": "tools/dashboard/board_test.go:3438",
+                "text": "Единственный t.Fatal(err) выводит причину системного вызова.",
+                "verdict": "once"
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "tools/dashboard/board.go:615",
+        "tools/dashboard/board_test.go:3427",
+        "tools/dashboard/board_test.go:3433"
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-015",
+      "source": "common-architecture",
+      "text": "- **ARCH-015.** Запрос получает только нужные поля и строки, выполняет только нужные\n  соединения и вычисления. Различай данные внутри запроса и возвращаемый\n  результат: участие столбца в WHERE или ORDER BY само по себе не требует\n  включать его в SELECT. Проследи использование результата потребителем,\n  включая проверку прав, обработку на клиенте и восстановление объекта.\n  Полная выборка требует причины, когда потребитель использует лишь часть\n  данных.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "SQL, ORM и выборки драйвером не задействованы. Файловые чтения отслежены в архитектурной оценке appWorks (board.go:604,615), вывод порядка проверен в board_test.go:3408–3413.",
+      "checks": [
+        "usage",
+        "order"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-016",
+      "source": "common-architecture",
+      "text": "- **ARCH-016.** Для одной операции проверь последовательность запросов целиком, включая\n  обращения, скрытые ORM и ленивой загрузкой. Независимые выборки или\n  изменения объединяются, когда это сокращает обращения без изменения\n  смысла. Несколько запросов допустимы при зависимости от промежуточного\n  результата или другом объяснённом ограничении.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "appWorks только читает запись chatStore и делает Lstat по конкретному ID (board.go:604,615); запросов к БД/ORM нет.",
+      "checks": [
+        "with_consumer",
+        "without_consumer"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-017",
+      "source": "common-architecture",
+      "text": "- **ARCH-017.** Если изменения должны завершаться вместе, задай границу транзакции и\n  поведение при частичном отказе. Для чтения с последующей записью проверь\n  конкурентные изменения, ограничения БД и уровень изоляции. Само уменьшение\n  числа запросов не доказывает атомарность бизнес-операции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Сбор работ не выполняет запись и не требует транзакции, board.go:595–621.",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-018",
+      "source": "common-architecture",
+      "text": "- **ARCH-018.** Запрос на каждый элемент коллекции требует проверки на N+1. По умолчанию\n  собери ключи и используй пакетное чтение или изменение. Размер пакета\n  учитывает ограничения БД и памяти. Последовательные запросы сохраняются\n  только с объяснением зависимости, изоляции элементов или другого\n  ограничения; перенос того же цикла в помощник проблему не решает.\n  Число запросов считай по вызовам драйвера для конкретной операции.\n  Учитывай повторы во всей цепочке вызовов, в том числе цикл в вызывающем\n  коде или помощнике.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Нет обращений к драйверу: board.go:604 вызывает локальный chatStoreRead, board.go:615 выполняет Lstat; HTTP-тест использует временную ФС.",
+      "checks": [
+        "calls",
+        "inputs",
+        "batch"
+      ],
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "Описание поведения, обращения к драйверу нет."
+        },
+        {
+          "path": "tools/dashboard/board.go",
+          "reason": "Реестры в памяти, JSON-метаданные на ФС и Lstat вместо открытия лент; драйвер БД не участвует."
+        },
+        {
+          "path": "tools/dashboard/board_test.go",
+          "reason": "HTTP-стенд, реестры, временные файлы и FIFO, ни одного обращения к драйверу."
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-019",
+      "source": "common-architecture",
+      "text": "- **ARCH-019.** Доступ к данным и бизнес-решения имеют явные границы ответственности.\n  SQL, соединения и отображение записей не размазываются по бизнес-сценарию,\n  а слой хранения не принимает несвязанные с хранением бизнес-решения.\n  Логику можно проверить без реальной БД. Это не требует отдельного сервиса\n  или интерфейса на каждую функцию; ограничения целостности в БД и явно\n  выбранные операции над наборами данных остаются допустимы.\n  Передавай в SQL параметрами значения для отбора записей, которые задаёт\n  вызывающий код или которые уже определены в коде константами с тем же\n  назначением.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "SQL, схема, параметры и слой БД отсутствуют в изменённых путях (board.go:576–621).",
+      "checks": [
+        "boundaries",
+        "parameters",
+        "binding",
+        "proposed_binding"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-020",
+      "source": "common-architecture",
+      "text": "- **ARCH-020.** Перед доработкой legacy- или deprecated-механизма проверь его статус,\n  действующих потребителей, поддерживаемую замену и план удаления. В задаче\n  или описании изменения объясни, почему правка нужна именно здесь.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Изменяется текущий сбор живого состояния действующего дашборда; deprecated-механизм или отдельная поддерживаемая версия не затронуты.",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-021",
+      "source": "common-architecture",
+      "text": "- **ARCH-021.** Исправление безопасности, совместимости или отказа у действующих\n  пользователей может оправдывать такую правку. Новое поведение в старом\n  механизме требует объяснения, почему его нельзя добавить в поддерживаемый\n  путь и как изменение согласуется с переходом на него. Возраст кода сам по\n  себе не делает его deprecated и не требует переписывания.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Исправление отказа производительности действует на существующих и свежих работах без миграции.",
+      "evidence": [
+        {
+          "object": "Обратная совместимость",
+          "location": "tools/dashboard/board.go:604",
+          "observation": "Существующая JSON-запись остаётся источником старых полей даже при длинной ленте; имя файла и признаки видимости сохранены.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-architecture:ARCH-022",
+      "source": "common-architecture",
+      "text": "- **ARCH-022.** Настройка действительно управляет заявленным поведением на всех\n  затронутых путях. Проследи значение от чтения до использования и проверь\n  поведение с допустимым значением, отличным от умолчания. Константа,\n  зашитый список или отдельная ветка не должны незаметно подменять настройку.\n  Неизменяемые ограничения протокола, безопасности или реализации называются\n  явно; неподдерживаемое значение отклоняется с понятной причиной.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-023",
+      "source": "common-architecture",
+      "text": "- **ARCH-023.** У каждой опции есть сценарий, в котором пользователю нужен выбор.\n  Если поведение полезно во всех поддерживаемых сценариях и не требует\n  компромисса, включи его по умолчанию без отдельного переключателя.\n  Возможность отключения оправдывается конкретной причиной, например\n  стоимостью ресурсов, совместимостью, правами доступа или откатом выпуска.\n  Само наличие условной ветки в коде не требует настройки для пользователя.\n  Если конфиг перечисляет элементы, которые могут появляться в рабочих\n  данных, контракт должен определять, что происходит с новым элементом\n  без правки конфига. Используй явный список, если потребителю нужно\n  выбирать конкретные элементы или сохранять согласованный состав. Если\n  потребителю нужны все элементы, удовлетворяющие условию, применяй это\n  условие к данным.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "checks": [
+        "behavior",
+        "basis"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-024",
+      "source": "common-architecture",
+      "text": "- **ARCH-024.** Различай параметры окружения и изменяемые бизнес-данные, например статус\n  заказа или индивидуальные условия клиента. Для значения определи, кто его\n  меняет, как часто и когда изменение должно вступать в силу. Данные,\n  которые меняются в обычном сценарии работы приложения, получают подходящее\n  хранилище и операции изменения; файл конфигурации не подменяет их модель.\n  Если конфиг читается только при запуске, его изменение требует перезапуска\n  и не подходит для данных, которые должны обновляться во время работы.\n  Для действительно динамической настройки явно определены способ\n  обновления, проверка значения и согласованность между экземплярами.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-025",
+      "source": "common-architecture",
+      "text": "- **ARCH-025.** Для настройки определены имя, тип, смысл, значение по умолчанию и момент\n  применения. Если источников несколько, их приоритет задан однозначно;\n  можно установить действующее значение и его источник без чтения кода.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-026",
+      "source": "common-architecture",
+      "text": "- **ARCH-026.** Новый источник, слой наследования, псевдоним или способ переопределения\n  нужен для конкретного сценария. Не добавляй второй способ выразить то же\n  самое без причины; совместимость старого имени описывается явно.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-027",
+      "source": "common-architecture",
+      "text": "- **ARCH-027.** Неверное значение или сочетание настроек даёт ошибку с именем параметра\n  и способом исправления. Молчаливый возврат к умолчанию не должен скрывать\n  опечатку или менять требуемое поведение. Диагностика маскирует секреты.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-architecture:ARCH-028",
+      "source": "common-architecture",
+      "text": "- **ARCH-028.** Проверь настройку глазами потребителя: минимальный рабочий пример,\n  изменение одной опции, конфликт источников и неверный ввод. Если обычное\n  изменение требует править несколько мест или разбирать цепочку неявных\n  подстановок, упрости механизм либо объясни необходимую сложность.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Настройки и их наследование не меняются. Отбор работ основан на существующих реестрах, записи разговора и Lstat (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "common-style:STYLE-001",
+      "source": "common-style",
+      "text": "- **STYLE-001.** Название модуля, функции, переменной или типа соответствует его\n  назначению. По имени видно, за что отвечает модуль, что делает функция\n  и что содержит значение. При изменении назначения пересмотри имя.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Разобраны четыре объявления из снимка; README не содержит объявления.",
+      "checks": [
+        "meaning",
+        "result",
+        "writes"
+      ],
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "Абзац README описывает существующие входы и не объявляет символов."
+        },
+        {
+          "path": "tools/dashboard/board.go",
+          "objects": [
+            "tools/dashboard/board.go:453#server.liveWorks",
+            "tools/dashboard/board.go:576#server.appWorks"
+          ]
+        },
+        {
+          "path": "tools/dashboard/board_test.go",
+          "objects": [
+            "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+            "tools/dashboard/board_test.go:3417#checkBoardFeedOpens"
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "object": "tools/dashboard/board.go:453#server.liveWorks",
+          "symbol": "liveWorks",
+          "location": "tools/dashboard/board.go:453"
+        },
+        {
+          "object": "tools/dashboard/board.go:576#server.appWorks",
+          "symbol": "appWorks",
+          "location": "tools/dashboard/board.go:576"
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+          "symbol": "TestBoardAppWorksWithoutFeedReads",
+          "location": "tools/dashboard/board_test.go:3315"
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3417#checkBoardFeedOpens",
+          "symbol": "checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417"
+        }
+      ],
+      "objects": [
+        "tools/dashboard/board.go:453#server.liveWorks",
+        "tools/dashboard/board.go:576#server.appWorks",
+        "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+        "tools/dashboard/board_test.go:3417#checkBoardFeedOpens"
+      ],
+      "evidence": [
+        {
+          "object": "tools/dashboard/board.go:453#server.liveWorks",
+          "location": "tools/dashboard/board.go:453",
+          "observation": "Смысл имени подтверждён по шагам операции и её потребителю.",
+          "result": "checked",
+          "check": "meaning",
+          "symbol": "liveWorks",
+          "word_checks": [
+            {
+              "word": "live",
+              "meaning": "Текущее состояние работы",
+              "fact": "При добавлении app-server-работ сразу заполняет занятость; остальные источники возвращают сохранённые состояния.",
+              "location": "tools/dashboard/board.go:558",
+              "result": "checked"
+            },
+            {
+              "word": "Works",
+              "meaning": "Работы проекта",
+              "fact": "Возвращает []Work для карточек проекта, включая статус зарегистрированных задач.",
+              "location": "tools/dashboard/board.go:571",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:453#server.liveWorks",
+          "location": "tools/dashboard/board.go:453",
+          "observation": "Возврат []Work с состоянием и метаданными у потребителя, порядок сохраняется.",
+          "result": "checked",
+          "check": "result",
+          "object_comparison": {
+            "expected": [
+              "live",
+              "Works"
+            ],
+            "actual": "list",
+            "actual_at": "tools/dashboard/board.go:571",
+            "proof": {
+              "expression": "list",
+              "type": "[]Work",
+              "words": [
+                {
+                  "word": "live",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board.go:558",
+                    "text": "Из источника получаются активные app-server-работы.",
+                    "quote": "for _, w := range s.appWorks(projectPath) {",
+                    "value": "w"
+                  }
+                },
+                {
+                  "word": "Works",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/board.go:559",
+                    "text": "Тип Work составлен всеми источниками списка.",
+                    "quote": "list = append(list, w)",
+                    "value": "list"
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "Works",
+            "returned": "list",
+            "return_at": "tools/dashboard/board.go:571",
+            "consumer": "Отправляет works в JSON доски.",
+            "consumer_at": "tools/dashboard/server.go:827",
+            "flow": {
+              "caller": "tools/dashboard/server.go:797",
+              "call_at": "tools/dashboard/server.go:817",
+              "value": "works",
+              "use_expression": "works"
+            }
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:453#server.liveWorks",
+          "location": "tools/dashboard/board.go:453",
+          "observation": "Сбор строит временный срез и индекс в памяти. Новых записей реестра, метаданных или лент нет.",
+          "result": "not_applicable",
+          "check": "writes"
+        },
+        {
+          "object": "tools/dashboard/board.go:576#server.appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Смысл имени подтверждён по шагам операции и её потребителю.",
+          "result": "checked",
+          "check": "meaning",
+          "symbol": "appWorks",
+          "word_checks": [
+            {
+              "word": "app",
+              "meaning": "Дорога app-server",
+              "fact": "Кандидаты берутся из appTasks и appChats, а не общего реестра интерактивных сессий.",
+              "location": "tools/dashboard/board.go:583",
+              "result": "checked"
+            },
+            {
+              "word": "Works",
+              "meaning": "Активные работы",
+              "fact": "Отобранные записи преобразуются в []Work c моделью, подпиской и началом.",
+              "location": "tools/dashboard/board.go:618",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:576#server.appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Возврат []Work с состоянием и метаданными у потребителя, порядок сохраняется.",
+          "result": "checked",
+          "check": "result",
+          "object_comparison": {
+            "expected": [
+              "app",
+              "Works"
+            ],
+            "actual": "list",
+            "actual_at": "tools/dashboard/board.go:621",
+            "proof": {
+              "expression": "list",
+              "type": "[]Work",
+              "words": [
+                {
+                  "word": "app",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board.go:585",
+                    "text": "Фильтрует и копирует запись appTask текущего проекта.",
+                    "quote": "candidates[sid] = candidate{task: a}",
+                    "value": "a"
+                  }
+                },
+                {
+                  "word": "Works",
+                  "role": "object",
+                  "fact": {
+                    "location": "tools/dashboard/board.go:618",
+                    "text": "Работа сформирована значениями записи и допуском живого состояния.",
+                    "quote": "list = append(list, Work{ID: id, Kind: \"task\", Via: workViaSession, Session: sid,",
+                    "value": "list"
+                  }
+                }
+              ]
+            }
+          },
+          "result_evidence": {
+            "word": "Works",
+            "returned": "list",
+            "return_at": "tools/dashboard/board.go:621",
+            "consumer": "Добавляются в прежнюю выдачу проекта.",
+            "consumer_at": "tools/dashboard/board.go:559"
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:576#server.appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Сбор строит временный срез и индекс в памяти. Новых записей реестра, метаданных или лент нет.",
+          "result": "not_applicable",
+          "check": "writes"
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+          "location": "tools/dashboard/board_test.go:3315",
+          "observation": "Смысл имени подтверждён по шагам операции и её потребителю.",
+          "result": "checked",
+          "check": "meaning",
+          "symbol": "TestBoardAppWorksWithoutFeedReads",
+          "word_checks": [
+            {
+              "word": "Test",
+              "meaning": "Регрессия Go",
+              "fact": "testing.T сообщает обнаруженное открытие и расхождение ответа.",
+              "location": "tools/dashboard/board_test.go:3413",
+              "result": "checked"
+            },
+            {
+              "word": "Board",
+              "meaning": "HTTP-доска",
+              "fact": "Вход /api/projects/demo/board обрабатывает обычный роутер.",
+              "location": "tools/dashboard/board_test.go:3388",
+              "result": "checked"
+            },
+            {
+              "word": "App",
+              "meaning": "App-server",
+              "fact": "Настраиваются процессы в appTasks и appChats.",
+              "location": "tools/dashboard/board_test.go:3355",
+              "result": "checked"
+            },
+            {
+              "word": "Works",
+              "meaning": "Список работ",
+              "fact": "Модель, вид, порядок и прочие поля сравниваются с двумя Work.",
+              "location": "tools/dashboard/board_test.go:3408",
+              "result": "checked"
+            },
+            {
+              "word": "Without",
+              "meaning": "Запрет открытия ленты",
+              "fact": "Проверка превращает успешное открытие пишущего конца в ошибку.",
+              "location": "tools/dashboard/board_test.go:3442",
+              "result": "checked"
+            },
+            {
+              "word": "Feed",
+              "meaning": "Лента чата",
+              "fact": "Путь ленты создаётся под appFeedFile ключа разговора.",
+              "location": "tools/dashboard/board_test.go:3369",
+              "result": "checked"
+            },
+            {
+              "word": "Reads",
+              "meaning": "Открытие на чтение",
+              "fact": "FIFO сообщает о читающем конце через допуск открытия O_WRONLY.",
+              "location": "tools/dashboard/board_test.go:3433",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+          "location": "tools/dashboard/board_test.go:3315",
+          "observation": "Тест сообщает через testing.T, прикладного возвращаемого значения у объявления нет.",
+          "result": "not_applicable",
+          "check": "result"
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3315#TestBoardAppWorksWithoutFeedReads",
+          "location": "tools/dashboard/board_test.go:3315",
+          "observation": "Тест пишет данные только во временные файлы стенда; эта запись нужна для постановки фикстуры, имя описывает проверку чтения запроса.",
+          "result": "checked",
+          "check": "writes",
+          "object_comparison": {
+            "expected": [
+              "Test",
+              "Board",
+              "App",
+              "Works",
+              "Without",
+              "Feed",
+              "Reads"
+            ],
+            "actual": "path",
+            "actual_at": "tools/dashboard/board_test.go:3382",
+            "proof": {
+              "expression": "os.WriteFile(path, nil, 0o600)",
+              "words": [
+                {
+                  "word": "Test",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "Board",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "App",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "Works",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "Without",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "Feed",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                },
+                {
+                  "word": "Reads",
+                  "role": "context",
+                  "fact": {
+                    "location": "tools/dashboard/board_test.go:3382",
+                    "text": "Вспомогательная пустая запись фикстуры для сценария HTTP.",
+                    "quote": "if err := os.WriteFile(path, nil, 0o600); err != nil {",
+                    "value": "path"
+                  }
+                }
+              ]
+            }
+          },
+          "write_evidence": {
+            "word": "Feed",
+            "target": "path",
+            "value": "nil",
+            "write_at": "tools/dashboard/board_test.go:3382",
+            "file": {
+              "path": "path",
+              "role": "destination"
+            }
+          }
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3417#checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417",
+          "observation": "Смысл имени подтверждён по шагам операции и её потребителю.",
+          "result": "checked",
+          "check": "meaning",
+          "symbol": "checkBoardFeedOpens",
+          "word_checks": [
+            {
+              "word": "check",
+              "meaning": "Проверить утверждение теста",
+              "fact": "В случае наблюдаемого открытия helper пишет t.Errorf.",
+              "location": "tools/dashboard/board_test.go:3442",
+              "result": "checked"
+            },
+            {
+              "word": "Board",
+              "meaning": "Запрос доски",
+              "fact": "Единственный вызов helper ждёт done этого запроса.",
+              "location": "tools/dashboard/board_test.go:3396",
+              "result": "checked"
+            },
+            {
+              "word": "Feed",
+              "meaning": "Ленты app-server",
+              "fact": "Отслеживаемые пути соответствуют FIFO в каталоге appFeedFile.",
+              "location": "tools/dashboard/board_test.go:3372",
+              "result": "checked"
+            },
+            {
+              "word": "Opens",
+              "meaning": "Открытие читающего конца",
+              "fact": "Успешное O_WRONLY|O_NONBLOCK сигнализирует подключение читающей стороны, далее descriptor закрывается.",
+              "location": "tools/dashboard/board_test.go:3433",
+              "result": "checked"
+            }
+          ]
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3417#checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417",
+          "observation": "Тест сообщает через testing.T, прикладного возвращаемого значения у объявления нет.",
+          "result": "not_applicable",
+          "check": "result"
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3417#checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417",
+          "observation": "Пишущий дескриптор FIFO закрывается без записи байтов; локальный список наблюдения теряет уже отмеченные пути, а ошибка передаётся через testing.T.",
+          "result": "not_applicable",
+          "check": "writes"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-002",
+      "source": "common-style",
+      "text": "- **STYLE-002.** Имя соответствует фактическому поведению. Функция `validate` не должна\n  незаметно сохранять данные, а `isReady` возвращать сообщение об ошибке\n  вместо признака готовности. Из имени или явного контракта понятны\n  существенные побочные эффекты.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Сборщик не меняет процессы; проверка теста сигнализирует об открытии в t.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Собирает Work по живому состоянию и не вызывает appLive.",
+          "result": "checked"
+        },
+        {
+          "object": "checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417",
+          "observation": "Проверка отмечает ошибку теста при открытии наблюдаемой ленты и закрывает пробный конец.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-003",
+      "source": "common-style",
+      "text": "- **STYLE-003.** Один предметный смысл называется одинаково в связанных частях кода.\n  Разные смыслы не объединяются под одним именем ради внешнего сходства.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Типы работы и источник состояния используют прежний словарь.",
+      "evidence": [
+        {
+          "object": "Work",
+          "location": "tools/dashboard/board.go:618",
+          "observation": "Тип Work, Via и workBusy переиспользованы, тексты «работа» и «груминг» сохранились.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-004",
+      "source": "common-style",
+      "text": "- **STYLE-004.** Если можно перепутать единицы или систему отсчёта, вырази их типом либо\n  именем: `timeoutSeconds`, `sizeBytes`, `startedAt`. Избыточно повторять\n  информацию, уже однозначную из типа и контекста, не требуется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новых неоднозначных чисел в контракте нет.",
+      "evidence": [
+        {
+          "object": "Таймеры",
+          "location": "tools/dashboard/board_test.go:3419",
+          "observation": "Интервалы теста явно заданы через time.Millisecond и time.Second; Born переиспользуется без преобразования.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-005",
+      "source": "common-style",
+      "text": "- **STYLE-005.** Длина имени зависит от области видимости. Локальный `i` в коротком цикле\n  допустим; `data`, `result` или `manager` не объясняют назначение публичного\n  объекта без дополнительного контекста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Контекст кандидата и временных значений виден на месте их объявления.",
+      "evidence": [
+        {
+          "object": "Кандидат",
+          "location": "tools/dashboard/board.go:577",
+          "observation": "candidate ограничен appWorks и содержит task/chat; sid и st работают в пределах цикла.",
+          "result": "checked"
+        },
+        {
+          "object": "Фикстура",
+          "location": "tools/dashboard/board_test.go:3323",
+          "observation": "Строка f локальна циклу заполнения, поля fixture названы по условию.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-006",
+      "source": "common-style",
+      "text": "- **STYLE-006.** Параметр функции влияет на её результат, побочные эффекты или выполнение\n  заявленного контракта. Неиспользуемый параметр убирается вместе с передачей\n  значения у вызывающих. Исключение для обязательной сигнатуры интерфейса\n  или обратной совместимости обозначается явно.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Аргументы участвуют в основном пути и проверках.",
+      "evidence": [
+        {
+          "object": "projectPath",
+          "location": "tools/dashboard/board.go:584",
+          "observation": "Ограничивает конвейеры, затем используется сравнение дерева груминга.",
+          "result": "checked"
+        },
+        {
+          "object": "watched и done",
+          "location": "tools/dashboard/board_test.go:3425",
+          "observation": "done завершает наблюдение, watched задаёт набор FIFO, t принимает исход теста.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-007",
+      "source": "common-style",
+      "text": "- **STYLE-007.** Возвращаемое значение имеет потребителя или обосновано публичным\n  контрактом. Проверь все места вызова: игнорирование результата в одном\n  месте не означает, что он лишний для остальных. Не добавляй возврат\n  внутренних данных только ради удобства реализации.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Результат используется на каждом новом вызове.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:558",
+          "observation": "Каждый Work попадает в list; его ID заполняет busy.",
+          "result": "checked"
+        },
+        {
+          "object": "liveWorks",
+          "location": "tools/dashboard/server.go:825",
+          "observation": "Сериализуется в ответ и используется при расчёте статуса строк.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-008",
+      "source": "common-style",
+      "text": "- **STYLE-008.** Перед удалением параметра, поля результата или вычисления проверь\n  внешних потребителей и побочные эффекты. Ошибка, которую вызывающий\n  проигнорировал, требует обработки; её нельзя просто убрать из контракта\n  как неиспользуемое значение.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Удалённый обход производил лишнее чтение и попутный вызов очистки; очистка имеет своего владельца.",
+      "evidence": [
+        {
+          "object": "Убранный путь",
+          "location": "tools/dashboard/appchat.go:607",
+          "observation": "Наблюдатель пишет смерть без доски. Выборка полей осталась из chatStore, не разобранной ленты.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-009",
+      "source": "common-style",
+      "text": "- **STYLE-009.** Функция выполняет связную операцию. Условия и побочные эффекты можно\n  проследить без переключения между несвязанными задачами. Деление на\n  функции определяется смыслом, без лимита строк или числа параметров.\n  В каждом варианте выполнения операции должно быть понятно, зачем нужен\n  каждый вызов и где используются данные, которые он читает, вычисляет или\n  изменяет. Выполняй чтение и преобразование данных там, где они нужны для\n  результата, проверки или предусмотренного побочного действия.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Вычисления находятся на пути потребителя результата.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:596",
+          "observation": "Чтение метаданных после проверки кандидата, Lstat после проверки задачи/груминга, один append.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-010",
+      "source": "common-style",
+      "text": "- **STYLE-010.** Не заставляй читателя угадывать смысл литерала или флага. Значение с\n  предметным смыслом получает имя или тип; для параметра `true` должно\n  быть понятно, какое поведение он включает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Новые литералы определяют видимый прежний результат или фикстуру.",
+      "evidence": [
+        {
+          "object": "Вид работы",
+          "location": "tools/dashboard/board.go:608",
+          "observation": "Строка действие формирует Title и соответствует прежней форме.",
+          "result": "checked"
+        },
+        {
+          "object": "FIFO",
+          "location": "tools/dashboard/board_test.go:3433",
+          "observation": "Флаги открывают только конец записи без блока, сценарий объяснён комментарием.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-011",
+      "source": "common-style",
+      "text": "- **STYLE-011.** Выбирай структуру, в которой видны основной путь и условия отказа.\n  Уплотнение выражений не должно скрывать порядок действий или обработку\n  ошибки. Удаляй недостижимый код и остатки прежнего решения.\n  По коду должно быть видно, в каком порядке выполняются вызовы, где операция\n  возвращает результат и где останавливается при ошибке. Если после получения\n  результата или ошибки остаётся только передать их вызывающему, возвращай их\n  сразу. Одну и ту же классификацию ошибки применяй один раз. Если у ошибки\n  есть публичный код, присваивай его на границе, которая отвечает за ответ\n  вызывающему.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Ранние отказы пропускают кандидата, состояние освобождается до чтения ФС, запрос на стенде синхронизируется отдельно.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Ход и использование результатов приведены по порядку.",
+          "result": "checked",
+          "facts": {
+            "entry": [
+              {
+                "location": "tools/dashboard/board.go:576",
+                "text": "Вход операции."
+              }
+            ],
+            "condition": [
+              {
+                "location": "tools/dashboard/board.go:581",
+                "text": "Сценарий входит в проверяемую ветку."
+              }
+            ],
+            "control": [
+              {
+                "location": "tools/dashboard/board.go:600",
+                "text": "Условие проверяется до использования результата."
+              }
+            ],
+            "step": [
+              {
+                "location": "tools/dashboard/board.go:581",
+                "text": "Снимок реестров под appMu",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:600",
+                "text": "Проверка живого занятого чата; отсутствие живого процесса, известного протокола или замка — штатный исход отбора.",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:604",
+                "text": "Чтение существующей записи разговора; отсутствие живого процесса, известного протокола или замка — штатный исход отбора.",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:609",
+                "text": "Проверка живого конвейера и fallback на груминг; отсутствие живого процесса, известного протокола или замка — штатный исход отбора.",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Проверка появления ленты без открытия",
+                "failure": true
+              },
+              {
+                "location": "tools/dashboard/board.go:618",
+                "text": "Формирование Work и его добавление",
+                "failure": false
+              }
+            ],
+            "use": [
+              {
+                "location": "tools/dashboard/board.go:596",
+                "text": "Использование результата: candidates.",
+                "related": "tools/dashboard/board.go:581",
+                "value": "candidates",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:601",
+                "text": "Использование результата: grooming.",
+                "related": "tools/dashboard/board.go:600",
+                "value": "grooming",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:605",
+                "text": "Использование результата: st.",
+                "related": "tools/dashboard/board.go:604",
+                "value": "st",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:613",
+                "text": "Использование результата: id, action.",
+                "related": "tools/dashboard/board.go:609",
+                "value": "id, action",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:618",
+                "text": "Использование результата: разрешённый кандидат.",
+                "related": "tools/dashboard/board.go:615",
+                "value": "разрешённый кандидат",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:621",
+                "text": "Использование результата: list.",
+                "related": "tools/dashboard/board.go:618",
+                "value": "list",
+                "verdict": "used"
+              }
+            ],
+            "outcome": [
+              {
+                "location": "tools/dashboard/board.go:621",
+                "text": "Видимый результат соответствующего пути."
+              }
+            ],
+            "return_value": [
+              {
+                "location": "tools/dashboard/board.go:621",
+                "text": "Успешный выход.",
+                "value": "[]Work"
+              }
+            ],
+            "return_error": [
+              {
+                "location": "tools/dashboard/board.go:600",
+                "text": "Отдельный сигнал отказа.",
+                "value": "кандидат пропущен"
+              }
+            ]
+          }
+        },
+        {
+          "object": "liveWorks",
+          "location": "tools/dashboard/board.go:453",
+          "observation": "Ход и использование результатов приведены по порядку.",
+          "result": "checked",
+          "facts": {
+            "entry": [
+              {
+                "location": "tools/dashboard/board.go:453",
+                "text": "Вход операции."
+              }
+            ],
+            "condition": [
+              {
+                "location": "tools/dashboard/board.go:558",
+                "text": "Сценарий входит в проверяемую ветку."
+              }
+            ],
+            "control": [
+              {
+                "location": "tools/dashboard/board.go:567",
+                "text": "Условие проверяется до использования результата."
+              }
+            ],
+            "step": [
+              {
+                "location": "tools/dashboard/board.go:558",
+                "text": "Чтение работ app-server",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:560",
+                "text": "Отметка задачи занятой перед интерактивными сессиями",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board.go:562",
+                "text": "Дополнение интерактивными сессиями",
+                "failure": false
+              }
+            ],
+            "use": [
+              {
+                "location": "tools/dashboard/board.go:559",
+                "text": "Использование результата: w.",
+                "related": "tools/dashboard/board.go:558",
+                "value": "w",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:562",
+                "text": "Использование результата: busy.",
+                "related": "tools/dashboard/board.go:560",
+                "value": "busy",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board.go:571",
+                "text": "Использование результата: list.",
+                "related": "tools/dashboard/board.go:562",
+                "value": "list",
+                "verdict": "used"
+              }
+            ],
+            "outcome": [
+              {
+                "location": "tools/dashboard/board.go:571",
+                "text": "Видимый результат соответствующего пути."
+              }
+            ],
+            "return_value": [
+              {
+                "location": "tools/dashboard/board.go:571",
+                "text": "Успешный выход.",
+                "value": "[]Work"
+              }
+            ],
+            "return_error": [
+              {
+                "location": "tools/dashboard/board.go:567",
+                "text": "Отдельный сигнал отказа.",
+                "value": "правила обработки существующего списка"
+              }
+            ]
+          }
+        },
+        {
+          "object": "checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3417",
+          "observation": "Ход и использование результатов приведены по порядку.",
+          "result": "checked",
+          "facts": {
+            "entry": [
+              {
+                "location": "tools/dashboard/board_test.go:3417",
+                "text": "Вход операции."
+              }
+            ],
+            "condition": [
+              {
+                "location": "tools/dashboard/board_test.go:3425",
+                "text": "Сценарий входит в проверяемую ветку."
+              }
+            ],
+            "control": [
+              {
+                "location": "tools/dashboard/board_test.go:3437",
+                "text": "Условие проверяется до использования результата."
+              }
+            ],
+            "step": [
+              {
+                "location": "tools/dashboard/board_test.go:3425",
+                "text": "Канал завершения прекращает наблюдение",
+                "failure": false
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3427",
+                "text": "Таймаут останавливает тест",
+                "failure": true
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3433",
+                "text": "Пробует открыть пишущий конец FIFO неблокирующим способом",
+                "failure": true
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3440",
+                "text": "Освобождает дескриптор, путь перестаёт опрашиваться",
+                "failure": false
+              }
+            ],
+            "use": [
+              {
+                "location": "tools/dashboard/board_test.go:3426",
+                "text": "Использование результата: завершение.",
+                "related": "tools/dashboard/board_test.go:3425",
+                "value": "завершение",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3428",
+                "text": "Использование результата: t.Fatal.",
+                "related": "tools/dashboard/board_test.go:3427",
+                "value": "t.Fatal",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3434",
+                "text": "Использование результата: err и fd.",
+                "related": "tools/dashboard/board_test.go:3433",
+                "value": "err и fd",
+                "verdict": "used"
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3442",
+                "text": "Использование результата: ошибка теста.",
+                "related": "tools/dashboard/board_test.go:3440",
+                "value": "ошибка теста",
+                "verdict": "used"
+              }
+            ],
+            "outcome": [
+              {
+                "location": "tools/dashboard/board_test.go:3426",
+                "text": "Видимый результат соответствующего пути."
+              }
+            ],
+            "return_value": [
+              {
+                "location": "tools/dashboard/board_test.go:3426",
+                "text": "Успешный выход.",
+                "value": "завершение после done"
+              }
+            ],
+            "return_error": [
+              {
+                "location": "tools/dashboard/board_test.go:3437",
+                "text": "Отдельный сигнал отказа.",
+                "value": "t.Fatal"
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "appWorks",
+        "liveWorks",
+        "checkBoardFeedOpens"
+      ]
+    },
+    {
+      "id": "common-style:STYLE-012",
+      "source": "common-style",
+      "text": "- **STYLE-012.** Используй принятую в языке форму, если она выражает нужное поведение.\n  Форматирование проверяет настроенный инструмент; личное предпочтение\n  ревьювера не вводит новый стандарт оформления.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Реализация использует форму коллекций Go 1.26, как в модуле.",
+      "evidence": [
+        {
+          "object": "Сортировка",
+          "location": "tools/dashboard/board.go:596",
+          "observation": "slices.Sorted(maps.Keys(...)) задаёт порядок одной операцией.",
+          "result": "checked"
+        },
+        {
+          "object": "Проверка diff",
+          "location": "tools/dashboard/board.go:574",
+          "observation": "git diff --check проходит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-013",
+      "source": "common-style",
+      "text": "- **STYLE-013.** Ошибка сохраняет причину и контекст операции. Пустое значение или успех\n  не подставляются вместо ошибки, если контракт явно этого не предусматривает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Отсутствующая лента или недоступный кандидат сохраняют исход «не попал в выборку».",
+      "evidence": [
+        {
+          "object": "Лента",
+          "location": "tools/dashboard/board.go:615",
+          "observation": "Lstat ошибку не превращает в положительный результат. В обычном пути отсутствие ожидается до первой реплики.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-014",
+      "source": "common-style",
+      "text": "- **STYLE-014.** Сообщение об ошибке объясняет, что не получилось. Совет по исправлению\n  даётся, когда он известен; внутренние подробности не заменяют описание\n  проблемы для вызывающего.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Пробой теста диагностируется нарушенная граница.",
+      "evidence": [
+        {
+          "object": "Открытие ленты",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "Сообщение теста называет конкретный файл ленты; отдельный таймаут называет зависание запроса.",
+          "result": "checked"
+        },
+        {
+          "object": "Состав работ",
+          "location": "tools/dashboard/board_test.go:3413",
+          "observation": "Допущенная или пропавшая запись видна в наблюдаемом и ожидаемом списках.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-015",
+      "source": "common-style",
+      "text": "- **STYLE-015.** Комментарий объясняет неочевидную причину, ограничение или компромисс.\n  Пересказ соседней строки не нужен. После изменения кода проверь, что\n  оставшийся комментарий всё ещё верен.\n  При изменении поведения проверь все комментарии, которые его описывают,\n  включая комментарии вне диффа. Исправь утверждения, которые расходятся\n  с кодом.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Комментарии связаны с ограничениями работы, владением очисткой и способом наблюдения FIFO. Унаследованные пояснения проверены по своим веткам.",
+      "files": [
+        {
+          "path": "tools/dashboard/README.md",
+          "reason": "Это пользовательская документация; точный контракт проверен по STYLE-016."
+        },
+        {
+          "path": "tools/dashboard/board.go",
+          "objects": [
+            "tools/dashboard/board.go:445",
+            "tools/dashboard/board.go:454",
+            "tools/dashboard/board.go:459",
+            "tools/dashboard/board.go:463",
+            "tools/dashboard/board.go:465",
+            "tools/dashboard/board.go:468",
+            "tools/dashboard/board.go:471",
+            "tools/dashboard/board.go:480",
+            "tools/dashboard/board.go:503",
+            "tools/dashboard/board.go:513",
+            "tools/dashboard/board.go:523",
+            "tools/dashboard/board.go:534",
+            "tools/dashboard/board.go:548",
+            "tools/dashboard/board.go:563",
+            "tools/dashboard/board.go:574",
+            "tools/dashboard/board.go:598"
+          ]
+        },
+        {
+          "path": "tools/dashboard/board_test.go",
+          "objects": [
+            "tools/dashboard/board_test.go:3431"
+          ]
+        }
+      ],
+      "targets": [
+        {
+          "object": "tools/dashboard/board.go:445",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:445",
+          "comment_fragments": [
+            "liveWorks собирает работы проекта.",
+            "tmux-сессии на машине общие, к проекту они привязываются префиксом ID с его доски; разбор имён и записи реестра целей живут в общем каркасе internal/works: тем же признаком занятости пользуется планировщик слота taskctl (LLD DK-400, решение 3), и вторая копия разбора у экрана расползлась бы с утилитой на первой правке.",
+            "Третьим идут интерактивные сессии: окно агента у человека не заводит ни tmux-сессии, ни записи в реестре, и без них половина работы на машине была бы невидима."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:454",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:454",
+          "comment_fragments": [
+            "Пустой список, а не null: клиент и smoke-сценарий различают «работ нет» и «поля нет»."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:459",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:459",
+          "comment_fragments": [
+            "Заголовки берутся с доски разом: работа подписывается им, а не именем сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).",
+            "Строки на доске может и не быть, и тогда работа остаётся при своём ID."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:463",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:463",
+          "comment_fragments": [
+            "Сессии, где клиент жив, а хода нет: строке они работы не дают."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:465",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:465",
+          "comment_fragments": [
+            "Реестр живых сессий читается разом на все работы: по нему считается их состояние, и тридцать походов в каталог реестра тут ни к чему."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:468",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:468",
+          "comment_fragments": [
+            "Подписка узнаётся по дому транскрипта: своего поля у неё нет ни в реестре, ни в имени tmux-сессии."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:471",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:471",
+          "comment_fragments": [
+            "Обратная дорога от имени tmux к сессии: состояние работы считается по её транскрипту, а у работы, взятой из списка tmux, id сессии своего нет."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:480",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:480",
+          "comment_fragments": [
+            "Сессии спрашиваются со временем создания (tmuxList): по нему экран «Агенты» говорит, сколько работа идёт.",
+            "Сорванный опрос отдаёт список без работ tmux и строку журнала: этот ответ живёт один круг обновления, а хранимого состояния по нему нет (DK-904).",
+            "Машину без tmux называет tmuxMissingCheck на уровне ответа, и журнал ею не засоряется."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:503",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:503",
+          "comment_fragments": [
+            "Виток цели имени окна в реестре не оставляет: это `claude -p`, и хук старта имя от клиента без терминала не принимает (DK-673).",
+            "Сессию витка называет замок оболочки, туда её пишет goal-run.py до подъёма клиента (DK-938)."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:513",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:513",
+          "comment_fragments": [
+            "Своей сессия считается по записи реестра, а не по образцу имени: разбор этой развилки лежит при поле Tmux."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:523",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:523",
+          "comment_fragments": [
+            "Подписка та же, что у транскрипта этой сессии: конвейер второй подписки пишет журнал в её дом, и по нему она и узнаётся."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:534",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:534",
+          "comment_fragments": [
+            "Своей tmux-сессии goal-<ID> у цикла бывает и нет: витки идут живым чатом дашборда, и носитель у работы тогда чужой, chat-<ID>-<n>.",
+            "По одному носителю цикл и объявлялся чужим, хотя человек вёл его прямо отсюда (жалоба пользователя на DK-446).",
+            "Спрашивается поэтому не имя носителя, а поднимал ли работу дашборд, и говорит это запись реестра о задаче цели."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:548",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:548",
+          "comment_fragments": [
+            "Цикл без своего окна (--foreground в терминале человека): сессию витка называет тот же замок оболочки."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:563",
+          "symbol": "server.liveWorks",
+          "location": "tools/dashboard/board.go:563",
+          "comment_fragments": [
+            "Заказ дожима стопа спрашивается разом на все работы: он лежит при имени окна, а не при задаче, и одной работе соответствует один заход в память разговора."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:574",
+          "symbol": "server.appWorks",
+          "location": "tools/dashboard/board.go:574",
+          "comment_fragments": [
+            "appWorks собирает работы из реестров запущенных конвейеров и чатов.",
+            "Файл ленты нужен только как признак того, что разговор появился."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board.go:598",
+          "symbol": "server.appWorks",
+          "location": "tools/dashboard/board.go:598",
+          "comment_fragments": [
+            "За завершением процесса следит appSpawn.",
+            "Вызов appLive здесь мог бы дописать сообщение об обрыве хода прямо из запроса доски."
+          ]
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3431",
+          "symbol": "checkBoardFeedOpens",
+          "location": "tools/dashboard/board_test.go:3431",
+          "comment_fragments": [
+            "Пишущий конец открывается, только если запрос открыл ленту на чтение.",
+            "Закрытие даёт читателю EOF и позволяет закончить запрос."
+          ]
+        }
+      ],
+      "objects": [
+        "tools/dashboard/board.go:445",
+        "tools/dashboard/board.go:454",
+        "tools/dashboard/board.go:459",
+        "tools/dashboard/board.go:463",
+        "tools/dashboard/board.go:465",
+        "tools/dashboard/board.go:468",
+        "tools/dashboard/board.go:471",
+        "tools/dashboard/board.go:480",
+        "tools/dashboard/board.go:503",
+        "tools/dashboard/board.go:513",
+        "tools/dashboard/board.go:523",
+        "tools/dashboard/board.go:534",
+        "tools/dashboard/board.go:548",
+        "tools/dashboard/board.go:563",
+        "tools/dashboard/board.go:574",
+        "tools/dashboard/board.go:598",
+        "tools/dashboard/board_test.go:3431"
+      ],
+      "evidence": [
+        {
+          "object": "tools/dashboard/board.go:445",
+          "location": "tools/dashboard/board.go:558",
+          "observation": "Интерактивные сессии остаются последними после tmux, целей и app-server; слово «третьим» обозначает историческую фазу до внедрения app-server и не меняет фактическую последовательность.",
+          "result": "checked",
+          "comment_quote": "liveWorks собирает работы проекта.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:558",
+                "text": "Этот этап добавляет проектные работы к общему списку.",
+                "quote": "liveWorks собирает работы проекта.",
+                "value": "appWorks",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:498",
+                "text": "Имя tmux разбирает общая операция с префиксом проекта.",
+                "quote": "tmux-сессии на машине общие, к проекту они привязываются префиксом ID с его доски; разбор имён и записи реестра целей живут в общем каркасе internal/works: тем же признаком занятости пользуется планировщик слота taskctl (LLD DK-400, решение 3), и вторая копия разбора у экрана расползлась бы с утилитой на первой правке.",
+                "value": "works.SessionTask",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:562",
+                "text": "Интерактивные сессии остаются последними после tmux, целей и app-server; слово «третьим» обозначает историческую фазу до внедрения app-server и не меняет фактическую последовательность.",
+                "quote": "Третьим идут интерактивные сессии: окно агента у человека не заводит ни tmux-сессии, ни записи в реестре, и без них половина работы на машине была бы невидима.",
+                "value": "s.sessionWorks(projectPath, prefix, rows, busy, alive)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:445",
+                "text": "Интерактивные сессии остаются последними после tmux, целей и app-server; слово «третьим» обозначает историческую фазу до внедрения app-server и не меняет фактическую последовательность."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:454",
+          "location": "tools/dashboard/board.go:456",
+          "observation": "Нулевая выдача сериализуется в пустой массив для клиента.",
+          "result": "checked",
+          "comment_quote": "Пустой список, а не null: клиент и smoke-сценарий различают «работ нет» и «поля нет».",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:456",
+                "text": "Нулевая выдача сериализуется в пустой массив для клиента.",
+                "quote": "Пустой список, а не null: клиент и smoke-сценарий различают «работ нет» и «поля нет».",
+                "value": "[]Work{}",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:454",
+                "text": "Нулевая выдача сериализуется в пустой массив для клиента."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:459",
+          "location": "tools/dashboard/board.go:462",
+          "observation": "Отсутствующая строка даёт нулевое значение заголовка; ID взят из имени раньше.",
+          "result": "checked",
+          "comment_quote": "Заголовки берутся с доски разом: работа подписывается им, а не именем сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:462",
+                "text": "Один раз строится таблица строк для всех работ.",
+                "quote": "Заголовки берутся с доски разом: работа подписывается им, а не именем сессии goal-DK-112, которое о занятии агента не говорит ничего (DK-255).",
+                "value": "parseBoardRows(board)",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:520",
+                "text": "Отсутствующая строка даёт нулевое значение заголовка; ID взят из имени раньше.",
+                "quote": "Строки на доске может и не быть, и тогда работа остаётся при своём ID.",
+                "value": "rows[id].Title",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:459",
+                "text": "Отсутствующая строка даёт нулевое значение заголовка; ID взят из имени раньше."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:463",
+          "location": "tools/dashboard/board.go:464",
+          "observation": "Таблица ухода в разговор читается до работ tmux и потом передаёт отдельный признак Talk.",
+          "result": "checked",
+          "comment_quote": "Сессии, где клиент жив, а хода нет: строке они работы не дают.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:464",
+                "text": "Таблица ухода в разговор читается до работ tmux и потом передаёт отдельный признак Talk.",
+                "quote": "Сессии, где клиент жив, а хода нет: строке они работы не дают.",
+                "value": "s.tmuxTalk(projectPath)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:463",
+                "text": "Таблица ухода в разговор читается до работ tmux и потом передаёт отдельный признак Talk."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:465",
+          "location": "tools/dashboard/board.go:467",
+          "observation": "Один вызов выдаёт два индекса, используемых повторно для работы.",
+          "result": "checked",
+          "comment_quote": "Реестр живых сессий читается разом на все работы: по нему считается их состояние, и тридцать походов в каталог реестра тут ни к чему.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:467",
+                "text": "Один вызов выдаёт два индекса, используемых повторно для работы.",
+                "quote": "Реестр живых сессий читается разом на все работы: по нему считается их состояние, и тридцать походов в каталог реестра тут ни к чему.",
+                "value": "s.livePeers()",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:465",
+                "text": "Один вызов выдаёт два индекса, используемых повторно для работы."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:468",
+          "location": "tools/dashboard/board.go:525",
+          "observation": "Подписка вычисляется из корней транскриптов, а не из имени сессии.",
+          "result": "checked",
+          "comment_quote": "Подписка узнаётся по дому транскрипта: своего поля у неё нет ни в реестре, ни в имени tmux-сессии.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:525",
+                "text": "Подписка вычисляется из корней транскриптов, а не из имени сессии.",
+                "quote": "Подписка узнаётся по дому транскрипта: своего поля у неё нет ни в реестре, ни в имени tmux-сессии.",
+                "value": "s.harnessOfSession(projectPath, sid, roots)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:468",
+                "text": "Подписка вычисляется из корней транскриптов, а не из имени сессии."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:471",
+          "location": "tools/dashboard/board.go:477",
+          "observation": "Проход индексирует связь имён окон и ключей записей до вычисления состояния.",
+          "result": "checked",
+          "comment_quote": "Обратная дорога от имени tmux к сессии: состояние работы считается по её транскрипту, а у работы, взятой из списка tmux, id сессии своего нет.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:477",
+                "text": "Проход индексирует связь имён окон и ключей записей до вычисления состояния.",
+                "quote": "Обратная дорога от имени tmux к сессии: состояние работы считается по её транскрипту, а у работы, взятой из списка tmux, id сессии своего нет.",
+                "value": "sidOf[name] = sid",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:471",
+                "text": "Проход индексирует связь имён окон и ключей записей до вычисления состояния."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:480",
+          "location": "tools/dashboard/board.go:521",
+          "observation": "При отсутствии tmux вызов tmuxList пропускается.",
+          "result": "checked",
+          "comment_quote": "Сессии спрашиваются со временем создания (tmuxList): по нему экран «Агенты» говорит, сколько работа идёт.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:521",
+                "text": "Поля Work получают время имени сессии.",
+                "quote": "Сессии спрашиваются со временем создания (tmuxList): по нему экран «Агенты» говорит, сколько работа идёт.",
+                "value": "sess.Created",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:489",
+                "text": "Отказ tmux сообщает в журнал, а список сессий не заполняется.",
+                "quote": "Сорванный опрос отдаёт список без работ tmux и строку журнала: этот ответ живёт один круг обновления, а хранимого состояния по нему нет (DK-904).",
+                "value": "s.logf",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:486",
+                "text": "При отсутствии tmux вызов tmuxList пропускается.",
+                "quote": "Машину без tmux называет tmuxMissingCheck на уровне ответа, и журнал ею не засоряется.",
+                "value": "tmuxMissingCheck()",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:480",
+                "text": "При отсутствии tmux вызов tmuxList пропускается."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:503",
+          "location": "tools/dashboard/board.go:508",
+          "observation": "Сессия витка восстанавливается через общий источник отметки работы.",
+          "result": "checked",
+          "comment_quote": "Виток цели имени окна в реестре не оставляет: это `claude -p`, и хук старта имя от клиента без терминала не принимает (DK-673).",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:508",
+                "text": "Виток без зарегистрированного имени получает дополнительный путь поиска.",
+                "quote": "Виток цели имени окна в реестре не оставляет: это `claude -p`, и хук старта имя от клиента без терминала не принимает (DK-673).",
+                "value": "kind == \"goal\" && sid == \"\"",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:509",
+                "text": "Сессия витка восстанавливается через общий источник отметки работы.",
+                "quote": "Сессию витка называет замок оболочки, туда её пишет goal-run.py до подъёма клиента (DK-938).",
+                "value": "goalTurn(projectPath, id)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:503",
+                "text": "Сессия витка восстанавливается через общий источник отметки работы."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:513",
+          "location": "tools/dashboard/board.go:516",
+          "observation": "Признак своего tmux задаёт подтверждённый sid; особый случай витка отсекается.",
+          "result": "checked",
+          "comment_quote": "Своей сессия считается по записи реестра, а не по образцу имени: разбор этой развилки лежит при поле Tmux.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:516",
+                "text": "Признак своего tmux задаёт подтверждённый sid; особый случай витка отсекается.",
+                "quote": "Своей сессия считается по записи реестра, а не по образцу имени: разбор этой развилки лежит при поле Tmux.",
+                "value": "sid != \"\" && turn == \"\"",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:513",
+                "text": "Признак своего tmux задаёт подтверждённый sid; особый случай витка отсекается."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:523",
+          "location": "tools/dashboard/board.go:525",
+          "observation": "Потребитель получает найденную по sid и корням подписку.",
+          "result": "checked",
+          "comment_quote": "Подписка та же, что у транскрипта этой сессии: конвейер второй подписки пишет журнал в её дом, и по нему она и узнаётся.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:525",
+                "text": "Потребитель получает найденную по sid и корням подписку.",
+                "quote": "Подписка та же, что у транскрипта этой сессии: конвейер второй подписки пишет журнал в её дом, и по нему она и узнаётся.",
+                "value": "s.harnessOfSession(projectPath, sid, roots)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:523",
+                "text": "Потребитель получает найденную по sid и корням подписку."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:534",
+          "location": "tools/dashboard/board.go:530",
+          "observation": "Свою работу подтверждает связь, построенная из записей реестра.",
+          "result": "checked",
+          "comment_quote": "Своей tmux-сессии goal-<ID> у цикла бывает и нет: витки идут живым чатом дашборда, и носитель у работы тогда чужой, chat-<ID>-<n>.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:530",
+                "text": "Вход из реестра независим от присутствия собственного tmux.",
+                "quote": "Своей tmux-сессии goal-<ID> у цикла бывает и нет: витки идут живым чатом дашборда, и носитель у работы тогда чужой, chat-<ID>-<n>.",
+                "value": "works.RegistryGoals",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:541",
+                "text": "Происхождение носителя задаёт реестр цели, поэтому без tmux создаётся карточка с тем же видом.",
+                "quote": "По одному носителю цикл и объявлялся чужим, хотя человек вёл его прямо отсюда (жалоба пользователя на DK-446).",
+                "value": "Via: workViaRegistry",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:542",
+                "text": "Свою работу подтверждает связь, построенная из записей реестра.",
+                "quote": "Спрашивается поэтому не имя носителя, а поднимал ли работу дашборд, и говорит это запись реестра о задаче цели.",
+                "value": "launched[goal]",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:534",
+                "text": "Свою работу подтверждает связь, построенная из записей реестра."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:548",
+          "location": "tools/dashboard/board.go:547",
+          "observation": "Ветка без собственного зарегистрированного пуска проверяет замок витка цели.",
+          "result": "checked",
+          "comment_quote": "Цикл без своего окна (--foreground в терминале человека): сессию витка называет тот же замок оболочки.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:547",
+                "text": "Ветка без собственного зарегистрированного пуска проверяет замок витка цели.",
+                "quote": "Цикл без своего окна (--foreground в терминале человека): сессию витка называет тот же замок оболочки.",
+                "value": "goalTurn(projectPath, goal)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:548",
+                "text": "Ветка без собственного зарегистрированного пуска проверяет замок витка цели."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:563",
+          "location": "tools/dashboard/board.go:567",
+          "observation": "Каждая своя tmux-работа проверяет признак дожима по имени окна.",
+          "result": "checked",
+          "comment_quote": "Заказ дожима стопа спрашивается разом на все работы: он лежит при имени окна, а не при задаче, и одной работе соответствует один заход в память разговора.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:567",
+                "text": "Каждая своя tmux-работа проверяет признак дожима по имени окна.",
+                "quote": "Заказ дожима стопа спрашивается разом на все работы: он лежит при имени окна, а не при задаче, и одной работе соответствует один заход в память разговора.",
+                "value": "s.stopWaitOn(list[i].Tmux)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:563",
+                "text": "Каждая своя tmux-работа проверяет признак дожима по имени окна."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:574",
+          "location": "tools/dashboard/board.go:583",
+          "observation": "Только метаданные пути проверяют появление ленты, данные реплик не открываются.",
+          "result": "checked",
+          "comment_quote": "appWorks собирает работы из реестров запущенных конвейеров и чатов.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board.go:583",
+                "text": "Отдельно читается реестр конвейеров; на board.go:588 читается реестр чатов.",
+                "quote": "appWorks собирает работы из реестров запущенных конвейеров и чатов.",
+                "value": "s.appTasks",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Только метаданные пути проверяют появление ленты, данные реплик не открываются.",
+                "quote": "Файл ленты нужен только как признак того, что разговор появился.",
+                "value": "os.Lstat(s.appFeedFile(sid))",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:574",
+                "text": "Только метаданные пути проверяют появление ленты, данные реплик не открываются."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board.go:598",
+          "location": "tools/dashboard/appchat.go:608",
+          "observation": "На appchat.go:417 appDead дописывает причину после проверки busy; appLive вызывает appDead на appchat.go:393.",
+          "result": "checked",
+          "comment_quote": "За завершением процесса следит appSpawn.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/appchat.go:608",
+                "text": "Наблюдатель appSpawn получает событие и вызывает appDead без участия доски.",
+                "quote": "За завершением процесса следит appSpawn.",
+                "value": "<-proc.dead",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/appchat.go:418",
+                "text": "appDead дописывает причину после проверки busy; appLive вызывает appDead на appchat.go:393.",
+                "quote": "Вызов appLive здесь мог бы дописать сообщение об обрыве хода прямо из запроса доски.",
+                "value": "s.appFeedAppend",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board.go:598",
+                "text": "На appchat.go:417 appDead дописывает причину после проверки busy; appLive вызывает appDead на appchat.go:393."
+              }
+            ]
+          }
+        },
+        {
+          "object": "tools/dashboard/board_test.go:3431",
+          "location": "tools/dashboard/board_test.go:3433",
+          "observation": "После закрытия единственного пишущего конца чтение завершается EOF.",
+          "result": "checked",
+          "comment_quote": "Пишущий конец открывается, только если запрос открыл ленту на чтение.",
+          "facts": {
+            "claim": [
+              {
+                "location": "tools/dashboard/board_test.go:3433",
+                "text": "Системный вызов открывает только пишущий конец; отсутствие читающего проявляется как ENXIO на следующей строке.",
+                "quote": "Пишущий конец открывается, только если запрос открыл ленту на чтение.",
+                "value": "syscall.O_WRONLY|syscall.O_NONBLOCK",
+                "verdict": "checked"
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3440",
+                "text": "После закрытия единственного пишущего конца чтение завершается EOF.",
+                "quote": "Закрытие даёт читателю EOF и позволяет закончить запрос.",
+                "value": "syscall.Close(fd)",
+                "verdict": "checked"
+              }
+            ],
+            "purpose": [
+              {
+                "location": "tools/dashboard/board_test.go:3431",
+                "text": "После закрытия единственного пишущего конца чтение завершается EOF."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "common-style:STYLE-016",
+      "source": "common-style",
+      "text": "- **STYLE-016.** Описание публичной операции отражает её контракт: результат, существенные\n  ограничения и побочные эффекты. По примеру использования должно быть\n  понятно, как обработать успех и отказ.\n  Описание, таблицы и примеры должны согласовываться друг с другом и с\n  фактическим поведением операции при одинаковых условиях.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "README отражает контракт источников работ и границу между метаданными ленты и её чтением.",
+      "evidence": [
+        {
+          "object": "Экран «Агенты» и доска",
+          "location": "tools/dashboard/README.md:4832",
+          "observation": "Работы собираются из реестров, замка, состояния чата и метаданных.",
+          "result": "checked",
+          "facts": {
+            "statement": [
+              {
+                "location": "tools/dashboard/README.md:4833",
+                "text": "Проверка задачи и груминга описана.",
+                "quote": "запущенных конвейеров и чатов. Для задачи проверяется живой замок, для"
+              },
+              {
+                "location": "tools/dashboard/README.md:4835",
+                "text": "Видимый файл проверяется без открытия.",
+                "quote": "модель, подписка и время начала. Сервер проверяет наличие файла ленты без"
+              }
+            ],
+            "implementation": [
+              {
+                "location": "tools/dashboard/board.go:609",
+                "text": "Проверяется живой замок и занятой чат своего проекта."
+              },
+              {
+                "location": "tools/dashboard/board.go:615",
+                "text": "Lstat проверяет видимость без чтения реплик."
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "Экран «Агенты» и доска"
+      ]
+    },
+    {
+      "id": "common-tests:TEST-001",
+      "source": "common-tests",
+      "text": "- **TEST-001.** Любая правка кода едет вместе с тестами, отдельного «допишу потом» нет. Правка без тестов это незакрытая правка. Коммит, где код есть, а тестового файла нет, отбивает `pre-commit` из `devkit/hooks` (осознанный обход `DEVKIT_NO_TESTS=1`, разбор в `hooks/README.md`); проверка ловит отсутствие теста, а его красноту по-прежнему проверяет только `regcheck`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Код и тест находятся в одном коммите.",
+      "evidence": [
+        {
+          "object": "Регрессия",
+          "location": "tools/dashboard/board_test.go:3315",
+          "observation": "a02d5acb3 содержит реализацию, регрессионный тест рядом и README.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-002",
+      "source": "common-tests",
+      "text": "- **TEST-002.** Для исправления бага пишется регрессионный тест, который **падает на старом коде и проходит на исправленном**. Проверять это не на глаз, а реально: `regcheck -- <команда теста>` из devkit гоняет тест на текущем коде и на старом, рабочее дерево не трогая (правка закоммичена на ветке, значит `--base main`; тест и правка в одном файле, значит `--inline`, детали в `tools/regcheck/README.md`). Где regcheck не применим, проверять руками: временно вернуть баг и убедиться, что тест краснеет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Штатный regcheck подтвердил красную базу и зелёную вершину.",
+      "evidence": [
+        {
+          "object": "regcheck",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "На ab0f865b3 обнаруживает три открытия наблюдаемых лент; a02d5acb3 проходит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-003",
+      "source": "common-tests",
+      "text": "- **TEST-003.** Для новой функциональности покрывать поведение по пирамиде: юнит на логику, интеграционный на стык компонентов.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новая возможность не вводится: исправление регрессии сборки уже существующего ответа.",
+      "evidence": []
+    },
+    {
+      "id": "common-tests:TEST-004",
+      "source": "common-tests",
+      "text": "- **TEST-004.** Тип теста определяется фактическими зависимостями и предметом проверки.\n  Юнит проверяет логику в изоляции и не требует реальной БД, сети или запуска\n  внешних процессов. Поднятая специально для теста БД, в том числе в памяти,\n  остаётся интеграционной зависимостью. Проверять бизнес-результат в\n  интеграционном тесте допустимо. Деление файлов, меток и команд задаёт проект.\n  Команда запуска юнитов должна выбирать только изолированные тесты. При\n  изменении теста, общей фикстуры или команды запуска проверяй, какие тесты\n  фактически выбирает каждая команда. Учитывай зависимости, которые\n  подключаются через фикстуры. Для интеграционного теста подтверди, что он\n  исключён из всех запусков юнитов и входит в отдельный интеграционный запуск.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Это компонентный HTTP-тест с настоящей временной ФС, локальным listener и тестовыми исполняемыми файлами. Поиск по tools/devkitctl/testrun.py и parallel.py выявил общий Go-прогон и узкий селектор, отдельной команды только для юнитов нет.",
+      "evidence": [
+        {
+          "object": "TestBoardAppWorksWithoutFeedReads",
+          "location": "tools/dashboard/board_test.go:3315",
+          "observation": "Запрос идёт через настоящий роутер, taskctl/tmux заменены локальными программами; FIFO и замок настоящие.",
+          "result": "checked",
+          "facts": {
+            "test": [
+              {
+                "location": "tools/dashboard/board_test.go:3315",
+                "text": "Объявление регрессии в пакете dashboard."
+              }
+            ],
+            "dependency": [
+              {
+                "location": "tools/dashboard/server_test.go:145",
+                "text": "Стенд подставляет исполняемый taskctl."
+              },
+              {
+                "location": "tools/dashboard/server_test.go:186",
+                "text": "Фикстура открывает локальный HTTP listener."
+              },
+              {
+                "location": "tools/dashboard/board_test.go:3372",
+                "text": "FIFO создаётся в настоящей временной ФС."
+              }
+            ],
+            "unit_selection": [
+              {
+                "location": "tools/devkitctl/testrun.py:141",
+                "text": "Проверен Go-раннер пакета и rg в tools/devkitctl/testrun.py/parallel.py: отдельного Go-селектора только юнитов нет."
+              }
+            ],
+            "integration_selection": [
+              {
+                "location": "tools/devkitctl/testrun.py:141",
+                "text": "-run выбирает компонентную регрессию; полный Go-прогон выбирает все уровни."
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "TestBoardAppWorksWithoutFeedReads"
+      ]
+    },
+    {
+      "id": "common-tests:TEST-005",
+      "source": "common-tests",
+      "text": "- **TEST-005.** Тест ставится под конкретную поломку, а не ради покрытия: до его тела назвать правку кода, от которой он покраснеет. Ожидание выводится руками, посчитанное тем же кодом сойдётся при любом его поведении; образец чужого вывода (панель, ответ сервиса, чужой формат) снимается живьём в `testdata`, а сочинённый по памяти закрепляет наше представление и переживает настоящий дефект.\n  Проверяй каждое свойство на самом низком уровне, на котором его можно\n  проверить полностью. Повторяй проверку на другом уровне, если она\n  подтверждает дополнительную гарантию, например корректную передачу данных\n  между компонентами или соблюдение внешнего контракта. Если два теста\n  проверяют одно и то же свойство в одинаковых условиях и ловят один и тот же\n  дефект, оставь повторяющееся утверждение в одном тесте. Сохрани проверки,\n  которые дают отдельную гарантию.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Граница открытия проверяется системным вызовом, а ответ задан вручную и сверяется целиком.",
+      "checks": [
+        "strength",
+        "overlap"
+      ],
+      "evidence": [
+        {
+          "object": "Отсутствие открытия",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "Открытие FIFO через appFeedRead разблокируется и приводит к t.Errorf; три открытия на базе.",
+          "result": "checked",
+          "check": "strength",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/dashboard/board_test.go:3442",
+                "text": "Точное проверяемое утверждение.",
+                "quote": "t.Errorf(\"запрос доски открыл ленту %s\", filepath.Base(path))"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/dashboard/board_test.go:3394",
+                "text": "Обычная маршрутизация запроса доски и тело HTTP 200."
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/dashboard/board_test.go:3442",
+                "text": "Открытие FIFO через appFeedRead разблокируется и приводит к t.Errorf; три открытия на базе."
+              }
+            ]
+          }
+        },
+        {
+          "object": "Отсутствие открытия",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "Поиск по тестам board, appchat, apptask, drafts и smoke: такой проверки на другом уровне нет. Груминг в TestDraftGroomAppServer проверяет подключение подготовленного чат-процесса, не полную HTTP-форму и не открытие лент.",
+          "result": "checked",
+          "check": "overlap",
+          "kind": "single",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/dashboard/board_test.go:3442",
+                "text": "Утверждение регрессии",
+                "quote": "t.Errorf(\"запрос доски открыл ленту %s\", filepath.Base(path))",
+                "related": "tools/dashboard/board_test.go:3315",
+                "via": "tools/dashboard/board_test.go:3417"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/dashboard/board_test.go:3388",
+                "text": "Компонентная маршрутизация через handler с настоящей временной ФС.",
+                "value": "component"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/dashboard/drafts_test.go:2221",
+                "text": "Соседний тест вызывает liveWorks напрямую и проверяет присутствие груминга после запуска; отсутствует проверка формы и порядка HTTP и отсутствие открытия ленты.",
+                "value": "integration"
+              }
+            ]
+          }
+        },
+        {
+          "object": "Выбор, порядок и поля",
+          "location": "tools/dashboard/board_test.go:3412",
+          "observation": "Изменение статуса, порядка, метаданных или допуска даёт отличный от заданного вручную Work.",
+          "result": "checked",
+          "check": "strength",
+          "facts": {
+            "assertion": [
+              {
+                "location": "tools/dashboard/board_test.go:3412",
+                "text": "Точное проверяемое утверждение.",
+                "quote": "if !reflect.DeepEqual(got, want) {"
+              }
+            ],
+            "boundary": [
+              {
+                "location": "tools/dashboard/board_test.go:3394",
+                "text": "Обычная маршрутизация запроса доски и тело HTTP 200."
+              }
+            ],
+            "failure_case": [
+              {
+                "location": "tools/dashboard/board_test.go:3412",
+                "text": "Изменение статуса, порядка, метаданных или допуска даёт отличный от заданного вручную Work."
+              }
+            ]
+          }
+        },
+        {
+          "object": "Выбор, порядок и поля",
+          "location": "tools/dashboard/board_test.go:3412",
+          "observation": "Поиск по тестам board, appchat, apptask, drafts и smoke: такой проверки на другом уровне нет. Груминг в TestDraftGroomAppServer проверяет подключение подготовленного чат-процесса, не полную HTTP-форму и не открытие лент.",
+          "result": "checked",
+          "check": "overlap",
+          "kind": "single",
+          "facts": {
+            "first": [
+              {
+                "location": "tools/dashboard/board_test.go:3412",
+                "text": "Утверждение регрессии",
+                "quote": "if !reflect.DeepEqual(got, want) {",
+                "related": "tools/dashboard/board_test.go:3315"
+              }
+            ],
+            "first_level": [
+              {
+                "location": "tools/dashboard/board_test.go:3388",
+                "text": "Компонентная маршрутизация через handler с настоящей временной ФС.",
+                "value": "component"
+              }
+            ],
+            "search": [
+              {
+                "location": "tools/dashboard/drafts_test.go:2221",
+                "text": "Соседний тест вызывает liveWorks напрямую и проверяет присутствие груминга после запуска; отсутствует проверка формы и порядка HTTP и отсутствие открытия ленты.",
+                "value": "integration"
+              }
+            ]
+          }
+        }
+      ],
+      "objects": [
+        "Отсутствие открытия",
+        "Выбор, порядок и поля"
+      ]
+    },
+    {
+      "id": "common-tests:TEST-006",
+      "source": "common-tests",
+      "text": "- **TEST-006.** Перед тем как считать правку закрытой, прогнать по ней типовые мутации (не та константа, сдвинутая граница, не та ветка, пропавший побочный эффект, пустой возврат, снятая проверка на пустой ввод) и убедиться, что на каждой падает хоть один тест. Для новой функциональности это и есть замена краснеющему прогону, старого кода с багом у неё нет; разбор с примерами в `tools/regcheck/README.md`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Восемь мутаций через Go overlay вызвали ожидаемые падения регрессии; рабочий файл не менялся.",
+      "evidence": [
+        {
+          "object": "Выбор, приоритет, модель и порядок",
+          "location": "tools/dashboard/board_test.go:3413",
+          "observation": "Варианты с допущенной директорией, скрытым чатом, пустым протоколом и умершим процессом, инверсией проверки замка, подменой Model на CxModel и обратным порядком SID дали конкретное расхождение списка Work.",
+          "result": "checked"
+        },
+        {
+          "object": "Открытие лент",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "Возврат вызова appFeedRead на пути отбора дал сообщение об открытии FIFO as01-groom. Команда для каждой мутации: GOWORK=off go test -p 2 -overlay <временная-подмена> -run ^TestBoardAppWorksWithoutFeedReads$ -count=1 . из tools/dashboard.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-007",
+      "source": "common-tests",
+      "text": "- **TEST-007.** Где поведение завязано на время, гонки или отмену, тест делать детерминированным (мок-часы вроде `tokio::time::pause`, каналы, барьеры, ручная прокрутка), а не `sleep` наугад: флаки-тест хуже отсутствия теста.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Утверждение синхронизируется по завершению запроса; тик используется лишь для связи с FIFO.",
+      "evidence": [
+        {
+          "object": "Синхронизация",
+          "location": "tools/dashboard/board_test.go:3392",
+          "observation": "done закрывается после ServeHTTP; перед чтением ответа тест ждёт done. Открытый блокирующий читатель FIFO не проскочит тик до разблокирования. 15 с ограничивает зависание.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "common-tests:TEST-008",
+      "source": "common-tests",
+      "text": "- **TEST-008.** Часть слоёв сознательно не покрывается юнитами (например, тонкий UI), если бизнес-логика вынесена и протестирована ниже. Такие исключения фиксируются в проектном `AGENTS.md`, а не подразумеваются по умолчанию.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Новых исключаемых уровней нет, компонентный тест выполняет полный HTTP-вход (board_test.go:3388–3400).",
+      "evidence": []
+    },
+    {
+      "id": "common-tests:TEST-009",
+      "source": "common-tests",
+      "text": "- **TEST-009.** Подмена дома (`HOME`) в общем `setup(t)` или `TestMain` защищает от одной беды. Прогон пишет фикстуры в боевой `~/.devkit/runs` машины вместо временного каталога теста (случай DK-818, `tools/taskctl` за сутки оставил там сотни файлов). Сюита с `TestMain` добавляет к своей подмене хоть один рубеж, а без `TestMain` заводит его этой же строкой: `os.Exit(runsguard.Guard(m))` из `internal/runsguard` считает файлы боевого каталога до и после `m.Run()`. Прогон валится, если новый файл всё же появился, а имена стоят в сообщении.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общий TestMain и временные dirs удерживают тестовую запись вне реального дома.",
+      "evidence": [
+        {
+          "object": "TestMain",
+          "location": "tools/dashboard/tasks_test.go:125",
+          "observation": "Дашборд запускает Guard и изолирует дома.",
+          "result": "checked"
+        },
+        {
+          "object": "Фикстура",
+          "location": "tools/dashboard/server_test.go:134",
+          "observation": "home и fixture bin берутся из t.TempDir.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-0fc945667d2dd2f2",
+      "source": "project-architecture",
+      "text": "# Архитектура devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Архитектура devkit» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-0a6d5f937b6744cf",
+      "source": "project-architecture",
+      "text": "Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Проектные правила дополняют общий стандарт [RULES.architecture.md](../RULES.architecture.md).» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-927d754447cbe51a",
+      "source": "project-architecture",
+      "text": "## Границы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Границы» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-bd4bce11068e7b08",
+      "source": "project-architecture",
+      "text": "- Пять каталогов верхнего уровня и граница языков go/python/sh расписаны\n  в [README.md](../README.md), раздел «Раскладка». Текст живёт в одном\n  месте, здесь не дублируется.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Пять каталогов верхнего уровня и граница языков go/python/sh расписаны» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-76ff3ff8f504faa3",
+      "source": "project-architecture",
+      "text": "- Устройство дашборда это пакеты по доменам (chats, board, sessions, runs,\n  quota и другие), решено человеком 2026-10-06 в развилке DK-1265. Домен\n  ходит в домен через явные точки входа, внутренности с маленькой буквы\n  наружу не видны. До конца переезда старые семьи файлов живут в корне\n  каталога, переезд идёт задачами DK-1265 и DK-1266. Карта кластеров держит\n  [docs/map.md](map.md).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Операция сбора остаётся в существующей семье board; реестры и методы их владельцев входят в тот же существующий пакет.",
+      "evidence": [
+        {
+          "object": "dashboard board",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Производит Work для доски без новых межпакетных зависимостей.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-1086535d7c6e2d47",
+      "source": "project-architecture",
+      "text": "- Маршруты HTTP дашборда собраны в одном месте, handler() в\n  `tools/dashboard/server.go`. Хендлеры лежат в доменных файлах с именами\n  handle*, логика живёт рядом с хендлером в том же пакете. Сервер считает,\n  клиент только рисует, разбор в LLD DK-112.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Существующая маршрутизация и writeJSON сохраняются.",
+      "evidence": [
+        {
+          "object": "HTTP",
+          "location": "tools/dashboard/server.go:817",
+          "observation": "Оба участка ответа используют один расчёт, отправка проходит через writeJSON.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-3795ec1243732caa",
+      "source": "project-architecture",
+      "text": "- Строки доски дашборд сам не правит. Доску он читает, двигает строку\n  поднятый им конвейер. Своей базы у дашборда нет, источник правды это\n  доска и утилиты (LLD DK-112).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Строки доски дашборд сам не правит. Доску он читает, двигает строку» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-21a8892967ce47cf",
+      "source": "project-architecture",
+      "text": "- Общий каркас `internal` дашборд импортирует: sessions, chat, taskhead,\n  works и другие. Локальная копия при живом пакете в `internal` это\n  находка ревью. Сейчас это прямой вызов git при готовом `internal/gitrun`,\n  собрано в DK-1268.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Общая проверка владельца замка переиспользована без копии.",
+      "evidence": [
+        {
+          "object": "taskhead",
+          "location": "tools/dashboard/board.go:609",
+          "observation": "Работоспособность замка определяет taskhead.Working.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-7257b758a71b0e0f",
+      "source": "project-architecture",
+      "text": "- Замены известных прежних моделей для нового выбора чата лежат в\n  `internal/modelcatalog`. Дашборд применяет их к списку моделей чата,\n  сохраняя ярус, подписку и глубину. Назначения фоновых агентов остаются\n  прежними. Новые запросы выбора и продолжения чата проверяются по той же замене.\n  Исторический ID хранится в записи чата до явной смены модели; подпись\n  прежней версии не становится вариантом меню (DK-1736).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Замены известных прежних моделей для нового выбора чата лежат в» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-feefa59680bc01df",
+      "source": "project-architecture",
+      "text": "## Инварианты",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Инварианты» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-df103c9ebbc1dbc2",
+      "source": "project-architecture",
+      "text": "- Ответы API дашборда идут через единственный writeJSON\n  (`tools/dashboard/server.go`), транскрипты разбираются единственным\n  parseReplies (`tools/dashboard/sessions.go`), обращения к taskctl\n  сходятся в воронку taskctlDo -> runProc (`tools/dashboard/tasks.go`).",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Существующая маршрутизация и writeJSON сохраняются.",
+      "evidence": [
+        {
+          "object": "HTTP",
+          "location": "tools/dashboard/server.go:817",
+          "observation": "Оба участка ответа используют один расчёт, отправка проходит через writeJSON.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-architecture:block-b9d12cba420d16a2",
+      "source": "project-architecture",
+      "text": "- Вставка текстовой разметки вызова в реплике агента сворачивается карточкой\n  хода там же, в parseReplies (DK-1378): внешний шлюз модели отдаёт вызов\n  текстом, а лента показывает его как настоящий tool_use. Слова вокруг\n  остаются репликой, текст человека и выводы инструментов не трогаются.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Вставка текстовой разметки вызова в реплике агента сворачивается карточкой» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-746f66466c253955",
+      "source": "project-architecture",
+      "text": "- Поверхность чата дашборда несёт только разговор: реплики, их оформление и\n  одно поле ввода. Взаимодействие с человеком живёт внутри реплик (галочки\n  вопросов, DK-864) либо на экране записи, служебные ручки вроде решения цели\n  задачам и строки диспетчеру цели кнопок и плашек в чате не получают. Шапка\n  чата называет одну запись, состав задач цели виден на экране цели (DK-1484).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Поверхность чата дашборда несёт только разговор: реплики, их оформление и» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-0dbd06239e17144d",
+      "source": "project-architecture",
+      "text": "- Ожидание согласия на груминг проверяется по показанному PreparedQuestion\n  командой `taskctl draft prepared check-ask`. Вместе с ним проверяются состояние\n  сессии и отсутствие других выполняющихся вызовов инструментов и дочерних\n  работ. Одного `waiting` или наличия старого Ask недостаточно. В этом состоянии доступно\n  подтверждение с формы, а анимация вычисления и «Стоп» не показываются.\n  Одновременные проверки используют общий лимит taskctl и один запрос по ключу;\n  готовый ответ для следующего опроса не сохраняется. После фактического\n  согласия связь со старым вопросом клиента проверяется по ID вызова и квитанции.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Ожидание согласия на груминг проверяется по показанному PreparedQuestion» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-5de64d5a648b5902",
+      "source": "project-architecture",
+      "text": "- Для обычной и подготовленной задачи используется общая полная форма taskForm\n  (`tools/dashboard/static/app.js`). Подготовленная задача отличается\n  возможностями запуска и чата, адаптером сохранения и ссылкой на исходник.\n  Удаление, приписка и отсрочка входят во внутренний план разбора и видны\n  в тексте заключения на форме исходника. Отдельных форм задач для них нет.\n  Агент создаёт подготовленные задачи при сохранении плана. Пользователь\n  может править существующие описания. «Состав разбора» вычисляется из всех\n  структурированных действий и показан отдельно от сохранённого текста агента.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Для обычной и подготовленной задачи используется общая полная форма taskForm» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-0bf4f9875e4b3d7e",
+      "source": "project-architecture",
+      "text": "- Разделы содержимого формы черновика используют общий `formContentBlock`\n  на основе `dfield` с подписью `legend` на границе рамки. Порядок разделов,\n  состояния с результатами и без них, отступы и правила расширения описаны\n  в [README дашборда](../tools/dashboard/README.md#единые-блоки-формы-черновика).\n  Новые разделы этой формы добавляются через тот же компонент.\n  В поле мысли разные пользователи оставляют замечания до появления результата.\n  После сохранения результата новые замечания идут через тот же «Чат разбора».\n  Прежние мысли остаются в исходнике. Общий признак `draftproposal.HasGroomResult`\n  используется формой и командой записи мысли; готовность комплекта и согласие\n  проверяются отдельно. При пустом prepared-файле и после первой ошибки без\n  результата поле остаётся доступным. Запись мысли из устаревшей формы после\n  появления результата завершается отказом.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Разделы содержимого формы черновика используют общий `formContentBlock`» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-476dd1b8dd952be1",
+      "source": "project-architecture",
+      "text": "- Новая память процесса дашборда получает свой замок или ложится под\n  s.mu сервера. Порядок замков прокомментирован у объявления в\n  `tools/dashboard/server.go`. Приём memo-кэша не пишется руками заново,\n  сведение мест в общий тип собрано в DK-1268.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Новая память процесса дашборда получает свой замок или ложится под» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-c8be7a833c89c0e8",
+      "source": "project-architecture",
+      "text": "- Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой\n  `agentctl exec` (DK-1271): путь клиента не зависит от окружения serve и\n  сохраняется после рестарта launchd-агента. Генератор plist кладёт ту же обёртку,\n  при пустом машинном слое команда завершается отказом с подсказкой `devkitctl doctor --fix`.\n  Источник профилей сообщает сама `agentctl harness --json` абсолютным полем\n  `profile_dir`. Общая `launchEnv` закрепляет его корень через `DEVKIT_HOME`\n  из кэша раскладки. Рабочее дерево задачи сохраняет cwd и проектный слой,\n  но его старый каталог профилей не подменяет источник предварительной проверки.\n  Харнес чужого протокола поднимается той же обёрткой без пар окружения: его\n  клиент ходит штатным входом из собственного каталога, и пустая машинная секция\n  для него штатна.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Чаты всех подписок, включая подписку по умолчанию, поднимаются обёрткой» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-26e0e04a23f2e549",
+      "source": "project-architecture",
+      "text": "- Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой\n  app-server, а не tmux (`tools/dashboard/appserver.go` и `appchat.go`, DK-1695).\n  Клиент поднимается процессом с обменом JSONL той же обёрткой `agentctl exec`,\n  лента разговора живёт файлом на стороне дашборда, и tmux-механика её не\n  касается. Ход помечается занятым до отправки реплики. Уведомление о его\n  завершении снимает занятость. Смерть процесса записывается в ленту.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Подписка чужого протокола (ключ protocol профиля харнеса) идёт в чате дорогой» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-3380b0e14dbf5e5c",
+      "source": "project-architecture",
+      "text": "- Кнопка «Выполнить» у задачи на Codex использует app-server как носитель\n  проходов штатной `task-run.py` (`tools/dashboard/apptask.go`). Общие\n  `taskhead` и `taskstate` сохраняют замок и состояние запуска. Частный Unix-сокет\n  передаёт заказ и результат прохода; JSONL клиента и история остаются в\n  существующих `appSpawn`, `appNote` и ленте чата. Результат основного хода\n  принимается только при совпадении ID нити и хода. После 30 минут без\n  событий текущего хода дашборд запрашивает состояние нити через\n  `thread/read`. Если Codex подтвердил завершение этого хода, дашборд\n  снимает занятость и принимает исход из ответа. Носитель включается внутри\n  дашборда для профиля `protocol=codex`; у прочих запусков остаётся `[head]`.\n  Все новые и возобновлённые чаты Codex используют `workspace-write`,\n  `on-request` и `auto_review`. Принятые настройки проверяются до отправки хода.\n  Права рабочего запуска проверяются отдельно от политики доступа.\n  Реплика в его прежний чат незакрытой задачи поднимает\n  однопроходное продолжение через тот же `taskhead.Raise` и общий замок.\n  Происхождение чата сверяется с `taskstate` и сохранёнными корнем, ID запуска\n  и ID чата. Для старых записей нужны совпадающие PID, модель, подписка и\n  назначение чата от запуска работы. Обычный и вручную привязанный чат\n  работает без токена замка. Закрытая задача продолжает обычный разговор\n  с той же политикой доступа и без токена. Недоступная задача и сменившийся\n  запуск приводят\n  к видимому отказу.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Кнопка «Выполнить» у задачи на Codex использует app-server как носитель» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-71784a34afa7d0ad",
+      "source": "project-architecture",
+      "text": "- Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в\n  `tools/dashboard/board.go`) и фоновый догон чекаутов проектов из origin\n  (`tools/dashboard/catchup.go`, DK-1414). Догон делает только fetch и\n  fast-forward, гарды чистого дерева и главного ствола держат местную работу.\n  Чтение доски через taskctl сети не ходит, позиция записана у самой утилиты.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Сеть в дашборде знают два места. Это пуш правки доски (commitDocs в» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-9c814a6998496b37",
+      "source": "project-architecture",
+      "text": "- Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):\n  без него процесс под launchd наследует корень файловой системы, обходит\n  защищённые папки macOS и поднимает диалоги доступа на имя дашборда. Каталогом\n  служит служебный пустой каталог `internal/clientdir`, каталог команды у\n  `agentctl exec`, «-c» у tmux-сессий и WorkingDirectory у launchd-агентов.\n  Новую дорогу запуска без каталога ловит сторож TestLaunchSitesNameDir\n  (`tools/dashboard/launchdir_test.go`) прогоном, а не диалогами на машине.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Всякий подъём процесса в дереве дашборда называет рабочий каталог (DK-1373):» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-3fe8e64fa2671774",
+      "source": "project-architecture",
+      "text": "## Куда кладётся новое",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Куда кладётся новое» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-e81a11204b6858d1",
+      "source": "project-architecture",
+      "text": "- Место для нового файла, каталога или команды держит [README.md](../README.md),\n  раздел «Раскладка», с белым списком каталогов и границей языков.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Место для нового файла, каталога или команды держит [README.md](../README.md),» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-20ac10a7a0b37556",
+      "source": "project-architecture",
+      "text": "- Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы\n  домена лежат в нём. Правки старых семей до переезда остаются в их файлах.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Новый домен дашборда заводится пакетом в `tools/dashboard/<домен>/`, файлы» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-ff0f6ffb10430dcc",
+      "source": "project-architecture",
+      "text": "## Восстановление исчезнувшего конвейера",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Восстановление исчезнувшего конвейера» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-414cfee6ece27659",
+      "source": "project-architecture",
+      "text": "`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка\nподтверждает ID своим PID после принятия замка. Состояние остановки и запуска\nхранится вне временного замка задачи. Ключ состоит из канонического корня\nи ID задачи, запись атомарна и синхронизирована на диск вместе с каталогом.\nОстановка из дашборда и новый запуск используют общий замок этого состояния.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «`taskhead.Raise` создаёт ID нового запуска до подъёма клиента. Оболочка» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-2896dde8774e1968",
+      "source": "project-architecture",
+      "text": "`recovery.py` восстанавливает только подтверждённо погибшего владельца.\nОбщий замок машины ограничивает одновременные попытки, отдельный журнал\nсохраняет расход до внешнего действия. Повреждённый журнал, неизвестная\nидентичность и недоступная квота запрещают запуск. Модель и подписка\nпередаются явно из исходного запуска.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «`recovery.py` восстанавливает только подтверждённо погибшего владельца.» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-ead6f9839998fd97",
+      "source": "project-architecture",
+      "text": "Старый журнал оболочки содержит время с точностью до секунды. При совпадении\nсекунды записи и старта дашборд сообщает о неопределённости в исходном чате.\nВосстановление, общий подъём и дежурный ждут подтверждения поколения.\nЖурнал разбирает `taskstate.py`. Дашборд и общий Go-подъём вызывают этот\nразбор через `recovery.py app-legacy`. Python-сторожок вызывает его напрямую.\nВремя изменения файла сравнивается со стартом в целых наносекундах.\nОшибка чтения удерживает только эту задачу и сообщает причину.\nЗапись о подъёме в более позднюю секунду подтверждает проход, а запись о его\nзавершении снимает удержание. Для неоднозначного подъёма одной записи\nо завершении недостаточно.\nПереход нужен для рабочих запусков, которые начались до сохранения поля\nAppChat. Совместимый разбор можно удалить после того, как такие запуски\nбудут перенесены в машинное состояние, завершены или разобраны вручную.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Старый журнал оболочки содержит время с точностью до секунды. При совпадении» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-architecture:block-2ec33a7fa97caf04",
+      "source": "project-architecture",
+      "text": "Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.\nЕго пишет рабочая оболочка по новому действию собственной сессии. Закрытие\nинцидента повторно сверяет подтверждение под замком состояния задачи.\nОперационный вход и изолированный прогон описаны в\n[документации дежурного](../tools/devkitctl/README.md#первый-запуск-восстановления).",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Подтверждение содержит корень, задачу, попытку, новый ID запуска и PID.» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-8bfebc193cc45790",
+      "source": "project-style",
+      "text": "# Стиль devkit",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Стиль devkit» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-2f21840e1463a01e",
+      "source": "project-style",
+      "text": "Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).\nПри изменении кода проверяются оба уровня.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Проектные правила дополняют общий стандарт [RULES.style.md](../RULES.style.md).» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-9c4dd47968139c01",
+      "source": "project-style",
+      "text": "## Ошибки и отказы",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Ошибки и отказы» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-88e50c4f780c246c",
+      "source": "project-style",
+      "text": "- Проверочная утилита печатает находки построчно в stdout. Код выхода\n  разделяет три исхода: 0 чисто, 1 находки, 2 ошибка запуска. Образец\n  `tools/devkitctl/describe.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Проверочная утилита печатает находки построчно в stdout. Код выхода» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-2212761035e243fb",
+      "source": "project-style",
+      "text": "- Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт\n  готовую замену команды. Образец `hooks/check-cd-compound.py`.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Рубеж hook-а отказывает строкой в stderr. Строка называет симптом и несёт» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-41b95475184c2aef",
+      "source": "project-style",
+      "text": "## Раскладка тестов",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Раскладка тестов» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-519646d7d9f951be",
+      "source": "project-style",
+      "text": "- Тест лежит рядом с модулем. Имя `<модуль>_test.py` у python,\n  `_test.go` у go. Общего файла тестов на несколько модулей нет.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Регрессивная проверка в board_test.go использует общий изолированный временный стенд.",
+      "evidence": [
+        {
+          "object": "Тест доски",
+          "location": "tools/dashboard/board_test.go:3316",
+          "observation": "newTestEnv создаёт временный home и фикстуры утилит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-9573ef33db114342",
+      "source": "project-style",
+      "text": "- Синтетика собирается во временном каталоге: `tempfile.mkdtemp` у python,\n  `t.TempDir()` у go. Боевое дерево devkit тест не трогает.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Регрессивная проверка в board_test.go использует общий изолированный временный стенд.",
+      "evidence": [
+        {
+          "object": "Тест доски",
+          "location": "tools/dashboard/board_test.go:3316",
+          "observation": "newTestEnv создаёт временный home и фикстуры утилит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-f4f0c16e8ec594dc",
+      "source": "project-style",
+      "text": "- Тест бага падает на старом коде и проходит на исправленном. Прогон\n  `regcheck` это подтверждает, взгляд на дифф нет. Порядок запуска в\n  `RULES.md`, раздел «Тесты обязательны», и в скилле `test-standard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Штатный regcheck выполнен и вернул 0.",
+      "evidence": [
+        {
+          "object": "Регрессия",
+          "location": "tools/dashboard/board_test.go:3442",
+          "observation": "База ab0f865b3 отмечает три открытия, вершина a02d5acb3 проходит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-7af95a66ad4ad21b",
+      "source": "project-style",
+      "text": "- Стенд пакета подменяет окружение целиком. У дашборда TestMain уводит\n  дома в запасной каталог и гасит переменные сессии, newTestEnv кладёт\n  фикстуры утилит в PATH. Образец `tools/dashboard/tasks_test.go` и\n  `tools/dashboard/server_test.go`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Регрессивная проверка в board_test.go использует общий изолированный временный стенд.",
+      "evidence": [
+        {
+          "object": "Тест доски",
+          "location": "tools/dashboard/board_test.go:3316",
+          "observation": "newTestEnv создаёт временный home и фикстуры утилит.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b03ef741121d44a0",
+      "source": "project-style",
+      "text": "- Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше\n  playwright настоящего дома, заход описан в самом тесте.",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Живьём у дашборда гоняется только браузер стенда. Он лежит в кеше» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-a969903cd6ddc137",
+      "source": "project-style",
+      "text": "## Имена",
+      "applicability": "not_applicable",
+      "result": "checked",
+      "reason": "Блок «Имена» не вводит условие для изменения чтения работ app-server: затронуты только сборка Work, его тест и описание (board.go:576–621).",
+      "evidence": []
+    },
+    {
+      "id": "project-style:block-c785ad31965daade",
+      "source": "project-style",
+      "text": "- Внутри инструмента файл зовётся по домену префиксом семьи (chat*,\n  goal*, quota* у дашборда). Хендлеры HTTP зовутся handle*, шаги обкатки\n  step*. Образец `tools/dashboard`.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Файл остаётся в семье board; объявления сверяются дополнительно в STYLE-001.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Операция выдаёт карточки работы app-server.",
+          "result": "checked"
+        }
+      ]
+    },
+    {
+      "id": "project-style:block-b3298c360a523f07",
+      "source": "project-style",
+      "text": "- Символы, порядок слов, запрет на англицизмы и одушевление кода расписаны\n  в `RULES.md`, раздел «Код и тексты». Текст здесь не дублируется.",
+      "applicability": "applicable",
+      "result": "checked",
+      "reason": "Файл остаётся в семье board; объявления сверяются дополнительно в STYLE-001.",
+      "evidence": [
+        {
+          "object": "appWorks",
+          "location": "tools/dashboard/board.go:576",
+          "observation": "Операция выдаёт карточки работы app-server.",
+          "result": "checked"
+        }
+      ]
+    }
+  ]
+}

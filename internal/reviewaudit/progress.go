@@ -13,31 +13,38 @@ func NameProgress(root, path, id, request, summaryPath string) (NameProgressStat
 	if err != nil {
 		return NameProgressState{}, err
 	}
-	return nameProgressForSnapshot(root, path, id, output, report, snapshot)
+	checked, err := nameProgressForSnapshot(root, path, id, output, report, snapshot)
+	return checked.state, err
 }
 
-func nameProgressForSnapshot(root, path, id, output string, report, snapshot Report) (NameProgressState, error) {
+type nameProgressCheck struct {
+	state  NameProgressState
+	issues error
+}
+
+func nameProgressForSnapshot(root, path, id, output string, report, snapshot Report) (nameProgressCheck, error) {
 	report, inventoryIssues := canonicalTargetInventory(report, snapshot)
 	if _, invalid := validateInventory(report, snapshot, id); invalid != nil {
-		return NameProgressState{}, invalid
+		return nameProgressCheck{}, invalid
 	}
 	index := slices.IndexFunc(report.Rules, func(rule Rule) bool { return rule.ID == namingRule })
 	if index == -1 {
-		return NameProgressState{}, fmt.Errorf("в снимке нет STYLE-001")
+		return nameProgressCheck{}, fmt.Errorf("в снимке нет STYLE-001")
 	}
 	rule := report.Rules[index]
 	original := snapshot.Rules[slices.IndexFunc(snapshot.Rules, func(rule Rule) bool { return rule.ID == namingRule })]
 	report.Rules = []Rule{rule}
-	progress := describeNameProgress(rule, original.Files, errors.Join(
+	checks := errors.Join(
 		errors.Join(checkSplitRule(rule, requiredChecks(namingRule))...),
 		checkNames(root, path, output, report), checkMissingFiles(root, report, snapshot),
-		validateTargetCoverage(rule, original.Targets)))
+		validateTargetCoverage(rule, original.Targets))
+	progress := describeNameProgress(rule, original.Files, checks)
 	progress.AuditPath, progress.BaseSHA, progress.HeadSHA = path, snapshot.BaseSHA, snapshot.HeadSHA
 	progress.InventoryIssues = inventoryIssues
 	if len(inventoryIssues) != 0 {
 		progress.ReadyForSummary = false
 	}
-	return progress, nil
+	return nameProgressCheck{state: progress, issues: checks}, nil
 }
 
 type NameProgressState struct {

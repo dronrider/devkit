@@ -680,28 +680,33 @@ func Validate(root, path, id string) error {
 }
 
 func ValidateWithRequest(root, path, id, request string) error {
+	_, _, _, err := validatedSnapshot(root, path, id, request)
+	return err
+}
+
+func validatedSnapshot(root, path, id, request string) (string, Report, Report, error) {
 	root, r, now, e := currentSnapshot(root, path, id, request)
 	if e != nil {
-		return e
+		return "", Report{}, Report{}, e
 	}
 	if e = validateSnapshot(root, path, path, r, now, id); e != nil {
-		return e
+		return "", Report{}, Report{}, e
 	}
 	// A verdict is attached to HEAD, so reviewed working files must have reached it.
 	out, e := gitRaw(root, "diff", "--name-only", "-z", "HEAD")
 	if e != nil {
-		return e
+		return "", Report{}, Report{}, e
 	}
 	untracked, e := gitRaw(root, "ls-files", "--others", "--exclude-standard", "-z")
 	if e != nil {
-		return e
+		return "", Report{}, Report{}, e
 	}
 	for _, name := range strings.Split(out+untracked, "\x00") {
 		if name != "" && !excluded(root, path, name) {
-			return fmt.Errorf("код %s ещё не закоммичен; закоммитьте проверенный код перед clean", name)
+			return "", Report{}, Report{}, fmt.Errorf("код %s ещё не закоммичен; закоммитьте проверенный код перед clean", name)
 		}
 	}
-	return nil
+	return root, r, now, nil
 }
 
 func currentSnapshot(root, path, id, request string) (string, Report, Report, error) {
@@ -777,52 +782,51 @@ func validateSnapshot(root, path, auditPath string, r, now Report, id string) er
 	if gaps, invalid := validateInventory(r, now, id); gaps != nil || invalid != nil {
 		return errors.Join(invalid, gaps)
 	}
+	var issues []error
 	if r.Architecture.Result != "checked" {
-		return fmt.Errorf("архитектурная оценка не завершена или выявила нарушение")
-	}
-	if err := checkArchitecture(r.Architecture); err != nil {
-		return err
+		issues = append(issues, fmt.Errorf("архитектурная оценка не завершена или выявила нарушение"))
+	} else {
+		issues = append(issues, checkArchitecture(r.Architecture))
 	}
 	for _, rr := range r.Rules {
-		if rr.Result != "checked" {
-			return fmt.Errorf("правило %s не завершено или нарушено (%s)", rr.ID, rr.Result)
-		}
-		if strings.TrimSpace(rr.Reason) == "" {
-			return fmt.Errorf("у правила %s нет основания вывода", rr.ID)
-		}
-		if checks := objectChecks(rr.ID); len(checks) > 0 {
-			if err := errors.Join(checkSplitRule(rr, checks)...); err != nil {
-				return err
-			}
-			continue
-		}
-		if rr.Applicability == "applicable" && tracksObjects(rr.ID) {
-			if err := errors.Join(checkObjects(rr, []string{""})...); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := checkEvidenceVerdicts(rr); err != nil {
-			return err
-		}
-		switch rr.Applicability {
-		case "not_applicable":
-		case "applicable":
-			if len(rr.Evidence) == 0 {
-				return fmt.Errorf("у правила %s нет проверенных объектов", rr.ID)
-			}
-			for _, ev := range rr.Evidence {
-				if strings.TrimSpace(ev.Object) == "" || strings.TrimSpace(ev.Location) == "" || strings.TrimSpace(ev.Observation) == "" {
-					return fmt.Errorf("у правила %s неполное свидетельство", rr.ID)
-				}
-			}
-		default:
-			return fmt.Errorf("применимость правила %s не разобрана", rr.ID)
-		}
+		issues = append(issues, checkRuleVerdict(rr))
 	}
-	return errors.Join(checkNames(root, path, "", r), checkQueryEvidence(root, path, "", auditPath, r),
+	return errors.Join(append(issues, checkNames(root, path, "", r), checkQueryEvidence(root, path, "", auditPath, r),
 		checkComments(root, path, "", r), checkMissingFiles(root, r, now),
-		checkReviewFacts(root, path, "", auditPath, r, now.taskText))
+		checkReviewFacts(root, path, "", auditPath, r, now.taskText))...)
+}
+
+func checkRuleVerdict(rr Rule) error {
+	if rr.Result != "checked" {
+		return fmt.Errorf("правило %s не завершено или нарушено (%s)", rr.ID, rr.Result)
+	}
+	if strings.TrimSpace(rr.Reason) == "" {
+		return fmt.Errorf("у правила %s нет основания вывода", rr.ID)
+	}
+	if checks := objectChecks(rr.ID); len(checks) > 0 {
+		return errors.Join(checkSplitRule(rr, checks)...)
+	}
+	if rr.Applicability == "applicable" && tracksObjects(rr.ID) {
+		return errors.Join(checkObjects(rr, []string{""})...)
+	}
+	if err := checkEvidenceVerdicts(rr); err != nil {
+		return err
+	}
+	switch rr.Applicability {
+	case "not_applicable":
+	case "applicable":
+		if len(rr.Evidence) == 0 {
+			return fmt.Errorf("у правила %s нет проверенных объектов", rr.ID)
+		}
+		for _, ev := range rr.Evidence {
+			if strings.TrimSpace(ev.Object) == "" || strings.TrimSpace(ev.Location) == "" || strings.TrimSpace(ev.Observation) == "" {
+				return fmt.Errorf("у правила %s неполное свидетельство", rr.ID)
+			}
+		}
+	default:
+		return fmt.Errorf("применимость правила %s не разобрана", rr.ID)
+	}
+	return nil
 }
 
 func checkArchitecture(a Architecture) error {

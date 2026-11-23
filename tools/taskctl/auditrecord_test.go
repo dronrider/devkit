@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/reviewaudit"
 )
 
 func TestCLIRecordNameEvidence(t *testing.T) {
@@ -87,5 +91,92 @@ func TestCLIRecordNameEvidence(t *testing.T) {
 				t.Fatalf("отказ должен оставить аудит и назвать путь: %s %v", out, err)
 			}
 		})
+	}
+}
+
+// An import keyed only by check would drop the writes of one of the objects.
+// Writing before validation would retain a candidate from a rejected batch.
+func TestCLIRecordNameEvidenceBatch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	const id = "XR-005"
+	path := completeReviewAudit(t, root, id)
+	put := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() []byte {
+		t.Helper()
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	put(filepath.Join(root, "a.go"), "package sample\nfunc alpha() {}\n")
+	put(filepath.Join(root, "b.go"), "package sample\nfunc beta() {}\n")
+	if out, err := runCLI(t, "-C", root, "review", "audit", id, "--refresh"); err != nil {
+		t.Fatalf("refresh: %s %v", out, err)
+	}
+	input := filepath.Join(t.TempDir(), "evidence.json")
+	runBatch := func(wantSaved bool) reviewaudit.NameEvidenceBatchResult {
+		t.Helper()
+		cmd := exec.Command("go", "run", ".", "-C", root, "review", "audit-record", id, "--batch", "--input", input)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if (err == nil) != wantSaved {
+			t.Fatalf("код выхода: %v\n%s\n%s", err, out, stderr.String())
+		}
+		var result reviewaudit.NameEvidenceBatchResult
+		if err := json.Unmarshal(out, &result); err != nil || result.Saved != wantSaved {
+			t.Fatalf("результат: %s\n%s\n%v", out, stderr.String(), err)
+		}
+		return result
+	}
+	const alpha = `{"object":"a.go:2#alpha","check":"writes","result":"not_applicable","location":"a.go:2","observation":"Пустое тело alpha"}`
+	const beta = `{"object":"b.go:2#beta","check":"writes","result":"not_applicable","location":"b.go:2","observation":"Пустое тело beta"}`
+	put(input, "["+alpha+","+beta+"]")
+	result := runBatch(true)
+	if result.Submitted != 2 || result.Progress == nil || result.Progress.Missing != 2 || len(result.Progress.OpenFiles) != 2 {
+		t.Fatalf("потеряны открытые цели: %+v", result)
+	}
+	for i, object := range []string{"a.go:2#alpha", "b.go:2#beta"} {
+		file := result.Progress.OpenFiles[i]
+		if len(file.Goals) != 1 || file.Goals[0].Object != object ||
+			!slices.Equal(file.Goals[0].MissingChecks, []string{"meaning", "result"}) {
+			t.Fatalf("неверные пробелы в %s: %+v", file.Path, file.Goals)
+		}
+	}
+	before := read()
+	runBatch(true)
+	if !bytes.Equal(before, read()) {
+		t.Fatal("повтор пакета изменил сохранённые записи")
+	}
+	for _, observation := range []string{"Пустое тело alpha", "Пустое тело beta"} {
+		if !bytes.Contains(before, []byte(observation)) {
+			t.Fatalf("запись потеряна: %s", observation)
+		}
+	}
+	const foreign = `{"object":"other","check":"writes"}`
+	const badAlpha = `{"object":"a.go:2#alpha","check":"meaning","symbol":"foreign","location":"a.go:2","result":"checked","observation":"Имя из другого файла"}`
+	const badBeta = `{"object":"b.go:2#beta","check":"result","location":"b.go:2","result":"unknown"}`
+	updatedAlpha := strings.Replace(alpha, "Пустое тело alpha", "Новое наблюдение", 1)
+	put(input, "["+strings.Join([]string{updatedAlpha, foreign, badAlpha, badBeta, alpha}, ",")+"]")
+	result = runBatch(false)
+	if result.Submitted != 5 || result.Progress == nil || result.Progress.Rejected != 2 || !bytes.Equal(before, read()) {
+		t.Fatalf("неверный или частично записанный пакет: %+v", result)
+	}
+	var rows []int
+	for _, issue := range result.Issues {
+		rows = append(rows, issue.Row)
+	}
+	if !slices.Equal(rows, []int{2, 3, 4, 4, 4, 5}) {
+		t.Fatalf("потеряны ошибки обеих целей или повтор: %+v", result.Issues)
+	}
+	if !strings.Contains(result.Issues[1].Message, `symbol "alpha"`) || !strings.Contains(result.Issues[len(result.Issues)-1].Message, "повторное") {
+		t.Fatalf("ошибки без причины: %+v", result.Issues)
 	}
 }

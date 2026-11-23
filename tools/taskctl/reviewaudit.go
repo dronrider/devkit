@@ -48,6 +48,28 @@ func cmdReviewAuditRecord(root, start, id, rule, object, input, request, summary
 	return reviewaudit.RecordNameEvidence(reviewCodeDir(root, start), path, id, rule, object, input, request, summary)
 }
 
+func cmdReviewAuditRecordBatch(root, start, id, input, request, summary string) (string, error) {
+	path, err := reviewAuditPath(root, id)
+	if err != nil {
+		return "", err
+	}
+	result, recordErr := reviewaudit.RecordNameEvidenceBatch(reviewCodeDir(root, start), path, id, input, request, summary)
+	if recordErr != nil {
+		result.Issues = append(result.Issues, reviewaudit.NameEvidenceBatchIssue{Message: recordErr.Error()})
+	}
+	body, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if recordErr != nil {
+		return string(body), recordErr
+	}
+	if !result.Saved {
+		return string(body), fmt.Errorf("пакет доказательств STYLE-001 отклонён")
+	}
+	return string(body), nil
+}
+
 func cmdReviewAuditProgress(root, start, id, request, summary string, asJSON bool) (string, error) {
 	path, err := reviewAuditPath(root, id)
 	if err != nil {

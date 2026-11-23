@@ -121,7 +121,7 @@ func TestNameRuntimeWriteIntegration(t *testing.T) {
 }
 
 // A trusted key is the only authority for payload bytes. A report-only commit
-// is allowed, but each other tracked path must remain identical to the run.
+// and committed review metadata may change after the run.
 func TestNameRuntimeSignatureAndTreeIntegration(t *testing.T) {
 	source, key, run, makeEvidence := nameRuntimeFixture(t)
 	proof := signNameRuntimeRecord(t, key, run)
@@ -196,6 +196,26 @@ func TestNameRuntimeSignatureAndTreeIntegration(t *testing.T) {
 	write(t, source.reportPath, "{\"updated\":true}\n")
 	check("")
 	gitT(t, source.root, "restore", "--", source.reportPath)
+	t.Run("вердикт в карточке сохраняет подпись", func(t *testing.T) {
+		head := gitT(t, source.root, "rev-parse", "HEAD")
+		t.Cleanup(func() { gitT(t, source.root, "checkout", "--detach", head) })
+		path := taskPath(source.reportPath)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		withVerdict := string(body) + "\n## Ревью\n\n- Вердикт: без замечаний.\n"
+		write(t, path, withVerdict)
+		assertTargetCheck(t, checkNameRuntimeWrite(e, nameRuntimeDeclaration, source), "изменение вне файла аудита")
+		gitT(t, source.root, "add", "--", path)
+		gitT(t, source.root, "commit", "-qm", "record verdict")
+		assertTargetCheck(t, checkNameRuntimeWrite(e, nameRuntimeDeclaration, source), "")
+
+		write(t, path, strings.Replace(withVerdict, "Правильный результат.", "Другой результат.", 1))
+		gitT(t, source.root, "add", "--", path)
+		gitT(t, source.root, "commit", "-qm", "change task contract")
+		assertTargetCheck(t, checkNameRuntimeWrite(e, nameRuntimeDeclaration, source), "постановка")
+	})
 	t.Run("изменён файл в рабочем дереве", func(t *testing.T) {
 		write(t, filepath.Join(source.root, "activity.py"), "return other\n")
 		t.Cleanup(func() { gitT(t, source.root, "restore", "--staged", "--worktree", "--", "activity.py") })

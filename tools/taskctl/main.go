@@ -295,6 +295,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review audit-check <ID> --coverage FILE [--request FILE]  сверить объекты и ссылки на итог
                                               при любом вердикте
   review audit-record <ID> --rule STYLE-001 --object NAME --input FILE [--request FILE] [--summary FILE]  сохранить доказательства цели
+  review audit-record <ID> --batch --input FILE [--request FILE] [--summary FILE]  проверить и записать доказательства нескольких целей
+  review verdict <ID> --checks FILE (--model MODEL --effort LEVEL | --packet) [--since REV] [--request FILE]  подготовить пакет и получить вердикт Codex
   review audit-progress <ID> [--request FILE] [--summary FILE] [--json]  показать ход STYLE-001
   review audit-repair <ID> --targets [--request FILE] [--summary FILE]  восстановить targets без сброса доказательств
   review level <ID> <0-3> "причина"           записать уровень тщательности
@@ -1113,7 +1115,7 @@ func main() {
 		return
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review audit|audit-check|audit-progress|audit-record|audit-repair|audit-template|level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
+			fail(fmt.Errorf("жду: review audit|audit-check|audit-progress|audit-record|audit-repair|audit-template|verdict|level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
 		}
 		switch args[1] {
 		case "audit-template":
@@ -1130,16 +1132,43 @@ func main() {
 			dir := fs.String("C", gdir, "стартовая директория")
 			rule := fs.String("rule", "", "правило проверки")
 			object := fs.String("object", "", "ключ цели аудита")
-			input := fs.String("input", "", "JSON с заполненными записями цели")
+			batch := fs.Bool("batch", false, "проверить и записать массив доказательств нескольких целей STYLE-001")
+			input := fs.String("input", "", "JSON с заполненными доказательствами")
 			request := fs.String("request", "", "файл исходной постановки")
 			summary := fs.String("summary", "", "путь итогового Markdown")
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 1, 1, "review audit-record <ID> --rule STYLE-001 --object NAME --input FILE [--request FILE] [--summary FILE]")
+			needArgs(pos, 1, 1, "review audit-record <ID> (--rule STYLE-001 --object NAME | --batch) --input FILE [--request FILE] [--summary FILE]")
 			r := noteRoot(*dir)
 			if r == "" {
 				r = root(*dir)
 			}
-			msg, err = cmdReviewAuditRecord(r, *dir, pos[0], *rule, *object, *input, *request, *summary)
+			if *batch {
+				if *rule != "" || *object != "" {
+					fail(fmt.Errorf("--batch задаёт правило STYLE-001 и читает цели из --input"))
+				}
+				msg, err = cmdReviewAuditRecordBatch(r, *dir, pos[0], *input, *request, *summary)
+				if err != nil && msg != "" {
+					fmt.Println(msg)
+				}
+			} else {
+				msg, err = cmdReviewAuditRecord(r, *dir, pos[0], *rule, *object, *input, *request, *summary)
+			}
+		case "verdict":
+			fs := flag.NewFlagSet("review verdict", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			request := fs.String("request", "", "файл постановки для ревью вне доски")
+			since := fs.String("since", "", "коммит предыдущего ревью для проверки дельты")
+			checks := fs.String("checks", "", "файл с результатами тестов")
+			model := fs.String("model", "", "модель Codex из agentctl pick")
+			effort := fs.String("effort", "", "усилие Codex из agentctl pick")
+			packet := fs.Bool("packet", false, "вывести пакет без запуска Codex")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review verdict <ID> --checks FILE (--model MODEL --effort LEVEL | --packet) [--since REV] [--request FILE]")
+			r := noteRoot(*dir)
+			if r == "" {
+				r = root(*dir)
+			}
+			msg, err = cmdReviewVerdict(r, *dir, pos[0], *request, *since, *checks, *model, *effort, *packet)
 		case "audit-progress":
 			fs := flag.NewFlagSet("review audit-progress", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

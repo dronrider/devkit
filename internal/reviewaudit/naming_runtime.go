@@ -173,15 +173,7 @@ func (s *nameRuntimeSource) lines(ref string, count int) (string, error) {
 	if base {
 		return "", fmt.Errorf("укажите строку проверяемой ревизии без base@")
 	}
-	entry, err := gitRaw(s.source.root, "--no-replace-objects", "ls-tree", "-z", "--full-tree", s.revision, "--", ":(literal)"+path)
-	if err != nil {
-		return "", err
-	}
-	mode, name, _ := strings.Cut(entry, "\t")
-	if name != path+"\x00" || !(strings.HasPrefix(mode, "100644 blob ") || strings.HasPrefix(mode, "100755 blob ")) {
-		return "", fmt.Errorf("%s: ссылка должна вести в обычный файл коммита прогона", path)
-	}
-	body, err := gitRaw(s.source.root, "--no-replace-objects", "cat-file", "blob", s.revision+":"+path)
+	_, body, err := nameRuntimeBlob(s.source.root, s.revision, path)
 	if err != nil {
 		return "", err
 	}
@@ -200,6 +192,20 @@ func (s *nameRuntimeSource) lines(ref string, count int) (string, error) {
 		return "", fmt.Errorf("цитата выходит за конец %s", path)
 	}
 	return strings.Join(lines[line-1:line-1+count], "\n"), nil
+}
+
+func nameRuntimeBlob(root, revision, path string) (mode, body string, err error) {
+	entry, err := gitRaw(root, "--no-replace-objects", "ls-tree", "-z", "--full-tree", revision, "--", ":(literal)"+path)
+	if err != nil {
+		return "", "", err
+	}
+	header, name, _ := strings.Cut(entry, "\t")
+	mode, kind, _ := strings.Cut(header, " ")
+	if name != path+"\x00" || (mode != "100644" && mode != "100755") || !strings.HasPrefix(kind, "blob ") {
+		return "", "", fmt.Errorf("%s: ссылка должна вести в обычный файл коммита прогона", path)
+	}
+	body, err = gitRaw(root, "--no-replace-objects", "cat-file", "blob", revision+":"+path)
+	return mode, body, err
 }
 
 func readNameRuntimeRecord(payload string) (nameRuntimeRecord, error) {
@@ -335,12 +341,24 @@ func checkNameRuntimeTree(root, reportPath, revision string) error {
 		report = ""
 	}
 	report = filepath.ToSlash(report)
+	// Only the task attached to this board audit may change its review history.
+	task := ""
+	if filepath.ToSlash(filepath.Dir(report)) == "docs/tasks" {
+		task = taskPath(report)
+	}
 	changed, err := gitRaw(root, "--no-replace-objects", "diff-tree", "--no-commit-id", "--no-renames", "--ignore-submodules=none", "--name-only", "-r", "-z", revision, head, "--")
 	if err != nil {
 		return err
 	}
 	for _, path := range strings.Split(changed, "\x00") {
-		if path != "" && path != report {
+		switch path {
+		case "", report:
+			continue
+		case task:
+			if err := checkNameRuntimeTask(root, revision, head, path); err != nil {
+				return err
+			}
+		default:
 			return fmt.Errorf("дерево коммита прогона отличается от HEAD по пути %q", path)
 		}
 	}
@@ -352,6 +370,21 @@ func checkNameRuntimeTree(root, reportPath, revision string) error {
 		if len(entry) > 3 && entry[3:] != report {
 			return fmt.Errorf("дерево проверки содержит изменение вне файла аудита по пути %q", entry[3:])
 		}
+	}
+	return nil
+}
+
+func checkNameRuntimeTask(root, revision, head, path string) error {
+	signedMode, signedTask, err := nameRuntimeBlob(root, revision, path)
+	if err != nil {
+		return err
+	}
+	headMode, headTask, err := nameRuntimeBlob(root, head, path)
+	if err != nil {
+		return err
+	}
+	if signedMode != headMode || taskContent(signedTask) != taskContent(headTask) {
+		return fmt.Errorf("постановка %q изменилась после подписанного прогона", path)
 	}
 	return nil
 }

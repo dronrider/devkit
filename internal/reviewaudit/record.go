@@ -52,102 +52,223 @@ func RecordNameEvidence(root, path, id, ruleID, object, input, request, summary 
 	if (ruleID != "STYLE-001" && ruleID != namingRule) || object == "" || input == "" {
 		return "", fmt.Errorf("укажите --rule STYLE-001 --object <ключ цели> --input <файл JSON>")
 	}
-	body, err := os.ReadFile(input)
+	result, evidence, err := recordNameEvidence(root, path, id, object, input, request, summary)
 	if err != nil {
 		return "", err
 	}
+	return recordFeedback(path, object, evidence, *result.Progress), nil
+}
+
+type NameEvidenceBatchResult struct {
+	Saved     bool                     `json:"saved"`
+	Submitted int                      `json:"submitted"`
+	Progress  *NameProgressState       `json:"progress,omitempty"`
+	Issues    []NameEvidenceBatchIssue `json:"issues,omitempty"`
+}
+
+type NameEvidenceBatchIssue struct {
+	Row     int    `json:"row,omitempty"`
+	Object  string `json:"object,omitempty"`
+	Check   string `json:"check,omitempty"`
+	Message string `json:"message"`
+}
+
+// RecordNameEvidenceBatch checks evidence for multiple objects against one snapshot.
+// Invalid submitted rows leave the audit unchanged and are returned in Issues.
+// Missing or rejected evidence outside the submission is reported in Progress.
+func RecordNameEvidenceBatch(root, path, id, input, request, summary string) (NameEvidenceBatchResult, error) {
+	if input == "" {
+		return NameEvidenceBatchResult{}, fmt.Errorf("укажите --batch --input <файл JSON>")
+	}
+	result, _, err := recordNameEvidence(root, path, id, "", input, request, summary)
+	return result, err
+}
+
+func recordNameEvidence(root, path, id, object, input, request, summary string) (NameEvidenceBatchResult, []Evidence, error) {
+	batch := object == ""
+	var result NameEvidenceBatchResult
+	body, err := os.ReadFile(input)
+	if err != nil {
+		return result, nil, err
+	}
 	var rows []json.RawMessage
-	if err := json.Unmarshal(body, &rows); err != nil {
-		return "", fmt.Errorf("%s: %w", input, err)
+	err = json.Unmarshal(body, &rows)
+	if err == nil && len(rows) == 0 {
+		err = fmt.Errorf("нужен массив записей цели")
 	}
-	if len(rows) == 0 {
-		return "", fmt.Errorf("%s: нужен массив записей цели", input)
+	if err != nil {
+		if batch {
+			result.Issues = []NameEvidenceBatchIssue{{Message: fmt.Sprintf("%s: %v", input, err)}}
+			return result, nil, nil
+		}
+		return result, nil, fmt.Errorf("%s: %w", input, err)
 	}
+	result.Submitted = len(rows)
 	lock, err := lockAuditDirectory(path)
 	if err != nil {
-		return "", fmt.Errorf("запись аудита %s: %w", path, err)
+		return result, nil, fmt.Errorf("запись аудита %s: %w", path, err)
 	}
 	defer lock.Close()
 
 	root, report, snapshot, output, err := snapshotForCoverage(root, path, id, summary, request)
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
 	if report.HeadSHA != snapshot.HeadSHA {
-		return "", fmt.Errorf("HEAD изменился после создания аудита")
+		return result, nil, fmt.Errorf("HEAD изменился после создания аудита")
 	}
 	i := slices.IndexFunc(report.Rules, func(r Rule) bool { return r.ID == namingRule })
-	if i < 0 || !slices.Contains(report.Rules[i].Objects, object) {
-		return "", fmt.Errorf("%s: цель %q отсутствует в objects правила STYLE-001", path, object)
+	if !batch && (i < 0 || !slices.Contains(report.Rules[i].Objects, object)) {
+		return result, nil, fmt.Errorf("%s: цель %q отсутствует в objects правила STYLE-001", path, object)
 	}
+	if i < 0 {
+		return result, nil, fmt.Errorf("%s: в отчёте нет правила STYLE-001", path)
+	}
+	rule := &report.Rules[i]
+	entries, issues := prepareNameEvidence(rule.Objects, rows, object)
+	if !batch && len(issues) != 0 {
+		return result, nil, fmt.Errorf("%s: %s", input, issues[0].Message)
+	}
+	result.Issues = issues
 	// Open the original for writing without truncating it. A writable directory
 	// alone would permit renaming over a read-only report.
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
 	var doc map[string]json.RawMessage
 	if err := json.NewDecoder(file).Decode(&doc); err != nil {
-		return "", err
+		return result, nil, err
 	}
 	var rules []map[string]json.RawMessage
 	if err := json.Unmarshal(doc["rules"], &rules); err != nil {
-		return "", err
+		return result, nil, err
 	}
-	rule := &report.Rules[i]
-	rules[i]["evidence"], err = mergeNameEvidence(rule, rules[i]["evidence"], rows, object, input)
+	rules[i]["evidence"], err = mergeNameEvidence(rule, rules[i]["evidence"], entries)
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
-	progress, err := nameProgressForSnapshot(root, path, id, output, report, snapshot)
+	checked, err := nameProgressForSnapshot(root, path, id, output, report, snapshot)
 	if err != nil {
-		return "", err
+		return result, nil, err
+	}
+	result.Progress = &checked.state
+	if batch {
+		result.Issues = append(result.Issues, rejectedNameEvidence(entries, checked.issues)...)
+		slices.SortStableFunc(result.Issues, func(a, b NameEvidenceBatchIssue) int { return a.Row - b.Row })
+		if len(result.Issues) != 0 {
+			return result, nil, nil
+		}
+		head, err := git(root, "rev-parse", "HEAD")
+		if err != nil {
+			return result, nil, err
+		}
+		if strings.TrimSpace(head) != snapshot.HeadSHA {
+			return result, nil, fmt.Errorf("HEAD изменился во время проверки пакета доказательств")
+		}
 	}
 	doc["rules"], err = json.Marshal(rules)
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return "", err
+		return result, nil, err
 	}
 	if err := replaceAuditFile(path, append(data, '\n'), info.Mode()); err != nil {
-		return "", err
+		return result, nil, err
 	}
-	return recordFeedback(path, object, rule.Evidence, progress), nil
+	result.Saved = true
+	return result, rule.Evidence, nil
 }
 
-func mergeNameEvidence(rule *Rule, original json.RawMessage, rows []json.RawMessage, object, input string) (json.RawMessage, error) {
+type nameEvidenceRow struct {
+	entry  Evidence
+	raw    json.RawMessage
+	number int
+}
+
+func prepareNameEvidence(objects []string, rows []json.RawMessage, object string) ([]nameEvidenceRow, []NameEvidenceBatchIssue) {
+	known := make(map[string]bool, len(objects))
+	for _, object := range objects {
+		known[object] = true
+	}
+	checks := requiredChecks(namingRule)
+	seen := make(map[evidenceKey]bool, len(rows))
+	var entries []nameEvidenceRow
+	var issues []NameEvidenceBatchIssue
+	for i, row := range rows {
+		var entry Evidence
+		decoder := json.NewDecoder(bytes.NewReader(row))
+		decoder.DisallowUnknownFields()
+		err := decoder.Decode(&entry)
+		key := evidenceKey{entry.Object, entry.Check}
+		if err == nil {
+			validCheck, duplicate := slices.Contains(checks, entry.Check), seen[key]
+			switch {
+			case object != "" && (entry.Object != object || !validCheck || duplicate):
+				err = fmt.Errorf("чужая цель, неизвестная или повторная подпроверка %q / %q", entry.Object, entry.Check)
+			case object == "" && (strings.TrimSpace(entry.Object) == "" || !known[entry.Object]):
+				err = fmt.Errorf("цель %q отсутствует в objects правила STYLE-001", entry.Object)
+			case !validCheck:
+				err = fmt.Errorf("неизвестная подпроверка %q", entry.Check)
+			case duplicate:
+				err = fmt.Errorf("повторное доказательство для %s", key)
+			}
+		}
+		if err != nil {
+			issues = append(issues, NameEvidenceBatchIssue{Row: i + 1, Object: entry.Object, Check: entry.Check, Message: err.Error()})
+			continue
+		}
+		seen[key] = true
+		entries = append(entries, nameEvidenceRow{entry: entry, raw: row, number: i + 1})
+	}
+	return entries, issues
+}
+
+func mergeNameEvidence(rule *Rule, original json.RawMessage, entries []nameEvidenceRow) (json.RawMessage, error) {
 	var evidence []json.RawMessage
 	if err := json.Unmarshal(original, &evidence); err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	for _, row := range rows {
-		var entry Evidence
-		decoder := json.NewDecoder(bytes.NewReader(row))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&entry); err != nil {
-			return nil, fmt.Errorf("%s: %w", input, err)
-		}
-		if entry.Object != object || !slices.Contains(requiredChecks(namingRule), entry.Check) || seen[entry.Check] {
-			return nil, fmt.Errorf("%s: чужая цель, неизвестная или повторная подпроверка %q / %q", input, entry.Object, entry.Check)
-		}
-		seen[entry.Check] = true
-		j := slices.IndexFunc(rule.Evidence, func(e Evidence) bool { return e.Object == object && e.Check == entry.Check })
-		if j < 0 {
-			evidence = append(evidence, row)
-			rule.Evidence = append(rule.Evidence, entry)
-		} else {
-			evidence[j], rule.Evidence[j] = row, entry
+	indices := make(map[evidenceKey]int, len(rule.Evidence))
+	for i, entry := range rule.Evidence {
+		key := evidenceKey{entry.Object, entry.Check}
+		if _, found := indices[key]; !found {
+			indices[key] = i
 		}
 	}
+	for _, row := range entries {
+		if i, found := indices[evidenceKey{row.entry.Object, row.entry.Check}]; found {
+			evidence[i], rule.Evidence[i] = row.raw, row.entry
+			continue
+		}
+		evidence = append(evidence, row.raw)
+		rule.Evidence = append(rule.Evidence, row.entry)
+	}
 	return json.Marshal(evidence)
+}
+
+func rejectedNameEvidence(entries []nameEvidenceRow, checks error) []NameEvidenceBatchIssue {
+	submitted := make(map[evidenceKey]int, len(entries))
+	for _, row := range entries {
+		submitted[evidenceKey{row.entry.Object, row.entry.Check}] = row.number
+	}
+	var issues []NameEvidenceBatchIssue
+	eachAuditIssue(checks, func(err error) {
+		if issue, ok := err.(*objectIssue); ok && !issue.missing {
+			if row, found := submitted[issue.key]; found {
+				issues = append(issues, NameEvidenceBatchIssue{Row: row, Object: issue.key.object,
+					Check: issue.key.check, Message: issue.err.Error()})
+			}
+		}
+	})
+	return issues
 }
 
 func recordFeedback(path, object string, evidence []Evidence, progress NameProgressState) string {

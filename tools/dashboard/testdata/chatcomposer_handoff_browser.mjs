@@ -60,7 +60,7 @@ async function composer(context) {
       if (state.list && url.searchParams.get("keep")?.split(",").includes(state.list.sid)) {
         return state.list.gate.hold(route);
       }
-      return route.fulfill({ json: { chats: state.chats, models } });
+      return route.fulfill({ json: { chats: state.chats, models: state.models || models } });
     }
     if (method === "GET" && path.endsWith("/tasks/XR-4/chat")) {
       return route.fulfill({ json: state.main || { id: "XR-4", kind: "без разговоров" } });
@@ -123,10 +123,13 @@ async function composer(context) {
       await page.keyboard.press("Escape");
     },
     read(addr) {
-      return page.evaluate(addr => ({
-        text: chatDraftRead(addr), effort: chatEffortOf("demo", addr), height: chatDraftHeight(addr),
-        files: (chatClipsStoredRead(addr) || []).map(c => c.path),
-      }), addr);
+      return page.evaluate(addr => {
+        const key = chatDraftKey("demo", addr);
+        return {
+          text: chatDraftRead(key), effort: chatEffortOf("demo", addr), height: chatDraftHeight(key),
+          files: (chatClipsStoredRead(key) || []).map(c => c.path),
+        };
+      }, addr);
     },
   };
 }
@@ -592,7 +595,8 @@ async function runReceipt(s) {
   const task = "XR-4";
   const sid = "session-from-receipt";
   const assigned = mode.endsWith("-assigned");
-  const reload = assigned || mode.endsWith("-reload");
+  const expired = mode.endsWith("-expired");
+  const reload = assigned || expired || mode.endsWith("-reload");
   const requests = [];
   s.state.run = async route => {
     const request = route.request().postDataJSON();
@@ -605,8 +609,17 @@ async function runReceipt(s) {
       await route.fulfill({ status: 504, contentType: "text/html", body: "<p>Gateway timeout</p>" });
       return;
     }
+    if (expired && requests.length === 4) {
+      s.state.chats = [live(sid, task)];
+      await route.fulfill({ json: { way: "appserver", session: sid } });
+      return;
+    }
     if (!request.receipt_only || (reload && requests.length === 2)) {
       await route.abort("failed");
+      return;
+    }
+    if (expired) {
+      await route.fulfill({ status: 410, json: { error: "истёк срок квитанции запуска", expired: true } });
       return;
     }
     s.state.chats = [live(sid, task)];
@@ -633,6 +646,23 @@ async function runReceipt(s) {
       await s.send.click();
     }
   }
+  if (expired) {
+    const held = s.page.locator(active + " .mlocal .m-held", { hasText: "истёк срок квитанции запуска" });
+    await held.waitFor();
+    assert.equal(await s.ta.inputValue(), "", "истёкший текст остался в пузыре");
+    assert.equal(await s.send.textContent(), "Начать работу");
+    assert.equal(await s.page.evaluate(task => sessionStorage.getItem("devkit.chat.run.demo/" + task), task), null);
+    assert.equal(requests.length, 3);
+    assert.deepEqual(requests[2], { ...requests[0], receipt_only: true });
+    await s.ta.fill("новая реплика");
+    await s.send.click();
+    await s.switched(old, sid);
+    assert.equal(requests.length, 4);
+    assert.notEqual(requests[3].msg_id, requests[0].msg_id);
+    assert.equal(requests[3].text, "новая реплика");
+    assert.equal(requests[3].receipt_only, undefined);
+    return;
+  }
   if (assigned) {
     await s.page.waitForFunction(task => !sessionStorage.getItem("devkit.chat.run.demo/" + task), task);
     assert.equal(await s.send.textContent(), "Отправить");
@@ -650,6 +680,78 @@ async function runReceipt(s) {
   assert.equal((await s.read(task)).effort, "", JSON.stringify({
     captured, current: await s.page.evaluate(task => chatEffortSnapshot("demo", task), task),
   }));
+  const unused = await s.page.evaluate(task => {
+    const key = chatEffortKey("demo", task);
+    return { value: chatEffortArm.has(key), revision: chatEffortRevision.has(key),
+      storedRevision: sessionStorage.getItem(CHAT_EFFORT_KEY + key + ".revision") };
+  }, task);
+  assert.deepEqual(unused, { value: false, revision: false, storedRevision: null });
+}
+
+async function draftProjectIsolation(s) {
+  await s.open("XR-4");
+  await s.ta.fill(firstText);
+  const snapshot = await s.page.evaluate(() => {
+    const one = { project: "demo", addr: "XR-4" };
+    const two = { project: "other", addr: "XR-4" };
+    const kept = chatDraftOwner(two);
+    const before = kept.text;
+    kept.text = "черновик другого проекта";
+    kept.height = 130;
+    kept.clips = [{ kind: "frag", path: "/other/fragment.txt" }];
+    chatDraftStore(kept);
+    chatMove("demo", one.addr, "session-project-one");
+    chatDraftEvict(kept.key || kept.addr);
+    const reopened = chatDraftOwner(two);
+    return {
+      before,
+      first: chatDraftOwner({ project: "demo", addr: "session-project-one" }).text,
+      other: { text: reopened.text, height: reopened.height, path: reopened.clips[0]?.path },
+    };
+  });
+  assert.deepEqual(snapshot, {
+    before: "", first: firstText,
+    other: { text: "черновик другого проекта", height: 130, path: "/other/fragment.txt" },
+  });
+}
+
+async function legacyDraft(s) {
+  await s.open("XR-4");
+  await s.page.evaluate(() => {
+    chatDraftWrite("XR-4", "черновик до обновления");
+    chatDraftHeightWrite("XR-4", 125);
+    chatClipsStoredWrite("XR-4", [{ kind: "frag", path: "/old/fragment.txt" }]);
+  });
+  await s.page.reload({ waitUntil: "domcontentloaded" });
+  await s.ta.waitFor();
+  assert.equal(await s.ta.inputValue(), "");
+  const recover = s.page.getByRole("button", { name: "Перенести старый черновик" });
+  await recover.click();
+  assert.equal(await s.ta.inputValue(), "черновик до обновления");
+  assert.deepEqual(await s.read("XR-4"), {
+    text: "черновик до обновления", effort: "", height: 125, files: ["/old/fragment.txt"],
+  });
+  assert.equal(await s.page.evaluate(() => chatDraftRead("XR-4")), "");
+  assert.equal(await recover.isVisible(), false);
+}
+
+async function runModelTier(s) {
+  s.state.models = [
+    ...models,
+    { model: "stand-extra", harness: "chat-stand", levels: ["high"] },
+  ];
+  const gate = barrier("запуск из меню моделей");
+  s.state.launch = { url: runURL, gate };
+  await s.open("XR-4");
+  const picker = s.page.locator(active + " .cdsel");
+  assert.equal(await picker.locator('option[value="stand-extra"]:enabled').count(), 0);
+  await s.ta.fill(firstText);
+  await s.send.click();
+  const { body } = await gate.request();
+  assert.equal(body.harness, "codex");
+  assert.equal(body.tier, "pro");
+  gate.reply({ status: 409, json: { error: "запуск отклонён стендом" } });
+  await s.page.locator(active + " .mlocal .m-held").waitFor();
 }
 
 const scenarios = {
@@ -660,9 +762,10 @@ const scenarios = {
   "crash-task-before-queue": crashBeforeQueue, "crash-task-feed-during-receipt": crashBeforeQueue,
   "crash-task-feed-receipt-503": crashBeforeQueue, "crash-task-feed-receipt-exhausted": crashBeforeQueue,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
-  "draft-eviction": draftLifecycle, "draft-removal": draftLifecycle,
+  "draft-eviction": draftLifecycle, "draft-removal": draftLifecycle, "draft-project-isolation": draftProjectIsolation, "draft-recover-legacy": legacyDraft,
   "runs-receipt-after-loss": runReceipt, "runs-receipt-after-reload": runReceipt,
   "runs-receipt-after-proxy": runReceipt, "runs-receipt-after-assigned": runReceipt,
+  "runs-receipt-expired": runReceipt, "runs-model-tier": runModelTier,
 };
 const browser = await chromium.launch({ executablePath, headless: true });
 try {

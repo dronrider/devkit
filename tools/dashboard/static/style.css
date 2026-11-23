@@ -2124,6 +2124,8 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .pselect{height:var(--ctl);padding:0 10px}
 .cdpick,.cdbtn,.cdsel{height:var(--ctl)}
 .cdbtn{width:var(--ctl)}
+.cdbtn.cdrecover{width:auto;padding:0 7px;font-size:11px}
+.cdrecover[hidden]{display:none}
 .chead .nx{width:var(--ctl);height:var(--ctl)}
 .brand,.bhead,.cpanel .chead{min-height:var(--ctl)}
 .brand{align-items:center}

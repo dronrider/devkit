@@ -705,7 +705,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неизвестное действие запуска"})
 		return
 	}
-	if (body.MsgID != "" || body.ReceiptOnly) && (body.Intent != "chat" || !chatKeyRe.MatchString(body.MsgID)) {
+	if (body.MsgID != "" || body.ReceiptOnly) && (body.Intent != "chat" || body.MsgID == "") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для квитанции запуска нужны intent=chat и допустимый msg_id"})
 		return
 	}

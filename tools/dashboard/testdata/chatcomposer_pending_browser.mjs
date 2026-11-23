@@ -63,7 +63,7 @@ try {
     const target = "as-pending-" + label.replaceAll("/", "-");
     const task = kind === "run" ? addr : "";
     await page.evaluate((addr) => {
-      chatClipsWrite(addr, [{ kind: "frag", name: "отправленное вложение", path: "/tmp/sent.txt" }]);
+      chatClipsWrite(chatDraftKey("demo", addr), [{ kind: "frag", name: "отправленное вложение", path: "/tmp/sent.txt" }]);
       chatEffortSet("demo", addr, "low");
     }, addr);
     await mount(kind === "run" ? { addr, task, unassigned: true, entry: null } :
@@ -87,7 +87,7 @@ try {
     check(await ta.isDisabled(), false, label + ": следующий черновик доступен во время запуска");
     await ta.fill("новый черновик " + label);
     await paste();
-    await page.waitForFunction((addr) => (chatClipsRead(addr) || []).some((clip) => clip.path?.startsWith("/tmp/new-")), addr);
+    await page.waitForFunction((addr) => (chatClipsRead(chatDraftKey("demo", addr)) || []).some((clip) => clip.path?.startsWith("/tmp/new-")), addr);
     await page.evaluate(({ addr, next }) => chatEffortSet("demo", addr, next), { addr, next });
     pending.release();
     if (outcome === "success") {
@@ -98,8 +98,8 @@ try {
     check(await page.evaluate((addr) => chatEffortOf("demo", addr), outcome === "success" ? task || target : addr), next,
       label + ": старый ответ сохранил новый effort");
     if (outcome === "error") {
-      check(await page.evaluate((addr) => chatDraftRead(addr), addr), "новый черновик " + label, label + ": новый текст сохранён после отказа");
-      const paths = await page.evaluate((addr) => (chatClipsRead(addr) || []).map((clip) => clip.path), addr);
+      check(await page.evaluate((addr) => chatDraftRead(chatDraftKey("demo", addr)), addr), "новый черновик " + label, label + ": новый текст сохранён после отказа");
+      const paths = await page.evaluate((addr) => (chatClipsRead(chatDraftKey("demo", addr)) || []).map((clip) => clip.path), addr);
       check(paths.length === 1 && paths[0].startsWith("/tmp/new-"), true, label + ": новый черновик сохранил только свои вложения");
       await mount(kind === "run" ? { addr, task, unassigned: true, entry: null } :
         { addr, blank: addr, fresh: true, entry: { model: "stand-a", pickHarness: "codex", state: "blank" } });
@@ -117,7 +117,7 @@ try {
     await mount({ addr: target, sid: target, task, entry: { protocol: "codex", state: "live", model: "stand-a", pickHarness: "codex" } });
     check(await ta.inputValue(), "новый черновик " + label, label + ": поле нового sid показывает черновик");
     check(await send.isEnabled(), true, label + ": у нового sid доступна отправка");
-    check(await page.evaluate((addr) => chatDraftRead(addr), addr), "", label + ": закрытие панели не вернуло старый ключ");
+    check(await page.evaluate((addr) => chatDraftRead(chatDraftKey("demo", addr)), addr), "", label + ": закрытие панели не вернуло старый ключ");
     check(await page.locator("#cpin .cslot:not(.off) .cclip").count(), 1, label + ": поле нового sid показывает вложение");
     const sayPath = "**/api/projects/demo/chats/" + target + "/say";
     let following;
@@ -136,21 +136,21 @@ try {
   }
 
   // Без нового черновика отказ возвращает отправленный снимок в поле.
-  await mount({ addr: "XR-rejected", task: "XR-rejected", unassigned: true, entry: null });
-  await page.evaluate(() => chatEffortSet("demo", "XR-rejected", "low"));
+  await mount({ addr: "XR-203", task: "XR-203", unassigned: true, entry: null });
+  await page.evaluate(() => chatEffortSet("demo", "XR-203", "low"));
   await ta.fill("вернуть после отказа");
   await paste();
-  await page.waitForFunction(() => (chatClipsRead("XR-rejected") || [])[0]?.path);
+  await page.waitForFunction(() => (chatClipsRead(chatDraftKey("demo", "XR-203")) || [])[0]?.path);
   await page.route("**/api/projects/demo/runs", (route) => route.fulfill({ status: 409, json: { error: "запуск отклонён" } }));
   await send.click();
   await page.waitForFunction(() => !document.querySelector("#cpin .cslot:not(.off) .csend").disabled);
   check(await ta.inputValue(), "вернуть после отказа", "run/error: исходный текст восстановлен в пустое поле");
   check(await page.locator("#cpin .cslot:not(.off) .cclip").count(), 1, "run/error: исходное вложение восстановлено");
-  check(await page.evaluate(() => chatEffortOf("demo", "XR-rejected")), "low", "run/error: неуспешный выбор не расходуется");
+  check(await page.evaluate(() => chatEffortOf("demo", "XR-203")), "low", "run/error: неуспешный выбор не расходуется");
   await page.unroute("**/api/projects/demo/runs");
 
   // Пустое поле тоже может быть новым выбором человека после отправки.
-  await mount({ addr: "XR-cleared", task: "XR-cleared", unassigned: true, entry: null });
+  await mount({ addr: "XR-204", task: "XR-204", unassigned: true, entry: null });
   const cleared = gate();
   await page.route("**/api/projects/demo/runs", async (route) => {
     cleared.arrived();
@@ -165,7 +165,7 @@ try {
   cleared.release();
   await page.waitForFunction(() => !document.querySelector("#cpin .cslot:not(.off) .csend").disabled);
   check(await ta.inputValue(), "", "run/error: новый пустой черновик сохранён");
-  check(await page.evaluate(() => chatDraftRead("XR-cleared")), "", "run/error: новый пустой черновик сохранён в хранилище");
+  check(await page.evaluate(() => chatDraftRead(chatDraftKey("demo", "XR-204"))), "", "run/error: новый пустой черновик сохранён в хранилище");
   await page.unroute("**/api/projects/demo/runs");
 
   // Важен и повторный выбор low: сравнение одного значения без ревизии

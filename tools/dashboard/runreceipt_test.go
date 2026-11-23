@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/taskstate"
@@ -19,7 +22,7 @@ func TestRunChatReceiptReplaysOriginalWire(t *testing.T) {
 		t.Run(road, func(t *testing.T) {
 			e, c, log, command, harness := runReceiptEnv(t, road)
 			mkProject(t, filepath.Join(filepath.Dir(e.proj), "other"))
-			payload := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":"m-m6hg18u2-1-77ab","text":"Первая реплика","effort":"high","harness":%q}`, harness)
+			payload := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q,"text":"Первая реплика","effort":"high","harness":%q}`, testRunReceiptKey(e.s.now()), harness)
 			lookup := strings.TrimSuffix(payload, "}") + `,"receipt_only":true}`
 			start := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", payload)
 			wire := body(t, start)
@@ -58,7 +61,7 @@ func TestRunChatReceiptRetriesBeforeDispatch(t *testing.T) {
 	for _, road := range []string{"tmux", "appserver"} {
 		t.Run(road, func(t *testing.T) {
 			e, _, log, command, harness := runReceiptEnv(t, road)
-			request := runStartRequest{ID: "XR-002", Intent: "chat", MsgID: "m-m6hg18u2-6-77ab", Text: "Исходная реплика", Harness: harness, Effort: "high"}
+			request := runStartRequest{ID: "XR-002", Intent: "chat", MsgID: testRunReceiptKey(e.s.now()), Text: "Исходная реплика", Harness: harness, Effort: "high"}
 			writeRunReceiptMarker(t, e, request, "before_dispatch")
 			e.srv.Close()
 			restarted := newTestEnvAt(t, e.home, e.proj, e.bin)
@@ -108,7 +111,7 @@ func TestRunChatReceiptRejectsUncertainOrLockedMarker(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e, c, log := runsEnv(t, "")
-			request := runStartRequest{ID: "XR-002", Intent: "chat", MsgID: "m-m6hg18u2-7-77ab"}
+			request := runStartRequest{ID: "XR-002", Intent: "chat", MsgID: testRunReceiptKey(e.s.now())}
 			path := writeRunReceiptMarker(t, e, request, tc.phase)
 			payload := fmt.Sprintf(`{"id":%q,"intent":"chat","msg_id":%q}`, request.ID, request.MsgID)
 			requests := []string{payload}
@@ -138,8 +141,8 @@ func TestRunChatReceiptDispatchMarkerWriteFailure(t *testing.T) {
 	for _, road := range []string{"tmux", "appserver"} {
 		t.Run(road, func(t *testing.T) {
 			e, c, log, command, harness := runReceiptEnv(t, road)
-			const key = "m-m6hg18u2-8-77ab"
-			path := filepath.Join(chatStoreDir(e.home), fmt.Sprintf(".run-start-%x", sha256.Sum256([]byte(key))))
+			key := testRunReceiptKey(e.s.now())
+			path := testRunReceiptPath(t, e.home, key)
 			// Вердикт запрашивается после первого маркера. Подмена его файла
 			// каталогом ломает переименование при записи второй фазы.
 			agent := readFile(t, filepath.Join(e.bin, scriptBody("agentctl")))
@@ -170,13 +173,27 @@ func runReceiptEnv(t *testing.T, road string) (*testEnv, *http.Client, string, s
 	return e, c, filepath.Join(e.proj, "fake-app-log"), "input ", "codextest"
 }
 
+func testRunReceiptKey(stamp time.Time) string {
+	return "m-" + strconv.FormatInt(stamp.UnixMilli(), 36) + "-1-77ab"
+}
+
+func testRunReceiptPath(t *testing.T, home, key string) string {
+	t.Helper()
+	ms, err := strconv.ParseInt(strings.Split(key, "-")[1], 36, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.UnixMilli(ms).UTC().Format("2006-01-02")
+	return filepath.Join(chatStoreDir(home), ".run-starts", day, fmt.Sprintf("%x", sha256.Sum256([]byte(key))))
+}
+
 func writeRunReceiptMarker(t *testing.T, e *testEnv, req runStartRequest, phase string) string {
 	t.Helper()
 	fields, err := json.Marshal([]string{"demo", e.proj, req.ID, req.Intent, req.Text, req.Harness, req.Tier, req.Effort})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(chatStoreDir(e.home), fmt.Sprintf(".run-start-%x", sha256.Sum256([]byte(req.MsgID))))
+	path := testRunReceiptPath(t, e.home, req.MsgID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +209,7 @@ func writeRunReceiptMarker(t *testing.T, e *testEnv, req runStartRequest, phase 
 
 func TestRunChatReceiptLookupDoesNotStart(t *testing.T) {
 	e, c, log := runsEnv(t, "")
-	const lookup = `{"id":"XR-002","intent":"chat","msg_id":"m-m6hg18u2-2-77ab","receipt_only":true}`
+	lookup := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q,"receipt_only":true}`, testRunReceiptKey(e.s.now()))
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", lookup)
 	if got := body(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(got, `"missing":true`) {
 		t.Fatalf("нет квитанции: %d %s", resp.StatusCode, got)
@@ -202,9 +219,9 @@ func TestRunChatReceiptLookupDoesNotStart(t *testing.T) {
 	}
 }
 
-func TestRunChatReceiptPreservesUnknownAfterTurn(t *testing.T) {
+func TestRunChatReceiptPreservesUnknownAfterTurnDispatch(t *testing.T) {
 	e, c := appTaskEnv(t, "recover-die")
-	const payload = `{"id":"XR-002","harness":"codextest","intent":"chat","msg_id":"m-m6hg18u2-3-77ab","text":"Реплика с потерянным подтверждением"}`
+	payload := fmt.Sprintf(`{"id":"XR-002","harness":"codextest","intent":"chat","msg_id":%q,"text":"Реплика с потерянным подтверждением"}`, testRunReceiptKey(e.s.now()))
 	lookup := strings.TrimSuffix(payload, "}") + `,"receipt_only":true}`
 	for _, request := range []string{payload, lookup, payload} {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", request)
@@ -219,13 +236,14 @@ func TestRunChatReceiptPreservesUnknownAfterTurn(t *testing.T) {
 
 func TestRunChatReceiptMarkerPrecedesRecoveryAndSweep(t *testing.T) {
 	e, c, log := runsEnv(t, "task-XR-004\\n")
-	const id, key = "XR-004", "m-m6hg18u2-4-77ab"
+	const id = "XR-004"
+	key := testRunReceiptKey(e.s.now())
 	e.s.chatRaised("task-"+id, "", id, "demo")
 	writePeerTmux(t, e.home, "cccc4444-4444-4444-8444-444444444444", "task-"+id+":@2.%2", "idle")
 	if err := taskstate.SetStopped(e.home, e.proj, id, true); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(chatStoreDir(e.home), fmt.Sprintf(".run-start-%x", sha256.Sum256([]byte(key))))
+	path := testRunReceiptPath(t, e.home, key)
 	// Доска читается после проверки квитанции. Каталог на месте её
 	// файла ломает атомарную запись маркера перед первым действием.
 	writeScript(t, e.bin, "taskctl", "mkdir "+shQuote(path)+"\nprintf '%s' "+shQuote(runsBoardJSON))
@@ -264,7 +282,7 @@ func TestRunChatReceiptConfirmsAndReplaysPreflightFailure(t *testing.T) {
 				writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "втораяtest", "Login expired. Please run /login")
 				writeScript(t, e.bin, "клиент-2", "exit 0")
 			}
-			const payload = `{"id":"XR-002","intent":"chat","msg_id":"m-m6hg18u2-5-77ab"}`
+			payload := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q}`, testRunReceiptKey(e.s.now()))
 			url := e.srv.URL + "/api/projects/demo/runs"
 			resp := doReq(t, c, "POST", url, payload)
 			raw := body(t, resp)
@@ -283,5 +301,133 @@ func TestRunChatReceiptConfirmsAndReplaysPreflightFailure(t *testing.T) {
 				t.Fatalf("чтение отказа запустило работу: %s", calls)
 			}
 		})
+	}
+}
+
+func TestRunChatReceiptKeyTime(t *testing.T) {
+	e, c, log := runsEnv(t, "")
+	now := e.s.now().UTC().Truncate(time.Millisecond)
+	e.s.now = func() time.Time { return now }
+	url := e.srv.URL + "/api/projects/demo/runs"
+	for _, tc := range []struct {
+		key  string
+		read bool
+		want int
+		flag string
+	}{
+		{"m-test-key", false, http.StatusBadRequest, ""},
+		{testRunReceiptKey(now.Add(5*time.Minute + time.Millisecond)), false, http.StatusBadRequest, ""},
+		{testRunReceiptKey(now.Add(5 * time.Minute)), true, http.StatusNotFound, `"missing":true`},
+		{testRunReceiptKey(now.Add(-7*24*time.Hour + time.Millisecond)), true, http.StatusNotFound, `"missing":true`},
+		{testRunReceiptKey(now.Add(-7 * 24 * time.Hour)), true, http.StatusGone, `"expired":true`},
+		{testRunReceiptKey(now.Add(-7 * 24 * time.Hour)), false, http.StatusGone, `"expired":true`},
+	} {
+		request := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q,"receipt_only":%t}`, tc.key, tc.read)
+		resp := doReq(t, c, http.MethodPost, url, request)
+		if got := body(t, resp); resp.StatusCode != tc.want || !strings.Contains(got, tc.flag) {
+			t.Errorf("ключ %s, чтение %t: %d %s, жду %d %s", tc.key, tc.read, resp.StatusCode, got, tc.want, tc.flag)
+		}
+	}
+	if _, err := os.Stat(runReceiptDir(e.home)); !os.IsNotExist(err) {
+		t.Errorf("запрос создал хранилище квитанций: %v", err)
+	}
+	if calls := readFile(t, log); strings.Contains(calls, "new-session") {
+		t.Errorf("запрос вызвал носитель: %s", calls)
+	}
+}
+
+func TestRunChatReceiptPruneKeepsLaunchClosedAfterClockRollback(t *testing.T) {
+	e, c, log := runsEnv(t, "")
+	now := e.s.now()
+	key := testRunReceiptKey(now.Add(-6 * 24 * time.Hour))
+	payload := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q}`, key)
+	url := e.srv.URL + "/api/projects/demo/runs"
+	resp := doReq(t, c, http.MethodPost, url, payload)
+	if got := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("первый запуск: %d %s", resp.StatusCode, got)
+	}
+	path := testRunReceiptPath(t, e.home, key)
+	day := filepath.Dir(path)
+	root := filepath.Dir(day)
+	keep := filepath.Dir(testRunReceiptPath(t, e.home, testRunReceiptKey(now)))
+	putDoc(t, keep, "current", "живой каталог")
+	putDoc(t, root, "unrelated", "посторонний файл")
+	lock, err := lockRunReceipts(day, syscall.LOCK_SH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
+	pruneAt := now.Add(3 * 24 * time.Hour)
+	if err := pruneRunReceipts(root, pruneAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("уборка задела квитанцию действующего запроса: %v", err)
+	}
+	lock.Close()
+	if err := pruneRunReceipts(root, pruneAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(day); !os.IsNotExist(err) {
+		t.Errorf("просроченный каталог с квитанцией и замком остался: %v", err)
+	}
+	if readFile(t, filepath.Join(keep, "current")) != "живой каталог" || readFile(t, filepath.Join(root, "unrelated")) != "посторонний файл" {
+		t.Fatal("уборка изменила соседние данные")
+	}
+	// Уборка уже видела время на трое суток позже. Новый сервер с часами
+	// до истечения срока всё равно должен отказать по сохранённой границе.
+	restarted := newTestEnvAt(t, e.home, e.proj, e.bin)
+	c = restarted.loggedClient(t)
+	url = restarted.srv.URL + "/api/projects/demo/runs"
+	lookup := strings.TrimSuffix(payload, "}") + `,"receipt_only":true}`
+	for _, request := range []string{lookup, payload} {
+		resp := doReq(t, c, http.MethodPost, url, request)
+		if got := body(t, resp); resp.StatusCode != http.StatusGone || !strings.Contains(got, `"expired":true`) {
+			t.Errorf("повтор после отката часов: %d %s", resp.StatusCode, got)
+		}
+	}
+	if calls := readFile(t, log); strings.Count(calls, "new-session") != 1 {
+		t.Errorf("уборка разрешила повтор: %s", calls)
+	}
+}
+
+func TestRunChatReceiptLogsLockOpenFailure(t *testing.T) {
+	e, c, log, served := runsEnvWithLog(t, "")
+	key := testRunReceiptKey(e.s.now())
+	path := testRunReceiptPath(t, e.home, key)
+	if err := os.MkdirAll(path+".lock", 0700); err != nil {
+		t.Fatal(err)
+	}
+	payload := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q}`, key)
+	resp := doReq(t, c, http.MethodPost, e.srv.URL+"/api/projects/demo/runs", payload)
+	if got := body(t, resp); resp.StatusCode != http.StatusBadGateway || !strings.Contains(got, `"unknown":true`) || strings.Contains(got, e.home) {
+		t.Errorf("отказ замка: %d %s", resp.StatusCode, got)
+	}
+	if !served.contains(t, `квитанция запуска "XR-002" в demo: замок квитанции:`) {
+		t.Error("отказ открытия замка не виден оператору")
+	}
+	if calls := readFile(t, log); strings.Contains(calls, "new-session") {
+		t.Errorf("отказ открытия замка вызвал носитель: %s", calls)
+	}
+}
+
+func TestRunChatReceiptLogsCorruptRecord(t *testing.T) {
+	e, c, _, served := runsEnvWithLog(t, "")
+	key := testRunReceiptKey(e.s.now())
+	path := testRunReceiptPath(t, e.home, key)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	query := fmt.Sprintf(`{"id":"XR-002","intent":"chat","msg_id":%q,"receipt_only":true}`, key)
+	resp := doReq(t, c, http.MethodPost, e.srv.URL+"/api/projects/demo/runs", query)
+	got := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(got, `"unknown":true`) || strings.Contains(got, "invalid character") {
+		t.Errorf("ответ на битую квитанцию: %d %s", resp.StatusCode, got)
+	}
+	if !served.contains(t, `квитанция запуска "XR-002" в demo: чтение квитанции: invalid character`) {
+		t.Error("ошибка разбора квитанции не видна оператору")
 	}
 }

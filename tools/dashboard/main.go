@@ -330,6 +330,7 @@ func cmdServe(home, staticDir string) error {
 	// иначе держит tmux с живым клиентом до следующего нажатия «Войти».
 	keeperStop := make(chan struct{})
 	go srv.quotaKeeper(keeperStop)
+	go srv.runStartReceiptKeeper(keeperStop)
 	recoveryDone := make(chan struct{})
 	go func() {
 		defer close(recoveryDone)

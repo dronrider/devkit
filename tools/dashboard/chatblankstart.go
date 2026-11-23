@@ -203,7 +203,11 @@ func writeChatStartReceipt(path string, receipt any) error {
 	if err := os.Rename(f.Name(), path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	return syncChatDir(filepath.Dir(path))
+}
+
+func syncChatDir(path string) error {
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}

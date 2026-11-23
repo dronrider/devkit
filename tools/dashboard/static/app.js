@@ -9581,60 +9581,76 @@ const CHAT_DRAFT_WAIT = 400;
 const chatDraftOwners = new Map();
 let chatDraftView = null;
 
+function chatDraftKey(project, addr) {
+  if (project && (addr === CHAT_BOARD || chatIsTask(addr) || chatIsNew(addr))) {
+    return project + "/" + addr;
+  }
+  return addr;
+}
+
+function chatDraftLegacy(draft) {
+  if (draft.key === draft.addr || draft.text || draft.height || draft.clips.length) return null;
+  const text = chatDraftRead(draft.addr);
+  const height = chatDraftHeight(draft.addr);
+  const clips = chatClipsStoredRead(draft.addr) || [];
+  return text || height || clips.length ? { text, height, clips } : null;
+}
+
 function chatDraftOwner(st) {
-  let draft = chatDraftOwners.get(st.addr);
+  const key = chatDraftKey(st.project, st.addr);
+  let draft = chatDraftOwners.get(key);
   if (!draft) {
     const entry = st.blank && st.entry;
     draft = {
-      addr: st.addr, blank: st.blank,
-      text: chatDraftRead(st.addr) || (entry && entry.draft) || "",
-      height: chatDraftHeight(st.addr),
-      clips: chatClipsRead(st.addr) || chatClipsStoredRead(st.addr) || (entry && entry.files) || [],
+      addr: st.addr, key, blank: st.blank,
+      text: chatDraftRead(key) || (entry && entry.draft) || "",
+      height: chatDraftHeight(key),
+      clips: chatClipsRead(key) || chatClipsStoredRead(key) || (entry && entry.files) || [],
       revision: 0, heightRevision: 0,
     };
-    chatDraftOwners.set(st.addr, draft);
+    chatDraftOwners.set(key, draft);
   }
   return draft;
 }
 
 function chatDraftStore(draft) {
   if (draft.discarded) return;
-  chatDraftWrite(draft.addr, draft.text);
-  chatDraftHeightWrite(draft.addr, draft.height);
-  chatClipsWrite(draft.addr, draft.clips);
-  chatClipsStoredWrite(draft.addr, draft.clips);
+  chatDraftWrite(draft.key, draft.text);
+  chatDraftHeightWrite(draft.key, draft.height);
+  chatClipsWrite(draft.key, draft.clips);
+  chatClipsStoredWrite(draft.key, draft.clips);
 }
 
 // Вытесненный слот восстанавливает черновик из хранилища. Пока идёт
 // запись вложения или запуск, ответ ещё может изменить тот же черновик.
 // При недоступном хранилище или неудачной загрузке данные остаются в памяти.
-function chatDraftEvict(addr) {
-  const draft = chatDraftOwners.get(addr);
+function chatDraftEvict(key) {
+  const draft = chatDraftOwners.get(key);
   if (!draft) return;
   draft.parked = true;
-  if (draft.work || chatDraftRead(addr) !== draft.text ||
-      chatDraftHeight(addr) !== Math.max(0, Math.round(draft.height))) return;
-  const files = chatClipsStoredRead(addr) || [];
+  if (draft.work || chatDraftRead(key) !== draft.text ||
+      chatDraftHeight(key) !== Math.max(0, Math.round(draft.height))) return;
+  const files = chatClipsStoredRead(key) || [];
   if (files.length !== draft.clips.length || draft.clips.some((clip, i) =>
     !clip.path || clip.path !== files[i].path || clip.kind !== files[i].kind)) return;
-  chatDraftOwners.delete(addr);
-  chatClipsWrite(addr, []);
+  chatDraftOwners.delete(key);
+  chatClipsWrite(key, []);
 }
 
 function chatDraftWorkDone(draft) {
   draft.work -= 1;
-  if (draft.parked && chatDraftOwners.get(draft.addr) === draft) chatDraftEvict(draft.addr);
+  if (draft.parked && chatDraftOwners.get(draft.key) === draft) chatDraftEvict(draft.key);
 }
 
-function chatDraftDiscard(addr) {
-  const draft = chatDraftOwners.get(addr);
+function chatDraftDiscard(key) {
+  const draft = chatDraftOwners.get(key);
   if (draft) {
     draft.discarded = true;
     draft.text = "";
     draft.clips = [];
   }
-  chatDraftOwners.delete(addr);
-  chatDraftStore({ addr, text: "", height: 0, clips: [] });
+  chatDraftOwners.delete(key);
+  chatDraftStore({ key, text: "", height: 0, clips: [] });
 }
 
 function chatLastSet(addr) {
@@ -9929,8 +9945,11 @@ function chatSlotPut(pin, key, kids) {
     const dead = chatPool.get(old);
     chatPool.delete(old);
     if (dead && dead.remove) dead.remove();
-    const addr = dead?.st?.addr;
-    if (addr && !Array.from(chatPool.values()).some(slot => slot.st?.addr === addr)) chatDraftEvict(addr);
+    const st = dead?.st;
+    if (!st) continue;
+    const draftKey = chatDraftKey(st.project, st.addr);
+    if (!Array.from(chatPool.values()).some(slot =>
+      slot.st && chatDraftKey(slot.st.project, slot.st.addr) === draftKey)) chatDraftEvict(draftKey);
   }
   // Плашки ожидания в контейнере панели живут до готового разговора: с приходом
   // слота им там делать нечего.
@@ -10429,23 +10448,36 @@ function chatEffortSet(project, addr, lv) {
 
 function chatEffortStore(project, addr, { value, revision }) {
   const key = chatEffortKey(project, addr);
-  chatEffortArm.set(key, value);
-  chatEffortRevision.set(key, revision);
+  if (value) {
+    chatEffortArm.set(key, value);
+    chatEffortRevision.set(key, revision);
+    try {
+      sessionStorage.setItem(CHAT_EFFORT_KEY + key + ".revision", revision);
+      sessionStorage.setItem(CHAT_EFFORT_KEY + key, value);
+    } catch (err) { /* Выбор работает и при запрете хранилища. */ }
+    return;
+  }
+  chatEffortRevision.delete(key);
   try {
-    sessionStorage.setItem(CHAT_EFFORT_KEY + key + ".revision", revision);
-    if (value) sessionStorage.setItem(CHAT_EFFORT_KEY + key, value);
-    else sessionStorage.removeItem(CHAT_EFFORT_KEY + key);
-  } catch (err) { /* Выбор работает и при запрете хранилища. */ }
+    sessionStorage.removeItem(CHAT_EFFORT_KEY + key);
+    sessionStorage.removeItem(CHAT_EFFORT_KEY + key + ".revision");
+    chatEffortArm.delete(key);
+  } catch (err) {
+    // Запрещённое хранилище может всё ещё держать прежний выбор.
+    chatEffortArm.set(key, "");
+  }
 }
 
 function chatEffortSnapshot(project, addr) {
+  const value = chatEffortOf(project, addr);
+  if (!value) return { value: "", revision: "" };
   const key = chatEffortKey(project, addr);
   let revision = chatEffortRevision.get(key) || "";
   if (!revision) {
     try { revision = sessionStorage.getItem(CHAT_EFFORT_KEY + key + ".revision") || ""; }
     catch (err) { /* Без хранилища ревизия живёт в памяти страницы. */ }
   }
-  return { value: chatEffortOf(project, addr), revision };
+  return { value, revision };
 }
 
 // Ответ расходует только свой выбор: даже повторный выбор того же уровня
@@ -14213,23 +14245,25 @@ function echoWrite(project, addr, list) {
   }
 }
 
-function chatDraftMove(from, to) {
-  const open = chatDraftOwners.get(from);
-  const draft = open || chatDraftOwner({ addr: from });
-  chatDraftOwners.delete(from);
+function chatDraftMove(project, from, to) {
+  const fromKey = chatDraftKey(project, from);
+  const open = chatDraftOwners.get(fromKey);
+  const draft = open || chatDraftOwner({ project, addr: from });
+  chatDraftOwners.delete(fromKey);
   // Пришивание может найти тот же sid несколькими опросами. Пустой ключ
   // предыдущего переезда не должен сменить владельца ещё раз.
   if (!open && !draft.text && !draft.height && !draft.clips.length) return;
 
-  const dest = chatDraftOwner({ addr: to });
+  const dest = chatDraftOwner({ project, addr: to });
   draft.text = dest.text || draft.text;
   draft.height = dest.height || draft.height;
   if (dest.clips.length) draft.clips = dest.clips;
   draft.addr = to;
+  draft.key = dest.key;
   draft.blank = "";
-  chatDraftOwners.set(to, draft);
+  chatDraftOwners.set(draft.key, draft);
   chatDraftStore(draft);
-  chatDraftStore({ addr: from, text: "", height: 0, clips: [] });
+  chatDraftStore({ key: fromKey, text: "", height: 0, clips: [] });
   if (chatDraftView?.draft === draft) chatDraftView.moving();
 }
 
@@ -14237,7 +14271,7 @@ function chatDraftMove(from, to) {
 // первой реплики остаётся в ленте до её прихода из транскрипта.
 function chatMove(project, from, to) {
   if (!from || !to || from === to) return;
-  chatDraftMove(from, to);
+  chatDraftMove(project, from, to);
   for (const slot of chatPool.values()) {
     if (slot.st?.addr === from && slot.st.project === project) slot.moved = true;
   }
@@ -15021,6 +15055,7 @@ function chatPanel(project, st) {
     askPickInput(askPick, ta.value);
     askPickSave(st.addr, askPick);
     keepText();
+    recoverDraft.hidden = !chatDraftLegacy(draft);
   });
   const row = el("div", "crow");
   // Приложенное к реплике видно до отправки, а не только после: слева от края
@@ -15039,7 +15074,10 @@ function chatPanel(project, st) {
     if (draft.blank) flushDraft();
     drawClips();
   };
+  const recoverDraft = el("button", "cdbtn cdrecover", "Перенести старый черновик");
+  recoverDraft.title = "Черновик сохранён без проекта. Перенести его в этот чат";
   const drawClips = () => {
+    recoverDraft.hidden = !chatDraftLegacy(draft);
     clips.replaceChildren();
     if (pinnedSel) {
       const chip = el("div", "cclip");
@@ -15183,8 +15221,28 @@ function chatPanel(project, st) {
   drawClips();
   // Продолжить работу задачи можно прямо отсюда: сервер сам решит, будить ли
   // живую сессию каналом или поднимать резюм (ручка /continue).
-  row.append(pickBtn);
-  row.append(modelPick(project, st, () => draft.addr));
+  recoverDraft.addEventListener("click", () => {
+    const legacy = chatDraftLegacy(draft);
+    if (!legacy) {
+      recoverDraft.hidden = true;
+      return;
+    }
+    draft.clips = legacy.clips;
+    draft.height = legacy.height;
+    draft.heightRevision += 1;
+    grow.minimum(legacy.height);
+    ta.value = legacy.text;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    if (chatDraftRead(draft.key) === legacy.text &&
+        chatDraftHeight(draft.key) === legacy.height &&
+        JSON.stringify(chatClipsStoredRead(draft.key) || []) === JSON.stringify(legacy.clips)) {
+      chatDraftStore({ key: draft.addr, text: "", height: 0, clips: [] });
+    }
+    drawClips();
+  });
+  row.append(recoverDraft, pickBtn);
+  const startModels = way.kind === "unassigned" ? (st.models || []).filter(m => m.tier) : null;
+  row.append(modelPick(project, startModels ? { ...st, models: startModels } : st, () => draft.addr));
   // Неразобранные мысли записи разбираются прямо из её чата: вход в разговор
   // сам ходку не поднимает, а эта кнопка поднимает, не отходя от ленты
   // (DK-1564, утверждённая поправка). Под идущим разбором кнопки нет: работы
@@ -15256,7 +15314,7 @@ function chatPanel(project, st) {
       clip.upload = null;
       // Ссылка принадлежит тому же черновику, даже если за время загрузки
       // он сменил адрес или уже открыт другой слот.
-      const current = chatDraftOwners.get(owner.addr);
+      const current = chatDraftOwners.get(owner.key);
       if (current?.clips.includes(clip)) {
         chatDraftStore(current);
         if (current.blank) chatDraftPush(project, current.blank, current.text, current.clips.map(clipLean));
@@ -15355,7 +15413,8 @@ function chatPanel(project, st) {
   const submitRun = async (attempt, m, readFirst) => {
     const r = await chatRunWithReceipt(project, attempt.body, readFirst, !st.sid);
     if (st.sid && r.status === 404 && r.body.missing) return;
-    if (r.body.unknown || (r.ok && !r.body.session)) {
+    if (r.body.expired || r.body.unknown || (r.ok && !r.body.session)) {
+      if (r.body.expired) saveRunAttempt(null);
       const why = apiSaid(r) || "запуск не назвал разговор";
       if (m) echo.held(m, why, st.task, true);
       else sayResult(why, true);
@@ -15667,8 +15726,8 @@ function chatPanel(project, st) {
     if (way.kind === "unassigned") {
       send.disabled = true;
       const pick = st.entry && st.entry.model
-        ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(st.models);
-      const option = (st.models || []).find((m) => m.model === pick.model && m.harness === pick.harness);
+        ? { model: st.entry.model, harness: st.entry.pickHarness || "" } : chatModelPref(startModels);
+      const option = startModels.find((m) => m.model === pick.model && m.harness === pick.harness);
       const effortSnapshot = chatEffortSnapshot(project, st.task);
       // Отправленное отделяется до запроса. Поле уже держит следующий черновик.
       const sent = takeDraft();
@@ -15685,8 +15744,8 @@ function chatPanel(project, st) {
           const wire = attachPrefix(sentClips) + text;
           if (m) echo.wire(m, wire);
           const attempt = { height: sent.height, effort: effortSnapshot, body: {
-            id: st.task, intent: "chat", text: wire, harness: pick.harness,
-            tier: option && option.tier || "", effort: effortSnapshot.value, msg_id: claim,
+            id: st.task, intent: "chat", text: wire, harness: option?.harness || "",
+            tier: option?.tier || "", effort: effortSnapshot.value, msg_id: claim,
           } };
           saveRunAttempt(attempt);
           await submitRun(attempt, m, false);

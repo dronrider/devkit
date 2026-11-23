@@ -29,7 +29,7 @@ try {
   assert.equal(body.session, undefined);
   if (text) await panel.locator(".mlocal .m-held .mwhy").waitFor({ state: "visible" });
   assert.equal(await field.inputValue(), text);
-  assert.equal(await page.evaluate(key => localStorage.getItem(key) || "", "devkit.chat.draft." + id), text);
+  assert.equal(await page.evaluate(key => localStorage.getItem(key) || "", "devkit.chat.draft.demo/" + id), text);
 } finally {
   await browser.close();
 }

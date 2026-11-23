@@ -1,3 +1,5 @@
+//go:build dashboard_live_acceptance
+
 package main
 
 import (

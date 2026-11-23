@@ -2,7 +2,7 @@ package reviewaudit
 
 import (
 	"fmt"
-	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/taskform"
@@ -41,12 +41,13 @@ type verdictPacketEvidence struct {
 }
 
 func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (VerdictPacket, error) {
-	if strings.TrimSpace(testEvidence) == "" {
-		return VerdictPacket{}, fmt.Errorf("передайте результаты тестов или объяснение их неприменимости")
-	}
 	root, report, now, err := validatedSnapshot(root, path, id, request)
 	if err != nil {
 		return VerdictPacket{}, err
+	}
+	header, tests, _ := strings.Cut(testEvidence, "\n")
+	if strings.TrimSpace(header) != "head_sha: "+now.HeadSHA || strings.TrimSpace(tests) == "" {
+		return VerdictPacket{}, fmt.Errorf("первая строка результатов тестов должна быть head_sha: %s, дальше нужен вывод проверки", now.HeadSHA)
 	}
 	diffBase := now.BaseSHA
 	if since != "" {
@@ -72,19 +73,32 @@ func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (
 	}
 	var notes string
 	if card := taskPath(path); card != "" {
-		body, err := os.ReadFile(card)
+		rel, err := filepath.Rel(root, card)
 		if err != nil {
 			return VerdictPacket{}, err
 		}
-		if digest(taskContent(string(body))) != now.TaskHash {
-			return VerdictPacket{}, fmt.Errorf("постановка изменилась при подготовке пакета")
+		rel = filepath.ToSlash(rel)
+		_, body, err := nameRuntimeBlob(root, now.HeadSHA, rel)
+		if err != nil {
+			return VerdictPacket{}, err
 		}
-		notes = strings.TrimSpace(strings.Join(taskform.SectionLines(string(body), "## Ревью"), "\n"))
+		if digest(taskContent(body)) != now.TaskHash {
+			return VerdictPacket{}, fmt.Errorf("постановка пакета должна быть закоммичена")
+		}
+		notes = strings.TrimSpace(strings.Join(taskform.SectionLines(body, "## Ревью"), "\n"))
+		if since != "" {
+			_, before, err := nameRuntimeBlob(root, diffBase, rel)
+			if err != nil || digest(taskContent(before)) != now.TaskHash {
+				return VerdictPacket{}, fmt.Errorf("постановка изменилась после предыдущего ревью; подготовьте полный пакет без --since")
+			}
+		}
+	} else if since != "" {
+		return VerdictPacket{}, fmt.Errorf("--since требует карточку с записью прежнего вердикта")
 	}
 	packet := VerdictPacket{
 		ID: id, BaseSHA: now.BaseSHA, HeadSHA: now.HeadSHA, DiffBaseSHA: diffBase,
 		CodeHash: now.CodeHash, TaskHash: now.TaskHash, Task: now.taskText, PriorReview: notes,
-		Diff: diff, Architecture: report.Architecture, TestEvidence: testEvidence,
+		Diff: diff, Architecture: report.Architecture, TestEvidence: strings.TrimSpace(tests),
 	}
 	for _, rule := range report.Rules {
 		item := verdictPacketRule{ID: rule.ID, Text: rule.Text, Applicability: rule.Applicability, Reason: rule.Reason}

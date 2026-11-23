@@ -706,6 +706,13 @@ func validatedSnapshot(root, path, id, request string) (string, Report, Report, 
 			return "", Report{}, Report{}, fmt.Errorf("код %s ещё не закоммичен; закоммитьте проверенный код перед clean", name)
 		}
 	}
+	head, e := git(root, "rev-parse", "HEAD")
+	if e != nil {
+		return "", Report{}, Report{}, e
+	}
+	if head != now.HeadSHA {
+		return "", Report{}, Report{}, fmt.Errorf("HEAD изменился при проверке аудита")
+	}
 	return root, r, now, nil
 }
 
@@ -779,10 +786,11 @@ func validateInventory(r, now Report, id string) (gaps, invalid error) {
 }
 
 func validateSnapshot(root, path, auditPath string, r, now Report, id string) error {
-	if gaps, invalid := validateInventory(r, now, id); gaps != nil || invalid != nil {
+	gaps, invalid := validateInventory(r, now, id)
+	if invalid != nil {
 		return errors.Join(invalid, gaps)
 	}
-	var issues []error
+	issues := []error{gaps}
 	if r.Architecture.Result != "checked" {
 		issues = append(issues, fmt.Errorf("архитектурная оценка не завершена или выявила нарушение"))
 	} else {

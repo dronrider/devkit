@@ -22,7 +22,12 @@ func TestPrepareVerdictPacketRequiresCurrentCompleteAudit(t *testing.T) {
 	gitT(t, root, "add", "--", taskPath(path))
 	gitT(t, root, "commit", "-qm", "review note")
 
-	packet, err := PrepareVerdictPacket(root, path, "XR-1", "", report.HeadSHA, "go test: PASS")
+	head := gitT(t, root, "rev-parse", "HEAD")
+	testRun := "head_sha: " + head + "\ngo test: PASS"
+	if _, err := PrepareVerdictPacket(root, path, "XR-1", "", "", "head_sha: "+report.HeadSHA+"\ngo test: PASS"); err == nil || !strings.Contains(err.Error(), head) {
+		t.Fatalf("приняты результаты с прежней ревизии: %v", err)
+	}
+	packet, err := PrepareVerdictPacket(root, path, "XR-1", "", report.HeadSHA, testRun)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +43,7 @@ func TestPrepareVerdictPacketRequiresCurrentCompleteAudit(t *testing.T) {
 	report.Rules[1].Result = "pending"
 	report.Architecture.Result = "pending"
 	save(t, path, report)
-	_, err = PrepareVerdictPacket(root, path, "XR-1", "", "", "PASS")
+	_, err = PrepareVerdictPacket(root, path, "XR-1", "", "", testRun)
 	if err == nil || !strings.Contains(err.Error(), "архитектурная оценка не завершена") ||
 		!strings.Contains(err.Error(), "правило "+report.Rules[0].ID+" не завершено") ||
 		!strings.Contains(err.Error(), "правило "+report.Rules[1].ID+" не завершено") {

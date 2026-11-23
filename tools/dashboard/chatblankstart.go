@@ -180,7 +180,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 	writeJSON(w, http.StatusOK, map[string]string{"way": way, "tmux": sess, "model": model, "harness": harness, "tree": chatTree(found.Path, id)})
 }
 
-func writeChatStartReceipt(path string, receipt chatStartReceipt) error {
+func writeChatStartReceipt(path string, receipt any) error {
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		return err

@@ -85,6 +85,7 @@ func TestChatComposerHandoffBrowser(t *testing.T) {
 		"crash-task-feed-receipt-503", "crash-task-feed-receipt-exhausted",
 		"runs-fragment", "raise-image", "runs-height",
 		"draft-eviction", "draft-removal",
+		"runs-receipt-after-loss", "runs-receipt-after-reload", "runs-receipt-after-proxy", "runs-receipt-after-assigned",
 	} {
 		t.Run(mode, func(t *testing.T) {
 			out, err := exec.Command(node, "testdata/chatcomposer_handoff_browser.mjs",

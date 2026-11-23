@@ -664,6 +664,26 @@ func headWhere(res taskhead.Result, sess string) string {
 	return "в tmux-сессии " + sess
 }
 
+type runStartRequest struct {
+	ID string `json:"id"`
+	// Пустой Harness оставляет выбор вердикту запуска. Если вердикт
+	// не назвал подписку, используется подписка по умолчанию.
+	Harness string `json:"harness"`
+	// Пустой Tier оставляет выбор вердикту задачи. Если вердикт не
+	// назначил ярус, берётся pro. У цели pro действует по умолчанию.
+	Tier string `json:"tier"`
+	// Effort это ручной уровень глубины размышления из ползунка меню
+	// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
+	// agentctl pick с учётом строки «Эффорт:» файла задачи.
+	Effort string `json:"effort"`
+	Text   string `json:"text"`
+	// "chat" просит начать разговор. Пустое намерение сохраняет
+	// действие кнопки карточки, в том числе приёмку в Check.
+	Intent      string `json:"intent"`
+	MsgID       string `json:"msg_id"`
+	ReceiptOnly bool   `json:"receipt_only"`
+}
+
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		s.logf("запуск отклонён: чужой Origin 403")
@@ -674,23 +694,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	var body struct {
-		ID string `json:"id"`
-		// Пустой Harness оставляет выбор вердикту запуска. Если вердикт
-		// не назвал подписку, используется подписка по умолчанию.
-		Harness string `json:"harness"`
-		// Пустой Tier оставляет выбор вердикту задачи. Если вердикт не
-		// назначил ярус, берётся pro. У цели pro действует по умолчанию.
-		Tier string `json:"tier"`
-		// Effort это ручной уровень глубины размышления из ползунка меню
-		// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
-		// agentctl pick с учётом строки «Эффорт:» файла задачи.
-		Effort string `json:"effort"`
-		Text   string `json:"text"`
-		// "chat" просит начать разговор. Пустое намерение сохраняет
-		// действие кнопки карточки, в том числе приёмку в Check.
-		Intent string `json:"intent"`
-	}
+	var body runStartRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"id\": \"DK-NNN\"}"})
@@ -701,6 +705,18 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неизвестное действие запуска"})
 		return
 	}
+	if (body.MsgID != "" || body.ReceiptOnly) && (body.Intent != "chat" || !chatKeyRe.MatchString(body.MsgID)) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для квитанции запуска нужны intent=chat и допустимый msg_id"})
+		return
+	}
+	if body.MsgID != "" {
+		s.runStartWithReceipt(w, found, body)
+		return
+	}
+	s.runStart(w, found, body)
+}
+
+func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRequest) {
 	if msg := effortBad(body.Effort); msg != "" {
 		s.logf("запуск %s отклонён: %s", body.ID, msg)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
@@ -748,7 +764,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if !s.setRecoveryStopped(w, found.Path, id, false) {
+	if !markRunStart(w) || !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	kind := "task"
@@ -770,6 +786,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// сохранить контекст цикла (DK-1009). При сбое подачи пытаемся
 		// снять остаток окна и возвращаемся к обычному запуску.
 		if kind == "goal" && name == sess {
+			dispatchRunStart(w)
 			if err := chatSend(name, goalContinuePrompt(id, "")); err != nil {
 				s.logf("ступень живого окна цели %s в %s не сработала, остаток снят: %v",
 					id, found.Name, err)
@@ -843,6 +860,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "живой исполнитель задачи")})
 			return
 		}
+		dispatchRunStart(w)
 		s.startAppTask(w, found, id, own, tier, body.Effort, order)
 		return
 	}
@@ -876,6 +894,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		}
 		rung := clientMissing(client)
 		if rung == "" {
+			dispatchRunStart(w)
 			rung = s.startGoalChat(found, id, sess, model, own, body.Effort)
 		}
 		if rung == "" {
@@ -923,6 +942,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		if body.Effort != "" {
 			args = append(args, "--effort", body.Effort)
 		}
+		dispatchRunStart(w)
 		out, err := runProc("python3", args...)
 		if err != nil {
 			text := procErr(err)
@@ -983,6 +1003,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own != nil {
 		model = own.tierModel(tier)
 	}
+	dispatchRunStart(w)
 	res, err := s.startTaskSession(found, id, sess, own, model,
 		order, runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {

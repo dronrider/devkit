@@ -752,6 +752,21 @@ async function startRun(project, id, harness, afterOk, tier, effort) {
   if (r.ok) await refresh();
 }
 
+// При потере ответа сначала читаем квитанцию. Отсутствие записи позволяет
+// повторить тот же запрос с тем же ключом, даже если первый ещё в дороге.
+async function chatRunWithReceipt(project, body, readFirst, retryMissing = true) {
+  const path = "/api/projects/" + encodeURIComponent(project) + "/runs";
+  const request = value => api(path, { method: "POST", body: value }).catch(() => null);
+  // Внешний вход может вернуть 502 или 504 уже после запуска дашбордом.
+  const lost = result => !result || (result.status >= 500 && !result.body?.unknown && !result.body?.run_receipt);
+  let result = readFirst ? null : await request(body);
+  if (!lost(result)) return result;
+  result = await request({ ...body, receipt_only: true });
+  if (retryMissing && result?.status === 404 && result.body.missing) result = await request(body);
+  if (!lost(result)) return result;
+  return { ok: false, body: { unknown: true, error: "результат запуска не подтвердился" } };
+}
+
 // Стоп строки. Сессию называют, когда по строке работает не одна: сервер тогда
 // отвечает списком, а выбор остаётся за человеком (DK-716). Ответ возвращается
 // целиком: строку таба сессий снимает с экрана тот, кто звал, и делать это по
@@ -2001,11 +2016,11 @@ function runPickBody(into, opts) {
   // Выбор строки пересобирает шкалу под её набор ступеней и возвращает бегунок
   // на её ручной выбор либо вердикт. Вызывающий узнаёт новый уровень тут же:
   // заказ запуска читает его по нажатию кнопки.
-  const pickRow = (m) => {
+  const pickRow = (m, notify = true) => {
     picked = m;
     curKey = keyOf(m);
     slider.setLevels((m && m.levels) || []);
-    if (opts.onEffort) opts.onEffort(hand.get(curKey) || "");
+    if (notify && opts.onEffort) opts.onEffort(hand.get(curKey) || "");
   };
   // Переключение снимает ручную пару в обе стороны: включённая машина её не
   // принимает, а выключенная начинает выбор с чистого листа и держит шкалу
@@ -2059,7 +2074,8 @@ function runPickBody(into, opts) {
   }
   // Шкала открывается набором пары машины либо строки-умолчания: ступени
   // семьи обязаны стоять на экране до первого касания.
-  pickRow(autoPick);
+  // Восстановление шкалы из сохранённого выбора сохраняет его ревизию.
+  pickRow(autoPick, !opts.getEffort);
   highlight();
   into.append(el("span", "hph gap", "Глубина размышления"));
   into.append(slider.root);
@@ -2127,7 +2143,7 @@ function runPickBody(into, opts) {
       // точка группы обязана переехать на неё.
       if (!auto) {
         if (!autoMenu && !pickedByHand) {
-          pickRow(autoPick);
+          pickRow(autoPick, !opts.getEffort);
           highlight();
         } else foldPaint();
         return row;
@@ -9607,7 +9623,7 @@ function chatDraftEvict(addr) {
 
 function chatDraftWorkDone(draft) {
   draft.work -= 1;
-  if (draft.parked && !draft.discarded) chatDraftEvict(draft.addr);
+  if (draft.parked && chatDraftOwners.get(draft.addr) === draft) chatDraftEvict(draft.addr);
 }
 
 function chatDraftDiscard(addr) {
@@ -14566,6 +14582,9 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     redraw() {
       draw();
     },
+    message(id) {
+      return mine.find(m => m.id === id);
+    },
     restoreReceipts(read, confirmed) {
       // Только восстановленная отправка с прежним ключом. Ручка читает
       // очередь и не отправляет реплику повторно.
@@ -15202,8 +15221,17 @@ function chatPanel(project, st) {
     row.append(go);
   }
   const send = el("button", "btn btn-acc csend", way.kind === "unassigned" ? "Начать работу" : "Отправить");
+  const runKey = st.task && (way.kind === "unassigned" || st.sid)
+    ? "devkit.chat.run." + chatEffortKey(project, st.task) : "";
+  let runAttempt = null;
+  if (runKey) {
+    try { runAttempt = JSON.parse(sessionStorage.getItem(runKey) || "null"); }
+    catch (err) { /* Запуск идёт даже без хранилища. */ }
+    if (!runAttempt?.body?.msg_id || runAttempt.body.id !== st.task) runAttempt = null;
+  }
   askPick.send = send;
   askPick.start = way.kind === "unassigned";
+  askPick.runPending = Boolean(runAttempt && !st.sid);
   askPick.draft = ta.value;
   askPickRender(askPick);
   send.disabled = Boolean(way.off);
@@ -15315,6 +15343,45 @@ function chatPanel(project, st) {
   };
 
   const readySend = () => { send.disabled = Boolean(way.off || draft.addr !== st.addr); };
+  const saveRunAttempt = (attempt) => {
+    runAttempt = attempt;
+    askPick.runPending = Boolean(attempt && !st.sid);
+    try {
+      if (attempt) sessionStorage.setItem(runKey, JSON.stringify(attempt));
+      else sessionStorage.removeItem(runKey);
+    } catch (err) { /* Попытка остаётся у открытой панели. */ }
+    askPickRender(askPick);
+  };
+  const submitRun = async (attempt, m, readFirst) => {
+    const r = await chatRunWithReceipt(project, attempt.body, readFirst, !st.sid);
+    if (st.sid && r.status === 404 && r.body.missing) return;
+    if (r.body.unknown || (r.ok && !r.body.session)) {
+      const why = apiSaid(r) || "запуск не назвал разговор";
+      if (m) echo.held(m, why, st.task, true);
+      else sayResult(why, true);
+      return;
+    }
+    saveRunAttempt(null);
+    if (!r.ok) throw new Error(apiSaid(r));
+    if (m && (!st.sid || st.sid === r.body.session || st.entry?.tmux === r.body.session)) {
+      m.wire = r.body.wire || attempt.body.text;
+      echo.sent(m);
+    }
+    chatEffortSpend(project, st.task, attempt.effort);
+    askPick.start = false;
+    askPickRender(askPick);
+    if (st.sid) {
+      echo.reconcile(shownFeed);
+      return;
+    }
+    if (r.body.way === "appserver") {
+      chatMove(project, st.sid || st.addr, r.body.session);
+      switchChat(r.body.session);
+    } else {
+      if (m) echo.mark(m, r.body.session);
+      chatWait(project, r.body.session, st.addr).catch(console.error);
+    }
+  };
   const takeDraft = () => {
     const sent = { clips: draft.clips, height: draft.height,
       revision: draft.revision, heightRevision: draft.heightRevision };
@@ -15567,6 +15634,28 @@ function chatPanel(project, st) {
 
   const fire = () => {
     if (send.disabled || draft.addr !== st.addr) return;
+    if (runAttempt && way.kind === "unassigned") {
+      send.disabled = true;
+      const m = echo?.message(runAttempt.body.msg_id);
+      const { height } = runAttempt;
+      const { revision, heightRevision } = draft;
+      submitRun(runAttempt, m, true).catch(err => {
+        if (m && !draft.text && !draft.clips.length && draft.revision === revision) {
+          ta.value = draft.text = m.text;
+          draft.clips = m.clips;
+        }
+        if (!draft.height && draft.heightRevision === heightRevision) {
+          draft.height = height || 0;
+          grow.minimum(draft.height);
+        }
+        chatDraftStore(draft);
+        drawClips();
+        grow.resize();
+        if (m) echo.held(m, String(err.message || err));
+        else sayResult(String(err.message || err), true);
+      }).finally(readySend);
+      return;
+    }
     const scenario = null;
     const selection = askPick.selection || null;
     let proposal = null;
@@ -15586,33 +15675,21 @@ function chatPanel(project, st) {
       const sentClips = sent.clips;
       const owner = draft;
       owner.work = (owner.work || 0) + 1;
+      const claim = msgKey();
       const launch = async () => {
-        const m = text.trim() || sentClips.length ? echo.add(text, null, text, null, sentClips) : null;
+        const m = text.trim() || sentClips.length ? echo.add(text, null, text, null, sentClips, claim) : null;
         try {
           await Promise.all(sentClips.map(putClip));
           const bad = sentClips.find((c) => !c.path);
           if (bad) throw new Error(bad.bad || "вложение не ушло");
           const wire = attachPrefix(sentClips) + text;
           if (m) echo.wire(m, wire);
-          const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs", {
-            method: "POST", body: { id: st.task, intent: "chat", text: wire, harness: pick.harness,
-              tier: option && option.tier || "", effort: effortSnapshot.value }
-          });
-          if (!r.ok) throw new Error(apiSaid(r));
-          if (!r.body.session) throw new Error("Запуск не открыл разговор");
-          if (m) {
-            m.wire = r.body.wire || wire;
-            echo.sent(m);
-          }
-          chatEffortSpend(project, st.task, effortSnapshot);
-          askPick.start = false;
-          askPickRender(askPick);
-          if (r.body.way === "appserver" && r.body.session) {
-            chatMove(project, st.sid || st.addr, r.body.session);
-            switchChat(r.body.session);
-          } else if (r.body.session) {
-            chatWait(project, r.body.session, st.addr).catch(console.error);
-          }
+          const attempt = { height: sent.height, effort: effortSnapshot, body: {
+            id: st.task, intent: "chat", text: wire, harness: pick.harness,
+            tier: option && option.tier || "", effort: effortSnapshot.value, msg_id: claim,
+          } };
+          saveRunAttempt(attempt);
+          await submitRun(attempt, m, false);
         } catch (err) {
           if (draft.revision === sent.revision) {
             ta.value = draft.text = text;
@@ -15774,6 +15851,10 @@ function chatPanel(project, st) {
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
       (rec) => post(rec.text, null, rec.clips, null, rec.scenario, rec.proposal, rec.selection, rec), legacy);
     chatLive.push(echo.stop);
+    if (st.sid && runAttempt) {
+      submitRun(runAttempt, echo.message(runAttempt.body.msg_id), true)
+        .catch(err => sayResult(String(err.message || err), true));
+    }
     if (st.sid && st.task && st.entry?.protocol) {
       const restored = echo;
       const sayURL = chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say";
@@ -16489,7 +16570,8 @@ function askPickRender(pick) {
     caption = el("span", "choice-caption");
     pick.send.replaceChildren(caption);
   }
-  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : pick.start ? "Начать работу" : "Отправить";
+  if (pick.runPending) caption.textContent = "Проверить запуск";
+  else caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : pick.start ? "Начать работу" : "Отправить";
   const border = pick.send.querySelector(".choice-border");
   if (choosing && !border) {
     const ring = el("span", "choice-border");

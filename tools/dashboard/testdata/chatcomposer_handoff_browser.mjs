@@ -63,8 +63,9 @@ async function composer(context) {
       return route.fulfill({ json: { chats: state.chats, models } });
     }
     if (method === "GET" && path.endsWith("/tasks/XR-4/chat")) {
-      return route.fulfill({ json: { id: "XR-4", kind: "без разговоров" } });
+      return route.fulfill({ json: state.main || { id: "XR-4", kind: "без разговоров" } });
     }
+    if (method === "POST" && path === runURL && state.run) return state.run(route);
     if (method === "POST" && path === state.launch?.url) return state.launch.gate.hold(route);
     if (method === "POST" && suffix === "draft") return route.fulfill({ json: {} });
     if (method === "POST" && suffix === "drop") {
@@ -587,6 +588,70 @@ async function draftLifecycle(s) {
   assert.deepEqual((await s.read(id)).files, [path]);
 }
 
+async function runReceipt(s) {
+  const task = "XR-4";
+  const sid = "session-from-receipt";
+  const assigned = mode.endsWith("-assigned");
+  const reload = assigned || mode.endsWith("-reload");
+  const requests = [];
+  s.state.run = async route => {
+    const request = route.request().postDataJSON();
+    requests.push(request);
+    if (!request.receipt_only && assigned) {
+      s.state.main = { id: task, chat: sid };
+      s.state.chats = [live(sid, task)];
+    }
+    if (!request.receipt_only && mode.endsWith("-proxy")) {
+      await route.fulfill({ status: 504, contentType: "text/html", body: "<p>Gateway timeout</p>" });
+      return;
+    }
+    if (!request.receipt_only || (reload && requests.length === 2)) {
+      await route.abort("failed");
+      return;
+    }
+    s.state.chats = [live(sid, task)];
+    await route.fulfill({ json: { way: "appserver", session: sid } });
+  };
+  await s.open(task);
+  let old = await s.ta.elementHandle();
+  await s.effort("high");
+  await s.ta.fill(firstText);
+  await s.send.click();
+  let captured;
+  if (reload) {
+    await s.page.locator(active + " .mlocal .m-held").waitFor();
+    captured = await s.page.evaluate(task => ({
+      attempt: JSON.parse(sessionStorage.getItem("devkit.chat.run.demo/" + task)),
+      current: chatEffortSnapshot("demo", task),
+    }), task);
+    assert.equal(captured.attempt.effort.value, "high");
+    await s.page.reload({ waitUntil: "domcontentloaded" });
+    await s.ta.waitFor();
+    old = await s.ta.elementHandle();
+    if (!assigned) {
+      assert.equal(await s.send.textContent(), "Проверить запуск");
+      await s.send.click();
+    }
+  }
+  if (assigned) {
+    await s.page.waitForFunction(task => !sessionStorage.getItem("devkit.chat.run.demo/" + task), task);
+    assert.equal(await s.send.textContent(), "Отправить");
+  } else {
+    await s.switched(old, sid);
+    assert.equal(await s.bubbles.count(), 1);
+  }
+  assert.equal(requests.length, reload ? 3 : 2);
+  assert.equal(requests[0].id, task);
+  assert.equal(requests[0].text, firstText);
+  assert.ok(requests[0].msg_id);
+  for (const lookup of requests.slice(1)) {
+    assert.deepEqual(lookup, { ...requests[0], receipt_only: true });
+  }
+  assert.equal((await s.read(task)).effort, "", JSON.stringify({
+    captured, current: await s.page.evaluate(task => chatEffortSnapshot("demo", task), task),
+  }));
+}
+
 const scenarios = {
   "runs-handoff": handoff, "raise-handoff": handoff, "raise-upload": lateUpload, "raise-upload-image": lateUpload,
   "retry-after-refusal": retry, "retry-after-reload": retry, "retry-after-lost-answer": retry,
@@ -596,6 +661,8 @@ const scenarios = {
   "crash-task-feed-receipt-503": crashBeforeQueue, "crash-task-feed-receipt-exhausted": crashBeforeQueue,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
   "draft-eviction": draftLifecycle, "draft-removal": draftLifecycle,
+  "runs-receipt-after-loss": runReceipt, "runs-receipt-after-reload": runReceipt,
+  "runs-receipt-after-proxy": runReceipt, "runs-receipt-after-assigned": runReceipt,
 };
 const browser = await chromium.launch({ executablePath, headless: true });
 try {

@@ -760,10 +760,14 @@ async function chatRunWithReceipt(project, body, readFirst, retryMissing = true)
   // Внешний вход может вернуть 502 или 504 уже после запуска дашбордом.
   const lost = result => !result || (result.status >= 500 && !result.body?.unknown && !result.body?.run_receipt);
   let result = readFirst ? null : await request(body);
-  if (!lost(result)) return result;
+  if (!lost(result)) {
+    return result;
+  }
   result = await request({ ...body, receipt_only: true });
   if (retryMissing && result?.status === 404 && result.body.missing) result = await request(body);
-  if (!lost(result)) return result;
+  if (!lost(result)) {
+    return result;
+  }
   return { ok: false, body: { unknown: true, error: "результат запуска не подтвердился" } };
 }
 

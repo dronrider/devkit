@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -553,24 +555,9 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		list = append(list, w)
 		busy[goal] = true
 	}
-	for _, entry := range s.appListRows("") {
-		st := s.chatStoreRead(entry.ID)
-		if a := s.appTaskFind(entry.ID, "", ""); a != nil && a.root == projectPath && taskhead.Working(taskhead.LockPath(a.home, st.Task)) {
-			list = append(list, Work{ID: st.Task, Kind: "task", Via: workViaSession, Session: entry.ID, Title: st.Task + " работа", Model: st.Model, Harness: st.Harness, Live: workBusy, Started: st.Born})
-			busy[st.Task] = true
-			continue
-		}
-		if st.GroomSource == "" || !sameGroomTree(st.GroomTree, projectPath) {
-			continue
-		}
-		c := s.appLive(entry.ID)
-		if c == nil || !c.busyNow() {
-			continue
-		}
-		list = append(list, Work{ID: st.GroomSource, Kind: "task", Via: workViaSession,
-			Session: entry.ID, Title: st.GroomSource + " груминг", Model: st.Model,
-			Harness: st.Harness, Live: workBusy, Started: st.Born})
-		busy[st.GroomSource] = true
+	for _, w := range s.appWorks(projectPath) {
+		list = append(list, w)
+		busy[w.ID] = true
 	}
 	list = append(list, s.sessionWorks(projectPath, prefix, rows, busy, alive)...)
 	// Заказ дожима стопа спрашивается разом на все работы: он лежит при имени
@@ -580,6 +567,56 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		if list[i].Own && list[i].Tmux != "" && s.stopWaitOn(list[i].Tmux) {
 			list[i].Stopping = true
 		}
+	}
+	return list
+}
+
+// appWorks собирает работы из реестров запущенных конвейеров и чатов.
+// Файл ленты нужен только как признак того, что разговор появился.
+func (s *server) appWorks(projectPath string) []Work {
+	type candidate struct {
+		task *appTask
+		chat *appChat
+	}
+	s.appMu.Lock()
+	candidates := make(map[string]candidate)
+	for sid, a := range s.appTasks {
+		if a.root == projectPath {
+			candidates[sid] = candidate{task: a}
+		}
+	}
+	for sid, c := range s.appChats {
+		entry := candidates[sid]
+		entry.chat = c
+		candidates[sid] = entry
+	}
+	s.appMu.Unlock()
+
+	var list []Work
+	for _, sid := range slices.Sorted(maps.Keys(candidates)) {
+		entry := candidates[sid]
+		// За завершением процесса следит appSpawn. Вызов appLive здесь мог
+		// бы дописать сообщение об обрыве хода прямо из запроса доски.
+		grooming := entry.chat != nil && !entry.chat.proc.gone() && entry.chat.busyNow()
+		if entry.task == nil && !grooming {
+			continue
+		}
+		st := s.chatStoreRead(sid)
+		if st.Protocol == "" || st.Hidden {
+			continue
+		}
+		id, action := st.Task, "работа"
+		if entry.task == nil || !taskhead.Working(taskhead.LockPath(entry.task.home, id)) {
+			if !grooming || st.GroomSource == "" || !sameGroomTree(st.GroomTree, projectPath) {
+				continue
+			}
+			id, action = st.GroomSource, "груминг"
+		}
+		if info, err := os.Lstat(s.appFeedFile(sid)); err != nil || info.IsDir() {
+			continue
+		}
+		list = append(list, Work{ID: id, Kind: "task", Via: workViaSession, Session: sid,
+			Title: id + " " + action, Model: st.Model, Harness: st.Harness, Live: workBusy, Started: st.Born})
 	}
 	return list
 }

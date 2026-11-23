@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,10 +13,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // funcBody вырезает тело функции статики по её началу: тесты разметки
@@ -3304,5 +3309,138 @@ func TestBoardTableDotCentred(t *testing.T) {
 	if strings.Contains(css, "calc(50% - 4.5px)") {
 		t.Error("кружок снова центрируется вписанной половиной своего размера: " +
 			"правило calc(50% - 4.5px) вернулось в стили")
+	}
+}
+
+func TestBoardAppWorksWithoutFeedReads(t *testing.T) {
+	e := newTestEnv(t)
+	other := filepath.Join(filepath.Dir(e.proj), "other")
+	folders := appFeedDir(e.home)
+	if err := os.MkdirAll(folders, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	watched := map[string]bool{}
+	for _, f := range []struct {
+		sid, id, taskRoot, groomTree string
+		chat, feed                   string
+		locked, hidden, noProtocol   bool
+	}{
+		{sid: "as02-task", id: "XR-002", taskRoot: e.proj, groomTree: e.proj, chat: "busy", locked: true, feed: "watch"},
+		{sid: "as01-groom", id: "XR-011", groomTree: e.proj, chat: "busy", feed: "watch"},
+		{sid: "as03-history", id: "XR-012", groomTree: e.proj, feed: "watch"},
+		{sid: "as04-foreign-task", id: "XR-013", taskRoot: other, locked: true},
+		{sid: "as05-foreign-groom", id: "XR-014", groomTree: other, chat: "busy"},
+		{sid: "as06-idle", id: "XR-015", groomTree: e.proj, chat: "idle"},
+		{sid: "as07-hidden", id: "XR-016", groomTree: e.proj, chat: "busy", hidden: true},
+		{sid: "as08-missing", id: "XR-017", groomTree: e.proj, chat: "busy", feed: "missing"},
+		{sid: "as09-directory", id: "XR-018", groomTree: e.proj, chat: "busy", feed: "directory"},
+		{sid: "as10-unlocked", id: "XR-019", taskRoot: e.proj},
+		{sid: "as11-other-protocol", id: "XR-020", groomTree: e.proj, chat: "busy", noProtocol: true},
+		{sid: "as12-dead", id: "XR-021", groomTree: e.proj, chat: "dead"},
+	} {
+		st := chatStore{
+			Project: "demo", Protocol: "codex", Task: f.id, Hidden: f.hidden,
+			Model: "рабочая модель", CxModel: "модель разговора", Harness: "codex", Born: 123,
+		}
+		if f.noProtocol {
+			st.Protocol = ""
+		}
+		if f.groomTree != "" {
+			st.GroomTree, st.GroomSource = f.groomTree, f.id
+		}
+		if err := e.s.chatStoreWrite(f.sid, st); err != nil {
+			t.Fatal(err)
+		}
+		if f.taskRoot != "" {
+			e.s.appTasks[f.sid] = &appTask{sid: f.sid, task: f.id, root: f.taskRoot, home: e.home}
+		}
+		if f.locked {
+			if err := taskhead.Take(taskhead.LockPath(e.home, f.id), os.Getpid()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if f.chat != "" {
+			proc := &appServer{dead: make(chan struct{})}
+			if f.chat == "dead" {
+				close(proc.dead)
+			}
+			e.s.appChats[f.sid] = &appChat{proc: proc, busy: f.chat != "idle"}
+		}
+		path := e.s.appFeedFile(f.sid)
+		switch f.feed {
+		case "watch":
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			watched[path] = true
+		case "missing":
+		case "directory":
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/demo/board", nil)
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: cookieValue(e.cfg.Token, e.s.now().Add(time.Hour))})
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.s.handler().ServeHTTP(rec, req)
+	}()
+	checkBoardFeedOpens(t, watched, done)
+
+	var payload struct{ Works []Work }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &payload) != nil {
+		t.Fatalf("доска: %d %s", rec.Code, rec.Body)
+	}
+	var got []Work
+	for _, w := range payload.Works {
+		if strings.HasPrefix(w.Session, "as") {
+			got = append(got, w)
+		}
+	}
+	want := []Work{
+		{ID: "XR-011", Kind: "task", Via: workViaSession, Session: "as01-groom", Title: "XR-011 груминг", Model: "рабочая модель", Harness: "codex", Live: workBusy, Started: 123},
+		{ID: "XR-002", Kind: "task", Via: workViaSession, Session: "as02-task", Title: "XR-002 работа", Model: "рабочая модель", Harness: "codex", Live: workBusy, Started: 123},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("работы app-server: %+v, ожидались %+v", got, want)
+	}
+}
+
+func checkBoardFeedOpens(t *testing.T, watched map[string]bool, done <-chan struct{}) {
+	t.Helper()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	timeout := time.NewTimer(15 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-timeout.C:
+			t.Fatal("запрос доски не завершился")
+		case <-poll.C:
+			for path := range watched {
+				// Пишущий конец открывается, только если запрос открыл ленту на
+				// чтение. Закрытие даёт читателю EOF и позволяет закончить запрос.
+				fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+				if errors.Is(err, syscall.ENXIO) {
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				syscall.Close(fd)
+				delete(watched, path)
+				t.Errorf("запрос доски открыл ленту %s", filepath.Base(path))
+			}
+		}
 	}
 }

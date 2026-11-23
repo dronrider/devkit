@@ -14507,12 +14507,13 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
           let r;
           try { r = await read(m.id); } catch (err) { r = null; }
           if (stopped || !mine.includes(m) || m.appMessageID) return;
-          if (!r || r.status >= 500) {
-            if (retry) flips.push(setTimeout(reread, ECHO_FIRST));
+          const unavailable = !r || r.status >= 500;
+          if (unavailable && retry) {
+            flips.push(setTimeout(() => probe(false), ECHO_FIRST));
             return;
           }
-          if (r.status === 404) {
-            // Запись в ленте могла появиться ещё до ответа о пропуске.
+          if (unavailable || r.status === 404) {
+            // Новая запись могла прийти, пока ручка готовила ответ.
             if (historyVersion !== version) reread();
             else missed.add(reread);
             return;
@@ -14523,8 +14524,8 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
           else out.sent(m);
           confirmed(m, r.body);
         };
-        const reread = () => probe(false);
-        probe(true);
+        const reread = () => probe(true);
+        reread();
       }
     },
     // Уход с панели гасит дожим: вернувшийся человек поднимет его заново, а

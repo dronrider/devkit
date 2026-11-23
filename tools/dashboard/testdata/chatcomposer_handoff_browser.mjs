@@ -355,6 +355,9 @@ async function crashBeforeReceipt(s) {
 
 async function crashBeforeQueue(s) {
   const feedBefore404 = mode === "crash-task-feed-during-receipt";
+  const exhausted = mode === "crash-task-feed-receipt-exhausted";
+  const transientFailures = exhausted ? 2 : Number(mode === "crash-task-feed-receipt-503");
+  let failuresLeft = transientFailures;
   const sid = "session-queued";
   const key = "devkit.chat.pend.demo/" + sid;
   const row = live(sid, "XR-4");
@@ -392,6 +395,10 @@ async function crashBeforeQueue(s) {
     probes.push({ request, accepted });
     if (feedBefore404 && probes.length === 1) return firstLookup.hold(route);
     if (!accepted) return route.fulfill(missing);
+    if (failuresLeft > 0) {
+      failuresLeft--;
+      return route.fulfill({ status: 503, json: { error: "временный отказ чтения" } });
+    }
     return route.fulfill({ json: { way: "dup", was: "appserver", app_message_id: "new-message" } });
   };
   await reopened.page.clock.install();
@@ -419,6 +426,8 @@ async function crashBeforeQueue(s) {
     await feed.nth(1).waitFor();
     assert.equal(probes.length, 2, "перерисовка с прежним ID не вызывает повторного чтения");
   }
+  const unavailable = () => reopened.page.waitForResponse(r => r.url().endsWith("/say") && r.status() === 503);
+  const firstFailure = transientFailures ? unavailable() : null;
   accepted = true;
   original.reply({ json: { way: "appserver", app_message_id: "new-message" } });
   reopened.state.items.push(item(3, "new-message"));
@@ -429,16 +438,35 @@ async function crashBeforeQueue(s) {
     firstLookup.reply(missing);
     await miss;
   }
+  if (firstFailure) {
+    await (await firstFailure).finished();
+    const secondFailure = exhausted ? unavailable() : null;
+    await reopened.page.clock.runFor(2500);
+    if (secondFailure) {
+      await (await secondFailure).finished();
+      await reopened.page.clock.runFor(5000);
+      assert.equal(probes.filter(probe => probe.accepted).length, 2, "таймер исчерпал бюджет");
+      assert.deepEqual(await snapshot(reopened.page), waiting, "квитанция всё ещё неизвестна");
+      reopened.state.items.push({ role: "assistant", seq: 4, key: "app:4", text: "ещё один ответ" });
+      await pull();
+      await feed.nth(3).waitFor();
+      assert.equal(probes.filter(probe => probe.accepted).length, 2, "прежние ID не дают нового бюджета");
+      reopened.state.items.push(item(5, "another-message"));
+      await pull();
+      await feed.nth(4).waitFor();
+    }
+  }
   await reopened.page.locator(active + " .mlocal .m-local").waitFor({ state: "detached" });
   await reopened.page.evaluate(() => window.dispatchEvent(new Event("online")));
   await reopened.page.clock.fastForward(61000);
   const storage = await snapshot(reopened.page);
   const bubbles = await reopened.bubbles.count();
-  console.log(JSON.stringify({ feedBefore404, sends, probes, outstanding, storage, bubbles, feedID: "new-message" }));
+  console.log(JSON.stringify({ feedBefore404, transientFailures, sends, probes, outstanding, storage, bubbles, feedID: "new-message" }));
   const request = { msg_id: sent.msg_id, receipt_only: true };
   assert.equal(sends, 1, "исходный запрос отправляет текст ровно один раз");
   const misses = Array(feedBefore404 ? 1 : 2).fill({ request, accepted: false });
-  assert.deepEqual(probes, [...misses, { request, accepted: true }]);
+  const readsAfterAcceptance = Array(1 + transientFailures).fill({ request, accepted: true });
+  assert.deepEqual(probes, [...misses, ...readsAfterAcceptance]);
   assert.deepEqual(storage, [], "точная квитанция снимает пузырь и запись очереди");
   assert.equal(bubbles, 0);
 }
@@ -516,6 +544,7 @@ const scenarios = {
   "retry-task-receipt": taskReceipt,
   "crash-task-before-receipt": crashBeforeReceipt, "crash-tmux-before-receipt": crashBeforeReceipt,
   "crash-task-before-queue": crashBeforeQueue, "crash-task-feed-during-receipt": crashBeforeQueue,
+  "crash-task-feed-receipt-503": crashBeforeQueue, "crash-task-feed-receipt-exhausted": crashBeforeQueue,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
 };
 const browser = await chromium.launch({ executablePath, headless: true });

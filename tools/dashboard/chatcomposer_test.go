@@ -82,6 +82,7 @@ func TestChatComposerHandoffBrowser(t *testing.T) {
 		"retry-after-refusal", "retry-after-reload", "retry-after-lost-answer", "retry-task-receipt",
 		"crash-task-before-receipt", "crash-tmux-before-receipt",
 		"crash-task-before-queue", "crash-task-feed-during-receipt",
+		"crash-task-feed-receipt-503", "crash-task-feed-receipt-exhausted",
 		"runs-fragment", "raise-image", "runs-height",
 	} {
 		t.Run(mode, func(t *testing.T) {

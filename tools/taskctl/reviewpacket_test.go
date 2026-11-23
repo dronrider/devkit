@@ -38,7 +38,7 @@ func TestCLIReviewVerdict(t *testing.T) {
 	reply := `{"status":"changes_requested","issues":[{"object":"code.go:1","finding":"Уточнить контракт","evidence":"Строка не задаёт результат"}],"missing_facts":[]}`
 	put(filepath.Join(dir, "agentctl"), `#!/bin/sh
 printf '%s\n' invoked >> "$VERDICT_CLI_TEST_CALLS"
-cat > /dev/null
+grep -Fq 'Новое замечание после проверенного коммита' || exit 1
 printf '%s\n' '`+reviewVerdictTestTrace+`' >&2
 cat <<'EVENTS'
 `+reviewVerdictTestStart+verdictTestReply(reply)+reviewVerdictTestEnd+"EVENTS\n")
@@ -76,7 +76,7 @@ cat <<'EVENTS'
 	if _, err := os.Stat(calls); !os.IsNotExist(err) {
 		t.Fatalf("Codex запускался до прохождения ворот: %v", err)
 	}
-	commitCard(string(doc) + "\n## Ревью\n\n- Вердикт: без замечаний до " + prior + ".\n")
+	commitCard(string(doc) + "\n## Ревью\n\n- Вердикт: без замечаний до " + prior + ".\n- Новое замечание после проверенного коммита.\n")
 	output, err := run("--since", prior)
 	var verdict struct {
 		HeadSHA     string              `json:"head_sha"`

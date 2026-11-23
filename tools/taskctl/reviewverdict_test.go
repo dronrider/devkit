@@ -48,7 +48,8 @@ func TestParseReviewVerdictRejectsInvalidRun(t *testing.T) {
 		name, events, want string
 	}{
 		{"extra answer", reviewVerdictTestStart + message + message + reviewVerdictTestEnd, "ответов 2"},
-		{"extra turn", reviewVerdictTestStart + reviewVerdictTestStart + message + reviewVerdictTestEnd, "начато 2"},
+		{"extra turn", reviewVerdictTestStart + "{\"type\":\"turn.started\"}\n" + message + reviewVerdictTestEnd, "порядок начала"},
+		{"reordered events", reviewVerdictTestEnd + message + reviewVerdictTestStart, "порядка"},
 		{"truncated turn", reviewVerdictTestStart + message, "завершено 0"},
 		{"command", reviewVerdictTestStart + "{\"type\":\"item.started\",\"item\":{\"type\":\"command_execution\"}}\n" + message + reviewVerdictTestEnd, "command_execution"},
 		{"retry", reviewVerdictTestStart + "{\"type\":\"error\",\"message\":\"Reconnecting... 1/5\"}\n" + message + reviewVerdictTestEnd, "Reconnecting"},

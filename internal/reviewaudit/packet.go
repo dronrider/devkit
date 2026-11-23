@@ -110,7 +110,8 @@ func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (
 		item := verdictPacketRule{ID: rule.ID, Text: rule.Text, Applicability: rule.Applicability, Reason: rule.Reason}
 		for _, evidence := range rule.Evidence {
 			var runtimeObservation json.RawMessage
-			if comparison := evidence.ObjectComparison; comparison != nil && comparison.Proof != nil && comparison.Proof.Runtime != nil {
+			if comparison := evidence.ObjectComparison; rule.ID == namingRule && comparison != nil &&
+				comparison.Proof != nil && comparison.Proof.Runtime != nil {
 				runtimeObservation = json.RawMessage(comparison.Proof.Runtime.Payload)
 			}
 			item.Evidence = append(item.Evidence, verdictPacketEvidence{

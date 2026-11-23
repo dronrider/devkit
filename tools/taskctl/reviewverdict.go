@@ -228,6 +228,7 @@ func countReviewVerdictRequests(diagnostics string) int {
 func parseReviewVerdictEvents(events io.Reader) (reviewVerdictResult, error) {
 	var result reviewVerdictResult
 	var answer string
+	var threadStarted bool
 	var starts, completions int
 	scanner := bufio.NewScanner(events)
 	scanner.Buffer(make([]byte, 4096), 8<<20)
@@ -254,9 +255,19 @@ func parseReviewVerdictEvents(events io.Reader) (reviewVerdictResult, error) {
 		}
 		switch event.Type {
 		case "thread.started":
+			if threadStarted {
+				return result, fmt.Errorf("Codex повторно сообщил о начале потока")
+			}
+			threadStarted = true
 		case "turn.started":
+			if !threadStarted || starts != 0 {
+				return result, fmt.Errorf("Codex нарушил порядок начала потока и хода")
+			}
 			starts++
 		case "item.started", "item.updated", "item.completed":
+			if event.Item.Type != "error" && (starts != 1 || completions != 0) {
+				return result, fmt.Errorf("ответ Codex пришёл вне активного хода")
+			}
 			switch event.Item.Type {
 			case "reasoning":
 			case "agent_message":
@@ -272,6 +283,9 @@ func parseReviewVerdictEvents(events io.Reader) (reviewVerdictResult, error) {
 				return result, fmt.Errorf("в запуске вердикта Codex появилось действие %q", event.Item.Type)
 			}
 		case "turn.completed":
+			if starts != 1 || completions != 0 || result.ModelResponses == 0 {
+				return result, fmt.Errorf("Codex завершил ход вне ожидаемого порядка")
+			}
 			completions++
 			if event.Usage == nil || event.Usage.InputTokens == nil ||
 				event.Usage.CachedInputTokens == nil || event.Usage.OutputTokens == nil {

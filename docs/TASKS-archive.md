@@ -841,3 +841,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1752 | STYLE-001 принимает доказательство из независимого прогона | task | P1 | 2026-11-22 | [tasks/archive/2026/DK-1752.md](tasks/archive/2026/DK-1752.md), `a6f222f7c`, `ba57b9f50`, `364bc2032`, `8ccc7534b`, `f6ca02b0e` |
 | DK-1753 | Отчёт аудита сбрасывает обкатку задачи | bug | P1 | 2026-11-23 | [tasks/archive/2026/DK-1753.md](tasks/archive/2026/DK-1753.md) |
 | DK-1746 | Рабочий конвейер Codex обрывается и теряет исходный чат | bug | P1 | 2026-11-23 | [tasks/archive/2026/DK-1746.md](tasks/archive/2026/DK-1746.md) |
+| DK-1754 | Аудит имён отклоняет результаты функций JavaScript | bug | P1 | 2026-11-23 | [tasks/archive/2026/DK-1754.md](tasks/archive/2026/DK-1754.md) |

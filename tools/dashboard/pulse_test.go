@@ -880,23 +880,23 @@ func TestPulseReadsRegistryOnce(t *testing.T) {
 	}
 }
 
+func replacePulseRegistryFIFO(t *testing.T, path string) {
+	t.Helper()
+	next := path + ".next"
+	if err := syscall.Mkfifo(next, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(next, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // pulseWithRegistry отдаёт один и тот же журнал каждому чтению запроса.
 // Новый FIFO ставится на его место до EOF, пока первое чтение ещё открыто.
 func pulseWithRegistry(t *testing.T, e *testEnv, query string, logs map[string]string) Pulse {
 	t.Helper()
-	const mode = 0o600
-	replace := func(path string) {
-		t.Helper()
-		next := path + ".next"
-		if err := syscall.Mkfifo(next, mode); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(next, path); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for path := range logs {
-		replace(path)
+		replacePulseRegistryFIFO(t, path)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/demo/pulse?"+query, nil)
 	req.AddCookie(&http.Cookie{Name: cookieName, Value: cookieValue(e.cfg.Token, e.s.now().Add(time.Hour))})
@@ -936,7 +936,7 @@ func pulseWithRegistry(t *testing.T, e *testEnv, query string, logs map[string]s
 					t.Fatal(err)
 				}
 				reads[path]++
-				replace(path)
+				replacePulseRegistryFIFO(t, path)
 				f := os.NewFile(uintptr(fd), path)
 				_, err = f.WriteString(log)
 				closeErr := f.Close()

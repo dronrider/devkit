@@ -568,6 +568,10 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("task"))
 	sid := strings.TrimSpace(r.URL.Query().Get("sid"))
+	if sid != "" && !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный id разговора"})
+		return
+	}
 	now := s.now()
 	out := Pulse{Task: id, State: pulseEmpty, Scale: scaleNone,
 		Quiet: int(pulseQuiet / time.Second), Agents: []PulseAgent{}}

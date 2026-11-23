@@ -45,10 +45,9 @@ func (s *server) appPlanUpdate(sid string, raw json.RawMessage) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.turn != "" && c.turn != p.Turn {
+	if c.turn != p.Turn {
 		return nil
 	}
-	c.turn = p.Turn
 	file := s.appPlanPath(sid)
 	if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
 		return err

@@ -14199,8 +14199,9 @@ function echoSweep(project, door, chats) {
 }
 
 function echoMatches(item, message) {
-  if (message.appMessageID) {
-    return item.app?.method === "devkit/appTaskMessage" && item.app?.item?.id === message.appMessageID;
+  if (message.appMessageID || item.app?.method === "devkit/appTaskMessage") {
+    return Boolean(message.appMessageID) &&
+      item.app?.method === "devkit/appTaskMessage" && item.app?.item?.id === message.appMessageID;
   }
   const clips = message.clips || [];
   const shots = item.shots || [];
@@ -14670,6 +14671,7 @@ function chatPanel(project, st) {
   // по ссылке в момент нажатия, поэтому переподнятая очередь доезжает до них
   // сама.
   let echo = null;
+  let shownFeed = [];
   // Разговор с идущей оболочкой цикла держит свою очередь исходящих над ручкой
   // цели: реплика ложится строкой во «Входящие», и под лентой видно, лежит она,
   // доставлена ли витку и прочитана ли (DK-287). Правка DK-397 снимала вызов
@@ -15358,6 +15360,7 @@ function chatPanel(project, st) {
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else if (r.body.way === "queued") echo.queued(m, r.body.message);
           else echo.sent(m);
+          if (m.appMessageID) echo.reconcile(shownFeed);
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
           // Успех расходует глубину, отправленную этим запросом.
@@ -15669,8 +15672,7 @@ function chatPanel(project, st) {
           ? "работа поднята, сессия " + st.lift + " вот-вот назовётся в реестре: " +
             "разговор откроется сам, ждать нажатий не надо"
           : st.unassigned
-          // Слова плашки над лентой уже назвали действие, и лента добавляет
-          // только про историю: у записи без назначения беседы не пропадают.
+          // У записи без назначения прежние беседы остаются в списке шапки.
           ? ""
           : st.fresh
           ? "новый чат: напишите первую реплику, она и поднимет сессию"
@@ -15689,6 +15691,7 @@ function chatPanel(project, st) {
         busy.saw(item);
         loginSaw(bye, item);
       }, (list) => {
+        shownFeed = list;
         echo.reconcile(list);
         loginSawAll(bye, list);
         askPickWire(feed, ta, askPick);

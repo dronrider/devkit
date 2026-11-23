@@ -33,14 +33,14 @@ func (s *server) appTaskLaunchLock(sid string) (*os.File, error) {
 	return chat.Lock(filepath.Join(chatStoreDir(s.cfg.Home), "app-task-queue", sid+".launch"))
 }
 
-func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim string) {
-	entry, err := s.appTaskQueueAdd(sid, claim, text)
+func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim, effort string) {
+	entry, err := s.appTaskQueueAdd(sid, claim, text, effort)
 	if err != nil {
 		appTaskQueueError(w, err)
 		return
 	}
 	if entry.Accepted {
-		s.chatSayDone(sid, claim, "appserver")
+		s.chatSayReceipt(sid, claim, "appserver", entry.ID)
 		writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
 		return
 	}

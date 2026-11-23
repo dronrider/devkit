@@ -40,11 +40,66 @@ type appChat struct {
 	project   string
 	automatic bool
 
-	mu       sync.Mutex
-	busy     bool
-	turn     string
-	turnAt   time.Time
-	taskTurn *appTaskTurn
+	mu           sync.Mutex
+	busy         bool
+	turn         string
+	previousTurn string
+	turnAt       time.Time
+	taskTurn     *appTaskTurn
+	starting     *appTurnStart
+}
+
+type appTurnStart struct {
+	previous string
+}
+
+func (c *appChat) beginTurn(at time.Time, task *appTaskTurn) (*appTurnStart, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.busy || c.starting != nil {
+		return nil, errAppTurnBusy
+	}
+	if c.turn != "" {
+		c.previousTurn = c.turn
+	}
+	start := &appTurnStart{previous: c.previousTurn}
+	c.starting = start
+	c.busy, c.turnAt, c.turn, c.taskTurn = true, at, "", task
+	return start, nil
+}
+
+func (c *appChat) finishTurnStart(start *appTurnStart) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.starting == start {
+		c.starting = nil
+	}
+}
+
+func appTurnResultID(raw json.RawMessage) string {
+	var result struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return ""
+	}
+	return result.Turn.ID
+}
+
+func (c *appChat) requestTurn(start *appTurnStart, params map[string]any) (string, error) {
+	defer c.finishTurnStart(start)
+	raw, err := c.proc.callResult("turn/start", params, func(raw json.RawMessage) {
+		if turn := appTurnResultID(raw); turn != "" {
+			c.mu.Lock()
+			if c.starting == start {
+				c.turn = turn
+			}
+			c.mu.Unlock()
+		}
+	})
+	return appTurnResultID(raw), err
 }
 
 func (c *appChat) busyNow() bool {
@@ -566,33 +621,23 @@ func appEffort(effort string) string {
 // за собственным погашением и висит вечно. Ручка отвечает сразу: реплика у
 // клиента.
 func (s *server) appTurn(c *appChat, text string, record bool) error {
-	c.mu.Lock()
-	if c.busy {
-		c.mu.Unlock()
-		return errAppTurnBusy
+	start, err := c.beginTurn(s.now(), nil)
+	if err != nil {
+		return err
 	}
-	c.busy, c.turnAt, c.turn = true, s.now(), ""
-	c.mu.Unlock()
 	if record {
 		s.appSayRecord(c.sid, text)
 	}
 	params := s.appTurnParams(c, text, c.effortNow())
-	if model := s.chatStoreRead(c.sid).appModel(); model != "" {
+	st := s.chatStoreRead(c.sid)
+	model := c.model
+	if st.Harness == "" || st.Harness == c.h.Name {
+		model = st.appModel()
+	}
+	if model != "" {
 		params["model"] = model
 	}
-	raw, err := c.proc.call("turn/start", params)
-	if err == nil {
-		var result struct {
-			Turn struct {
-				ID string `json:"id"`
-			} `json:"turn"`
-		}
-		if json.Unmarshal(raw, &result) == nil && result.Turn.ID != "" {
-			c.mu.Lock()
-			c.turn = result.Turn.ID
-			c.mu.Unlock()
-		}
-	}
+	_, err = c.requestTurn(start, params)
 	if err != nil {
 		c.mu.Lock()
 		c.busy = false
@@ -611,8 +656,8 @@ func (s *server) appNote(sid, method string, params json.RawMessage) {
 		if c.taskTurn != nil {
 			c.taskTurn.note(method, params, time.Now())
 		}
-		if method == "turn/started" {
-			if turn := appTaskTurnID(method, params, c.thread); turn != "" {
+		if method == "turn/started" && c.starting != nil && c.turn == "" {
+			if turn := appTaskTurnID(method, params, c.thread); turn != "" && turn != c.starting.previous {
 				c.turn = turn
 			}
 		}
@@ -780,7 +825,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			if !s.appTaskSaveEffort(w, sid, effort) {
 				return
 			}
-			s.appTaskAcceptSay(w, sid, text, claim)
+			s.appTaskAcceptSay(w, sid, text, claim, appTaskReplyEffort(effort, st.CxEffort))
 			return
 		}
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "конвейер задачи уже идёт: дождитесь его остановки"})
@@ -808,13 +853,13 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		if effort != "" {
 			st.CxEffort = effort
 		}
-		entry, err = s.appTaskQueueAdd(sid, claim, text)
+		entry, err = s.appTaskQueueAdd(sid, claim, text, appTaskReplyEffort(effort, st.CxEffort))
 		if err != nil {
 			appTaskQueueError(w, err)
 			return
 		}
 		if entry.Accepted {
-			s.chatSayDone(sid, claim, "appserver")
+			s.chatSayReceipt(sid, claim, "appserver", entry.ID)
 			writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
 			return
 		}
@@ -929,7 +974,9 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			if current.Model == "" {
 				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol
 			}
-			current.Thread = c.thread
+			if current.Harness == harness {
+				current.Thread = c.thread
+			}
 			if effortSet {
 				current.CxEffort = st.CxEffort
 			}

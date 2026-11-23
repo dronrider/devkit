@@ -252,6 +252,38 @@ async function retry(s) {
   assert.equal(await s.ta.inputValue(), "следующий черновик");
 }
 
+async function taskReceipt(s) {
+  const sid = "session-queued";
+  const item = (seq, id) => ({
+    role: "user", seq, key: "app:" + seq, text: firstText,
+    app: { method: "devkit/appTaskMessage", item: { id } },
+  });
+  s.state.chats = [live(sid, "XR-4")];
+  s.state.items = [item(1, "earlier-message")];
+  const first = barrier("первая отправка рабочего чата");
+  const again = barrier("повтор рабочего чата");
+  let tries = 0;
+  s.state.say = route => (++tries === 1 ? first : again).hold(route);
+  await s.open(sid);
+  await s.page.locator(active + " .chatfeed .mlist .frow").waitFor();
+  await s.ta.fill(firstText);
+  await s.send.click();
+  const sent = (await first.request()).body;
+  first.reply({ abort: true });
+  await s.page.locator(active + " .mlocal .m-bad").waitFor();
+  await s.page.reload({ waitUntil: "domcontentloaded" });
+  await s.page.locator(active + " .chatfeed .mlist .frow").waitFor();
+  assert.equal(await s.bubbles.count(), 1, "старая реплика не снимает пузырь без квитанции");
+  assert.deepEqual((await again.request()).body, sent);
+  again.reply({ json: { way: "dup", was: "appserver", app_message_id: "new-message" } });
+  await s.page.locator(active + " .mlocal .m-sent").waitFor();
+  assert.equal(await s.bubbles.count(), 1, "старая реплика не совпадает с ID новой");
+  s.state.items.push(item(2, "new-message"));
+  await s.page.reload({ waitUntil: "domcontentloaded" });
+  await s.page.locator(active + " .chatfeed .mlist .frow").nth(1).waitFor();
+  assert.equal(await s.bubbles.count(), 0, "точное эхо снимает локальный пузырь");
+}
+
 async function attachmentOnly(s) {
   const start = launch(s);
   const { from, sid, gate, run } = start;
@@ -322,6 +354,7 @@ async function height(s) {
 const scenarios = {
   "runs-handoff": handoff, "raise-handoff": handoff, "raise-upload": lateUpload, "raise-upload-image": lateUpload,
   "retry-after-refusal": retry, "retry-after-reload": retry, "retry-after-lost-answer": retry,
+  "retry-task-receipt": taskReceipt,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
 };
 const browser = await chromium.launch({ executablePath, headless: true });

@@ -449,16 +449,21 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	}
 	turn := &appTaskTurn{thread: c.thread, last: time.Now(), early: make(map[string]appTaskActivity),
 		wake: make(chan struct{}, 1), ends: make(chan json.RawMessage, 128)}
-	c.mu.Lock()
-	if c.busy {
-		c.mu.Unlock()
-		return errAppTurnBusy
+	start, err := c.beginTurn(s.now(), turn)
+	if err != nil {
+		return err
 	}
-	c.taskTurn = turn
-	c.busy, c.turnAt, c.turn = true, s.now(), ""
-	c.mu.Unlock()
-	defer func() { c.mu.Lock(); c.taskTurn = nil; c.mu.Unlock() }()
-	params := s.appTurnParams(c, order, st.CxEffort)
+	defer func() {
+		c.finishTurnStart(start)
+		c.mu.Lock()
+		c.taskTurn = nil
+		c.mu.Unlock()
+	}()
+	effort := st.CxEffort
+	if queued.Effort != "" {
+		effort = queued.Effort
+	}
+	params := s.appTurnParams(c, order, effort)
 	if a.recover || a.replyOnce {
 		params["model"] = st.Model
 	}
@@ -471,7 +476,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	} else {
 		s.appSayRecord(a.sid, order)
 	}
-	raw, err := c.proc.call("turn/start", params)
+	turnID, err := c.requestTurn(start, params)
 	if err != nil {
 		var rejected *appError
 		if queued.ID != "" && errors.As(err, &rejected) && appTaskRecoveryPermanent(err) {
@@ -479,17 +484,9 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		}
 		return err
 	}
-	var started struct {
-		Turn struct {
-			ID string `json:"id"`
-		} `json:"turn"`
-	}
-	if json.Unmarshal(raw, &started) != nil || started.Turn.ID == "" {
+	if turnID == "" {
 		return errors.New("клиент не назвал ID хода конвейера")
 	}
-	c.mu.Lock()
-	c.turn = started.Turn.ID
-	c.mu.Unlock()
 	if queued.ID != "" {
 		if err = s.appTaskQueueFeed(a.sid, queued); err != nil {
 			return err
@@ -515,7 +512,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	} else {
 		ready()
 	}
-	if err = c.waitTaskTurn(turn, started.Turn.ID, a.stop, appBusyCap, confirm); err != nil {
+	if err = c.waitTaskTurn(turn, turnID, a.stop, appBusyCap, confirm); err != nil {
 		return err
 	}
 	if queued.ID != "" {
@@ -703,7 +700,7 @@ func (s *server) raiseAppTask(w http.ResponseWriter, p *Project, sid string, st 
 			s.appTaskQueued(w, sid, message.ID)
 			return nil
 		}
-		s.chatSayDone(sid, message.Claim, "appserver")
+		s.chatSayReceipt(sid, message.Claim, "appserver", message.ID)
 	}
 	body := map[string]string{"way": "appserver", "id": id, "kind": "task", "session": sid, "harness": h.Name, "model": st.Model, "tier": tier, "effort": st.CxEffort, "message": "конвейер задачи " + id + " поднят через app-server, модель " + st.Model + ", effort " + st.CxEffort}
 	if !recover && !replyOnce {

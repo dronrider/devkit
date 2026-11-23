@@ -541,3 +541,105 @@ esac`)
 		t.Fatalf("реплика изменила исходную модель или нить: %+v", current)
 	}
 }
+
+func TestAppTaskDuplicateReceiptKeepsMessageID(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("запуск: %d %+v", code, first)
+	}
+	sid := first["session"]
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("остановка: %d %s", resp.StatusCode, raw)
+	}
+	waitTaskStopped(t, e, sid)
+	putDoc(t, e.proj, "fake-app-mode", "reply-open")
+	const text = "Два одинаковых текста"
+	say := func(claim, way string) string {
+		t.Helper()
+		code, raw := appTaskSay(t, e, c, sid, text, claim)
+		var receipt map[string]string
+		if err := json.Unmarshal([]byte(raw), &receipt); code != http.StatusOK || err != nil ||
+			receipt["way"] != way || receipt["app_message_id"] == "" {
+			t.Fatalf("квитанция %s: %d %s", claim, code, raw)
+		}
+		return receipt["app_message_id"]
+	}
+	a := say("one", "appserver")
+	waitTaskStopped(t, e, sid)
+	b := say("lost-response", "appserver")
+	waitTaskStopped(t, e, sid)
+	if a == b {
+		t.Fatal("две отдельные реплики получили одну квитанцию")
+	}
+	if got := say("lost-response", "dup"); got != b {
+		t.Fatalf("повтор потерял ID второй реплики: %s, жду %s", got, b)
+	}
+	var feedIDs []string
+	for _, it := range e.s.appFeedRead(sid) {
+		if it.Role == "user" && it.Text == text && it.App != nil && it.App.Method == "devkit/appTaskMessage" {
+			if id, ok := it.App.Item["id"].(string); ok {
+				feedIDs = append(feedIDs, id)
+			}
+		}
+	}
+	if len(feedIDs) != 2 || feedIDs[0] != a || feedIDs[1] != b {
+		t.Fatalf("две реплики в ленте: %v, жду %s и %s", feedIDs, a, b)
+	}
+}
+
+func TestAppTaskQueueUsesReplyEffort(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("запуск: %d %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitTaskStopped(t, e, sid)
+	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
+	p, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("проект не найден")
+	}
+	if err := e.s.appTaskRecover(p, sid); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ id, effort string }{{"one", "low"}, {"two", "high"}} {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+			fmt.Sprintf(`{"text":%q,"msg_id":%q,"effort":%q}`, tc.id, tc.id, tc.effort))
+		if raw := body(t, resp); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("очередь: %d %s", resp.StatusCode, raw)
+		}
+	}
+	live := e.s.appLive(sid)
+	for _, text := range []string{"one", "two"} {
+		if _, err := live.proc.call("test/finish", map[string]bool{"keepOpen": true}); err != nil {
+			t.Fatal(err)
+		}
+		appWaitFeed(t, e, sid, text)
+	}
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	effortByText := map[string]string{}
+	for _, line := range strings.Split(log, "\n") {
+		if wire, ok := strings.CutPrefix(line, "params "); ok {
+			var params struct {
+				Effort string
+				Input  []struct{ Text string }
+			}
+			if err := json.Unmarshal([]byte(wire), &params); err != nil {
+				t.Fatal(err)
+			}
+			if len(params.Input) == 1 {
+				effortByText[params.Input[0].Text] = params.Effort
+			}
+		}
+	}
+	if effortByText["one"] != "low" || effortByText["two"] != "high" {
+		t.Fatalf("глубина двух реплик: %v, жду low и high", effortByText)
+	}
+}

@@ -792,3 +792,16 @@ func TestStaticTaskPanelBlocked(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+func TestPulseRejectsInvalidChatKey(t *testing.T) {
+	e, c := chatEnv(t)
+	for _, tc := range []struct {
+		query string
+		code  int
+	}{{"", http.StatusOK}, {"?sid=as-pulse", http.StatusOK}, {"?sid=invalid%20chat", http.StatusBadRequest}} {
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/pulse"+tc.query, "")
+		if raw := body(t, resp); resp.StatusCode != tc.code {
+			t.Errorf("pulse %q: %d %s, жду %d", tc.query, resp.StatusCode, raw, tc.code)
+		}
+	}
+}

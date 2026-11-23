@@ -18,6 +18,7 @@ type appTaskMessage struct {
 	ID       string `json:"id"`
 	Claim    string `json:"claim"`
 	Text     string `json:"text,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 	Sent     bool   `json:"sent,omitempty"`
 	Accepted bool   `json:"accepted,omitempty"`
 }
@@ -67,8 +68,18 @@ func (s *server) appTaskQueue(sid string, change func(*[]appTaskMessage) bool) e
 
 var errAppTaskClaimConflict = errors.New("ключ реплики уже занят другим текстом")
 
-func (s *server) appTaskQueueAdd(sid, claim, text string) (appTaskMessage, error) {
+func appTaskReplyEffort(chosen, saved string) string {
+	if chosen != "" {
+		return chosen
+	}
+	return appEffort(saved)
+}
+
+func (s *server) appTaskQueueAdd(sid, claim, text string, effort ...string) (appTaskMessage, error) {
 	entry := appTaskMessage{ID: msgID(), Claim: claim, Text: text}
+	if len(effort) != 0 {
+		entry.Effort = effort[0]
+	}
 	if entry.Claim == "" {
 		entry.Claim = entry.ID
 	}

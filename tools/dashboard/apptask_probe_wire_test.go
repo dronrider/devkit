@@ -12,7 +12,7 @@ import (
 func TestAppTaskReadThreadPreservesDecodeError(t *testing.T) {
 	client, peer := net.Pipe()
 	defer client.Close()
-	proc := &appServer{in: client, pending: make(map[int64]chan *appMsg), dead: make(chan struct{})}
+	proc := &appServer{in: client, pending: make(map[int64]appRequest), dead: make(chan struct{})}
 	go proc.readOut(client)
 	peerErr := make(chan error, 1)
 	go func() {
@@ -51,7 +51,7 @@ func TestAppTaskSilenceProbeWire(t *testing.T) {
 		if err := peer.SetDeadline(deadline); err != nil {
 			t.Fatal(err)
 		}
-		proc := &appServer{in: client, pending: make(map[int64]chan *appMsg), dead: make(chan struct{})}
+		proc := &appServer{in: client, pending: make(map[int64]appRequest), dead: make(chan struct{})}
 		go proc.readOut(client)
 		turn := &appTaskTurn{thread: "thread-1", last: time.Now(), early: map[string]appTaskActivity{}, wake: make(chan struct{}, 1), ends: make(chan json.RawMessage, 128)}
 		c := &appChat{thread: "thread-1", busy: true, proc: proc}

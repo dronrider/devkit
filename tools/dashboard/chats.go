@@ -3424,8 +3424,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			s.logf("повтор реплики чата %s отброшен: та же запись отправителя уже %s", sid, prevWord(prev))
-			writeJSON(w, http.StatusOK, map[string]any{"way": "dup", "was": prev.way,
-				"message": "эта реплика уже " + prevWord(prev) + ", повтор никуда не поехал"})
+			receipt := map[string]string{"way": "dup", "was": prev.way,
+				"message": "эта реплика уже " + prevWord(prev) + ", повтор никуда не поехал"}
+			if prev.appMessageID != "" {
+				receipt["app_message_id"] = prev.appMessageID
+			}
+			writeJSON(w, http.StatusOK, receipt)
 			return
 		}
 		// Незакрытая попытка ключ отпускает: отказ доставки это повод повторить,
@@ -4568,6 +4572,9 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			if current.appTaskRecorded() {
 				current.CxModel = model
 			} else {
+				if previous := s.chatHarnessOf(current.Model, current.Harness); previous == nil || previous.Name != h.Name {
+					current.Thread = ""
+				}
 				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol
 			}
 			return current

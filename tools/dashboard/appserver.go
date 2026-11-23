@@ -49,13 +49,18 @@ func (e *appError) Error() string {
 
 // appServer это поднятый процесс сервера приложения. Горутина чтения разбирает
 // stdout построчно: ответы уходят ждущим по карте, уведомления зовут note.
+type appRequest struct {
+	done   chan *appMsg
+	result func(json.RawMessage)
+}
+
 type appServer struct {
 	cmd  *exec.Cmd
 	in   io.WriteCloser
 	note func(method string, params json.RawMessage)
 
 	mu      sync.Mutex
-	pending map[int64]chan *appMsg
+	pending map[int64]appRequest
 	nextID  int64
 	closed  bool
 
@@ -92,7 +97,7 @@ func (s *server) appServerStart(h *Harness, dir, agentctl string, note func(meth
 		return nil, fmt.Errorf("процесс не поднялся: %w", err)
 	}
 	p := &appServer{cmd: cmd, in: stdin, note: note,
-		pending: map[int64]chan *appMsg{}, dead: make(chan struct{})}
+		pending: map[int64]appRequest{}, dead: make(chan struct{})}
 	s.appWorkers.Go(func() { p.readOut(stdout) })
 	s.appWorkers.Go(func() { p.readErr(stderr) })
 	s.appWorkers.Go(p.await)
@@ -157,8 +162,8 @@ func (p *appServer) die(why string) {
 	p.deadDo.Do(func() {
 		p.mu.Lock()
 		p.closed = true
-		for _, ch := range p.pending {
-			ch <- nil
+		for _, request := range p.pending {
+			request.done <- nil
 		}
 		clear(p.pending)
 		p.mu.Unlock()
@@ -172,12 +177,18 @@ func (p *appServer) die(why string) {
 // resolve отдаёт ответ ждущему, если он ещё ждёт.
 func (p *appServer) resolve(id int64, msg *appMsg) {
 	p.mu.Lock()
-	ch := p.pending[id]
+	request, ok := p.pending[id]
 	delete(p.pending, id)
 	p.mu.Unlock()
-	if ch != nil {
-		ch <- msg
+	if !ok {
+		return
 	}
+	// Уведомление о плане может идти следующей строкой за ответом turn/start.
+	// Обработчик результата подтверждает ход до чтения этой строки.
+	if request.result != nil && msg != nil && msg.Error == nil {
+		request.result(msg.Result)
+	}
+	request.done <- msg
 }
 
 // errTail это последние строки stderr одним куском.
@@ -213,6 +224,10 @@ func (p *appServer) errWhyFmt() string {
 // call шлёт запрос и ждёт ответа. Пустой msg это смерть процесса: refusal
 // собирается из причины смерти.
 func (p *appServer) call(method string, params any) (json.RawMessage, error) {
+	return p.callResult(method, params, nil)
+}
+
+func (p *appServer) callResult(method string, params any, result func(json.RawMessage)) (json.RawMessage, error) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -221,7 +236,7 @@ func (p *appServer) call(method string, params any) (json.RawMessage, error) {
 	p.nextID++
 	id := p.nextID
 	ch := make(chan *appMsg, 1)
-	p.pending[id] = ch
+	p.pending[id] = appRequest{done: ch, result: result}
 	body, err := json.Marshal(struct {
 		ID     int64  `json:"id"`
 		Method string `json:"method"`

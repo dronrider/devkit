@@ -49,7 +49,7 @@ func TestAppTaskAcceptSayExplainsUnreadableQueue(t *testing.T) {
 	const sid = "as-thread"
 	putDoc(t, e.s.cfg.Home, ".devkit/chats/app-task-queue/"+sid+".json", "{")
 	answer := httptest.NewRecorder()
-	e.s.appTaskAcceptSay(answer, sid, "Реплика пользователя", "id")
+	e.s.appTaskAcceptSay(answer, sid, "Реплика пользователя", "id", "medium")
 	if answer.Code != http.StatusBadGateway || !strings.Contains(answer.Body.String(), "не удалось подтвердить сохранение реплики в очереди рабочего разговора Codex") ||
 		!strings.Contains(answer.Body.String(), "unexpected end of JSON input") {
 		t.Fatalf("ответ не объясняет отказ сохранения и причину: %d %s", answer.Code, answer.Body.String())

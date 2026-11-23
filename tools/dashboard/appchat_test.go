@@ -564,8 +564,11 @@ func TestAppChatModelSwitch(t *testing.T) {
 		t.Fatalf("смена модели не записалась: %d %s", resp.StatusCode, body(t, resp))
 	}
 	st := e.s.chatStoreRead(sid)
-	if st.Model != "модель-codex2" || st.Harness != "codex2test" || st.Thread != "th-1" || st.Protocol != "codex" {
-		t.Fatalf("смена модели изменила нить до следующего хода: %+v", st)
+	if st.Model != "модель-codex2" || st.Harness != "codex2test" || st.Thread != "" || st.Protocol != "codex" {
+		t.Fatalf("выбор сохранил нить чужой подписки: %+v", st)
+	}
+	if live := e.s.appLive(sid); live == nil || live.thread != "th-1" {
+		t.Fatal("выбор остановил прежнего клиента")
 	}
 
 	// Следующая реплика заводит свежую нить уже новой моделью.
@@ -1487,4 +1490,26 @@ esac`)
 	if strings.Count(raw, "input ") != 2 {
 		t.Fatalf("лишняя служебная реплика: %s", raw)
 	}
+}
+
+func TestAppChatSwitchesDeadSubscriptionBeforeNextTurn(t *testing.T) {
+	e, c := appEnv(t)
+	sid := appStartChat(t, e, c, "первая реплика")
+	appWaitBusy(t, e, c, sid, false)
+	e.s.appDrop(sid, "проверка смены подписки после остановки")
+	base := e.srv.URL + "/api/projects/demo/chats/" + sid
+	resp := doReq(t, c, "POST", base+"/model", `{"model":"модель-codex2","harness":"codex2test"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
+	}
+	resp = doReq(t, c, "POST", base+"/say", `{"text":"вторая реплика","msg_id":"second"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("следующая реплика: %d %s", resp.StatusCode, raw)
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику: вторая реплика")
+	log := readFile(t, filepath.Join(e.proj, "fake-app-log"))
+	if !strings.Contains(log, "start модель-codex2\n") || strings.Contains(log, "resume ") {
+		t.Fatalf("другая подписка должна завести новую нить: %s", log)
+	}
+	appWaitFeed(t, e, sid, "ответ на реплику: первая реплика")
 }

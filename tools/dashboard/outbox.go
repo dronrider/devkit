@@ -384,8 +384,9 @@ const (
 // sayClaim это судьба записи отправителя. Пустая дорога значит, что попытка
 // ещё идёт: второй такой же отправке ехать некуда, первая сама всё расскажет.
 type sayClaim struct {
-	at  time.Time
-	way string
+	at           time.Time
+	way          string
+	appMessageID string
 }
 
 func sayClaimKey(sid, msg string) string { return sid + "/" + msg }
@@ -418,6 +419,10 @@ func (s *server) chatSayStart(sid, msg string) (sayClaim, bool) {
 
 // chatSayDone помнит доставленную запись: повтор такой уже никуда не поедет.
 func (s *server) chatSayDone(sid, msg, way string) {
+	s.chatSayReceipt(sid, msg, way, "")
+}
+
+func (s *server) chatSayReceipt(sid, msg, way, appMessageID string) {
 	if msg == "" {
 		return
 	}
@@ -426,7 +431,7 @@ func (s *server) chatSayDone(sid, msg, way string) {
 	if s.says == nil {
 		s.says = map[string]sayClaim{}
 	}
-	s.says[sayClaimKey(sid, msg)] = sayClaim{at: s.now(), way: way}
+	s.says[sayClaimKey(sid, msg)] = sayClaim{at: s.now(), way: way, appMessageID: appMessageID}
 }
 
 // chatSayRelease отпускает запись, чья попытка кончилась ничем: отказ доставки

@@ -13,16 +13,23 @@ import (
 	"github.com/dronrider/devkit/internal/chat"
 )
 
+type runStartPhase string
+
+const (
+	runStartBeforeDispatch runStartPhase = "before_dispatch"
+	runStartDispatching    runStartPhase = "dispatching"
+)
+
 type runStartReceipt struct {
 	Fingerprint string          `json:"fingerprint"`
+	Phase       runStartPhase   `json:"phase,omitempty"`
 	Status      int             `json:"status,omitempty"`
 	Reply       json.RawMessage `json:"reply,omitempty"`
 }
 
-// runStartResponse буферизует ответ до сохранения квитанции. Status
-// появляется на диске после подтверждения исхода. Маркер пишется до снятия
-// ручного стопа и других изменений. При обрыве между этими записями повтор
-// увидит неизвестный исход.
+// runStartResponse буферизует ответ до сохранения квитанции. Первый
+// маркер пишется до снятия ручного стопа. Перед вызовом носителя его
+// сменяет маркер, при котором исход без сохранённого ответа неизвестен.
 type runStartResponse struct {
 	http.ResponseWriter
 	receiptPath string
@@ -36,22 +43,17 @@ func (w *runStartResponse) WriteHeader(status int) { w.status = status }
 
 func (w *runStartResponse) Write(p []byte) (int, error) { return w.reply.Write(p) }
 
-func markRunStart(w http.ResponseWriter) bool {
+func markRunStart(w http.ResponseWriter, phase runStartPhase) bool {
 	out, ok := w.(*runStartResponse)
-	if !ok {
+	if !ok || out.dispatched {
 		return true
 	}
-	if err := writeChatStartReceipt(out.receiptPath, runStartReceipt{Fingerprint: out.fingerprint}); err != nil {
+	if err := writeChatStartReceipt(out.receiptPath, runStartReceipt{Fingerprint: out.fingerprint, Phase: phase}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "не удалось сохранить квитанцию перед запуском: " + err.Error()})
 		return false
 	}
+	out.dispatched = phase == runStartDispatching
 	return true
-}
-
-func dispatchRunStart(w http.ResponseWriter) {
-	if out, ok := w.(*runStartResponse); ok {
-		out.dispatched = true
-	}
 }
 
 func writeRunStartUnknown(w http.ResponseWriter, detail string) {
@@ -75,6 +77,9 @@ func replyRunStartReceipt(w http.ResponseWriter, path, fingerprint string) bool 
 	if receipt.Fingerprint != fingerprint {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "ключ запуска уже относится к другому запросу"})
 		return true
+	}
+	if receipt.Phase == runStartBeforeDispatch && receipt.Status == 0 && len(receipt.Reply) == 0 {
+		return false
 	}
 	if receipt.Status < http.StatusOK || receipt.Status > 599 || !json.Valid(receipt.Reply) {
 		writeRunStartUnknown(w, "")

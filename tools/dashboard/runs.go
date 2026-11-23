@@ -764,7 +764,7 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 		s.closeFromCheck(w, found, id)
 		return
 	}
-	if !markRunStart(w) || !s.setRecoveryStopped(w, found.Path, id, false) {
+	if !markRunStart(w, runStartBeforeDispatch) || !s.setRecoveryStopped(w, found.Path, id, false) {
 		return
 	}
 	kind := "task"
@@ -786,7 +786,9 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 		// сохранить контекст цикла (DK-1009). При сбое подачи пытаемся
 		// снять остаток окна и возвращаемся к обычному запуску.
 		if kind == "goal" && name == sess {
-			dispatchRunStart(w)
+			if !markRunStart(w, runStartDispatching) {
+				return
+			}
 			if err := chatSend(name, goalContinuePrompt(id, "")); err != nil {
 				s.logf("ступень живого окна цели %s в %s не сработала, остаток снят: %v",
 					id, found.Name, err)
@@ -860,7 +862,9 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "живой исполнитель задачи")})
 			return
 		}
-		dispatchRunStart(w)
+		if !markRunStart(w, runStartDispatching) {
+			return
+		}
 		s.startAppTask(w, found, id, own, tier, body.Effort, order)
 		return
 	}
@@ -894,7 +898,9 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 		}
 		rung := clientMissing(client)
 		if rung == "" {
-			dispatchRunStart(w)
+			if !markRunStart(w, runStartDispatching) {
+				return
+			}
 			rung = s.startGoalChat(found, id, sess, model, own, body.Effort)
 		}
 		if rung == "" {
@@ -942,7 +948,9 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 		if body.Effort != "" {
 			args = append(args, "--effort", body.Effort)
 		}
-		dispatchRunStart(w)
+		if !markRunStart(w, runStartDispatching) {
+			return
+		}
 		out, err := runProc("python3", args...)
 		if err != nil {
 			text := procErr(err)
@@ -1003,7 +1011,9 @@ func (s *server) runStart(w http.ResponseWriter, found *Project, body runStartRe
 	if own != nil {
 		model = own.tierModel(tier)
 	}
-	dispatchRunStart(w)
+	if !markRunStart(w, runStartDispatching) {
+		return
+	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
 		order, runPrompt("in-progress", id), "работа", false, body.Effort, false)
 	if err != nil {

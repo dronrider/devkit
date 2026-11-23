@@ -353,6 +353,96 @@ async function crashBeforeReceipt(s) {
   console.log(JSON.stringify({ taskChat, sends, claim: sent.msg_id, probes, bubbles: await reopened.bubbles.count() }));
 }
 
+async function crashBeforeQueue(s) {
+  const feedBefore404 = mode === "crash-task-feed-during-receipt";
+  const sid = "session-queued";
+  const key = "devkit.chat.pend.demo/" + sid;
+  const row = live(sid, "XR-4");
+  s.state.chats = [row];
+  const original = barrier("первый запрос ещё не записан в очередь");
+  let sends = 0;
+  s.state.say = route => {
+    sends++;
+    return original.hold(route).catch(() => {});
+  };
+  const snapshot = page => page.evaluate(key => (JSON.parse(localStorage.getItem(key) || "[]"))
+    .map(({ id, state, appMessageID, why }) => ({ id, state, appMessageID, why })), key);
+  await s.open(sid);
+  await s.ta.fill(firstText);
+  await s.send.click();
+  const sent = (await original.request()).body;
+  assert.deepEqual(await snapshot(s.page), [{ id: sent.msg_id, state: "wait", appMessageID: "", why: "" }]);
+
+  const context = s.page.context();
+  const cd = await context.newCDPSession(s.page);
+  const crashed = s.page.waitForEvent("crash");
+  cd.send("Page.crash").catch(() => {});
+  await crashed;
+  await s.page.close();
+
+  const reopened = await composer(context);
+  reopened.state.chats = [row];
+  const probes = [];
+  let accepted = false;
+  const missing = { status: 404, json: { error: "квитанция не найдена" } };
+  const firstLookup = barrier("первое чтение квитанции");
+  reopened.state.say = route => {
+    const request = route.request().postDataJSON();
+    if (!request.receipt_only) sends++;
+    probes.push({ request, accepted });
+    if (feedBefore404 && probes.length === 1) return firstLookup.hold(route);
+    if (!accepted) return route.fulfill(missing);
+    return route.fulfill({ json: { way: "dup", was: "appserver", app_message_id: "new-message" } });
+  };
+  await reopened.page.clock.install();
+  const miss = reopened.page.waitForResponse(r => r.url().endsWith("/say") && r.status() === 404);
+  const stream = reopened.page.waitForResponse(r => r.url().includes("/sessions/" + sid + "?stream=1"));
+  await reopened.open(sid);
+  await Promise.all([feedBefore404 ? firstLookup.request() : miss, stream]);
+  const waiting = [{ id: sent.msg_id, state: "wait", appMessageID: "", why: "" }];
+  const outstanding = await snapshot(reopened.page);
+  assert.deepEqual(outstanding, waiting);
+  const item = (seq, id) => ({
+    role: "user", seq, key: "app:" + seq, text: firstText,
+    app: { method: "devkit/appTaskMessage", item: { id } },
+  });
+  const pull = () => reopened.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  const feed = reopened.page.locator(active + " .chatfeed .mlist .frow");
+  if (!feedBefore404) {
+    const anotherMiss = reopened.page.waitForResponse(r => r.url().endsWith("/say") && r.status() === 404);
+    reopened.state.items = [item(1, "other-message")];
+    await pull();
+    await anotherMiss;
+    assert.deepEqual(await snapshot(reopened.page), waiting, "чужой ID с тем же текстом не подтверждает реплику");
+    reopened.state.items.push({ role: "assistant", seq: 2, key: "app:2", text: "ещё один ответ" });
+    await pull();
+    await feed.nth(1).waitFor();
+    assert.equal(probes.length, 2, "перерисовка с прежним ID не вызывает повторного чтения");
+  }
+  accepted = true;
+  original.reply({ json: { way: "appserver", app_message_id: "new-message" } });
+  reopened.state.items.push(item(3, "new-message"));
+  await pull();
+  await feed.nth(reopened.state.items.length - 1).waitFor();
+  if (feedBefore404) {
+    assert.equal(probes.length, 1, "во время чтения второй запрос не запускается");
+    firstLookup.reply(missing);
+    await miss;
+  }
+  await reopened.page.locator(active + " .mlocal .m-local").waitFor({ state: "detached" });
+  await reopened.page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await reopened.page.clock.fastForward(61000);
+  const storage = await snapshot(reopened.page);
+  const bubbles = await reopened.bubbles.count();
+  console.log(JSON.stringify({ feedBefore404, sends, probes, outstanding, storage, bubbles, feedID: "new-message" }));
+  const request = { msg_id: sent.msg_id, receipt_only: true };
+  assert.equal(sends, 1, "исходный запрос отправляет текст ровно один раз");
+  const misses = Array(feedBefore404 ? 1 : 2).fill({ request, accepted: false });
+  assert.deepEqual(probes, [...misses, { request, accepted: true }]);
+  assert.deepEqual(storage, [], "точная квитанция снимает пузырь и запись очереди");
+  assert.equal(bubbles, 0);
+}
+
 async function attachmentOnly(s) {
   const start = launch(s);
   const { from, sid, gate, run } = start;
@@ -425,6 +515,7 @@ const scenarios = {
   "retry-after-refusal": retry, "retry-after-reload": retry, "retry-after-lost-answer": retry,
   "retry-task-receipt": taskReceipt,
   "crash-task-before-receipt": crashBeforeReceipt, "crash-tmux-before-receipt": crashBeforeReceipt,
+  "crash-task-before-queue": crashBeforeQueue, "crash-task-feed-during-receipt": crashBeforeQueue,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
 };
 const browser = await chromium.launch({ executablePath, headless: true });

@@ -14241,6 +14241,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   // перерисовке, и без памяти вторая одинаковая реплика снималась бы копией
   // первой.
   const claimed = new Set();
+  let receiptHistory = null;
   // Простой реплики переживает её попытки: дожим снимает запись и заводит
   // новую с тем же ключом, а порог снятия считается с первой попытки, и без
   // карты ключ -> время он обнулялся бы каждым дожимом.
@@ -14479,16 +14480,41 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     restoreReceipts(read, confirmed) {
       // Только восстановленная отправка с прежним ключом. Ручка читает
       // очередь и не отправляет реплику повторно.
-      for (const m of mine) {
+      const waiting = mine.filter((m) => {
         const unconfirmed = m.state === "wait" || (m.state === "held" && m.why === ECHO_LOST_WHY);
-        if (!unconfirmed || !m.persistedClaim || !m.wireReady || m.appMessageID || m.once || m.launch) continue;
+        return unconfirmed && m.persistedClaim && m.wireReady && !m.appMessageID && !m.once && !m.launch;
+      });
+      if (!waiting.length) return;
+      const historyIDs = new Set();
+      const missed = new Set();
+      let historyVersion = 0;
+      receiptHistory = (list) => {
+        const size = historyIDs.size;
+        for (const item of list) {
+          if (item?.role === "user" && item.app?.method === "devkit/appTaskMessage" && item.app.item?.id) {
+            historyIDs.add(item.app.item.id);
+          }
+        }
+        if (historyIDs.size === size) return;
+        historyVersion++;
+        for (const reread of [...missed]) reread();
+      };
+      for (const m of waiting) {
         const probe = async (retry) => {
+          missed.delete(reread);
           if (stopped || !mine.includes(m) || m.appMessageID) return;
+          const version = historyVersion;
           let r;
           try { r = await read(m.id); } catch (err) { r = null; }
           if (stopped || !mine.includes(m) || m.appMessageID) return;
           if (!r || r.status >= 500) {
-            if (retry) flips.push(setTimeout(() => probe(false), ECHO_FIRST));
+            if (retry) flips.push(setTimeout(reread, ECHO_FIRST));
+            return;
+          }
+          if (r.status === 404) {
+            // Запись в ленте могла появиться ещё до ответа о пропуске.
+            if (historyVersion !== version) reread();
+            else missed.add(reread);
             return;
           }
           if (!r.ok || !r.body.app_message_id) return;
@@ -14497,6 +14523,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
           else out.sent(m);
           confirmed(m, r.body);
         };
+        const reread = () => probe(false);
         probe(true);
       }
     },
@@ -14633,6 +14660,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // отличаться из-за разметки.
     reconcile(list) {
       if (!mine.length || !list || !list.length) return;
+      if (receiptHistory) receiptHistory(list);
       let went = false;
       for (const m of mine.slice()) {
         if (m.refused) continue;

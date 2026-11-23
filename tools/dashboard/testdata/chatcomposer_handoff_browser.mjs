@@ -284,6 +284,75 @@ async function taskReceipt(s) {
   assert.equal(await s.bubbles.count(), 0, "точное эхо снимает локальный пузырь");
 }
 
+async function crashBeforeReceipt(s) {
+  const taskChat = mode === "crash-task-before-receipt";
+  const sid = "session-queued";
+  const wrap = active + " .mlocal";
+  const key = "devkit.chat.pend.demo/" + sid;
+  const row = { ...live(sid, "XR-4"), protocol: taskChat ? "codex" : "" };
+  s.state.chats = [row];
+  const first = barrier("HTTP ответ ещё не получен");
+  let sends = 0;
+  s.state.say = route => {
+    sends++;
+    return first.hold(route).catch(() => {});
+  };
+  const snapshot = page => page.evaluate(key => (JSON.parse(localStorage.getItem(key) || "[]"))
+    .map(({ id, state, appMessageID }) => ({ id, state, appMessageID })), key);
+  await s.open(sid);
+  await s.ta.fill(firstText);
+  await s.send.click();
+  const sent = (await first.request()).body;
+  assert.deepEqual(await snapshot(s.page), [{ id: sent.msg_id, state: "wait", appMessageID: "" }]);
+
+  const context = s.page.context();
+  const cd = await context.newCDPSession(s.page);
+  const crashed = s.page.waitForEvent("crash");
+  cd.send("Page.crash").catch(() => {});
+  await crashed;
+  await s.page.close();
+  first.reply({ json: taskChat ? { way: "appserver", app_message_id: "new-message" } : { way: "socket" } });
+
+  const reopened = await composer(context);
+  reopened.state.chats = [row];
+  if (taskChat) {
+    reopened.state.items = [{
+      role: "user", seq: 1, key: "app:1", text: firstText,
+      app: { method: "devkit/appTaskMessage", item: { id: "new-message" } },
+    }];
+  }
+  const probes = [];
+  reopened.state.say = route => {
+    const body = route.request().postDataJSON();
+    if (!body.receipt_only) sends++;
+    probes.push(body);
+    if (probes.length === 1) return route.fulfill({ status: 503, json: { error: "временный отказ" } });
+    return route.fulfill({ json: { way: "dup", was: "appserver", app_message_id: "new-message" } });
+  };
+  await reopened.page.clock.install();
+  await reopened.open(sid);
+  if (taskChat) {
+    await reopened.page.locator(active + " .chatfeed .mlist .frow").waitFor();
+    await reopened.page.waitForFunction(() => document.querySelector("#cpin .mlocal .m-wait"));
+  }
+  await reopened.page.clock.fastForward(61000);
+  if (taskChat) {
+    await reopened.page.locator(wrap + " .m-local").waitFor({ state: "detached" });
+    assert.deepEqual(probes, Array(2).fill({ msg_id: sent.msg_id, receipt_only: true }));
+    assert.deepEqual(await snapshot(reopened.page), []);
+    await reopened.page.reload({ waitUntil: "domcontentloaded" });
+    await reopened.page.locator(active + " .chatfeed .mlist .frow").waitFor();
+    assert.equal(await reopened.bubbles.count(), 0);
+    assert.equal(probes.length, 2, "обычное обновление не ищет уже снятую квитанцию");
+  } else {
+    await reopened.page.locator(wrap + " .m-held").waitFor();
+    assert.deepEqual(await snapshot(reopened.page), [{ id: sent.msg_id, state: "held", appMessageID: "" }]);
+    assert.deepEqual(probes, [], "неизвестная доставка tmux не повторяется");
+  }
+  assert.equal(sends, 1, "отправка текста ровно одна");
+  console.log(JSON.stringify({ taskChat, sends, claim: sent.msg_id, probes, bubbles: await reopened.bubbles.count() }));
+}
+
 async function attachmentOnly(s) {
   const start = launch(s);
   const { from, sid, gate, run } = start;
@@ -355,6 +424,7 @@ const scenarios = {
   "runs-handoff": handoff, "raise-handoff": handoff, "raise-upload": lateUpload, "raise-upload-image": lateUpload,
   "retry-after-refusal": retry, "retry-after-reload": retry, "retry-after-lost-answer": retry,
   "retry-task-receipt": taskReceipt,
+  "crash-task-before-receipt": crashBeforeReceipt, "crash-tmux-before-receipt": crashBeforeReceipt,
   "runs-fragment": attachmentOnly, "raise-image": attachmentOnly, "runs-height": height,
 };
 const browser = await chromium.launch({ executablePath, headless: true });

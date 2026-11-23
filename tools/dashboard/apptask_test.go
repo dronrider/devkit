@@ -643,3 +643,57 @@ func TestAppTaskQueueUsesReplyEffort(t *testing.T) {
 		t.Fatalf("глубина двух реплик: %v, жду low и high", effortByText)
 	}
 }
+
+func TestAppTaskReceiptLookupDoesNotSend(t *testing.T) {
+	e := newTestEnv(t)
+	client := e.loggedClient(t)
+	const sid = "as-receipt"
+	st := chatStore{Project: "demo", Protocol: "codex", TaskRunID: "closed-run"}
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	const claim = "original-claim"
+	entry, err := e.s.appTaskQueueAdd(sid, claim, "прежняя реплика")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.appTaskQueueMark(sid, entry.ID, appTaskDelivery{sent: true, accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	url := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"
+	for _, tc := range []struct {
+		claim string
+		code  int
+	}{{claim, http.StatusOK}, {"unknown-claim", http.StatusNotFound}, {"", http.StatusBadRequest}} {
+		request := map[string]any{"msg_id": tc.claim, "receipt_only": true}
+		if tc.claim == "unknown-claim" {
+			request["text"] = "этот текст не должен отправиться"
+		}
+		data, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := doReq(t, client, "POST", url, string(data))
+		raw := body(t, resp)
+		if resp.StatusCode != tc.code {
+			t.Errorf("квитанция %q: %d %s, жду %d", tc.claim, resp.StatusCode, raw, tc.code)
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			var got map[string]string
+			if err := json.Unmarshal([]byte(raw), &got); err != nil || got["way"] != "dup" ||
+				got["was"] != "appserver" || got["app_message_id"] != entry.ID {
+				t.Errorf("исходная квитанция: %s, жду %q", raw, entry.ID)
+			}
+		}
+	}
+	err = e.s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
+		if len(*entries) != 1 || (*entries)[0].ID != entry.ID || !(*entries)[0].Accepted {
+			t.Errorf("запрос квитанции изменил очередь: %+v", *entries)
+		}
+		return false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

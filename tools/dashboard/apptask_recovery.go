@@ -47,6 +47,41 @@ func (s *server) appTaskAcceptSay(w http.ResponseWriter, sid, text, claim, effor
 	s.appTaskQueued(w, sid, entry.ID)
 }
 
+// appTaskReceipt читает квитанцию очереди по прежнему msg_id. Запрос
+// восстановленной вкладки не занимает ключ отправки и не заводит ход.
+func (s *server) appTaskReceipt(w http.ResponseWriter, project, sid, claim string) {
+	if claim == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нужен ключ реплики"})
+		return
+	}
+	st := s.chatStoreRead(sid)
+	if st.Protocol != "" && st.Project == project && st.appTaskRecorded() {
+		var entry appTaskMessage
+		err := s.appTaskQueue(sid, func(entries *[]appTaskMessage) bool {
+			for _, candidate := range *entries {
+				if candidate.Claim == claim {
+					entry = candidate
+					break
+				}
+			}
+			return false
+		})
+		if err != nil {
+			appTaskQueueError(w, err)
+			return
+		}
+		if entry.ID != "" {
+			if entry.Accepted {
+				writeJSON(w, http.StatusOK, map[string]string{"way": "dup", "was": "appserver", "app_message_id": entry.ID})
+			} else {
+				s.appTaskQueued(w, sid, entry.ID)
+			}
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "квитанция рабочей реплики не найдена"})
+}
+
 func appTaskQueueError(w http.ResponseWriter, err error) {
 	message := err.Error()
 	if errors.Is(err, errAppTaskClaimConflict) {

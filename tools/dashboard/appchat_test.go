@@ -1513,3 +1513,43 @@ func TestAppChatSwitchesDeadSubscriptionBeforeNextTurn(t *testing.T) {
 	}
 	appWaitFeed(t, e, sid, "ответ на реплику: первая реплика")
 }
+
+func TestAppChatSwitchAfterOldModelLeftSubscription(t *testing.T) {
+	e, client := appEnv(t)
+	sid := appStartChat(t, e, client, "первая реплика")
+	appWaitBusy(t, e, client, sid, false)
+	e.s.appDrop(sid, "проверка выбора после изменения каталога")
+	before := e.s.chatStoreRead(sid)
+
+	view := e.s.harnesses()
+	old, _ := view.pick("codextest")
+	next, _ := view.pick("codex2test")
+	oldProfile, nextProfile := *old, *next
+	nextProfile.Models = append(next.Models[:len(next.Models):len(next.Models)], old.Models...)
+	oldProfile.Models = nil
+	view.Harnesses = []Harness{oldProfile, nextProfile}
+	e.s.mu.Lock()
+	e.s.harn, e.s.harnBorn = &view, e.s.now()
+	e.s.mu.Unlock()
+	resolved := e.s.chatHarnessOf(before.Model, before.Harness)
+	if resolved == nil || resolved.Name != "codex2test" {
+		t.Fatalf("фикстура не переместила старую пару: %+v", resolved)
+	}
+
+	url := e.srv.URL + "/api/projects/demo/chats/" + sid
+	resp := doReq(t, client, "POST", url+"/model", `{"model":"модель-codex2","harness":"codex2test"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
+	}
+	after := e.s.chatStoreRead(sid)
+	t.Logf("до выбора: подписка %s, нить %s, раскладка разрешает старую модель через %s; после: подписка %s, нить %s",
+		before.Harness, before.Thread, resolved.Name, after.Harness, after.Thread)
+	appMode(t, e, "resume-error")
+	resp = doReq(t, client, "POST", url+"/say", `{"text":"вторая реплика","msg_id":"second"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("следующая реплика после смены подписки: %d %s", resp.StatusCode, raw)
+	}
+	if after.Thread != "" {
+		t.Fatalf("выбор сохранил нить исходной подписки %s в новой %s", before.Harness, after.Harness)
+	}
+}

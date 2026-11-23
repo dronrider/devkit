@@ -3313,6 +3313,35 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
+	var body struct {
+		Text string `json:"text"`
+		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
+		// первой отправки и у всех её повторов.
+		MsgID       string          `json:"msg_id"`
+		ReceiptOnly bool            `json:"receipt_only"`
+		Selection   *chat.Selection `json:"selection,omitempty"`
+		Scenario    *scenarioAnswer `json:"scenario,omitempty"`
+		Proposal    *proposalAnswer `json:"proposal,omitempty"`
+		// Effort это уровень глубины из меню модели (DK-1570). У app-server
+		// выбор применяется в следующем ходе. Для терминального клиента
+		// глубина передаётся при подъёме процесса.
+		Effort string `json:"effort"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		// Для слишком длинной реплики панель предлагает вставку фрагментом.
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("реплика длиннее предела %d КБ: длинную вставку панель складывает фрагментом", msgBodyLimit/1024)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	if body.ReceiptOnly {
+		s.appTaskReceipt(w, found.Name, sid, body.MsgID)
+		return
+	}
 	records := s.bindsAll()[sid]
 	guardLast := sessions.Last(records)
 	taskIDs := sessions.Works(records)
@@ -3346,30 +3375,6 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			roots = append(roots, info.Tree)
 			taskIDs = append(taskIDs, headTasks(guardLast, filepath.Base(info.Tree))...)
 		}
-	}
-	var body struct {
-		Text string `json:"text"`
-		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
-		// первой отправки и у всех её повторов.
-		MsgID     string          `json:"msg_id"`
-		Selection *chat.Selection `json:"selection,omitempty"`
-		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
-		Proposal  *proposalAnswer `json:"proposal,omitempty"`
-		// Effort это уровень глубины из меню модели (DK-1570). У app-server
-		// выбор применяется в следующем ходе. Для терминального клиента
-		// глубина передаётся при подъёме процесса.
-		Effort string `json:"effort"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
-		// Для слишком длинной реплики панель предлагает вставку фрагментом.
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": fmt.Sprintf("реплика длиннее предела %d КБ: длинную вставку панель складывает фрагментом", msgBodyLimit/1024)})
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
-		return
 	}
 	if msg := effortBad(body.Effort); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
@@ -4572,7 +4577,13 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 			if current.appTaskRecorded() {
 				current.CxModel = model
 			} else {
-				if previous := s.chatHarnessOf(current.Model, current.Harness); previous == nil || previous.Name != h.Name {
+				previous := current.Harness
+				if previous == "" {
+					if inferred := s.chatHarnessOf(current.Model, ""); inferred != nil {
+						previous = inferred.Name
+					}
+				}
+				if previous != h.Name {
 					current.Thread = ""
 				}
 				current.Model, current.Harness, current.Protocol = model, harness, h.Protocol

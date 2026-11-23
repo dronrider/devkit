@@ -80,6 +80,7 @@ func TestChatComposerHandoffBrowser(t *testing.T) {
 	for _, mode := range []string{
 		"runs-handoff", "raise-handoff", "raise-upload", "raise-upload-image",
 		"retry-after-refusal", "retry-after-reload", "retry-after-lost-answer", "retry-task-receipt",
+		"crash-task-before-receipt", "crash-tmux-before-receipt",
 		"runs-fragment", "raise-image", "runs-height",
 	} {
 		t.Run(mode, func(t *testing.T) {

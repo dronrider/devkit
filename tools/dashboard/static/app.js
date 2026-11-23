@@ -14050,7 +14050,7 @@ function echoRead(project, addr) {
       task: m.task ? String(m.task) : "",
       // Ключ записи переживает перезагрузку вместе с ней: по нему сервер узнаёт
       // повтор, а вкладка, поднятая заново, шлёт ту же запись, а не новую.
-      id: m.id ? String(m.id) : msgKey(),
+      id: m.id ? String(m.id) : msgKey(), persistedClaim: Boolean(m.id),
     }));
   } catch (err) {
     // Приватное окно запрещает хранилище: панель тогда живёт без памяти о
@@ -14475,6 +14475,30 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // стоящие пузыри, а вкладка, поднятая заново, застаёт ровно этот порядок.
     redraw() {
       draw();
+    },
+    restoreReceipts(read, confirmed) {
+      // Только восстановленная отправка с прежним ключом. Ручка читает
+      // очередь и не отправляет реплику повторно.
+      for (const m of mine) {
+        const unconfirmed = m.state === "wait" || (m.state === "held" && m.why === ECHO_LOST_WHY);
+        if (!unconfirmed || !m.persistedClaim || !m.wireReady || m.appMessageID || m.once || m.launch) continue;
+        const probe = async (retry) => {
+          if (stopped || !mine.includes(m) || m.appMessageID) return;
+          let r;
+          try { r = await read(m.id); } catch (err) { r = null; }
+          if (stopped || !mine.includes(m) || m.appMessageID) return;
+          if (!r || r.status >= 500) {
+            if (retry) flips.push(setTimeout(() => probe(false), ECHO_FIRST));
+            return;
+          }
+          if (!r.ok || !r.body.app_message_id) return;
+          m.appMessageID = r.body.app_message_id;
+          if (r.body.way === "queued") out.queued(m, r.body.message);
+          else out.sent(m);
+          confirmed(m, r.body);
+        };
+        probe(true);
+      }
     },
     // Уход с панели гасит дожим: вернувшийся человек поднимет его заново, а
     // два цикла на одну запись слали бы её дважды.
@@ -15615,6 +15639,15 @@ function chatPanel(project, st) {
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
       (rec) => post(rec.text, null, rec.clips, null, rec.scenario, rec.proposal, rec.selection, rec), legacy);
     chatLive.push(echo.stop);
+    if (st.sid && st.task && st.entry?.protocol) {
+      const restored = echo;
+      const sayURL = chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say";
+      restored.restoreReceipts(id => api(sayURL, { method: "POST", body: { msg_id: id, receipt_only: true } }),
+        (m, receipt) => {
+          if (receipt.was === "appserver") chatEffortSpend(project, st.task, m.effortSnapshot);
+          restored.reconcile(shownFeed);
+        });
+    }
     grow.arm();
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать. Гашение явное (halt): занятость,
@@ -15622,8 +15655,8 @@ function chatPanel(project, st) {
     // поднимет, пока опрос не застанет сессию свободной.
     echo.onHeld = () => busy.halt();
     chatLive.push(busy.shut);
-    // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
-    // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
+    // Плашка относится к подъёму сессии старого адреса. При первой
+    // отправке из нового чата ожидание видно на самой реплике.
     if (!st.dead && !chatIsNew(st.addr) && !st.blank && !st.sid && st.lift) busy.raise();
     // Слежение за состоянием чата (DK-893). Плашка встаёт по ответу сервера, а
     // не по нажатию «Отправить»: открытие чата, перезагрузка страницы и заход с

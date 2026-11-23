@@ -9,6 +9,9 @@ import (
 func TestPrepareVerdictPacketRequiresCurrentCompleteAudit(t *testing.T) {
 	root, path := fixture(t)
 	report := completed(t, root, path)
+	fact := ReviewFact{Location: "code.go:1", Text: "Объявление пакета", Quote: "package sample"}
+	report.Rules[0].Evidence[0].Facts = map[string][]ReviewFact{"statement": {fact}}
+	save(t, path, report)
 	write(t, taskPath(path), "## DoD\n\nПравильный результат.\n")
 	if _, err := PrepareVerdictPacket(root, path, "XR-1", "", "", "PASS"); err == nil || !strings.Contains(err.Error(), "постановка изменились") {
 		t.Fatalf("пакет со старой постановкой: %v", err)
@@ -37,6 +40,10 @@ func TestPrepareVerdictPacketRequiresCurrentCompleteAudit(t *testing.T) {
 		packet.Diff != "" || len(packet.Rules) != len(report.Rules) ||
 		packet.TestEvidence != "go test: PASS" {
 		t.Fatalf("пакет не соответствует проверенной версии: %+v", packet)
+	}
+	facts := packet.Rules[0].Evidence[0].Facts["statement"]
+	if len(facts) != 1 || facts[0].Location != fact.Location || facts[0].Quote != fact.Quote {
+		t.Fatalf("пакет потерял основание вывода: %+v", facts)
 	}
 
 	report.Rules[0].Result = "pending"

@@ -159,7 +159,7 @@ func recordNameEvidence(root, path, id, object, input, request, summary string) 
 	}
 	result.Progress = &checked.state
 	if batch {
-		result.Issues = append(result.Issues, rejectedNameEvidence(entries, checked.issues)...)
+		result.Issues = append(result.Issues, rejectedNameEvidenceIssues(entries, checked.issues)...)
 		slices.SortStableFunc(result.Issues, func(a, b NameEvidenceBatchIssue) int { return a.Row - b.Row })
 		if len(result.Issues) != 0 {
 			return result, nil, nil
@@ -254,7 +254,7 @@ func mergeNameEvidence(rule *Rule, original json.RawMessage, entries []nameEvide
 	return json.Marshal(evidence)
 }
 
-func rejectedNameEvidence(entries []nameEvidenceRow, checks error) []NameEvidenceBatchIssue {
+func rejectedNameEvidenceIssues(entries []nameEvidenceRow, checks error) []NameEvidenceBatchIssue {
 	submitted := make(map[evidenceKey]int, len(entries))
 	for _, row := range entries {
 		submitted[evidenceKey{row.entry.Object, row.entry.Check}] = row.number

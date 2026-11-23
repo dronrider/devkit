@@ -1,6 +1,7 @@
 package reviewaudit
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -33,11 +34,15 @@ type verdictPacketRule struct {
 }
 
 type verdictPacketEvidence struct {
-	Object      string `json:"object"`
-	Check       string `json:"check,omitempty"`
-	Location    string `json:"location"`
-	Result      string `json:"result,omitempty"`
-	Observation string `json:"observation"`
+	Object             string                  `json:"object"`
+	Check              string                  `json:"check,omitempty"`
+	Location           string                  `json:"location"`
+	Result             string                  `json:"result,omitempty"`
+	Observation        string                  `json:"observation"`
+	Facts              map[string][]ReviewFact `json:"facts,omitempty"`
+	ResultEvidence     *ResultEvidence         `json:"result_evidence,omitempty"`
+	WriteEvidence      *WriteEvidence          `json:"write_evidence,omitempty"`
+	RuntimeObservation json.RawMessage         `json:"runtime_observation,omitempty"`
 }
 
 func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (VerdictPacket, error) {
@@ -104,9 +109,15 @@ func PrepareVerdictPacket(root, path, id, request, since, testEvidence string) (
 	for _, rule := range report.Rules {
 		item := verdictPacketRule{ID: rule.ID, Text: rule.Text, Applicability: rule.Applicability, Reason: rule.Reason}
 		for _, evidence := range rule.Evidence {
+			var runtimeObservation json.RawMessage
+			if comparison := evidence.ObjectComparison; comparison != nil && comparison.Proof != nil && comparison.Proof.Runtime != nil {
+				runtimeObservation = json.RawMessage(comparison.Proof.Runtime.Payload)
+			}
 			item.Evidence = append(item.Evidence, verdictPacketEvidence{
 				Object: evidence.Object, Check: evidence.Check, Location: evidence.Location,
 				Result: evidence.Result, Observation: evidence.Observation,
+				Facts: evidence.Facts, ResultEvidence: evidence.ResultEvidence,
+				WriteEvidence: evidence.WriteEvidence, RuntimeObservation: runtimeObservation,
 			})
 		}
 		packet.Rules = append(packet.Rules, item)

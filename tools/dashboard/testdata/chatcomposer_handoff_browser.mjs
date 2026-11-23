@@ -737,7 +737,7 @@ async function legacyDraft(s) {
 
 async function runModelTier(s) {
   s.state.models = [
-    ...models,
+    { ...models[0], run_model: "stand-a-assigned" },
     { model: "stand-extra", harness: "chat-stand", levels: ["high"] },
   ];
   const gate = barrier("запуск из меню моделей");
@@ -745,6 +745,7 @@ async function runModelTier(s) {
   await s.open("XR-4");
   const picker = s.page.locator(active + " .cdsel");
   assert.equal(await picker.locator('option[value="stand-extra"]:enabled').count(), 0);
+  assert.equal(await picker.inputValue(), "stand-a-assigned");
   await s.ta.fill(firstText);
   await s.send.click();
   const { body } = await gate.request();

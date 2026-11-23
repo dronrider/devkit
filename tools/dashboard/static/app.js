@@ -15241,7 +15241,11 @@ function chatPanel(project, st) {
     drawClips();
   });
   row.append(recoverDraft, pickBtn);
-  const startModels = way.kind === "unassigned" ? (st.models || []).filter(m => m.tier) : null;
+  const startModels = way.kind === "unassigned"
+    ? (st.models || []).filter(m => m.tier).map(m => m.run_model
+      ? { ...m, model: m.run_model, replaces: [m.model, ...(m.replaces || [])] }
+      : m)
+    : null;
   row.append(modelPick(project, startModels ? { ...st, models: startModels } : st, () => draft.addr));
   // Неразобранные мысли записи разбираются прямо из её чата: вход в разговор
   // сам ходку не поднимает, а эта кнопка поднимает, не отходя от ленты

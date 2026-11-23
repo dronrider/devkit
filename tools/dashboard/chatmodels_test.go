@@ -113,6 +113,9 @@ func TestChatModelCatalogProjectsLegacyAssignments(t *testing.T) {
 	if opts[2].Tier != "pro" || strings.Join(opts[2].Levels, ",") != "low,high" || opts[3].Tier != "max" {
 		t.Fatalf("проекция потеряла ярусы или глубину: %+v", opts)
 	}
+	if opts[2].RunModel != "gpt-6.1-sol" || opts[3].RunModel != "gpt-6-astra" || opts[0].RunModel != "" {
+		t.Fatalf("меню запуска получило неверное назначение яруса: %+v", opts)
+	}
 	for _, model := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
 		if !e.s.chatPairKnown(model, "codextest") || e.s.chatHarnessOf(model, "codextest").Name != "codextest" {
 			t.Fatalf("модель нового выбора не сопоставилась прежнему назначению: %s", model)

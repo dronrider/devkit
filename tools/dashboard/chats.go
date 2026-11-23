@@ -45,6 +45,7 @@ const chatModelDefault = "opus"
 // нет ни одного, и новая подписка появляется в выборе сама.
 type chatModelOpt struct {
 	Model    string   `json:"model"`
+	RunModel string   `json:"run_model,omitempty"`
 	Tier     string   `json:"tier"`
 	Harness  string   `json:"harness"`
 	Protocol string   `json:"protocol,omitempty"`
@@ -85,7 +86,10 @@ func (s *server) chatModelOpts() []chatModelOpt {
 	for _, h := range view.Harnesses {
 		seen := map[string]bool{}
 		for _, m := range h.Models {
-			m.Model = modelcatalog.Current(m.Model)
+			var runModel string
+			if current := modelcatalog.Current(m.Model); current != m.Model {
+				runModel, m.Model = m.Model, current
+			}
 			if seen[m.Model] {
 				continue
 			}
@@ -93,7 +97,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 				continue
 			}
 			seen[m.Model] = true
-			out = append(out, chatModelOpt{Model: m.Model, Tier: m.Tier,
+			out = append(out, chatModelOpt{Model: m.Model, RunModel: runModel, Tier: m.Tier,
 				Harness: h.Name, Protocol: h.Protocol, Default: h.Default && m.Tier == "pro", Levels: m.Levels,
 				Replaces: modelcatalog.Replaces(m.Model)})
 		}

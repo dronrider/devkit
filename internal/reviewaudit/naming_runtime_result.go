@@ -137,7 +137,8 @@ func checkNameRuntimeResult(e Evidence, declaration string, words []string, sour
 	}
 	for _, word := range proof.Words {
 		fact := word.Fact
-		if !nameRuntimeSiteCites(run.Returned.nameRuntimeSite, fact) && !nameRuntimeSiteCites(run.Read.nameRuntimeSite, fact) {
+		if !nameRuntimeSiteCites(run.Returned.nameRuntimeSite, fact) &&
+			!nameRuntimeSiteCites(run.Read.nameRuntimeSite, fact) {
 			return fmt.Errorf("proof.words %s: факт должен цитировать подписанный возврат или потребителя", word.Word)
 		}
 	}

@@ -815,6 +815,16 @@ func (s *server) appTaskSaveEffort(w http.ResponseWriter, sid, effort string) bo
 	return true
 }
 
+func (s *server) appSayModelError(st chatStore, model string) error {
+	if err := chatModelError(model); err != nil {
+		return err
+	}
+	if st.appTaskRecorded() && !s.chatPairKnown(model, st.Harness) {
+		return fmt.Errorf("модель %s недоступна в подписке %s: выберите актуальную модель в чате", model, st.Harness)
+	}
+	return nil
+}
+
 // appSay передаёт реплику обычному разговору, при необходимости поднимая
 // клиент. У рабочего чата задачи реплика идёт в очередь восстановления
 // или однопроходного продолжения. Занятый исходный конвейер может отказать.
@@ -837,7 +847,7 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "refused": err.Error()})
 		return
 	}
-	model, harness := st.Model, st.Harness
+	model, harness := st.appModel(), st.Harness
 	if model == "" {
 		model, harness = s.chatChoice(sid, "")
 	}
@@ -864,10 +874,11 @@ func (s *server) appSay(w http.ResponseWriter, found *Project, sid, text, claim,
 			return
 		}
 	}
-	if !chatModelCurrent(w, model) {
+	if err := s.appSayModelError(st, model); err != nil {
 		if continuation {
-			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. Исходная модель "+model+" недоступна", true, "model-"+st.TaskRunID)
+			s.appTaskRecoveryNote(sid, "Реплика сохранена в очереди. "+err.Error(), true, "model-"+st.TaskRunID)
 		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	h := s.chatHarnessOf(model, harness)

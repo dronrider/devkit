@@ -1325,6 +1325,66 @@ func TestAppTaskQueuedSaySavesEffort(t *testing.T) {
 	t.Fatalf("в ответе ленты нет принятой реплики: %s", raw)
 }
 
+func TestAppTaskQueuedSayChecksModelAtDelivery(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("запуск: %d %+v", code, first)
+	}
+	sid := first["session"]
+	e.s.appTasksClose()
+	waitTaskStopped(t, e, sid)
+	e.s.appWorkers.Wait()
+	waitAppTaskRecoveryCarrierExit(t, e, sid)
+	p, ok := e.s.projectByName("demo")
+	if !ok {
+		t.Fatal("проект не найден")
+	}
+	if err := e.s.appTaskRecover(p, sid); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(e.proj, "fake-app-log")
+	before := readFile(t, logPath)
+	var params struct{ Model string }
+	for _, line := range strings.Split(before, "\n") {
+		if raw, ok := strings.CutPrefix(line, "params "); ok {
+			params.Model = ""
+			if err := json.Unmarshal([]byte(raw), &params); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if params.Model != "модель-codex" {
+		t.Fatalf("автоматическое восстановление потеряло исходную модель: %s", before)
+	}
+	const claim, text = "queued-before-catalog-change", "Реплика из очереди"
+	if code, raw := appTaskSay(t, e, c, sid, text, claim); code != http.StatusAccepted {
+		t.Fatalf("реплика до смены каталога: %d %s", code, raw)
+	}
+	// Сохранённый выбор прежней версии мог появиться до обновления дашборда.
+	if err := e.s.chatStoreUpdate(sid, func(st chatStore) chatStore {
+		st.CxModel = "gpt-6.1-sol"
+		return st
+	}); err != nil {
+		t.Fatal(err)
+	}
+	appMode(t, e, "task-check")
+	live := e.s.appLive(sid)
+	if _, err := live.proc.call("test/finish", map[string]bool{"keepOpen": true}); err != nil {
+		t.Fatal(err)
+	}
+	waitTaskStopped(t, e, sid)
+	if log := readFile(t, logPath); strings.Count(log, "input ") != strings.Count(before, "input ") {
+		t.Fatalf("снятая с выбора модель дошла до turn/start: %s", log)
+	}
+	appWaitFeed(t, e, sid, "перед продолжением выберите gpt-6.2-sol")
+	entry, err := e.s.appTaskQueueNext(sid)
+	if err != nil || entry.Claim != claim || entry.Sent {
+		t.Fatalf("очередь потеряла реплику до выбора модели: %+v, %v", entry, err)
+	}
+}
+
 func TestAppTaskImportLeavesOtherAddressee(t *testing.T) {
 	e, _ := appTaskEnv(t, "mute")
 	p, ok := e.s.projectByName("demo")

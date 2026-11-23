@@ -661,8 +661,10 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Agents = append(out.Agents, a)
 	}
-	if sid != "" && s.chatStoreRead(sid).Protocol != "" {
-		out.Plan, out.PlanTemplate = s.appPlanRead(sid), ""
+	if sid != "" {
+		if st := s.chatStoreRead(sid); st.Project == found.Name && st.Protocol != "" {
+			out.Plan, out.PlanTemplate = s.appPlanRead(sid), ""
+		}
 	}
 	sort.SliceStable(out.Agents, func(i, j int) bool { return out.Agents[i].Since > out.Agents[j].Since })
 	out.Count = len(out.Agents)

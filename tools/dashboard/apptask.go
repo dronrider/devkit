@@ -403,11 +403,15 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 	st := s.chatStoreRead(a.sid)
 	c := s.appLive(a.sid)
 	if c == nil {
-		h := s.chatHarnessOf(st.Model, st.Harness)
+		model := st.Model
+		if a.replyOnce {
+			model = st.appModel()
+		}
+		h := s.chatHarnessOf(model, st.Harness)
 		if !h.foreign() || h.Name != st.Harness {
 			return errors.New("исходная подписка конвейера Codex недоступна")
 		}
-		c, err = s.appSpawn(a.sid, h, st.Model, chatTree(p.Path, st.Task), p.Name, st.Thread, a.stop)
+		c, err = s.appSpawn(a.sid, h, model, chatTree(p.Path, st.Task), p.Name, st.Thread, a.stop)
 		if err != nil {
 			return err
 		}
@@ -447,6 +451,14 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		return errors.New("конвейер задачи остановлен")
 	default:
 	}
+	var queuedModel string
+	if queued.ID != "" {
+		current := s.chatStoreRead(a.sid)
+		queuedModel = current.appModel()
+		if err := s.appSayModelError(current, queuedModel); err != nil {
+			return fmt.Errorf("реплика сохранена в очереди: %w", err)
+		}
+	}
 	turn := &appTaskTurn{thread: c.thread, last: time.Now(), early: make(map[string]appTaskActivity),
 		wake: make(chan struct{}, 1), ends: make(chan json.RawMessage, 128)}
 	start, err := c.beginTurn(s.now(), turn)
@@ -468,7 +480,7 @@ func (s *server) appTaskPass(a *appTask, p *Project, conn net.Conn) (err error) 
 		params["model"] = st.Model
 	}
 	if queued.ID != "" {
-		params["model"] = s.chatStoreRead(a.sid).appModel()
+		params["model"] = queuedModel
 		if err = s.appTaskQueueMark(a.sid, queued.ID, appTaskDelivery{sent: true}); err != nil {
 			return err
 		}

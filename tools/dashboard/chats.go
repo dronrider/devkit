@@ -3350,6 +3350,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	taskIDs := sessions.Works(records)
 	stored := s.chatStoreRead(sid)
 	chosenModel, _ := s.chatChoice(sid, guardLast.Tmux)
+	if stored.Protocol != "" && stored.appModel() != "" {
+		chosenModel = stored.appModel()
+	}
 	if stored.TaskRunID == "" && !chatModelCurrent(w, chosenModel) {
 		return
 	}

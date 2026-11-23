@@ -481,13 +481,80 @@ func TestAppTaskFirstAttachmentInHistory(t *testing.T) {
 }
 
 func TestAppTaskModelChoicePreservesRun(t *testing.T) {
-	appTaskModelChoice(t, func(e *testEnv, c *http.Client, sid string) {
+	appTaskModelChoice(t, "модель-codex", "модель-next", func(e *testEnv, c *http.Client, sid string) {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
 			`{"model":"модель-next","harness":"codextest"}`)
 		if raw := body(t, resp); resp.StatusCode != http.StatusOK {
 			t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
 		}
 	})
+}
+
+func TestAppTaskModelChoiceReplacesLegacyManualModel(t *testing.T) {
+	appTaskModelChoice(t, "gpt-6.1-sol", "gpt-6.2-sol", func(e *testEnv, c *http.Client, sid string) {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/model",
+			`{"model":"gpt-6.2-sol","harness":"codextest"}`)
+		if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("выбор: %d %s", resp.StatusCode, raw)
+		}
+	})
+}
+
+func TestAppTaskSayRefusesRemovedManualModel(t *testing.T) {
+	e, c := appTaskEnv(t, "mute")
+	appTaskRecoveryFixture(t, e)
+	catalog := strings.Replace(appHarnessJSON, `"model": "модель-codex"}]`,
+		`"model": "модель-codex"},{"tier":"base","model":"модель-прежняя"}]`, 1)
+	writeScript(t, e.bin, "agentctl", `case "$1" in
+ exec) shift 4; exec "$@" ;;
+ *) printf '%s' '`+catalog+`' ;;
+esac`)
+	code, first := appTaskStart(t, e, c)
+	if code != http.StatusOK {
+		t.Fatalf("запуск: %d %+v", code, first)
+	}
+	sid := first["session"]
+	base := e.srv.URL + "/api/projects/demo/chats/" + sid
+	resp := doReq(t, c, "POST", base+"/model", `{"model":"модель-прежняя","harness":"codextest"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор модели до удаления: %d %s", resp.StatusCode, raw)
+	}
+	resp = doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-002", "")
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("остановка: %d %s", resp.StatusCode, raw)
+	}
+	waitTaskStopped(t, e, sid)
+	appTaskRecoveryFixture(t, e)
+	e.s.mu.Lock()
+	e.s.harn = nil
+	e.s.mu.Unlock()
+
+	const claim, text = "removed-model", "Реплика после удаления модели"
+	logPath := filepath.Join(e.proj, "fake-app-log")
+	before := readFile(t, logPath)
+	code, raw := appTaskSay(t, e, c, sid, text, claim)
+	if code != http.StatusConflict || !strings.Contains(raw, "модель-прежняя") ||
+		!strings.Contains(raw, "codextest") || !strings.Contains(raw, "выберите актуальную модель") {
+		t.Fatalf("реплика с удалённой моделью: %d %s", code, raw)
+	}
+	if got := readFile(t, logPath); got != before {
+		t.Fatalf("отказ отправил запрос клиенту: %s", got)
+	}
+	entry, err := e.s.appTaskQueueNext(sid)
+	if err != nil || entry.Claim != claim || entry.Text != text || entry.Sent {
+		t.Fatalf("отклонённая реплика не сохранилась для повтора: %+v, %v", entry, err)
+	}
+	resp = doReq(t, c, "POST", base+"/model", `{"model":"модель-codex","harness":"codextest"}`)
+	if raw := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("выбор актуальной модели: %d %s", resp.StatusCode, raw)
+	}
+	code, raw = appTaskSay(t, e, c, sid, text, claim)
+	if code != http.StatusOK || !strings.Contains(raw, entry.ID) {
+		t.Fatalf("повтор сохранённой реплики: %d %s", code, raw)
+	}
+	if log := readFile(t, logPath); strings.Count(log, "input ") != 2 || strings.Contains(log, "модель-прежняя") {
+		t.Fatalf("реплика должна уйти один раз с актуальной моделью: %s", log)
+	}
 }
 
 func TestAppTaskModelMenuBrowser(t *testing.T) {
@@ -504,7 +571,7 @@ func TestAppTaskModelMenuBrowser(t *testing.T) {
 	}
 	for _, mode := range []string{"menu", "ordered", "refused", "new-chat", "new-chat-other-tab"} {
 		t.Run(mode, func(t *testing.T) {
-			appTaskModelChoice(t, func(e *testEnv, _ *http.Client, sid string) {
+			appTaskModelChoice(t, "модель-codex", "модель-next", func(e *testEnv, _ *http.Client, sid string) {
 				if err := e.s.chatStoreUpdate(sid, func(st chatStore) chatStore {
 					st.CxModel = "прежняя-модель"
 					return st
@@ -522,11 +589,13 @@ func TestAppTaskModelMenuBrowser(t *testing.T) {
 	}
 }
 
-func appTaskModelChoice(t *testing.T, choose func(*testEnv, *http.Client, string)) {
+func appTaskModelChoice(t *testing.T, original, selected string, choose func(*testEnv, *http.Client, string)) {
 	t.Helper()
 	e, c := appTaskEnv(t, "mute")
 	appTaskRecoveryFixture(t, e)
 	catalog := strings.Replace(appHarnessJSON, `"model": "модель-codex"}]`, `"model": "модель-codex"},{"tier":"base","model":"модель-next"}]`, 1)
+	catalog = strings.Replace(catalog, `"модель-codex"`, strconv.Quote(original), 1)
+	catalog = strings.Replace(catalog, `"модель-next"`, strconv.Quote(selected), 1)
 	writeScript(t, e.bin, "agentctl", `case "$1" in
  exec) shift 4; exec "$@" ;;
  *) printf '%s' '`+catalog+`' ;;
@@ -572,7 +641,7 @@ esac`)
 			}
 		}
 	}
-	if strings.Count(log, "input ") != 2 || params["model"] != "модель-next" ||
+	if strings.Count(log, "input ") != 2 || params["model"] != selected ||
 		params["threadId"] != initial.Thread || params["effort"] != "low" {
 		t.Fatalf("следующая реплика потеряла модель, нить или глубину: %s", log)
 	}

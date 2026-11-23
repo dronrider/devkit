@@ -256,6 +256,28 @@ func TestPulsePlanFileOfSilentChat(t *testing.T) {
 	}
 }
 
+func TestPulseAppPlanBelongsToProject(t *testing.T) {
+	e, c := pulseEnv(t, time.Now())
+	mkProject(t, filepath.Join(filepath.Dir(e.proj), "other"))
+	const sid = "as-plan-owner"
+	st := chatStore{Project: "other", Task: "XR-1", Protocol: "codex"}
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	plan := e.s.appPlanPath(sid)
+	putDoc(t, filepath.Dir(plan), filepath.Base(plan), `{"plan":[{"step":"Проверить выпуск","status":"completed"}]}`)
+	if got := getPulse(t, e, c, "sid="+sid+"&task=XR-1"); len(got.Plan) != 0 {
+		t.Errorf("пульс показывает план другого проекта: %+v", got.Plan)
+	}
+	st.Project = "demo"
+	if err := e.s.chatStoreWrite(sid, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := getPulse(t, e, c, "sid="+sid+"&task=XR-2"); len(got.Plan) != 1 || got.Plan[0].Text != "Проверить выпуск" {
+		t.Fatalf("план разговора потерялся при смене задачи в проекте: %+v", got.Plan)
+	}
+}
+
 // Живых сессий у задачи нет: кольцо пустое и числа не носит.
 func TestPulseEmpty(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)

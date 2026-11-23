@@ -330,7 +330,8 @@ try {
           };
           requestAnimationFrame(step);
         }));
-        const point = await target.evaluate((n) => {
+        const measure = () => target.evaluate((n) => {
+          if (!n.isConnected) return null;
           const menu = n.closest(".hpop,.menu");
           if (menu) {
             const r = n.getBoundingClientRect(), m = menu.getBoundingClientRect();
@@ -347,6 +348,14 @@ try {
               .map((at) => { const r = at.getBoundingClientRect(); const s = getComputedStyle(at); return { class: at.className, left: r.left, right: r.right, top: r.top, bottom: r.bottom, overflowX: s.overflowX, overflowY: s.overflowY }; }),
           };
         });
+        let point = await measure();
+        // Между получением DOM-элемента и замером меню может заменить строку.
+        // Для отсоединённой строки берём действующий элемент тем же locator.
+        if (!point) {
+          await target.waitFor({ state: "visible" });
+          point = await measure();
+        }
+        assert(point, "элемент исчез при повторном замере " + expected);
         clicks.push({ expected, ...point });
         if (proof && !point.hit) await page.screenshot({ path: proof + "/failed-hit.png" });
         await page.mouse.move(point.x, point.y);

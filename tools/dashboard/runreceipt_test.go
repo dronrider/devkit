@@ -201,7 +201,7 @@ func writeRunReceiptMarker(t *testing.T, e *testEnv, req runStartRequest, phase 
 		Fingerprint string `json:"fingerprint"`
 		Phase       string `json:"phase,omitempty"`
 	}{fmt.Sprintf("%x", sha256.Sum256(fields)), phase}
-	if err := writeChatStartReceipt(path, marker); err != nil {
+	if err := writeChatStartJSON(path, marker); err != nil {
 		t.Fatal(err)
 	}
 	return path

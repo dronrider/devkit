@@ -133,7 +133,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 	}
 	sess := chatNewName(id, tmuxAliveFn())
 	receipt := chatStartReceipt{Key: key, Project: found.Name, Task: id, Tmux: sess, Model: model, Harness: harness, Since: s.now().Unix()}
-	if err := writeChatStartReceipt(path, receipt); err != nil {
+	if err := writeChatStartJSON(path, receipt); err != nil {
 		fail(fmt.Errorf("квитанция запуска не сохранилась: %w", err))
 		return
 	}
@@ -149,7 +149,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 			receipt.Unknown = err.Error()
 			// Даже при отказе этой записи исходная квитанция остаётся: повтор не
 			// создаст второй процесс поверх неизвестного первого.
-			if writeErr := writeChatStartReceipt(path, receipt); writeErr != nil {
+			if writeErr := writeChatStartJSON(path, receipt); writeErr != nil {
 				s.logf("неопределённый запуск %s: %v", blank, writeErr)
 			}
 		} else if removeErr := os.Remove(path); removeErr != nil {
@@ -166,7 +166,7 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 		receipt.Created = roll[sess]
 	}
 	receipt.Accepted = true
-	if err := writeChatStartReceipt(path, receipt); err != nil {
+	if err := writeChatStartJSON(path, receipt); err != nil {
 		hold(fmt.Errorf("клиент запущен, но подтверждение не сохранилось; повтор не отправлен: %w", err))
 		return
 	}
@@ -180,8 +180,8 @@ func (s *server) chatBlankStart(w http.ResponseWriter, found *Project, blank, id
 	writeJSON(w, http.StatusOK, map[string]string{"way": way, "tmux": sess, "model": model, "harness": harness, "tree": chatTree(found.Path, id)})
 }
 
-func writeChatStartReceipt(path string, receipt any) error {
-	data, err := json.Marshal(receipt)
+func writeChatStartJSON(path string, record any) error {
+	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}

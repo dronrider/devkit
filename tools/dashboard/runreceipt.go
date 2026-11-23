@@ -61,7 +61,7 @@ func markRunStart(w http.ResponseWriter, phase runStartPhase) bool {
 	if !ok || out.dispatched {
 		return true
 	}
-	if err := writeChatStartReceipt(out.receiptPath, runStartReceipt{Fingerprint: out.fingerprint, Phase: phase}); err != nil {
+	if err := writeChatStartJSON(out.receiptPath, runStartReceipt{Fingerprint: out.fingerprint, Phase: phase}); err != nil {
 		out.logFailure("запись маркера "+string(phase), err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "не удалось сохранить квитанцию перед запуском"})
 		return false
@@ -171,7 +171,7 @@ func pruneRunReceipts(dir string, now time.Time) error {
 		// Сначала сохраняем границу уборки. При откате часов ключ удалённой
 		// квитанции всё равно не сможет запустить работу.
 		if cutoff.After(saved) {
-			if err := writeChatStartReceipt(filepath.Join(dir, ".pruned-before"), cutoff.Format(runReceiptDate)); err != nil {
+			if err := writeChatStartJSON(filepath.Join(dir, ".pruned-before"), cutoff.Format(runReceiptDate)); err != nil {
 				return err
 			}
 			saved = cutoff
@@ -341,7 +341,7 @@ func (s *server) runStartWithReceipt(w http.ResponseWriter, p *Project, body run
 		problem["run_receipt"] = json.RawMessage("true")
 		reply, _ = json.Marshal(problem)
 	}
-	if err := writeChatStartReceipt(path, runStartReceipt{Fingerprint: fingerprint, Status: out.status, Reply: reply}); err != nil {
+	if err := writeChatStartJSON(path, runStartReceipt{Fingerprint: fingerprint, Status: out.status, Reply: reply}); err != nil {
 		logFailure("запись окончательной квитанции", err)
 		if out.dispatched {
 			writeRunStartUnknown(w, "Подтверждение запуска не сохранилось")
